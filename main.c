@@ -39,6 +39,7 @@ void cmd_rmdir(char *dir);
 void cmd_rm(char *file);
 void cmd_touch(char *file);
 void cmd_clear();
+void cmd_run_sv(char *script);
 void help();
 
 // Comparison function for sorting filenames alphabetically
@@ -89,6 +90,8 @@ void process_command(char *command) {
         cmd_clear();
     } else if (strcmp(command, "help") == 0) {
         help();
+    } else if (strstr(command, ".sv")) {  
+        cmd_run_sv(command);  // Run .sv script files
     } else {
         printf("Unknown command: %s\n", command);
     }
@@ -115,44 +118,9 @@ void cmd_pwd() {
 
 // List directory contents with sorting, file size, and type
 void cmd_ls() {
-#ifdef _WIN32
-    WIN32_FIND_DATA findFileData;
-    HANDLE hFind = FindFirstFile("*", &findFileData);
-    if (hFind == INVALID_HANDLE_VALUE) {
-        printf("No files found.\n");
-        return;
-    }
-
-    FileInfo files[1024];
-    int count = 0;
-
-    do {
-        if (count >= 1024) break; // Prevent overflow
-        strcpy(files[count].name, findFileData.cFileName);
-        files[count].size = findFileData.nFileSizeLow;
-        files[count].type = (findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 'D' : 'F';
-        count++;
-    } while (FindNextFile(hFind, &findFileData));
-
-    FindClose(hFind);
-
-    // Sort files alphabetically
-    qsort(files, count, sizeof(FileInfo), compare);
-
-    // Print column headers
-    printf("%-30s %-12s %-5s\n", "Filename", "Size (bytes)", "Type");
-    printf("------------------------------------------------------\n");
-
-    // Print files
-    for (int i = 0; i < count; i++) {
-        printf("%-30s %-12lu %c\n", files[i].name, files[i].size, files[i].type);
-    }
-
-#else
     DIR *d;
     struct dirent *dir;
     struct stat fileStat;
-
     FileInfo files[1024];
     int count = 0;
 
@@ -184,7 +152,6 @@ void cmd_ls() {
     for (int i = 0; i < count; i++) {
         printf("%-30s %-12ld %c\n", files[i].name, files[i].size, files[i].type);
     }
-#endif
 }
 
 // Create directory
@@ -225,6 +192,28 @@ void cmd_touch(char *file) {
     }
 }
 
+// Function to run .sv script files
+void cmd_run_sv(char *script) {
+    FILE *fp = fopen(script, "r");
+    if (!fp) {
+        perror("Failed to open script");
+        return;
+    }
+
+    char command[256];
+    printf("Running script: %s\n", script);
+
+    while (fgets(command, sizeof(command), fp)) {
+        command[strcspn(command, "\n")] = 0;  // Remove newline
+        if (strlen(command) > 0) {
+            printf("> %s\n", command);  // Show command being executed
+            process_command(command);
+        }
+    }
+
+    fclose(fp);
+}
+
 // Clear terminal screen
 void cmd_clear() {
     system(CLEAR_SCREEN);
@@ -242,5 +231,6 @@ void help() {
     printf("  touch <file> - Create empty file\n");
     printf("  clear      - Clear screen\n");
     printf("  help       - Show this menu\n");
+    printf("  <script>.sv - Run .sv script file\n");
     printf("  exit       - Close terminal\n");
 }

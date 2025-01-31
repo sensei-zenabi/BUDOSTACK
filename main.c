@@ -29,6 +29,7 @@ void cmd_rmdir(char *dir);
 void cmd_rm(char *file);
 void cmd_clear();
 void cmd_create_sv(char *filename);
+void cmd_delete_sv(char *filename);
 void cmd_run_sv(char *script);
 void help();
 
@@ -80,6 +81,8 @@ void process_command(char *command) {
         help();
     } else if (strncmp(command, "create ", 7) == 0) {
     	cmd_create_sv(command + 7);
+    } else if (strncmp(command, "delete ", 7) == 0) {
+        cmd_delete_sv(command + 7); // Delete .sv script
     } else if (strstr(command, ".sv")) {  
         cmd_run_sv(command);  // Run .sv script files
     } else {
@@ -188,6 +191,20 @@ void cmd_create_sv(char *filename) {
     fclose(file);
 }
 
+// Delete an .sv script file
+void cmd_delete_sv(char *filename) {
+    if (!strstr(filename, ".sv")) {
+        printf("Error: Only .sv files can be deleted\n");
+        return;
+    }
+
+    if (remove(filename) == 0) {
+        printf("Script deleted: %s\n", filename);
+    } else {
+        perror("Failed to delete script");
+    }
+}
+
 // Function to run .sv script files
 void cmd_run_sv(char *script) {
     FILE *fp = fopen(script, "r");
@@ -227,5 +244,7 @@ void help() {
     printf("  clear      - Clear screen\n");
     printf("  help       - Show this menu\n");
     printf("  <script>.sv - Run .sv script file\n");
+	printf("  create <script>.sv - Create a new .sv database");
+	printf("  delete <script>.sv - Delete an existing .sv database");
     printf("  exit       - Close terminal\n");
 }

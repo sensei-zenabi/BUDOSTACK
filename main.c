@@ -84,8 +84,6 @@ void process_command(char *command) {
         cmd_rmdir(command + 6);
     } else if (strncmp(command, "rm ", 3) == 0) {
         cmd_rm(command + 3);
-    } else if (strncmp(command, "touch ", 6) == 0) {
-        cmd_touch(command + 6);
     } else if (strcmp(command, "clear") == 0) {
         cmd_clear();
     } else if (strcmp(command, "help") == 0) {
@@ -181,17 +179,6 @@ void cmd_rm(char *file) {
     }
 }
 
-// Create empty file (touch)
-void cmd_touch(char *file) {
-    FILE *fp = fopen(file, "w");
-    if (fp) {
-        fclose(fp);
-        printf("File created: %s\n", file);
-    } else {
-        perror("touch failed");
-    }
-}
-
 // Function to run .sv script files
 void cmd_run_sv(char *script) {
     FILE *fp = fopen(script, "r");
@@ -228,7 +215,6 @@ void help() {
     printf("  mkdir <dir>- Create directory\n");
     printf("  rmdir <dir>- Remove empty directory\n");
     printf("  rm <file>  - Delete file\n");
-    printf("  touch <file> - Create empty file\n");
     printf("  clear      - Clear screen\n");
     printf("  help       - Show this menu\n");
     printf("  <script>.sv - Run .sv script file\n");

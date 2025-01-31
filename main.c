@@ -28,6 +28,7 @@ void cmd_mkdir(char *dir);
 void cmd_rmdir(char *dir);
 void cmd_rm(char *file);
 void cmd_clear();
+void cmd_create_sv(char *filename);
 void cmd_run_sv(char *script);
 void help();
 
@@ -77,6 +78,8 @@ void process_command(char *command) {
         cmd_clear();
     } else if (strcmp(command, "help") == 0) {
         help();
+    } else if (strncmp(command, "create ", 7) == 0) {
+    	cmd_create_sv(command + 7);
     } else if (strstr(command, ".sv")) {  
         cmd_run_sv(command);  // Run .sv script files
     } else {
@@ -166,6 +169,23 @@ void cmd_rm(char *file) {
     } else {
         perror("rm failed");
     }
+}
+
+// Create an .sv script file
+void cmd_create_sv(char *filename) {
+    if (!strstr(filename, ".sv")) {
+        printf("Error: Filename must have .sv extension\n");
+        return;
+    }
+
+    FILE *file = fopen(filename, "w");
+    if (!file) {
+        perror("Failed to create script");
+        return;
+    }
+
+    printf("Script created: %s\n", filename);
+    fclose(file);
 }
 
 // Function to run .sv script files

@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# Set the source file and output executable
-SOURCE="main.c"
+# Set the source files and output executable
+SOURCES="main.c teach.c"
 OUTPUT="terminal"
 
 # Compile with gcc
-echo "Compiling $SOURCE..."
-gcc "$SOURCE" -o "$OUTPUT" -Wall -Wextra -pedantic -std=c11
+echo "Compiling $SOURCES..."
+gcc $SOURCES -o $OUTPUT -Wall -Wextra -pedantic -std=c11
 
 # Check if compilation was successful
 if [ $? -eq 0 ]; then

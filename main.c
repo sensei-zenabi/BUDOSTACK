@@ -12,6 +12,8 @@
 #define CHDIR(dir) chdir(dir)
 #define GETCWD(buffer, size) getcwd(buffer, size)
 
+extern void cmd_teach_sv(char *filename);
+
 // Define file structure for sorting in ls
 typedef struct {
     char name[256];
@@ -83,6 +85,8 @@ void process_command(char *command) {
     	cmd_create_sv(command + 7);
     } else if (strncmp(command, "delete ", 7) == 0) {
         cmd_delete_sv(command + 7); // Delete .sv script
+	} else if (strncmp(command, "teach ", 7) == 0) {
+        cmd_teach_sv(command + 7);
     } else if (strstr(command, ".sv")) {  
         cmd_run_sv(command);  // Run .sv script files
     } else {
@@ -205,6 +209,8 @@ void cmd_delete_sv(char *filename) {
     }
 }
 
+// PLACEHOLDER FOR cmd_teach() that is loaded from include file
+
 // Function to run .sv script files
 void cmd_run_sv(char *script) {
     FILE *fp = fopen(script, "r");
@@ -235,16 +241,16 @@ void cmd_clear() {
 // Display help menu
 void help() {
     printf("Available commands:\n");
-    printf("  cd <dir>   - Change directory\n");
-    printf("  pwd        - Print working directory\n");
-    printf("  ls         - List files in directory\n");
-    printf("  mkdir <dir>- Create directory\n");
-    printf("  rmdir <dir>- Remove empty directory\n");
-    printf("  rm <file>  - Delete file\n");
-    printf("  clear      - Clear screen\n");
-    printf("  help       - Show this menu\n");
-    printf("  <script>.sv - Run .sv script file\n");
-	printf("  create <script>.sv - Create a new .sv database");
-	printf("  delete <script>.sv - Delete an existing .sv database");
-    printf("  exit       - Close terminal\n");
+    printf("  cd <dir>           - Change directory\n");
+    printf("  pwd                - Print working directory\n");
+    printf("  ls                 - List files in directory\n");
+    printf("  mkdir <dir>        - Create directory\n");
+    printf("  rmdir <dir>        - Remove empty directory\n");
+    printf("  rm <file>          - Delete file\n");
+    printf("  clear              - Clear screen\n");
+    printf("  help               - Show this menu\n");
+    printf("  <script>.sv        - Run .sv script file\n");
+	printf("  create <script>.sv - Create a new .sv database\n");
+	printf("  delete <script>.sv - Delete an existing .sv database\n");
+    printf("  exit               - Close terminal\n");
 }

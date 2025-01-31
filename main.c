@@ -4,23 +4,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/types.h>
 
-#ifdef _WIN32
-    #include <windows.h>
-    #include <direct.h>
-    #define CLEAR_SCREEN "cls"
-    #define MKDIR(dir) _mkdir(dir)
-    #define RMDIR(dir) _rmdir(dir)
-    #define CHDIR(dir) _chdir(dir)
-    #define GETCWD(buffer, size) _getcwd(buffer, size)
-#else
-    #include <sys/types.h>
-    #define CLEAR_SCREEN "clear"
-    #define MKDIR(dir) mkdir(dir, 0777)
-    #define RMDIR(dir) rmdir(dir)
-    #define CHDIR(dir) chdir(dir)
-    #define GETCWD(buffer, size) getcwd(buffer, size)
-#endif
+#define CLEAR_SCREEN "clear"
+#define MKDIR(dir) mkdir(dir, 0777)
+#define RMDIR(dir) rmdir(dir)
+#define CHDIR(dir) chdir(dir)
+#define GETCWD(buffer, size) getcwd(buffer, size)
 
 // Define file structure for sorting in ls
 typedef struct {
@@ -37,7 +27,6 @@ void cmd_ls();
 void cmd_mkdir(char *dir);
 void cmd_rmdir(char *dir);
 void cmd_rm(char *file);
-void cmd_touch(char *file);
 void cmd_clear();
 void cmd_run_sv(char *script);
 void help();
@@ -50,7 +39,7 @@ int compare(const void *a, const void *b) {
 int main() {
     char command[256];
 
-    printf("\nWelcome to Mini Terminal (Cross-Platform)\n");
+    printf("\nWelcome to Mini Terminal (Linux Only)\n");
     printf("This terminal is intended to run .sv files\n");
     printf("Type 'help' for a full list of commands.\n\n");
 

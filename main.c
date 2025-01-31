@@ -49,8 +49,9 @@ int compare(const void *a, const void *b) {
 int main() {
     char command[256];
 
-    printf("Welcome to Mini Terminal (Cross-Platform)\n");
-    printf("Type 'help' for a list of commands.\n");
+    printf("\nWelcome to Mini Terminal (Cross-Platform)\n");
+    printf("This terminal is intended to run .sv files\n");
+    printf("Type 'help' for a full list of commands.\n\n");
 
     while (1) {
         printf("> ");

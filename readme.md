@@ -1,0 +1,1 @@
+- Preferred editor: sudo apt install micro

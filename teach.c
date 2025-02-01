@@ -3,7 +3,7 @@
 #include <string.h>
 #include <ctype.h>
 
-#define MAX_WORDS 10000
+#define INITIAL_CAPACITY 10000
 #define WORD_LEN 50
 
 typedef struct {
@@ -12,10 +12,54 @@ typedef struct {
     int count;
 } WordPair;
 
-WordPair model[MAX_WORDS];
+// Global dynamic model
+WordPair *model = NULL;
 int model_size = 0;
+int model_capacity = 0;
 
-// Function to trim whitespace from a string
+/*------------------------------------------
+  Initialization and Memory Management
+------------------------------------------*/
+
+// Initialize the model if it has not been allocated yet.
+void init_model() {
+    if (model == NULL) {
+        model = malloc(INITIAL_CAPACITY * sizeof(WordPair));
+        if (model == NULL) {
+            fprintf(stderr, "Memory allocation failed\n");
+            exit(1);
+        }
+        model_capacity = INITIAL_CAPACITY;
+    }
+}
+
+// Ensure there is enough capacity for a new WordPair; if not, double the capacity.
+void ensure_capacity() {
+    if (model_size >= model_capacity) {
+        int new_capacity = model_capacity * 2;
+        WordPair *temp = realloc(model, new_capacity * sizeof(WordPair));
+        if (temp == NULL) {
+            fprintf(stderr, "Memory allocation failed during expansion\n");
+            exit(1);
+        }
+        model = temp;
+        model_capacity = new_capacity;
+    }
+}
+
+// Free the allocated model memory.
+void free_model() {
+    if (model) {
+        free(model);
+        model = NULL;
+    }
+}
+
+/*------------------------------------------
+  String Utility Functions
+------------------------------------------*/
+
+// Trim leading and trailing whitespace from a string.
 void trim_whitespace(char *str) {
     char *end;
     // Trim leading space
@@ -27,14 +71,14 @@ void trim_whitespace(char *str) {
     *(end + 1) = '\0';
 }
 
-// Function to normalize a word: convert to lowercase and remove leading/trailing punctuation/special characters.
+// Normalize a word: convert to lowercase and remove leading/trailing punctuation.
 void normalize_word(char *word) {
     // Convert to lowercase
     for (int i = 0; word[i]; i++) {
         word[i] = tolower((unsigned char) word[i]);
     }
 
-    // Remove leading non-alphanumeric characters
+    // Remove leading non-alphanumeric characters.
     int start = 0;
     while (word[start] && !isalnum((unsigned char)word[start])) {
         start++;
@@ -48,7 +92,7 @@ void normalize_word(char *word) {
         word[i] = '\0';
     }
     
-    // Remove trailing non-alphanumeric characters
+    // Remove trailing non-alphanumeric characters.
     int len = strlen(word);
     while (len > 0 && !isalnum((unsigned char)word[len - 1])) {
         word[len - 1] = '\0';
@@ -56,27 +100,34 @@ void normalize_word(char *word) {
     }
 }
 
-// Function to find or add a word pair in the model
+/*------------------------------------------
+  Model Update and Persistence Functions
+------------------------------------------*/
+
+// Find an existing word pair and update its count; otherwise, add a new pair.
 void update_model(const char *word1, const char *word2) {
+    // Linear search for the word pair.
     for (int i = 0; i < model_size; i++) {
         if (strcmp(model[i].word1, word1) == 0 && strcmp(model[i].word2, word2) == 0) {
             model[i].count++;
             return;
         }
     }
-    if (model_size < MAX_WORDS) {
-        strcpy(model[model_size].word1, word1);
-        strcpy(model[model_size].word2, word2);
-        model[model_size].count = 1;
-        model_size++;
-    }
+    // Not found: ensure capacity and add the new pair.
+    ensure_capacity();
+    strncpy(model[model_size].word1, word1, WORD_LEN - 1);
+    model[model_size].word1[WORD_LEN - 1] = '\0';
+    strncpy(model[model_size].word2, word2, WORD_LEN - 1);
+    model[model_size].word2[WORD_LEN - 1] = '\0';
+    model[model_size].count = 1;
+    model_size++;
 }
 
-// Function to save the model to a file
+// Save the model (word pairs and counts) to a file.
 void save_model(const char *filename) {
     FILE *file = fopen(filename, "w");
     if (!file) {
-        printf("Error: Could not open file %s\n", filename);
+        printf("Error: Could not open file %s for writing\n", filename);
         return;
     }
     for (int i = 0; i < model_size; i++) {
@@ -85,7 +136,7 @@ void save_model(const char *filename) {
     fclose(file);
 }
 
-// Function to load the model from a file (with normalization)
+// Load the model from a file (with normalization).
 void load_model(const char *filename) {
     FILE *file = fopen(filename, "r");
     if (!file) return;
@@ -95,23 +146,31 @@ void load_model(const char *filename) {
     while (fscanf(file, "%49s %49s %d", word1, word2, &count) == 3) {
         normalize_word(word1);
         normalize_word(word2);
-        strcpy(model[model_size].word1, word1);
-        strcpy(model[model_size].word2, word2);
+        ensure_capacity();
+        strncpy(model[model_size].word1, word1, WORD_LEN - 1);
+        model[model_size].word1[WORD_LEN - 1] = '\0';
+        strncpy(model[model_size].word2, word2, WORD_LEN - 1);
+        model[model_size].word2[WORD_LEN - 1] = '\0';
         model[model_size].count = count;
         model_size++;
     }
     fclose(file);
 }
 
-// Function to process user input and update the model (with normalization)
+/*------------------------------------------
+  Input Processing and Prediction
+------------------------------------------*/
+
+// Process a line of user input by tokenizing and updating the model with word pairs.
 void process_input(char *input) {
-    char *words[MAX_WORDS];
+    // Allocate a temporary array of pointers. (We use INITIAL_CAPACITY for simplicity.)
+    char *words[INITIAL_CAPACITY];
     int count = 0;
 
     char *token = strtok(input, " ");
-    while (token && count < MAX_WORDS) {
+    while (token && count < INITIAL_CAPACITY) {
         normalize_word(token);
-        if (strlen(token) > 0) {  // Skip if token becomes empty after normalization.
+        if (strlen(token) > 0) {  // Skip tokens that become empty after normalization.
             words[count++] = token;
         }
         token = strtok(NULL, " ");
@@ -122,28 +181,7 @@ void process_input(char *input) {
     }
 }
 
-// Main function to teach the model
-void cmd_teach_sv(char *filename) {
-    char input[1000];
-
-    load_model(filename);
-
-    while (1) {
-        printf("teach> ");
-        if (!fgets(input, sizeof(input), stdin)) break;
-        input[strcspn(input, "\n")] = '\0';
-        trim_whitespace(input);
-
-        if (strcmp(input, "exit") == 0) {
-            save_model(filename);
-            break;
-        }
-
-        process_input(input);
-    }
-}
-
-// Function to predict the most frequent next word (expects normalized input)
+// Predict the most frequent next word for a given normalized word.
 const char* predict_next_word(const char *word) {
     int max_count = 0;
     const char *best_match = NULL;
@@ -160,16 +198,50 @@ const char* predict_next_word(const char *word) {
     return best_match;
 }
 
-// Function to run the model in test mode with sentence completion
+/*------------------------------------------
+  API Functions for Main (cmd_teach_sv and cmd_run_sv)
+------------------------------------------*/
+
+// This function serves as the API for teaching/training the model.
+// It loads an existing model (if available), processes user input,
+// and saves the updated model upon exit.
+void cmd_teach_sv(char *filename) {
+    char input[1000];
+
+    init_model();
+    load_model(filename);
+
+    while (1) {
+        printf("teach> ");
+        if (!fgets(input, sizeof(input), stdin))
+            break;
+        input[strcspn(input, "\n")] = '\0';
+        trim_whitespace(input);
+
+        if (strcmp(input, "exit") == 0) {
+            save_model(filename);
+            break;
+        }
+
+        process_input(input);
+    }
+    // Optionally free memory if no further processing is required.
+    // free_model();
+}
+
+// This function serves as the API for running/testing the model.
+// It loads an existing model and allows the user to get sentence completions.
 void cmd_run_sv(char *filename) {
     char input[1000];
     char generated_sentence[1000] = {0};
 
+    init_model();
     load_model(filename);
 
     while (1) {
         printf("run> ");
-        if (!fgets(input, sizeof(input), stdin)) break;
+        if (!fgets(input, sizeof(input), stdin))
+            break;
         input[strcspn(input, "\n")] = '\0';
         trim_whitespace(input);
 
@@ -180,7 +252,7 @@ void cmd_run_sv(char *filename) {
         // Start the generated sentence with the original input.
         strcpy(generated_sentence, input);
 
-        // Use a copy of the input for tokenization (to preserve the original input)
+        // Make a copy of the input for tokenization.
         char input_copy[1000];
         strcpy(input_copy, input);
         char *token = strtok(input_copy, " ");
@@ -196,15 +268,16 @@ void cmd_run_sv(char *filename) {
             continue;
         }
 
-        // Use the normalized last token for prediction
+        // Use the normalized last token for prediction.
         char current_word[WORD_LEN];
         strncpy(current_word, last_token, WORD_LEN - 1);
         current_word[WORD_LEN - 1] = '\0';
 
-        // Generate additional words based on predictions
-        for (int i = 0; i < 10; i++) { // Limit output to 10 additional words
+        // Generate up to 10 additional words.
+        for (int i = 0; i < 10; i++) {
             const char *next_word = predict_next_word(current_word);
-            if (!next_word) break;
+            if (!next_word)
+                break;
 
             strcat(generated_sentence, " ");
             strcat(generated_sentence, next_word);
@@ -214,5 +287,6 @@ void cmd_run_sv(char *filename) {
 
         printf("Prediction: %s\n", generated_sentence);
     }
+    // Optionally free memory if no further processing is required.
+    // free_model();
 }
-

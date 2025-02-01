@@ -14,6 +14,7 @@
 
 // All the functions imported from other files (preferably only one per file!)
 extern void cmd_teach_sv(char *filename);
+extern void cmd_run_sv(char *filename);
 
 // Define file structure for sorting in ls
 typedef struct {
@@ -33,7 +34,6 @@ void cmd_rm(char *file);
 void cmd_clear();
 void cmd_create_sv(char *filename);
 void cmd_delete_sv(char *filename);
-void cmd_run_sv(char *script);
 void help();
 
 // Comparison function for sorting filenames alphabetically
@@ -87,9 +87,9 @@ void process_command(char *command) {
     } else if (strncmp(command, "delete ", 7) == 0) {
         cmd_delete_sv(command + 7); // Delete .sv script
 	} else if (strncmp(command, "teach ", 6) == 0) {
-        cmd_teach_sv(command + 7);
-    } else if (strncmp(command, "run ", 4)) {  
-        cmd_run_sv(command);  // Run .sv script files
+        cmd_teach_sv(command + 6);
+    } else if (strncmp(command, "run ", 4) == 0) {  
+        cmd_run_sv(command + 4);  // Run .sv script files
     } else {
         printf("Unknown command: %s\n", command);
     }
@@ -210,27 +210,6 @@ void cmd_delete_sv(char *filename) {
     }
 }
 
-// Function to run .sv script files
-void cmd_run_sv(char *script) {
-    FILE *fp = fopen(script, "r");
-    if (!fp) {
-        perror("Failed to open script");
-        return;
-    }
-
-    char command[256];
-    printf("Running script: %s\n", script);
-
-    while (fgets(command, sizeof(command), fp)) {
-        command[strcspn(command, "\n")] = 0;  // Remove newline
-        if (strlen(command) > 0) {
-            printf("> %s\n", command);  // Show command being executed
-            process_command(command);
-        }
-    }
-
-    fclose(fp);
-}
 
 // Clear terminal screen
 void cmd_clear() {

@@ -12,6 +12,7 @@
 #define CHDIR(dir) chdir(dir)
 #define GETCWD(buffer, size) getcwd(buffer, size)
 
+// All the functions imported from other files (preferably only one per file!)
 extern void cmd_teach_sv(char *filename);
 
 // Define file structure for sorting in ls
@@ -209,8 +210,6 @@ void cmd_delete_sv(char *filename) {
     }
 }
 
-// PLACEHOLDER FOR cmd_teach() that is loaded from include file
-
 // Function to run .sv script files
 void cmd_run_sv(char *script) {
     FILE *fp = fopen(script, "r");
@@ -240,7 +239,7 @@ void cmd_clear() {
 
 // Display help menu
 void help() {
-    printf("Available commands:\n");
+    printf("\nAvailable commands:\n");
     printf("  cd <dir>           - Change directory\n");
     printf("  pwd                - Print working directory\n");
     printf("  ls                 - List files in directory\n");
@@ -250,7 +249,9 @@ void help() {
     printf("  clear              - Clear screen\n");
     printf("  help               - Show this menu\n");
     printf("  <script>.sv        - Run .sv script file\n");
-	printf("  create <script>.sv - Create a new .sv database\n");
-	printf("  delete <script>.sv - Delete an existing .sv database\n");
-    printf("  exit               - Close terminal\n");
+	printf("  create <model>.sv  - Create a new .sv database\n");
+	printf("  delete <model>.sv  - Delete an existing .sv database\n");
+	printf("  teach <model>.sv   - Start teaching a model\n");
+	printf("  run <model>.sv     - Run existing model\n");
+    printf("  exit               - Close terminal\n\n");
 }

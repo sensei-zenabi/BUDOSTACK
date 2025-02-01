@@ -86,9 +86,9 @@ void process_command(char *command) {
     	cmd_create_sv(command + 7);
     } else if (strncmp(command, "delete ", 7) == 0) {
         cmd_delete_sv(command + 7); // Delete .sv script
-	} else if (strncmp(command, "teach ", 7) == 0) {
+	} else if (strncmp(command, "teach ", 6) == 0) {
         cmd_teach_sv(command + 7);
-    } else if (strstr(command, ".sv")) {  
+    } else if (strncmp(command, "run ", 4)) {  
         cmd_run_sv(command);  // Run .sv script files
     } else {
         printf("Unknown command: %s\n", command);

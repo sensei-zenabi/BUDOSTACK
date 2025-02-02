@@ -1,0 +1,135 @@
+Who is Abraham Lincoln? He was the 16th President of the United States, celebrated for his leadership during the Civil War and his role in abolishing slavery.
+Who is Winston Churchill? He served as the Prime Minister of the United Kingdom during World War II and is renowned for his inspiring speeches and steadfast leadership.
+Who is Nelson Mandela? He was a South African anti-apartheid revolutionary who became the nation’s first black president and a global symbol of reconciliation and justice.
+Who is Mahatma Gandhi? He led India’s non-violent independence movement against British colonial rule and inspired civil rights movements around the world.
+Who is Angela Merkel? She was the Chancellor of Germany and a key figure in European politics, known for her pragmatic approach and steady leadership during times of crisis.
+Who is Julius Caesar? He was a Roman general and statesman whose conquests and political reforms paved the way for the transformation of the Roman Republic into the Roman Empire.
+Who is Alexander the Great? He was the ancient Macedonian king who created one of the largest empires in history through a series of rapid military campaigns.
+Who is Cleopatra? She was the last active ruler of the Ptolemaic Kingdom of Egypt, known for her intelligence, political savvy, and influential relationships with Roman leaders.
+Who is Leonardo da Vinci? He was a Renaissance polymath whose genius spanned art, science, and engineering, leaving behind masterpieces like the Mona Lisa and innovative engineering designs.
+Who is Nikola Tesla? He was an inventor and electrical engineer whose pioneering work on alternating current (AC) power systems revolutionized the distribution and use of electricity.
+Who is Thomas Edison? He was an inventor and entrepreneur best known for developing the practical electric light bulb, the phonograph, and numerous other innovations that shaped modern life.
+Who is Elon Musk? He is a contemporary entrepreneur and engineer recognized for founding companies like SpaceX and Tesla, driving forward innovations in space exploration and sustainable energy.
+Who is Grace Hopper? She was a computer scientist and U.S. Navy rear admiral who made groundbreaking contributions to early programming languages and is often credited with popularizing the term “debugging.”
+Who is Steve Jobs? He was an American entrepreneur and co-founder of Apple Inc., celebrated for his visionary approach to technology and design that transformed multiple industries.
+Who is Marie Curie? She was a pioneering physicist and chemist who conducted influential research on radioactivity, becoming the first woman to win a Nobel Prize and the only person to win in two scientific fields.
+Who is Martin Luther King Jr.? He was a prominent civil rights leader who advocated for nonviolent protest and played a key role in advancing civil rights in the United States.
+Who is John F. Kennedy? He was the 35th President of the United States, known for his inspiring leadership and initiatives such as the space program during the Cold War.
+Who is Ronald Reagan? He was the 40th President of the United States, celebrated for his economic policies and strong stance against the Soviet Union.
+Who is Margaret Thatcher? She was the Prime Minister of the United Kingdom, known as the "Iron Lady" for her uncompromising politics and economic reforms.
+Who is Vladimir Lenin? He was the leader of the Bolshevik Revolution in Russia and the founding head of the Soviet state.
+Who is Mao Zedong? He was the founding father of the People's Republic of China and a key figure in modern Chinese history through his revolutionary leadership.
+Who is Che Guevara? He was an Argentine Marxist revolutionary, physician, and major figure in the Cuban Revolution, symbolizing resistance and radical change.
+Who is Sigmund Freud? He was the founder of psychoanalysis, whose theories about the unconscious mind have deeply influenced modern psychology.
+Who is Carl Jung? He was a Swiss psychiatrist and psychoanalyst who founded analytical psychology and introduced influential concepts like the collective unconscious.
+Who is Albert Einstein? He was a theoretical physicist renowned for developing the theory of relativity, which revolutionized our understanding of space, time, and energy.
+Who is Stephen Hawking? He was a theoretical physicist and cosmologist known for his work on black holes and his bestselling book on the nature of the universe.
+Who is Richard Feynman? He was an influential American physicist known for his work in quantum mechanics, quantum electrodynamics, and his engaging teaching style.
+Who is James Watt? He was an inventor whose improvements to the steam engine were fundamental to the Industrial Revolution.
+Who is Isambard Kingdom Brunel? He was a pioneering British engineer who designed revolutionary bridges, tunnels, and railways during the Industrial Revolution.
+Who is Galileo Galilei? He was an Italian astronomer, physicist, and engineer whose observations laid the foundation for modern astronomy and physics.
+Who is Isaac Newton? He was an English mathematician and physicist who formulated the laws of motion and universal gravitation.
+Who is Michael Faraday? He was a British scientist whose discoveries in electromagnetism and electrochemistry significantly advanced technology and engineering.
+Who is Rosalind Franklin? She was a pioneering scientist whose work with X-ray diffraction was crucial to understanding the structure of DNA.
+Who is Charles Darwin? He was a naturalist who developed the theory of evolution by natural selection, fundamentally altering our view of life on Earth.
+Who is Karl Marx? He was a philosopher, economist, and revolutionary whose ideas about capitalism and class struggle influenced many modern political movements.
+Who is Adam Smith? He was an economist known as the father of modern economics, whose work laid the foundation for free-market capitalism.
+Who is Florence Nightingale? She was a social reformer and the founder of modern nursing, known for her pioneering work during the Crimean War.
+Who is Socrates? He was an ancient Greek philosopher whose method of inquiry and emphasis on ethical living profoundly influenced Western thought.
+Who is Plato? He was a student of Socrates and an influential philosopher, best known for his dialogues and the establishment of the Academy in Athens.
+Who is Aristotle? He was a Greek philosopher and scientist whose writings on diverse subjects shaped much of Western intellectual history.
+Who is Confucius? He was a Chinese philosopher whose teachings on morality, family, and social relationships have deeply influenced East Asian culture.
+Who is Sun Tzu? He was an ancient Chinese military strategist known for his treatise "The Art of War," which remains influential in strategy and leadership.
+Who is Genghis Khan? He was the founder and first Great Khan of the Mongol Empire, which became the largest contiguous empire in history through his conquests.
+Who is Joan of Arc? She was a French heroine who, claiming divine guidance, led French forces to several important victories during the Hundred Years' War.
+Who is Queen Victoria? She was the British monarch whose long reign during the 19th century marked a period of industrial, cultural, and political change known as the Victorian Era.
+Who is Franklin D. Roosevelt? He was the 32nd President of the United States, notable for his leadership during the Great Depression and World War II through his New Deal policies.
+Who is Barack Obama? He was the 44th President of the United States and the first African American to hold the office, known for his efforts in healthcare reform and diplomacy.
+Who is Donald Trump? He is a businessman and the 45th President of the United States, whose tenure was marked by a distinct political style and polarizing policies.
+Who is Jeff Bezos? He is an entrepreneur and the founder of Amazon, whose innovations in e-commerce and technology have reshaped global retail.
+Who is Bill Gates? He is a co-founder of Microsoft and a leading philanthropist, influential in both technology and global health initiatives.
+Who is Mark Zuckerberg? He is the co-founder and CEO of Facebook, a key figure in the development of social media and digital communication.
+Who is Larry Page? He is a co-founder of Google and a significant innovator in internet technology and search engine development.
+Who is Sergey Brin? He is the other co-founder of Google, instrumental in shaping modern internet and technology landscapes.
+Who is Tim Berners-Lee? He is a computer scientist credited with inventing the World Wide Web, fundamentally transforming how information is shared.
+Who is Ada Lovelace? She is considered the first computer programmer, having written early algorithms for Charles Babbage's analytical engine.
+Who is Alan Turing? He was a pioneering computer scientist and mathematician whose work laid the foundation for modern computing and artificial intelligence.
+Who is Benjamin Franklin? He was a founding father of the United States, as well as a renowned inventor, scientist, and diplomat.
+Who is Johannes Gutenberg? He was the inventor of the movable-type printing press, which revolutionized the spread of knowledge in Europe.
+Who is Martin Luther? He was a seminal figure in the Protestant Reformation, challenging the practices of the Catholic Church and reshaping Western religion.
+Who is Pope Francis? He is the current head of the Catholic Church, known for his progressive stances on social issues and efforts to modernize church practices.
+Who is the Dalai Lama? He is the spiritual leader of Tibetan Buddhism and a global advocate for peace, compassion, and human rights.
+Who is Mother Teresa? She was a Catholic nun renowned for her charitable work among the poor in India and around the world.
+Who is Oprah Winfrey? She is a media mogul and philanthropist whose influence extends across television, literature, and social activism.
+Who is Maya Angelou? She was an acclaimed poet, memoirist, and civil rights activist whose works continue to inspire generations.
+Who is Pablo Picasso? He was a groundbreaking Spanish painter and sculptor, co-founder of the Cubist movement, and one of the most influential artists of the 20th century.
+Who is Vincent van Gogh? He was a post-impressionist painter whose emotionally charged works and turbulent life have made him a legendary figure in art history.
+Who is Ludwig van Beethoven? He was a German composer and pianist whose symphonies and musical innovations remain central to classical music.
+Who is Wolfgang Amadeus Mozart? He was a prolific and influential composer of the Classical era, celebrated for his masterful compositions and enduring musical legacy.
+Who is Johann Sebastian Bach? He was a German composer and musician whose works have had a lasting impact on Western classical music.
+Who is Elvis Presley? He was an iconic American singer and actor, often referred to as the "King of Rock and Roll" for his revolutionary influence on music.
+Who is Michael Jackson? He was a legendary American pop singer and dancer known as the "King of Pop," whose innovative music and performance style captivated the world.
+Who is Bob Dylan? He is an influential American singer-songwriter whose poetic lyrics and distinctive voice have shaped modern music and culture.
+Who is William Shakespeare? He was an English playwright and poet whose timeless works continue to be celebrated for their language, insight, and dramatic power.
+Who is Artturi Ilmari Virtanen? He was a Finnish biochemist awarded the Nobel Prize in Chemistry in 1945 for his pioneering research in agricultural and nutrition chemistry.
+Who is Linus Torvalds? He is a Finnish software engineer best known for creating the Linux kernel, which has revolutionized open-source operating systems.
+Who is Rolf Nevanlinna? He was a Finnish mathematician renowned for his work in complex analysis, particularly Nevanlinna theory, and is honored by the Nevanlinna Prize.
+Who is Yrjö Väisälä? He was a Finnish astronomer, physicist, and inventor recognized for his significant contributions to optical instrumentation and geodesy.
+Who is Teuvo Kohonen? He was a Finnish computer scientist and neuroscientist famous for developing the self-organizing map, a neural network algorithm influential in data visualization and pattern recognition.
+Who is Johan Gadolin? He was a Finnish chemist, physicist, and mineralogist whose research on rare earth elements was pivotal, and the element gadolinium is named in his honor.
+Who is Erkki Oja? He is a Finnish computer scientist noted for his extensive work in neural networks, machine learning, and computational neuroscience.
+Who is Adolf Hitler? He was the leader of Nazi Germany responsible for initiating World War II and orchestrating the Holocaust.
+Who is Joseph Stalin? He was the leader of the Soviet Union known for his authoritarian rule, widespread purges, and mass repression.
+Who is Benito Mussolini? He was the Fascist Prime Minister of Italy whose dictatorial regime allied with Nazi Germany and suppressed political dissent.
+Who is Pol Pot? He was the leader of the Khmer Rouge in Cambodia whose brutal regime resulted in the deaths of millions through forced labor and genocide.
+Who is Saddam Hussein? He was the President of Iraq known for his oppressive regime, human rights abuses, and involvement in regional conflicts.
+Who is Idi Amin? He was the military dictator of Uganda notorious for his brutal rule, widespread human rights violations, and ethnic persecution.
+Who is Attila the Hun? He was the ruler of the Huns, infamous for his ruthless military campaigns across Europe during the 5th century.
+Who is Ivan the Terrible? He was the first Tsar of Russia, infamous for his violent and tyrannical reign marked by brutal purges and repressive policies.
+Who is Vlad the Impaler? He was a 15th-century ruler of Wallachia known for his extreme cruelty and penchant for impaling his enemies, which inspired the Dracula legend.
+Who is King Leopold II? He was the King of Belgium responsible for severe exploitation and atrocities in the Congo Free State, resulting in millions of deaths.
+Who is Nero? He was a Roman Emperor infamous for his tyrannical rule, extravagant excesses, and persecution of early Christians.
+Who is Al Capone? He was an American gangster during the Prohibition era, notorious for his involvement in organized crime, bootlegging, and corruption.
+Who is John Gotti? He was an American mobster and head of the Gambino crime family, known for his high-profile criminal activities and influence in organized crime.
+Who is Pablo Escobar? He was a Colombian drug lord who led the Medellín Cartel, notorious for his vast wealth, extreme violence, and impact on global drug trafficking.
+Who is Klaus Barbie? He was a Nazi officer nicknamed the "Butcher of Lyon" for his role in war crimes during World War II and his subsequent evasion of justice.
+Who is Charles Manson? He was the leader of the Manson Family cult, responsible for orchestrating a series of brutal murders in the late 1960s that shocked the nation.
+Who is Osama bin Laden? He was the founder of al-Qaeda, known for orchestrating major terrorist attacks, including the September 11 attacks, and promoting extremist ideologies.
+Who is Julius Caesar? He was a Roman general and statesman whose actions led to the fall of the Roman Republic and the rise of the Roman Empire.
+Who is Augustus Caesar? He was the first Roman Emperor who established the Pax Romana, a long period of relative peace and stability in the empire.
+Who is Constantine the Great? He was a Roman Emperor known for embracing Christianity and establishing Constantinople as the new capital of the Roman Empire.
+Who is Charlemagne? He was the King of the Franks and later Emperor of the Romans, uniting much of Western Europe during the early Middle Ages.
+Who is Genghis Khan? He was the founder and Great Khan of the Mongol Empire, renowned for his military conquests and the creation of the largest contiguous empire in history.
+Who is Kublai Khan? He was a Mongol emperor who established the Yuan dynasty in China and expanded the influence of the Mongol Empire throughout Asia.
+Who is Saladin? He was a Muslim military leader known for recapturing Jerusalem during the Crusades and for his chivalrous conduct in warfare.
+Who is Richard the Lionheart? He was the King of England celebrated for his military leadership and valor during the Crusades.
+Who is William the Conqueror? He was the Norman ruler who invaded England in 1066, fundamentally transforming the nation’s culture, language, and governance.
+Who is King Henry VIII? He was the King of England best known for his role in the English Reformation, breaking away from the Roman Catholic Church.
+Who is Queen Elizabeth I? She was the Queen of England whose reign, known as the Elizabethan era, saw the flourishing of English drama and exploration.
+Who is Peter the Great? He was the Tsar of Russia who modernized and expanded the Russian Empire, transforming it into a major European power.
+Who is Catherine the Great? She was an Empress of Russia noted for her progressive reforms and territorial expansion that strengthened the Russian state.
+Who is Napoleon Bonaparte? He was a French military and political leader who rose to power during the French Revolution and established a vast empire across Europe.
+Who is Otto von Bismarck? He was the Prussian statesman who unified Germany through a series of wars and diplomatic efforts, becoming the first Chancellor of the German Empire.
+Who is Queen Victoria? She was the British monarch whose long reign oversaw significant industrial, cultural, and imperial expansion during the Victorian era.
+Who is Franklin D. Roosevelt? He was the 32nd President of the United States, known for his New Deal policies and leadership during the Great Depression and World War II.
+Who is Winston Churchill? He was the British Prime Minister whose leadership and stirring speeches were crucial during World War II.
+Who is Mahatma Gandhi? He was the leader of the Indian independence movement, famed for his philosophy of nonviolent resistance against British rule.
+Who is Nelson Mandela? He was a South African revolutionary and statesman who fought apartheid, eventually becoming the nation’s first black president and a global symbol of reconciliation.
+Who is Ho Chi Minh? He was a Vietnamese revolutionary leader who played a central role in the struggle for Vietnamese independence and the formation of a communist state.
+Who is Mao Zedong? He was the founding father of the People’s Republic of China and led a communist revolution that significantly transformed Chinese society.
+Who is Kim Il-sung? He was the founding leader of North Korea, establishing an enduring authoritarian regime and shaping the country’s political ideology.
+Who is Mustafa Kemal Atatürk? He was the founder and first President of Turkey, responsible for modernizing and secularizing the nation after the collapse of the Ottoman Empire.
+Who is Deng Xiaoping? He was a Chinese statesman who initiated major economic reforms, opening China to global markets and transforming its economy after Mao’s era.
+Who is Ronald Reagan? He was the 40th President of the United States, known for his conservative policies, economic reforms, and influential role in the Cold War’s conclusion.
+Who is Margaret Thatcher? She was the Prime Minister of the United Kingdom, nicknamed the "Iron Lady" for her uncompromising political style and economic reforms.
+Who is Jawaharlal Nehru? He was the first Prime Minister of independent India, instrumental in shaping the nation’s democratic and secular foundations.
+Who is Konrad Adenauer? He was the first Chancellor of West Germany after World War II, credited with rebuilding the country and forging strong transatlantic ties.
+Who is Lee Kuan Yew? He was the founding Prime Minister of Singapore, renowned for transforming the nation from a developing country into a thriving global financial hub.
+Who is Fidel Castro? He was the revolutionary leader of Cuba whose long rule was marked by his communist policies and defiant stance against U.S. influence.
+Who is Che Guevara? He was an Argentine revolutionary who became a key figure in the Cuban Revolution and a symbol of insurgency worldwide.
+Who is Simón Bolívar? He was a military and political leader who played a pivotal role in Latin America’s struggle for independence from Spanish colonial rule.
+Who is José de San Martín? He was an Argentine general who was instrumental in securing independence for several South American countries from Spain.
+Who is Emperor Meiji? He was the Japanese emperor during the Meiji Restoration, a period that transformed Japan through rapid modernization and industrialization.
+Who is Vladimir Putin? He is the current President of Russia, known for his long tenure, strongman politics, and assertive foreign policy.
+Who is Angela Merkel? She was the Chancellor of Germany, respected for her pragmatic leadership and steady guidance through numerous European and global crises.
+Who is Xi Jinping? He is the current President of China, recognized for consolidating power and advancing policies that shape China’s role on the world stage.

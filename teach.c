@@ -5,23 +5,33 @@
 #include <ctype.h>
 #include <time.h>
 #include <math.h>
+#include <sys/stat.h>
 
 /*-----------------------*/
 /* Configuration Macros  */
 /*-----------------------*/
-#define MAX_WORD_LEN       50
-#define MAX_INPUT_SIZE     1000
-#define MAX_TOKENS         1000
-#define MAX_VOCAB_SIZE     10000
-#define MAX_TRAIN_EXAMPLES 100000
+/* Increased model capacity */
+#define EMBEDDING_DIM       50
+#define HIDDEN_SIZE1        128
+#define HIDDEN_SIZE2        128
 
-/* Neural Network hyperparameters */
-#define EMBEDDING_DIM   10      /* Dimension of word embeddings */
-#define HIDDEN_SIZE1    32      /* Size of first hidden layer */
-#define HIDDEN_SIZE2    32      /* Size of second hidden layer */
-#define LEARNING_RATE   0.01
-#define EPOCHS          5       /* Default number of training passes in automatic teaching mode */
-#define MAX_PREDICT_WORDS 10     /* Maximum number of words to generate */
+#define MAX_WORD_LEN        50
+#define MAX_INPUT_SIZE      1000
+#define MAX_TOKENS          1000
+#define MAX_VOCAB_SIZE      10000
+#define MAX_TRAIN_EXAMPLES  100000
+
+#define INITIAL_LEARNING_RATE  0.01
+#define DEFAULT_EPOCHS         30
+#define LR_DECAY_FACTOR        0.95
+
+#define DEFAULT_BATCH_SIZE     32
+#define MAX_PREDICT_WORDS      10
+
+/* Adam optimizer hyperparameters */
+#define BETA1    0.9
+#define BETA2    0.999
+#define EPSILON  1e-8
 
 /* Special tokens */
 #define START_TOKEN "<s>"
@@ -30,20 +40,16 @@
 /*-----------------------*/
 /* Data Structures       */
 /*-----------------------*/
-
-/* Vocabulary: a simple dynamic list of words. */
 typedef struct {
     char *words[MAX_VOCAB_SIZE];
     int size;
 } Vocabulary;
 
-/* A training example consists of a context (two words) and a target word (all stored as indices) */
 typedef struct {
     int context[2];
     int target;
 } TrainingExample;
 
-/* Neural network parameters and weight matrices */
 typedef struct {
     int vocab_size;
     int emb_dim;
@@ -62,29 +68,60 @@ typedef struct {
     double *b3;          // vocab_size
 } NeuralNetwork;
 
+typedef struct {
+    double **m_embedding;
+    double **v_embedding;
+    double **m_W1;
+    double **v_W1;
+    double *m_b1;
+    double *v_b1;
+    double **m_W2;
+    double **v_W2;
+    double *m_b2;
+    double *v_b2;
+    double **m_W3;
+    double **v_W3;
+    double *m_b3;
+    double *v_b3;
+    int t;
+} AdamParams;
+
+/* For mini-batch training, we compute (raw) gradients and then average */
+typedef struct {
+    double **d_embedding; // shape: [vocab_size][emb_dim]
+    double **d_W1;        // shape: [2*emb_dim][hidden1]
+    double *d_b1;         // shape: [hidden1]
+    double **d_W2;        // shape: [hidden1][hidden2]
+    double *d_b2;         // shape: [hidden2]
+    double **d_W3;        // shape: [hidden2][vocab_size]
+    double *d_b3;         // shape: [vocab_size]
+} Gradients;
+
+/* For forward propagation caching */
+typedef struct {
+    double *x;
+    double *z1;
+    double *a1;
+    double *z2;
+    double *a2;
+    double *z3;
+    double *y;
+} ForwardCache;
+
 /*-----------------------*/
 /* Global Variables      */
 /*-----------------------*/
 Vocabulary vocab;
 TrainingExample train_examples[MAX_TRAIN_EXAMPLES];
 int train_example_count = 0;
+NeuralNetwork net = {0};
+AdamParams adam = {0};
 
-NeuralNetwork net = {0};  /* Global network: pointer members are initialized to NULL */
+double learning_rate = INITIAL_LEARNING_RATE;
 
 /*-----------------------*/
 /* Utility Functions     */
 /*-----------------------*/
-
-/* djb2 hash function (not used in the neural version but kept for consistency) */
-unsigned long hash_djb2(const char *str) {
-    unsigned long hash = 5381;
-    int c;
-    while ((c = *str++))
-        hash = ((hash << 5) + hash) + c;
-    return hash;
-}
-
-/* Remove leading and trailing whitespace from str in place */
 void trim_whitespace(char *str) {
     char *start = str;
     while (*start && isspace((unsigned char)*start))
@@ -98,12 +135,12 @@ void trim_whitespace(char *str) {
     }
 }
 
-/* Normalize a word: convert to lowercase and remove punctuation (except for special tokens) */
 void normalize_word(char *word) {
     if (strcmp(word, START_TOKEN) == 0 || strcmp(word, END_TOKEN) == 0)
         return;
     for (int i = 0; word[i]; i++)
         word[i] = tolower((unsigned char)word[i]);
+    // Remove leading punctuation
     int start = 0;
     while (word[start] && !isalnum((unsigned char)word[start]))
         start++;
@@ -115,6 +152,7 @@ void normalize_word(char *word) {
         }
         word[i] = '\0';
     }
+    // Remove trailing punctuation
     int len = strlen(word);
     while (len > 0 && !isalnum((unsigned char)word[len - 1])) {
         word[len - 1] = '\0';
@@ -122,8 +160,6 @@ void normalize_word(char *word) {
     }
 }
 
-/* Tokenize the input string into words.
-   Returns the number of tokens; tokens are stored as pointers within input. */
 int tokenize(char *input, char **words, int max_tokens) {
     int count = 0;
     char *token = strtok(input, " ");
@@ -152,7 +188,6 @@ int find_in_vocab(const char *word) {
     return -1;
 }
 
-/* Add word to vocabulary if not present, return its index */
 int add_word(const char *word) {
     int idx = find_in_vocab(word);
     if (idx >= 0)
@@ -169,7 +204,6 @@ int add_word(const char *word) {
     return vocab.size++;
 }
 
-/* Free vocabulary memory */
 void free_vocab() {
     for (int i = 0; i < vocab.size; i++) {
         free(vocab.words[i]);
@@ -205,14 +239,13 @@ double **alloc_matrix(int rows, int cols) {
 }
 
 void free_matrix(double **m, int rows) {
-    if (m == NULL)
+    if (!m)
         return;
     for (int i = 0; i < rows; i++)
         free(m[i]);
     free(m);
 }
 
-/* Random initialization in range [-r, r] */
 double rand_uniform(double r) {
     return ((double)rand() / RAND_MAX) * 2 * r - r;
 }
@@ -221,20 +254,17 @@ double rand_uniform(double r) {
 /* Neural Network Setup  */
 /*-----------------------*/
 void init_network() {
-    /* Update network dimensions based on the current vocabulary size */
     net.vocab_size = vocab.size;
     net.emb_dim = EMBEDDING_DIM;
     net.hidden1 = HIDDEN_SIZE1;
     net.hidden2 = HIDDEN_SIZE2;
 
-    /* Allocate embedding: vocab_size x emb_dim */
     net.embedding = alloc_matrix(net.vocab_size, net.emb_dim);
     double r_emb = 0.5;
     for (int i = 0; i < net.vocab_size; i++)
         for (int j = 0; j < net.emb_dim; j++)
             net.embedding[i][j] = rand_uniform(r_emb);
 
-    /* Layer 1: input dim = 2*emb_dim, output = hidden1 */
     net.W1 = alloc_matrix(2 * net.emb_dim, net.hidden1);
     net.b1 = alloc_vector(net.hidden1);
     double r_W1 = 0.5;
@@ -244,7 +274,6 @@ void init_network() {
     for (int j = 0; j < net.hidden1; j++)
         net.b1[j] = 0.0;
 
-    /* Layer 2: hidden1 -> hidden2 */
     net.W2 = alloc_matrix(net.hidden1, net.hidden2);
     net.b2 = alloc_vector(net.hidden2);
     double r_W2 = 0.5;
@@ -254,7 +283,6 @@ void init_network() {
     for (int j = 0; j < net.hidden2; j++)
         net.b2[j] = 0.0;
 
-    /* Output layer: hidden2 -> vocab_size */
     net.W3 = alloc_matrix(net.hidden2, net.vocab_size);
     net.b3 = alloc_vector(net.vocab_size);
     double r_W3 = 0.5;
@@ -265,74 +293,100 @@ void init_network() {
         net.b3[j] = 0.0;
 }
 
-/* Free network parameters with pointer guards */
+void init_adam() {
+    adam.t = 0;
+    adam.m_embedding = alloc_matrix(net.vocab_size, net.emb_dim);
+    adam.v_embedding = alloc_matrix(net.vocab_size, net.emb_dim);
+    for (int i = 0; i < net.vocab_size; i++)
+        for (int j = 0; j < net.emb_dim; j++) {
+            adam.m_embedding[i][j] = 0.0;
+            adam.v_embedding[i][j] = 0.0;
+        }
+    adam.m_W1 = alloc_matrix(2 * net.emb_dim, net.hidden1);
+    adam.v_W1 = alloc_matrix(2 * net.emb_dim, net.hidden1);
+    adam.m_b1 = alloc_vector(net.hidden1);
+    adam.v_b1 = alloc_vector(net.hidden1);
+    for (int i = 0; i < 2 * net.emb_dim; i++)
+        for (int j = 0; j < net.hidden1; j++) {
+            adam.m_W1[i][j] = 0.0;
+            adam.v_W1[i][j] = 0.0;
+        }
+    for (int j = 0; j < net.hidden1; j++) {
+        adam.m_b1[j] = 0.0;
+        adam.v_b1[j] = 0.0;
+    }
+    adam.m_W2 = alloc_matrix(net.hidden1, net.hidden2);
+    adam.v_W2 = alloc_matrix(net.hidden1, net.hidden2);
+    adam.m_b2 = alloc_vector(net.hidden2);
+    adam.v_b2 = alloc_vector(net.hidden2);
+    for (int i = 0; i < net.hidden1; i++)
+        for (int j = 0; j < net.hidden2; j++) {
+            adam.m_W2[i][j] = 0.0;
+            adam.v_W2[i][j] = 0.0;
+        }
+    for (int j = 0; j < net.hidden2; j++) {
+        adam.m_b2[j] = 0.0;
+        adam.v_b2[j] = 0.0;
+    }
+    adam.m_W3 = alloc_matrix(net.hidden2, net.vocab_size);
+    adam.v_W3 = alloc_matrix(net.hidden2, net.vocab_size);
+    adam.m_b3 = alloc_vector(net.vocab_size);
+    adam.v_b3 = alloc_vector(net.vocab_size);
+    for (int i = 0; i < net.hidden2; i++)
+        for (int j = 0; j < net.vocab_size; j++) {
+            adam.m_W3[i][j] = 0.0;
+            adam.v_W3[i][j] = 0.0;
+        }
+    for (int j = 0; j < net.vocab_size; j++) {
+        adam.m_b3[j] = 0.0;
+        adam.v_b3[j] = 0.0;
+    }
+}
+
+/*-----------------------*/
+/* Free Functions        */
+/*-----------------------*/
 void free_network() {
-    if (net.embedding) {
-        free_matrix(net.embedding, net.vocab_size);
-        net.embedding = NULL;
-    }
-    if (net.W1) {
-        free_matrix(net.W1, 2 * net.emb_dim);
-        net.W1 = NULL;
-    }
-    if (net.b1) {
-        free(net.b1);
-        net.b1 = NULL;
-    }
-    if (net.W2) {
-        free_matrix(net.W2, net.hidden1);
-        net.W2 = NULL;
-    }
-    if (net.b2) {
-        free(net.b2);
-        net.b2 = NULL;
-    }
-    if (net.W3) {
-        free_matrix(net.W3, net.hidden2);
-        net.W3 = NULL;
-    }
-    if (net.b3) {
-        free(net.b3);
-        net.b3 = NULL;
-    }
+    if (net.embedding) { free_matrix(net.embedding, net.vocab_size); net.embedding = NULL; }
+    if (net.W1) { free_matrix(net.W1, 2 * net.emb_dim); net.W1 = NULL; }
+    if (net.b1) { free(net.b1); net.b1 = NULL; }
+    if (net.W2) { free_matrix(net.W2, net.hidden1); net.W2 = NULL; }
+    if (net.b2) { free(net.b2); net.b2 = NULL; }
+    if (net.W3) { free_matrix(net.W3, net.hidden2); net.W3 = NULL; }
+    if (net.b3) { free(net.b3); net.b3 = NULL; }
+}
+
+void free_adam() {
+    if (adam.m_embedding) { free_matrix(adam.m_embedding, net.vocab_size); adam.m_embedding = NULL; }
+    if (adam.v_embedding) { free_matrix(adam.v_embedding, net.vocab_size); adam.v_embedding = NULL; }
+    if (adam.m_W1) { free_matrix(adam.m_W1, 2 * net.emb_dim); adam.m_W1 = NULL; }
+    if (adam.v_W1) { free_matrix(adam.v_W1, 2 * net.emb_dim); adam.v_W1 = NULL; }
+    if (adam.m_b1) { free(adam.m_b1); adam.m_b1 = NULL; }
+    if (adam.v_b1) { free(adam.v_b1); adam.v_b1 = NULL; }
+    if (adam.m_W2) { free_matrix(adam.m_W2, net.hidden1); adam.m_W2 = NULL; }
+    if (adam.v_W2) { free_matrix(adam.v_W2, net.hidden1); adam.v_W2 = NULL; }
+    if (adam.m_b2) { free(adam.m_b2); adam.m_b2 = NULL; }
+    if (adam.v_b2) { free(adam.v_b2); adam.v_b2 = NULL; }
+    if (adam.m_W3) { free_matrix(adam.m_W3, net.hidden2); adam.m_W3 = NULL; }
+    if (adam.v_W3) { free_matrix(adam.v_W3, net.hidden2); adam.v_W3 = NULL; }
+    if (adam.m_b3) { free(adam.m_b3); adam.m_b3 = NULL; }
+    if (adam.v_b3) { free(adam.v_b3); adam.v_b3 = NULL; }
 }
 
 /*-----------------------*/
 /* Forward Propagation   */
 /*-----------------------*/
-
-/* Given a context of two word indices, perform forward propagation.
-   Outputs (via allocated arrays) intermediate activations needed for backprop.
-   The returned output (probabilities) is an array of length vocab_size. 
-   Caller is responsible for freeing allocated arrays.
-   Note: All vectors are allocated dynamically.
-*/
-typedef struct {
-    double *x;    /* concatenated embedding vector, length = 2*emb_dim */
-    double *z1;   /* pre-activation of first hidden layer, length = hidden1 */
-    double *a1;   /* activation of first hidden layer (ReLU), length = hidden1 */
-    double *z2;   /* pre-activation of second hidden layer, length = hidden2 */
-    double *a2;   /* activation of second hidden layer (ReLU), length = hidden2 */
-    double *z3;   /* pre-activation of output layer, length = vocab_size */
-    double *y;    /* softmax output, length = vocab_size */
-} ForwardCache;
-
-/* ReLU activation and its derivative */
 double relu(double x) {
     return x > 0 ? x : 0;
 }
-
 double relu_deriv(double x) {
     return x > 0 ? 1.0 : 0.0;
 }
-
-/* Softmax function (in-place for a vector of length n) */
 void softmax(double *z, int n) {
     double max = z[0];
-    for (int i = 1; i < n; i++) {
+    for (int i = 1; i < n; i++)
         if (z[i] > max)
             max = z[i];
-    }
     double sum = 0.0;
     for (int i = 0; i < n; i++) {
         z[i] = exp(z[i] - max);
@@ -342,56 +396,44 @@ void softmax(double *z, int n) {
         z[i] /= sum;
 }
 
-/* Forward propagation function */
 ForwardCache forward_prop(int context[2]) {
     ForwardCache cache;
     int input_dim = 2 * net.emb_dim;
     cache.x = alloc_vector(input_dim);
-    /* Lookup embeddings for the two context words and concatenate */
     for (int i = 0; i < net.emb_dim; i++) {
         cache.x[i] = net.embedding[context[0]][i];
         cache.x[i + net.emb_dim] = net.embedding[context[1]][i];
     }
-    /* Layer 1: z1 = x * W1 + b1 */
     cache.z1 = alloc_vector(net.hidden1);
     for (int j = 0; j < net.hidden1; j++) {
         cache.z1[j] = net.b1[j];
         for (int i = 0; i < input_dim; i++)
             cache.z1[j] += cache.x[i] * net.W1[i][j];
     }
-    /* a1 = ReLU(z1) */
     cache.a1 = alloc_vector(net.hidden1);
     for (int j = 0; j < net.hidden1; j++)
         cache.a1[j] = relu(cache.z1[j]);
-    
-    /* Layer 2: z2 = a1 * W2 + b2 */
     cache.z2 = alloc_vector(net.hidden2);
     for (int j = 0; j < net.hidden2; j++) {
         cache.z2[j] = net.b2[j];
         for (int i = 0; i < net.hidden1; i++)
             cache.z2[j] += cache.a1[i] * net.W2[i][j];
     }
-    /* a2 = ReLU(z2) */
     cache.a2 = alloc_vector(net.hidden2);
     for (int j = 0; j < net.hidden2; j++)
         cache.a2[j] = relu(cache.z2[j]);
-    
-    /* Output layer: z3 = a2 * W3 + b3 */
     cache.z3 = alloc_vector(net.vocab_size);
     for (int j = 0; j < net.vocab_size; j++) {
         cache.z3[j] = net.b3[j];
         for (int i = 0; i < net.hidden2; i++)
             cache.z3[j] += cache.a2[i] * net.W3[i][j];
     }
-    /* Softmax output */
     cache.y = alloc_vector(net.vocab_size);
-    memcpy(cache.y, cache.z3, sizeof(double) * net.vocab_size);
+    memcpy(cache.y, cache.z3, sizeof(double)*net.vocab_size);
     softmax(cache.y, net.vocab_size);
-    
     return cache;
 }
 
-/* Free the cache allocated in forward_prop */
 void free_forward_cache(ForwardCache *cache) {
     free(cache->x);
     free(cache->z1);
@@ -403,168 +445,346 @@ void free_forward_cache(ForwardCache *cache) {
 }
 
 /*-----------------------*/
-/* Backpropagation       */
+/* Gradient Computation  */
 /*-----------------------*/
-/* Given a training example (context, target) and the forward cache,
-   perform backpropagation and update the network parameters using SGD.
-*/
-void backpropagate(int context[2], int target, ForwardCache *cache) {
+Gradients *alloc_gradients() {
+    Gradients *g = malloc(sizeof(Gradients));
+    g->d_embedding = alloc_matrix(net.vocab_size, net.emb_dim);
+    g->d_W1 = alloc_matrix(2 * net.emb_dim, net.hidden1);
+    g->d_b1 = alloc_vector(net.hidden1);
+    g->d_W2 = alloc_matrix(net.hidden1, net.hidden2);
+    g->d_b2 = alloc_vector(net.hidden2);
+    g->d_W3 = alloc_matrix(net.hidden2, net.vocab_size);
+    g->d_b3 = alloc_vector(net.vocab_size);
+    /* Initialize all gradients to 0 */
+    for (int i = 0; i < net.vocab_size; i++)
+        for (int j = 0; j < net.emb_dim; j++)
+            g->d_embedding[i][j] = 0.0;
+    for (int i = 0; i < 2 * net.emb_dim; i++)
+        for (int j = 0; j < net.hidden1; j++)
+            g->d_W1[i][j] = 0.0;
+    for (int j = 0; j < net.hidden1; j++)
+        g->d_b1[j] = 0.0;
+    for (int i = 0; i < net.hidden1; i++)
+        for (int j = 0; j < net.hidden2; j++)
+            g->d_W2[i][j] = 0.0;
+    for (int j = 0; j < net.hidden2; j++)
+        g->d_b2[j] = 0.0;
+    for (int i = 0; i < net.hidden2; i++)
+        for (int j = 0; j < net.vocab_size; j++)
+            g->d_W3[i][j] = 0.0;
+    for (int j = 0; j < net.vocab_size; j++)
+        g->d_b3[j] = 0.0;
+    return g;
+}
+
+void free_gradients(Gradients *g) {
+    free_matrix(g->d_embedding, net.vocab_size);
+    free_matrix(g->d_W1, 2 * net.emb_dim);
+    free(g->d_b1);
+    free_matrix(g->d_W2, net.hidden1);
+    free(g->d_b2);
+    free_matrix(g->d_W3, net.hidden2);
+    free(g->d_b3);
+    free(g);
+}
+
+/* Compute gradients for one training example (without updating parameters) */
+Gradients *compute_gradients(int context[2], int target) {
+    ForwardCache cache = forward_prop(context);
+    Gradients *g = alloc_gradients();
     int input_dim = 2 * net.emb_dim;
     int vocab_size = net.vocab_size;
-    /* Create one-hot vector for target */
+
+    /* One-hot target */
     double *t = alloc_vector(vocab_size);
-    for (int i = 0; i < vocab_size; i++)
-        t[i] = 0.0;
+    for (int i = 0; i < vocab_size; i++) t[i] = 0.0;
     t[target] = 1.0;
 
-    /* Compute gradient at output layer: dL/dz3 = y - t */
+    /* dz3 = y - t */
     double *dz3 = alloc_vector(vocab_size);
     for (int j = 0; j < vocab_size; j++)
-        dz3[j] = cache->y[j] - t[j];
+        dz3[j] = cache.y[j] - t[j];
 
     /* Gradients for W3 and b3 */
-    double **dW3 = alloc_matrix(net.hidden2, vocab_size);
-    double *db3 = alloc_vector(vocab_size);
-    for (int j = 0; j < vocab_size; j++) {
-        db3[j] = dz3[j];
-    }
     for (int i = 0; i < net.hidden2; i++) {
         for (int j = 0; j < vocab_size; j++) {
-            dW3[i][j] = cache->a2[i] * dz3[j];
+            g->d_W3[i][j] = cache.a2[i] * dz3[j];
         }
     }
+    for (int j = 0; j < vocab_size; j++) {
+        g->d_b3[j] = dz3[j];
+    }
 
-    /* Backprop into layer 2: dL/da2 = dz3 * W3^T */
+    /* Backprop into layer 2 */
     double *da2 = alloc_vector(net.hidden2);
     for (int i = 0; i < net.hidden2; i++) {
         da2[i] = 0.0;
         for (int j = 0; j < vocab_size; j++)
             da2[i] += dz3[j] * net.W3[i][j];
     }
-    /* dL/dz2 = da2 * ReLU'(z2) */
     double *dz2 = alloc_vector(net.hidden2);
     for (int i = 0; i < net.hidden2; i++)
-        dz2[i] = da2[i] * relu_deriv(cache->z2[i]);
+        dz2[i] = da2[i] * relu_deriv(cache.z2[i]);
 
     /* Gradients for W2 and b2 */
-    double **dW2 = alloc_matrix(net.hidden1, net.hidden2);
-    double *db2 = alloc_vector(net.hidden2);
-    for (int j = 0; j < net.hidden2; j++) {
-        db2[j] = dz2[j];
-    }
     for (int i = 0; i < net.hidden1; i++) {
         for (int j = 0; j < net.hidden2; j++) {
-            dW2[i][j] = cache->a1[i] * dz2[j];
+            g->d_W2[i][j] = cache.a1[i] * dz2[j];
         }
     }
+    for (int j = 0; j < net.hidden2; j++) {
+        g->d_b2[j] = dz2[j];
+    }
 
-    /* Backprop into layer 1: dL/da1 = dz2 * W2^T */
+    /* Backprop into layer 1 */
     double *da1 = alloc_vector(net.hidden1);
     for (int i = 0; i < net.hidden1; i++) {
         da1[i] = 0.0;
         for (int j = 0; j < net.hidden2; j++)
             da1[i] += dz2[j] * net.W2[i][j];
     }
-    /* dL/dz1 = da1 * ReLU'(z1) */
     double *dz1 = alloc_vector(net.hidden1);
     for (int i = 0; i < net.hidden1; i++)
-        dz1[i] = da1[i] * relu_deriv(cache->z1[i]);
+        dz1[i] = da1[i] * relu_deriv(cache.z1[i]);
 
     /* Gradients for W1 and b1 */
-    double **dW1 = alloc_matrix(input_dim, net.hidden1);
-    double *db1 = alloc_vector(net.hidden1);
-    for (int j = 0; j < net.hidden1; j++) {
-        db1[j] = dz1[j];
-    }
     for (int i = 0; i < input_dim; i++) {
         for (int j = 0; j < net.hidden1; j++) {
-            dW1[i][j] = cache->x[i] * dz1[j];
+            g->d_W1[i][j] = cache.x[i] * dz1[j];
         }
     }
-
-    /* Gradients for embeddings.
-       The input x is a concatenation of embedding[context[0]] and embedding[context[1]].
-    */
-    double **dEmb = alloc_matrix(2, net.emb_dim);
-    for (int i = 0; i < net.emb_dim; i++) {
-        dEmb[0][i] = 0.0;
-        dEmb[1][i] = 0.0;
+    for (int j = 0; j < net.hidden1; j++) {
+        g->d_b1[j] = dz1[j];
     }
-    /* For first word: gradient is the dot product of dz1 with the corresponding part of W1 */
+
+    /* Gradients for embeddings (for the two context words) */
     for (int i = 0; i < net.emb_dim; i++) {
         for (int j = 0; j < net.hidden1; j++) {
-            dEmb[0][i] += net.W1[i][j] * dz1[j];
-        }
-    }
-    /* For second word: gradient comes from second half of x */
-    for (int i = 0; i < net.emb_dim; i++) {
-        for (int j = 0; j < net.hidden1; j++) {
-            dEmb[1][i] += net.W1[i + net.emb_dim][j] * dz1[j];
+            g->d_embedding[context[0]][i] += net.W1[i][j] * dz1[j];
+            g->d_embedding[context[1]][i] += net.W1[i + net.emb_dim][j] * dz1[j];
         }
     }
 
-    /* SGD update for all parameters */
-    int i, j;
-    /* Update output layer */
-    for (i = 0; i < net.hidden2; i++)
-        for (j = 0; j < vocab_size; j++)
-            net.W3[i][j] -= LEARNING_RATE * dW3[i][j];
-    for (j = 0; j < vocab_size; j++)
-        net.b3[j] -= LEARNING_RATE * db3[j];
-
-    /* Update layer 2 */
-    for (i = 0; i < net.hidden1; i++)
-        for (j = 0; j < net.hidden2; j++)
-            net.W2[i][j] -= LEARNING_RATE * dW2[i][j];
-    for (j = 0; j < net.hidden2; j++)
-        net.b2[j] -= LEARNING_RATE * db2[j];
-
-    /* Update layer 1 */
-    for (i = 0; i < input_dim; i++)
-        for (j = 0; j < net.hidden1; j++)
-            net.W1[i][j] -= LEARNING_RATE * dW1[i][j];
-    for (j = 0; j < net.hidden1; j++)
-        net.b1[j] -= LEARNING_RATE * db1[j];
-
-    /* Update embeddings */
-    /* For context[0] */
-    for (i = 0; i < net.emb_dim; i++)
-        net.embedding[context[0]][i] -= LEARNING_RATE * dEmb[0][i];
-    /* For context[1] */
-    for (i = 0; i < net.emb_dim; i++)
-        net.embedding[context[1]][i] -= LEARNING_RATE * dEmb[1][i];
-
-    /* Free all allocated gradients */
     free(t);
     free(dz3);
-    free_matrix(dW3, net.hidden2);
-    free(db3);
     free(da2);
     free(dz2);
-    free_matrix(dW2, net.hidden1);
-    free(db2);
     free(da1);
     free(dz1);
-    free_matrix(dW1, input_dim);
-    free(db1);
-    free_matrix(dEmb, 2);
+    free_forward_cache(&cache);
+    return g;
 }
 
-/* Train on one example: perform forward propagation, backpropagation, and update parameters */
+void accumulate_gradients(Gradients *batch_grad, Gradients *g) {
+    for (int i = 0; i < net.vocab_size; i++)
+        for (int j = 0; j < net.emb_dim; j++)
+            batch_grad->d_embedding[i][j] += g->d_embedding[i][j];
+    for (int i = 0; i < 2 * net.emb_dim; i++)
+        for (int j = 0; j < net.hidden1; j++)
+            batch_grad->d_W1[i][j] += g->d_W1[i][j];
+    for (int j = 0; j < net.hidden1; j++)
+        batch_grad->d_b1[j] += g->d_b1[j];
+    for (int i = 0; i < net.hidden1; i++)
+        for (int j = 0; j < net.hidden2; j++)
+            batch_grad->d_W2[i][j] += g->d_W2[i][j];
+    for (int j = 0; j < net.hidden2; j++)
+        batch_grad->d_b2[j] += g->d_b2[j];
+    for (int i = 0; i < net.hidden2; i++)
+        for (int j = 0; j < net.vocab_size; j++)
+            batch_grad->d_W3[i][j] += g->d_W3[i][j];
+    for (int j = 0; j < net.vocab_size; j++)
+        batch_grad->d_b3[j] += g->d_b3[j];
+}
+
+/*-----------------------*/
+/* Parameter Update with Adam (Mini-Batch) */
+/*-----------------------*/
+void update_parameters(Gradients *avg_grad) {
+    adam.t++; // one update per batch
+    /* For each parameter update using averaged gradients */
+    // Embedding update:
+    for (int i = 0; i < net.vocab_size; i++) {
+        for (int j = 0; j < net.emb_dim; j++) {
+            double grad = avg_grad->d_embedding[i][j];
+            adam.m_embedding[i][j] = BETA1 * adam.m_embedding[i][j] + (1 - BETA1) * grad;
+            adam.v_embedding[i][j] = BETA2 * adam.v_embedding[i][j] + (1 - BETA2) * grad * grad;
+            double m_hat = adam.m_embedding[i][j] / (1 - pow(BETA1, adam.t));
+            double v_hat = adam.v_embedding[i][j] / (1 - pow(BETA2, adam.t));
+            net.embedding[i][j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+        }
+    }
+    // W1 and b1:
+    for (int i = 0; i < 2 * net.emb_dim; i++) {
+        for (int j = 0; j < net.hidden1; j++) {
+            double grad = avg_grad->d_W1[i][j];
+            adam.m_W1[i][j] = BETA1 * adam.m_W1[i][j] + (1 - BETA1) * grad;
+            adam.v_W1[i][j] = BETA2 * adam.v_W1[i][j] + (1 - BETA2) * grad * grad;
+            double m_hat = adam.m_W1[i][j] / (1 - pow(BETA1, adam.t));
+            double v_hat = adam.v_W1[i][j] / (1 - pow(BETA2, adam.t));
+            net.W1[i][j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+        }
+    }
+    for (int j = 0; j < net.hidden1; j++) {
+        double grad = avg_grad->d_b1[j];
+        adam.m_b1[j] = BETA1 * adam.m_b1[j] + (1 - BETA1) * grad;
+        adam.v_b1[j] = BETA2 * adam.v_b1[j] + (1 - BETA2) * grad * grad;
+        double m_hat = adam.m_b1[j] / (1 - pow(BETA1, adam.t));
+        double v_hat = adam.v_b1[j] / (1 - pow(BETA2, adam.t));
+        net.b1[j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+    }
+    // W2 and b2:
+    for (int i = 0; i < net.hidden1; i++) {
+        for (int j = 0; j < net.hidden2; j++) {
+            double grad = avg_grad->d_W2[i][j];
+            adam.m_W2[i][j] = BETA1 * adam.m_W2[i][j] + (1 - BETA1) * grad;
+            adam.v_W2[i][j] = BETA2 * adam.v_W2[i][j] + (1 - BETA2) * grad * grad;
+            double m_hat = adam.m_W2[i][j] / (1 - pow(BETA1, adam.t));
+            double v_hat = adam.v_W2[i][j] / (1 - pow(BETA2, adam.t));
+            net.W2[i][j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+        }
+    }
+    for (int j = 0; j < net.hidden2; j++) {
+        double grad = avg_grad->d_b2[j];
+        adam.m_b2[j] = BETA1 * adam.m_b2[j] + (1 - BETA1) * grad;
+        adam.v_b2[j] = BETA2 * adam.v_b2[j] + (1 - BETA2) * grad * grad;
+        double m_hat = adam.m_b2[j] / (1 - pow(BETA1, adam.t));
+        double v_hat = adam.v_b2[j] / (1 - pow(BETA2, adam.t));
+        net.b2[j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+    }
+    // W3 and b3:
+    for (int i = 0; i < net.hidden2; i++) {
+        for (int j = 0; j < net.vocab_size; j++) {
+            double grad = avg_grad->d_W3[i][j];
+            adam.m_W3[i][j] = BETA1 * adam.m_W3[i][j] + (1 - BETA1) * grad;
+            adam.v_W3[i][j] = BETA2 * adam.v_W3[i][j] + (1 - BETA2) * grad * grad;
+            double m_hat = adam.m_W3[i][j] / (1 - pow(BETA1, adam.t));
+            double v_hat = adam.v_W3[i][j] / (1 - pow(BETA2, adam.t));
+            net.W3[i][j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+        }
+    }
+    for (int j = 0; j < net.vocab_size; j++) {
+        double grad = avg_grad->d_b3[j];
+        adam.m_b3[j] = BETA1 * adam.m_b3[j] + (1 - BETA1) * grad;
+        adam.v_b3[j] = BETA2 * adam.v_b3[j] + (1 - BETA2) * grad * grad;
+        double m_hat = adam.m_b3[j] / (1 - pow(BETA1, adam.t));
+        double v_hat = adam.v_b3[j] / (1 - pow(BETA2, adam.t));
+        net.b3[j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+    }
+}
+
+/*-----------------------*/
+/* Training Functions    */
+/*-----------------------*/
+/* Single-example training (manual mode) */
 void train_on_example(int context[2], int target) {
-    ForwardCache cache = forward_prop(context);
-    backpropagate(context, target, &cache);
-    free_forward_cache(&cache);
+    Gradients *g = compute_gradients(context, target);
+    /* Use Adam update immediately */
+    adam.t++;
+    // Update for each parameter (similar to update_parameters, but using g directly)
+    for (int i = 0; i < net.vocab_size; i++) {
+        for (int j = 0; j < net.emb_dim; j++) {
+            double grad = g->d_embedding[i][j];
+            adam.m_embedding[i][j] = BETA1 * adam.m_embedding[i][j] + (1 - BETA1) * grad;
+            adam.v_embedding[i][j] = BETA2 * adam.v_embedding[i][j] + (1 - BETA2) * grad * grad;
+            double m_hat = adam.m_embedding[i][j] / (1 - pow(BETA1, adam.t));
+            double v_hat = adam.v_embedding[i][j] / (1 - pow(BETA2, adam.t));
+            net.embedding[i][j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+        }
+    }
+    for (int i = 0; i < 2 * net.emb_dim; i++) {
+        for (int j = 0; j < net.hidden1; j++) {
+            double grad = g->d_W1[i][j];
+            adam.m_W1[i][j] = BETA1 * adam.m_W1[i][j] + (1 - BETA1) * grad;
+            adam.v_W1[i][j] = BETA2 * adam.v_W1[i][j] + (1 - BETA2) * grad * grad;
+            double m_hat = adam.m_W1[i][j] / (1 - pow(BETA1, adam.t));
+            double v_hat = adam.v_W1[i][j] / (1 - pow(BETA2, adam.t));
+            net.W1[i][j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+        }
+    }
+    for (int j = 0; j < net.hidden1; j++) {
+        double grad = g->d_b1[j];
+        adam.m_b1[j] = BETA1 * adam.m_b1[j] + (1 - BETA1) * grad;
+        adam.v_b1[j] = BETA2 * adam.v_b1[j] + (1 - BETA2) * grad * grad;
+        double m_hat = adam.m_b1[j] / (1 - pow(BETA1, adam.t));
+        double v_hat = adam.v_b1[j] / (1 - pow(BETA2, adam.t));
+        net.b1[j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+    }
+    for (int i = 0; i < net.hidden1; i++) {
+        for (int j = 0; j < net.hidden2; j++) {
+            double grad = g->d_W2[i][j];
+            adam.m_W2[i][j] = BETA1 * adam.m_W2[i][j] + (1 - BETA1) * grad;
+            adam.v_W2[i][j] = BETA2 * adam.v_W2[i][j] + (1 - BETA2) * grad * grad;
+            double m_hat = adam.m_W2[i][j] / (1 - pow(BETA1, adam.t));
+            double v_hat = adam.v_W2[i][j] / (1 - pow(BETA2, adam.t));
+            net.W2[i][j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+        }
+    }
+    for (int j = 0; j < net.hidden2; j++) {
+        double grad = g->d_b2[j];
+        adam.m_b2[j] = BETA1 * adam.m_b2[j] + (1 - BETA1) * grad;
+        adam.v_b2[j] = BETA2 * adam.v_b2[j] + (1 - BETA2) * grad * grad;
+        double m_hat = adam.m_b2[j] / (1 - pow(BETA1, adam.t));
+        double v_hat = adam.v_b2[j] / (1 - pow(BETA2, adam.t));
+        net.b2[j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+    }
+    for (int i = 0; i < net.hidden2; i++) {
+        for (int j = 0; j < net.vocab_size; j++) {
+            double grad = g->d_W3[i][j];
+            adam.m_W3[i][j] = BETA1 * adam.m_W3[i][j] + (1 - BETA1) * grad;
+            adam.v_W3[i][j] = BETA2 * adam.v_W3[i][j] + (1 - BETA2) * grad * grad;
+            double m_hat = adam.m_W3[i][j] / (1 - pow(BETA1, adam.t));
+            double v_hat = adam.v_W3[i][j] / (1 - pow(BETA2, adam.t));
+            net.W3[i][j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+        }
+    }
+    for (int j = 0; j < net.vocab_size; j++) {
+        double grad = g->d_b3[j];
+        adam.m_b3[j] = BETA1 * adam.m_b3[j] + (1 - BETA1) * grad;
+        adam.v_b3[j] = BETA2 * adam.v_b3[j] + (1 - BETA2) * grad * grad;
+        double m_hat = adam.m_b3[j] / (1 - pow(BETA1, adam.t));
+        double v_hat = adam.v_b3[j] / (1 - pow(BETA2, adam.t));
+        net.b3[j] -= learning_rate * m_hat / (sqrt(v_hat) + EPSILON);
+    }
+    free_gradients(g);
+}
+
+/* Mini-batch training: compute averaged gradients over the batch and update parameters */
+void train_on_batch(TrainingExample batch[], int batch_size) {
+    Gradients *batch_grad = alloc_gradients();
+    for (int i = 0; i < batch_size; i++) {
+        Gradients *g = compute_gradients(batch[i].context, batch[i].target);
+        accumulate_gradients(batch_grad, g);
+        free_gradients(g);
+    }
+    /* Average gradients */
+    for (int i = 0; i < net.vocab_size; i++)
+        for (int j = 0; j < net.emb_dim; j++)
+            batch_grad->d_embedding[i][j] /= batch_size;
+    for (int i = 0; i < 2 * net.emb_dim; i++)
+        for (int j = 0; j < net.hidden1; j++)
+            batch_grad->d_W1[i][j] /= batch_size;
+    for (int j = 0; j < net.hidden1; j++)
+        batch_grad->d_b1[j] /= batch_size;
+    for (int i = 0; i < net.hidden1; i++)
+        for (int j = 0; j < net.hidden2; j++)
+            batch_grad->d_W2[i][j] /= batch_size;
+    for (int j = 0; j < net.hidden2; j++)
+        batch_grad->d_b2[j] /= batch_size;
+    for (int i = 0; i < net.hidden2; i++)
+        for (int j = 0; j < net.vocab_size; j++)
+            batch_grad->d_W3[i][j] /= batch_size;
+    for (int j = 0; j < net.vocab_size; j++)
+        batch_grad->d_b3[j] /= batch_size;
+    update_parameters(batch_grad);
+    free_gradients(batch_grad);
 }
 
 /*-----------------------*/
 /* Prediction (Inference)*/
 /*-----------------------*/
-/* Given a context (two word indices), run forward propagation and sample the output.
-   Returns the predicted word index. */
 int sample_prediction(int context[2]) {
     ForwardCache cache = forward_prop(context);
-    /* Sample from the output probability distribution */
     double r = (double)rand() / RAND_MAX;
     double cumulative = 0.0;
     int pred = 0;
@@ -582,14 +802,6 @@ int sample_prediction(int context[2]) {
 /*-----------------------*/
 /* Model Persistence     */
 /*-----------------------*/
-/* Save the vocabulary and network parameters to a text file.
-   Format:
-      vocab_size
-      word0
-      word1
-      ...
-      (then network parameters, dimensions followed by each matrix row)
-*/
 void save_model(const char *filename) {
     FILE *fp = fopen(filename, "w");
     if (!fp) {
@@ -600,15 +812,12 @@ void save_model(const char *filename) {
     for (int i = 0; i < vocab.size; i++) {
         fprintf(fp, "%s\n", vocab.words[i]);
     }
-    /* Save dimensions */
     fprintf(fp, "%d %d %d %d\n", net.vocab_size, net.emb_dim, net.hidden1, net.hidden2);
-    /* Save embedding matrix */
     for (int i = 0; i < net.vocab_size; i++) {
         for (int j = 0; j < net.emb_dim; j++)
             fprintf(fp, "%lf ", net.embedding[i][j]);
         fprintf(fp, "\n");
     }
-    /* Save W1 and b1 */
     for (int i = 0; i < 2 * net.emb_dim; i++) {
         for (int j = 0; j < net.hidden1; j++)
             fprintf(fp, "%lf ", net.W1[i][j]);
@@ -617,7 +826,6 @@ void save_model(const char *filename) {
     for (int j = 0; j < net.hidden1; j++)
         fprintf(fp, "%lf ", net.b1[j]);
     fprintf(fp, "\n");
-    /* Save W2 and b2 */
     for (int i = 0; i < net.hidden1; i++) {
         for (int j = 0; j < net.hidden2; j++)
             fprintf(fp, "%lf ", net.W2[i][j]);
@@ -626,7 +834,6 @@ void save_model(const char *filename) {
     for (int j = 0; j < net.hidden2; j++)
         fprintf(fp, "%lf ", net.b2[j]);
     fprintf(fp, "\n");
-    /* Save W3 and b3 */
     for (int i = 0; i < net.hidden2; i++) {
         for (int j = 0; j < net.vocab_size; j++)
             fprintf(fp, "%lf ", net.W3[i][j]);
@@ -638,25 +845,20 @@ void save_model(const char *filename) {
     fclose(fp);
 }
 
-/* Load the model from a file (expects same format as save_model).
-   If the model file is empty or invalid, this function leaves the global
-   vocabulary and network uninitialized so that teaching mode can start fresh.
-*/
 void load_model(const char *filename) {
-    FILE *fp = fopen(filename, "r");
-    if (!fp) {
-        /* If model does not exist, we start fresh */
+    struct stat st;
+    if (stat(filename, &st) == 0 && st.st_size == 0)
         return;
-    }
+    FILE *fp = fopen(filename, "r");
+    if (!fp)
+        return;
     int vocab_size;
     if (fscanf(fp, "%d", &vocab_size) != 1) {
-        /* Empty or invalid file: close and return without modifying globals */
         fclose(fp);
         return;
     }
     init_vocab();
     char buffer[256];
-    /* Read the newline after the vocabulary size */
     fgets(buffer, sizeof(buffer), fp);
     for (int i = 0; i < vocab_size; i++) {
         if (!fgets(buffer, sizeof(buffer), fp))
@@ -666,32 +868,26 @@ void load_model(const char *filename) {
     }
     vocab.size = vocab_size;
     if (fscanf(fp, "%d %d %d %d", &net.vocab_size, &net.emb_dim, &net.hidden1, &net.hidden2) != 4) {
-        /* File did not contain valid network dimensions */
         fclose(fp);
         return;
     }
-    /* Allocate network parameters */
     init_network();
-    /* Load embedding */
     for (int i = 0; i < net.vocab_size; i++) {
         for (int j = 0; j < net.emb_dim; j++)
             fscanf(fp, "%lf", &net.embedding[i][j]);
     }
-    /* Load W1 */
     for (int i = 0; i < 2 * net.emb_dim; i++) {
         for (int j = 0; j < net.hidden1; j++)
             fscanf(fp, "%lf", &net.W1[i][j]);
     }
     for (int j = 0; j < net.hidden1; j++)
         fscanf(fp, "%lf", &net.b1[j]);
-    /* Load W2 */
     for (int i = 0; i < net.hidden1; i++) {
         for (int j = 0; j < net.hidden2; j++)
             fscanf(fp, "%lf", &net.W2[i][j]);
     }
     for (int j = 0; j < net.hidden2; j++)
         fscanf(fp, "%lf", &net.b2[j]);
-    /* Load W3 */
     for (int i = 0; i < net.hidden2; i++) {
         for (int j = 0; j < net.vocab_size; j++)
             fscanf(fp, "%lf", &net.W3[i][j]);
@@ -704,93 +900,94 @@ void load_model(const char *filename) {
 /*-----------------------*/
 /* Training Data Builder */
 /*-----------------------*/
-/* Process a line of text for training: prepend START_TOKEN and append END_TOKEN,
-   tokenize the sentence, add words to vocabulary, and record training examples
-   for every trigram (context = previous two words, target = current word).
-*/
-void process_training_line(char *input) {
-    char buffer[MAX_INPUT_SIZE * 2];
+void process_training_line(char *input, int allow_new_words) {
+    char buffer[MAX_INPUT_SIZE*2];
     snprintf(buffer, sizeof(buffer), "%s %s %s", START_TOKEN, input, END_TOKEN);
     char *words[MAX_TOKENS];
     int count = tokenize(buffer, words, MAX_TOKENS);
     if (count < 3)
         return;
-    /* Convert words to indices (adding to vocab as needed) */
     int indices[MAX_TOKENS];
     for (int i = 0; i < count; i++) {
-        indices[i] = add_word(words[i]);
+        int idx = find_in_vocab(words[i]);
+        if (idx < 0) {
+            if (!allow_new_words) {
+                fprintf(stderr, "Word '%s' is unknown. Please teach it first in automatic mode.\n", words[i]);
+                return;
+            }
+            idx = add_word(words[i]);
+        }
+        indices[i] = idx;
     }
-    /* Create training examples for each trigram */
     for (int i = 0; i < count - 2; i++) {
         if (train_example_count >= MAX_TRAIN_EXAMPLES)
             break;
         train_examples[train_example_count].context[0] = indices[i];
-        train_examples[train_example_count].context[1] = indices[i + 1];
-        train_examples[train_example_count].target = indices[i + 2];
+        train_examples[train_example_count].context[1] = indices[i+1];
+        train_examples[train_example_count].target = indices[i+2];
         train_example_count++;
+    }
+}
+
+void shuffle_training_examples() {
+    for (int i = train_example_count - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        TrainingExample temp = train_examples[i];
+        train_examples[i] = train_examples[j];
+        train_examples[j] = temp;
     }
 }
 
 /*-----------------------*/
 /* Helper for Run Mode   */
 /*-----------------------*/
-/* Capitalize first letter and append a period if needed */
 void humanize_response(char *response) {
     if (response[0] != '\0')
         response[0] = toupper((unsigned char)response[0]);
     size_t len = strlen(response);
-    if (len > 0 && response[len - 1] != '.' && response[len - 1] != '!' && response[len - 1] != '?')
+    if (len > 0 && response[len-1] != '.' && response[len-1] != '!' && response[len-1] != '?')
         strncat(response, ".", MAX_INPUT_SIZE - strlen(response) - 1);
 }
 
-/* Check if input ends with a '?' */
 int is_question(const char *input) {
     size_t len = strlen(input);
-    while (len > 0 && isspace((unsigned char)input[len - 1]))
+    while (len > 0 && isspace((unsigned char)input[len-1]))
         len--;
-    return (len > 0 && input[len - 1] == '?');
+    return (len > 0 && input[len-1] == '?');
 }
 
 /*-----------------------*/
 /* API Functions         */
 /*-----------------------*/
-
-/* cmd_teach_sv: API function called when entering teach mode in main.c
-   Teaching mode. Supports two modes:
-   - Manual teaching: interactive input lines.
-   - Automatic teaching: user supplies a filename for teaching material.
-   In either case, training examples are built from the text and the network is trained.
-   
-   IMPORTANT: When new words are added to the vocabulary, the network dimensions become outdated.
-   In this implementation (for an empty model) we reinitialize the network (losing any previous training)
-   so that its dimensions match the updated vocabulary.
-*/
-void cmd_teach_sv(char *filename) {
+void cmd_teach_sv(char *model_filename) {
     char input[MAX_INPUT_SIZE];
-    /* Try to load an existing model */
-    load_model(filename);
+    struct stat st;
+    int fileExists = (stat(model_filename, &st) == 0);
+    int fileEmpty = fileExists && st.st_size == 0;
+    if (fileExists && !fileEmpty) {
+        load_model(model_filename);
+    }
     if (vocab.size == 0) {
-        /* Start a new vocabulary with special tokens if the model is empty */
         init_vocab();
         add_word(START_TOKEN);
         add_word(END_TOKEN);
     }
-    if (net.vocab_size == 0) {
+    /* For manual mode, we use the current network; for automatic mode we will rebuild below */
+    if (net.vocab_size == 0)
         init_network();
-    }
-    
+    init_adam();
+
     printf("Welcome to the NN Teaching Tool.\n");
-    printf("Would you like to use manual teaching mode? (Type 'y' for manual mode)\n");
-    printf("Your choice: ");
+    printf("Select teaching mode: (m)anual or (a)utomatic? ");
     if (!fgets(input, sizeof(input), stdin)) {
         fprintf(stderr, "Input error.\n");
         return;
     }
     input[strcspn(input, "\n")] = '\0';
     trim_whitespace(input);
-    
-    if (strcmp(input, "y") == 0 || strcmp(input, "Y") == 0) {
-        printf("Manual teaching mode selected.\n");
+
+    if (input[0] == 'm' || input[0] == 'M') {
+        printf("Manual teaching mode selected. (New words are not allowed.)\n");
         printf("Enter sentences to update the model. Type 'exit' to save and quit.\n");
         while (1) {
             printf("teach> ");
@@ -800,19 +997,15 @@ void cmd_teach_sv(char *filename) {
             trim_whitespace(input);
             if (strcmp(input, "exit") == 0)
                 break;
-            process_training_line(input);
-            /* Reinitialize network if new words were added */
-            if (net.vocab_size != vocab.size) {
-                free_network();
-                init_network();
-            }
-            /* Train for one epoch on the newly added examples */
-            for (int i = 0; i < train_example_count; i++) {
-                train_on_example(train_examples[i].context, train_examples[i].target);
+            process_training_line(input, 0);
+            int last = train_example_count - 1;
+            if (last >= 0) {
+                train_on_example(train_examples[last].context, train_examples[last].target);
             }
             printf("Processed and trained on the input line.\n");
         }
     } else {
+        /* Automatic mode: build vocabulary/training examples from file first */
         char materialFilename[256];
         FILE *materialFile;
         printf("Automatic teaching mode selected.\n");
@@ -833,15 +1026,16 @@ void cmd_teach_sv(char *filename) {
             input[strcspn(input, "\n")] = '\0';
             trim_whitespace(input);
             if (strlen(input) > 0)
-                process_training_line(input);
+                process_training_line(input, 1);
         }
         fclose(materialFile);
-        /* Reinitialize network if new words were added */
-        if (net.vocab_size != vocab.size) {
-            free_network();
-            init_network();
-        }
-        /* Ask the user how many epochs to run */
+        printf("Built vocabulary of size %d with %d training examples.\n", vocab.size, train_example_count);
+        /* Since new words were added, reinitialize network and Adam */
+        free_network();
+        free_adam();
+        init_network();
+        init_adam();
+
         char epochs_str[32];
         int num_epochs = 0;
         printf("Enter the number of epochs for training: ");
@@ -851,39 +1045,40 @@ void cmd_teach_sv(char *filename) {
         }
         num_epochs = atoi(epochs_str);
         if (num_epochs <= 0) {
-            printf("Invalid input. Using default %d epochs.\n", EPOCHS);
-            num_epochs = EPOCHS;
+            printf("Invalid input. Using default %d epochs.\n", DEFAULT_EPOCHS);
+            num_epochs = DEFAULT_EPOCHS;
         }
-        /* Train for the specified number of epochs */
-        printf("Training on %d examples for %d epochs...\n", train_example_count, num_epochs);
+        char batch_str[32];
+        int batch_size = DEFAULT_BATCH_SIZE;
+        printf("Enter mini-batch size (default %d): ", DEFAULT_BATCH_SIZE);
+        if (fgets(batch_str, sizeof(batch_str), stdin)) {
+            int bs = atoi(batch_str);
+            if (bs > 0) batch_size = bs;
+        }
+        /* Training loop with mini-batches and learning rate decay */
         for (int epoch = 0; epoch < num_epochs; epoch++) {
-            for (int i = 0; i < train_example_count; i++) {
-                train_on_example(train_examples[i].context, train_examples[i].target);
+            shuffle_training_examples();
+            for (int i = 0; i < train_example_count; i += batch_size) {
+                int current_batch = (i + batch_size <= train_example_count) ? batch_size : (train_example_count - i);
+                train_on_batch(&train_examples[i], current_batch);
             }
-            printf("Epoch %d completed.\n", epoch+1);
+            printf("Epoch %d completed.\n", epoch + 1);
+            learning_rate *= LR_DECAY_FACTOR;
         }
     }
-    /* Save the updated model */
-    save_model(filename);
-    printf("Model saved to %s.\n", filename);
+    save_model(model_filename);
+    printf("Model saved to %s.\n", model_filename);
 }
 
-/* cmd_run_sv = API function called when entering run mode in main.c
-   Run mode. The user enters a sentence as context and the system predicts continuations.
-   The prediction uses the last two tokens (or duplicates if needed) and generates up to
-   MAX_PREDICT_WORDS words.
-*/
-void cmd_run_sv(char *filename) {
+void cmd_run_sv(char *model_filename) {
     char input[MAX_INPUT_SIZE];
     char response[MAX_INPUT_SIZE] = {0};
-    /* Load model */
-    load_model(filename);
+    load_model(model_filename);
     if (vocab.size == 0 || net.vocab_size == 0) {
         fprintf(stderr, "No model found. Please teach first.\n");
         return;
     }
     srand((unsigned int)time(NULL));
-    
     printf("Entering run mode. Type a sentence to receive predictions.\n");
     printf("Type 'exit' to quit.\n");
     while (1) {
@@ -903,23 +1098,20 @@ void cmd_run_sv(char *filename) {
             printf("Not enough context. Please enter at least two words.\n");
             continue;
         }
-        /* Use the last two tokens as context */
         int context[2];
-        context[0] = find_in_vocab(words[count - 2]);
-        context[1] = find_in_vocab(words[count - 1]);
+        context[0] = find_in_vocab(words[count-2]);
+        context[1] = find_in_vocab(words[count-1]);
         if (context[0] < 0 || context[1] < 0) {
             printf("Unknown words in context. Please teach them first.\n");
             continue;
         }
-        /* Start generating the response */
         response[0] = '\0';
         if (is_question(input)) {
             const char *question_prefixes[] = {"I think", "Well", "Perhaps", "In my opinion"};
             int num_prefixes = sizeof(question_prefixes) / sizeof(question_prefixes[0]);
             int idx = rand() % num_prefixes;
-            strncat(response, question_prefixes[idx], sizeof(response) - strlen(response) - 1);
+            strncat(response, question_prefixes[idx], sizeof(response)-strlen(response)-1);
         }
-        /* Generate first predicted word */
         int pred = sample_prediction(context);
         if (pred < 0 || pred >= vocab.size ||
             strcmp(vocab.words[pred], START_TOKEN) == 0 ||
@@ -927,9 +1119,8 @@ void cmd_run_sv(char *filename) {
             printf("No valid prediction.\n");
             continue;
         }
-        strncat(response, " ", sizeof(response) - strlen(response) - 1);
-        strncat(response, vocab.words[pred], sizeof(response) - strlen(response) - 1);
-        /* Iteratively predict further words */
+        strncat(response, " ", sizeof(response)-strlen(response)-1);
+        strncat(response, vocab.words[pred], sizeof(response)-strlen(response)-1);
         int current_context[2];
         current_context[0] = context[1];
         current_context[1] = pred;
@@ -939,8 +1130,8 @@ void cmd_run_sv(char *filename) {
                 strcmp(vocab.words[next_pred], START_TOKEN) == 0 ||
                 strcmp(vocab.words[next_pred], END_TOKEN) == 0)
                 break;
-            strncat(response, " ", sizeof(response) - strlen(response) - 1);
-            strncat(response, vocab.words[next_pred], sizeof(response) - strlen(response) - 1);
+            strncat(response, " ", sizeof(response)-strlen(response)-1);
+            strncat(response, vocab.words[next_pred], sizeof(response)-strlen(response)-1);
             current_context[0] = current_context[1];
             current_context[1] = next_pred;
         }
@@ -964,8 +1155,9 @@ int main(int argc, char *argv[]) {
         cmd_run_sv(argv[2]);
     else
         fprintf(stderr, "Unknown mode: %s. Use 'teach' or 'run'.\n", argv[1]);
-    
+
     free_network();
+    free_adam();
     free_vocab();
     return 0;
 }

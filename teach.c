@@ -10,6 +10,9 @@
 #define BIGRAM_TABLE_SIZE 10007   /* A prime number for hash table buckets */
 #define TRIGRAM_TABLE_SIZE 10007  /* A prime number for hash table buckets */
 
+#define START_TOKEN "<s>"
+#define END_TOKEN   "</s>"
+
 /*------------------------------------------
    Data Structures for Bigrams and Trigrams
 ------------------------------------------*/
@@ -72,8 +75,11 @@ void trim_whitespace(char *str) {
     }
 }
 
-/* Normalize a word: convert to lowercase and remove leading/trailing punctuation */
+/* Normalize a word: convert to lowercase and remove leading/trailing punctuation.
+   Special tokens (START_TOKEN and END_TOKEN) are preserved unchanged. */
 void normalize_word(char *word) {
+    if (strcmp(word, START_TOKEN) == 0 || strcmp(word, END_TOKEN) == 0)
+        return;
     for (int i = 0; word[i]; i++) {
         word[i] = tolower((unsigned char)word[i]);
     }
@@ -186,10 +192,14 @@ void update_trigram(const char *word1, const char *word2, const char *word3) {
     trigramTable[idx] = entry;
 }
 
-/* Process a line of input by tokenizing and updating both bigram and trigram models */
+/* Process a line of input by inserting sentence boundaries, tokenizing,
+   and updating both bigram and trigram models */
 void process_input(char *input) {
+    char buffer[MAX_INPUT_SIZE * 2];
+    /* Prepend START_TOKEN and append END_TOKEN */
+    snprintf(buffer, sizeof(buffer), "%s %s %s", START_TOKEN, input, END_TOKEN);
     char *words[MAX_TOKENS];
-    int count = tokenize(input, words, MAX_TOKENS);
+    int count = tokenize(buffer, words, MAX_TOKENS);
     for (int i = 0; i < count - 1; i++) {
         update_bigram(words[i], words[i + 1]);
     }
@@ -619,6 +629,12 @@ void cmd_teach_sv(char *filename) {
                 continue;
             }
             
+            /* If a boundary token is predicted, do not append it */
+            if (strcmp(next_word, START_TOKEN) == 0 || strcmp(next_word, END_TOKEN) == 0) {
+                fprintf(resultsFile, "Prompt: %s\nPrediction: %s\n\n", prompt, generated_sentence);
+                continue;
+            }
+            
             strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
             strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
             
@@ -643,6 +659,8 @@ void cmd_teach_sv(char *filename) {
                 if (!next_word)
                     next_word = predict_bigram(current_last);
                 if (!next_word)
+                    break;
+                if (strcmp(next_word, START_TOKEN) == 0 || strcmp(next_word, END_TOKEN) == 0)
                     break;
                 strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
                 strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
@@ -724,6 +742,10 @@ void cmd_run_sv(char *filename) {
             printf("Prediction: %s\n", generated_sentence);
             continue;
         }
+        if (strcmp(next_word, START_TOKEN) == 0 || strcmp(next_word, END_TOKEN) == 0) {
+            printf("Prediction: %s\n", generated_sentence);
+            continue;
+        }
 
         strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
         strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
@@ -749,6 +771,8 @@ void cmd_run_sv(char *filename) {
             if (!next_word)
                 next_word = predict_bigram(current_last);
             if (!next_word)
+                break;
+            if (strcmp(next_word, START_TOKEN) == 0 || strcmp(next_word, END_TOKEN) == 0)
                 break;
             strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
             strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);

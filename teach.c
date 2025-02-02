@@ -1,15 +1,9 @@
-/* teach.c - A simple teaching/prediction tool using bigrams and trigrams
- * 
- * This version includes improvements to the run mode:
- *   1. The prompt is no longer repeated as part of the output.
- *   2. A simple heuristic distinguishes questions (by checking for '?')
- *      and, if so, prepends a fixed conversational phrase.
- *   3. Duplicate consecutive words are avoided in user (run) mode by
- *      retrying predictions up to a fixed number of times.
- *   4. The final generated response is “humanized” by capitalizing its first letter
- *      and appending appropriate punctuation.
- *   5. The prediction context is updated so that the new predicted word is used
- *      as part of the context for subsequent predictions, avoiding duplicate output.
+/* teach.c - An improved teaching/prediction tool using bigrams and trigrams
+ *
+ * Improvements:
+ *   1. Add‑one smoothing is applied in prediction functions to avoid zero probabilities.
+ *   2. A decay mechanism reduces older counts by a factor (DECAY_FACTOR) to give more weight to recent data.
+ *   3. The API functions (cmd_teach_sv and cmd_run_sv) remain unchanged.
  *
  * Author: Your Name
  * Date: 2025-02-02
@@ -32,6 +26,8 @@
 #define MAX_TOKENS 1000
 #define BIGRAM_TABLE_SIZE 10007   /* A prime number for hash table buckets */
 #define TRIGRAM_TABLE_SIZE 10007  /* A prime number for hash table buckets */
+#define DECAY_FACTOR 0.95         /* Decay factor for older counts */
+#define DECAY_INTERVAL 100        /* Apply decay after every 100 lines processed */
 
 #define START_TOKEN "<s>"
 #define END_TOKEN   "</s>"
@@ -149,6 +145,31 @@ void init_tables(void) {
 }
 
 /*------------------------------------------
+          Count Decay Function
+------------------------------------------*/
+
+/* Decay all counts in both bigram and trigram tables using DECAY_FACTOR.
+   Minimum count is enforced to be 1. */
+void decay_models(void) {
+    for (int i = 0; i < BIGRAM_TABLE_SIZE; i++) {
+        BigramEntry *entry = bigramTable[i];
+        while (entry) {
+            entry->count = (int)(entry->count * DECAY_FACTOR);
+            if (entry->count < 1) entry->count = 1;
+            entry = entry->next;
+        }
+    }
+    for (int i = 0; i < TRIGRAM_TABLE_SIZE; i++) {
+        TrigramEntry *entry = trigramTable[i];
+        while (entry) {
+            entry->count = (int)(entry->count * DECAY_FACTOR);
+            if (entry->count < 1) entry->count = 1;
+            entry = entry->next;
+        }
+    }
+}
+
+/*------------------------------------------
             Updating the Models
 ------------------------------------------*/
 
@@ -215,6 +236,7 @@ void update_trigram(const char *word1, const char *word2, const char *word3) {
 /* Process a line of input by inserting sentence boundaries, tokenizing,
    and updating both bigram and trigram models */
 void process_input(char *input) {
+    static int lines_processed = 0;
     char buffer[MAX_INPUT_SIZE * 2];
     /* Prepend START_TOKEN and append END_TOKEN */
     snprintf(buffer, sizeof(buffer), "%s %s %s", START_TOKEN, input, END_TOKEN);
@@ -225,6 +247,11 @@ void process_input(char *input) {
     }
     for (int i = 0; i < count - 2; i++) {
         update_trigram(words[i], words[i + 1], words[i + 2]);
+    }
+    lines_processed++;
+    /* Apply decay every DECAY_INTERVAL lines */
+    if (lines_processed % DECAY_INTERVAL == 0) {
+        decay_models();
     }
 }
 
@@ -395,11 +422,12 @@ void free_trigrams(void) {
 }
 
 /*------------------------------------------
-         Prediction Functions
+         Prediction Functions with Smoothing
 ------------------------------------------*/
 
 /* Predict the next word using the trigram model with weighted random selection.
-   Given the previous two words, sum the counts for matching trigrams and choose one at random. */
+   Uses add-one smoothing (each candidate’s weight is count+1).
+   Given the previous two words, sum the smoothed counts and choose one at random. */
 const char* predict_trigram(const char *prev_word, const char *last_word) {
     int total = 0;
     for (int i = 0; i < TRIGRAM_TABLE_SIZE; i++) {
@@ -407,7 +435,7 @@ const char* predict_trigram(const char *prev_word, const char *last_word) {
         while (entry) {
             if (strcmp(entry->word1, prev_word) == 0 &&
                 strcmp(entry->word2, last_word) == 0) {
-                total += entry->count;
+                total += (entry->count + 1);
             }
             entry = entry->next;
         }
@@ -421,7 +449,7 @@ const char* predict_trigram(const char *prev_word, const char *last_word) {
         while (entry) {
             if (strcmp(entry->word1, prev_word) == 0 &&
                 strcmp(entry->word2, last_word) == 0) {
-                cumulative += entry->count;
+                cumulative += (entry->count + 1);
                 if (r < cumulative)
                     return entry->word3;
             }
@@ -432,14 +460,15 @@ const char* predict_trigram(const char *prev_word, const char *last_word) {
 }
 
 /* Predict the next word using the bigram model with weighted random selection.
-   Given a word, sum the counts for matching bigrams and choose one at random. */
+   Uses add-one smoothing (each candidate’s weight is count+1).
+   Given a word, sum the smoothed counts for matching bigrams and choose one at random. */
 const char* predict_bigram(const char *word) {
     int total = 0;
     for (int i = 0; i < BIGRAM_TABLE_SIZE; i++) {
         BigramEntry *entry = bigramTable[i];
         while (entry) {
             if (strcmp(entry->word1, word) == 0)
-                total += entry->count;
+                total += (entry->count + 1);
             entry = entry->next;
         }
     }
@@ -451,7 +480,7 @@ const char* predict_bigram(const char *word) {
         BigramEntry *entry = bigramTable[i];
         while (entry) {
             if (strcmp(entry->word1, word) == 0) {
-                cumulative += entry->count;
+                cumulative += (entry->count + 1);
                 if (r < cumulative)
                     return entry->word2;
             }
@@ -686,7 +715,7 @@ void cmd_teach_sv(char *filename) {
             strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
             
             /* Set up context for iterative prediction:
-               Use the last token from the input prompt and the first predicted word */
+               Use the last token from the prompt and the first predicted word */
             char current_prev[WORD_LEN];
             char current_last[WORD_LEN];
             strncpy(current_prev, words[count - 1], WORD_LEN - 1);
@@ -708,7 +737,8 @@ void cmd_teach_sv(char *filename) {
                         break;
                 } while (retries < 3);
                 if (!candidate || strcmp(candidate, current_last) == 0 ||
-                    strcmp(candidate, START_TOKEN) == 0 || strcmp(candidate, END_TOKEN) == 0)
+                    strcmp(candidate, START_TOKEN) == 0 ||
+                    strcmp(candidate, END_TOKEN) == 0)
                     break;
                 strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
                 strncat(generated_sentence, candidate, sizeof(generated_sentence) - strlen(generated_sentence) - 1);

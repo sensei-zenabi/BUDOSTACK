@@ -4,11 +4,16 @@
  *   1. The prompt is no longer repeated as part of the output.
  *   2. A simple heuristic distinguishes questions (by checking for '?')
  *      and, if so, prepends a fixed conversational phrase.
- *   3. The final generated response is “humanized” by capitalizing its first letter
+ *   3. Duplicate consecutive words are avoided in user (run) mode by
+ *      retrying predictions up to a fixed number of times.
+ *   4. The final generated response is “humanized” by capitalizing its first letter
  *      and appending appropriate punctuation.
  *
  * Author: Your Name
  * Date: 2025-02-02
+ *
+ * Improvements based on industry standard heuristics for repetition avoidance
+ * and contextual prompt handling.
  */
 
 #include <stdio.h>
@@ -646,18 +651,27 @@ void cmd_teach_sv(char *filename) {
                 continue;
             }
             
-            /* First prediction: try trigram then bigram */
+            /* First prediction: try trigram then bigram.
+               Also, avoid duplicating the last token of the prompt. */
+            next_word = NULL;
             if (count >= 2)
                 next_word = predict_trigram(words[count - 2], words[count - 1]);
             if (!next_word)
                 next_word = predict_bigram(words[count - 1]);
-            if (!next_word) {
-                fprintf(resultsFile, "Prompt: %s\nPrediction: %s\n\n", prompt, generated_sentence);
-                continue;
+            {
+                int initial_retries = 0;
+                while (initial_retries < 3 && next_word && strcmp(next_word, words[count - 1]) == 0) {
+                    if (count >= 2)
+                        next_word = predict_trigram(words[count - 2], words[count - 1]);
+                    if (!next_word)
+                        next_word = predict_bigram(words[count - 1]);
+                    initial_retries++;
+                }
             }
-            
-            /* If a boundary token is predicted, do not append it */
-            if (strcmp(next_word, START_TOKEN) == 0 || strcmp(next_word, END_TOKEN) == 0) {
+            if (!next_word ||
+                strcmp(next_word, START_TOKEN) == 0 ||
+                strcmp(next_word, END_TOKEN) == 0 ||
+                (count > 0 && strcmp(next_word, words[count - 1]) == 0)) {
                 fprintf(resultsFile, "Prompt: %s\nPrediction: %s\n\n", prompt, generated_sentence);
                 continue;
             }
@@ -680,21 +694,29 @@ void cmd_teach_sv(char *filename) {
                 current_last[WORD_LEN - 1] = '\0';
             }
             
-            /* Generate up to 10 additional words */
+            /* Generate up to 10 additional words with duplicate avoidance */
             for (int i = 1; i < 10; i++) {
-                next_word = predict_trigram(current_prev, current_last);
-                if (!next_word)
-                    next_word = predict_bigram(current_last);
-                if (!next_word)
-                    break;
-                if (strcmp(next_word, START_TOKEN) == 0 || strcmp(next_word, END_TOKEN) == 0)
+                int retries = 0;
+                const char *candidate = NULL;
+                do {
+                    candidate = predict_trigram(current_prev, current_last);
+                    if (!candidate)
+                        candidate = predict_bigram(current_last);
+                    /* Retry if the candidate is NULL or duplicates the previous word */
+                    if (candidate && strcmp(candidate, current_last) == 0)
+                        retries++;
+                    else
+                        break;
+                } while (retries < 3);
+                if (!candidate || strcmp(candidate, current_last) == 0 ||
+                    strcmp(candidate, START_TOKEN) == 0 || strcmp(candidate, END_TOKEN) == 0)
                     break;
                 strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
-                strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
+                strncat(generated_sentence, candidate, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
                 /* Update context: shift window by one word */
                 strncpy(current_prev, current_last, WORD_LEN - 1);
                 current_prev[WORD_LEN - 1] = '\0';
-                strncpy(current_last, next_word, WORD_LEN - 1);
+                strncpy(current_last, candidate, WORD_LEN - 1);
                 current_last[WORD_LEN - 1] = '\0';
             }
             
@@ -726,6 +748,7 @@ void cmd_teach_sv(char *filename) {
  * The run mode now:
  *  - Uses the input only for context, not as part of the output.
  *  - Detects if the prompt ends with a question and, if so, prepends a fixed conversational phrase.
+ *  - Avoids generating consecutive duplicate words by retrying predictions up to three times.
  *  - Post-processes the generated sentence to capitalize its first letter and append a period if needed.
  */
 void cmd_run_sv(char *filename) {
@@ -773,15 +796,27 @@ void cmd_run_sv(char *filename) {
             strncat(response, question_prefixes[idx], sizeof(response) - strlen(response) - 1);
         }
 
-        /* Predict the next word using context from the prompt */
+        /* Predict the next word using context from the prompt.
+           Also, avoid repeating the last word of the prompt. */
         const char *next_word = NULL;
         if (count >= 2)
             next_word = predict_trigram(words[count - 2], words[count - 1]);
         if (!next_word)
             next_word = predict_bigram(words[count - 1]);
+        {
+            int initial_retries = 0;
+            while (initial_retries < 3 && next_word && strcmp(next_word, words[count - 1]) == 0) {
+                if (count >= 2)
+                    next_word = predict_trigram(words[count - 2], words[count - 1]);
+                if (!next_word)
+                    next_word = predict_bigram(words[count - 1]);
+                initial_retries++;
+            }
+        }
         if (!next_word ||
             strcmp(next_word, START_TOKEN) == 0 ||
-            strcmp(next_word, END_TOKEN) == 0) {
+            strcmp(next_word, END_TOKEN) == 0 ||
+            (count > 0 && strcmp(next_word, words[count - 1]) == 0)) {
             printf("No valid continuation predicted.\n");
             continue;
         }
@@ -805,21 +840,29 @@ void cmd_run_sv(char *filename) {
             current_last[WORD_LEN - 1] = '\0';
         }
 
-        /* Generate up to 10 additional words */
+        /* Generate up to 10 additional words with duplicate avoidance */
         for (int i = 1; i < 10; i++) {
-            next_word = predict_trigram(current_prev, current_last);
-            if (!next_word)
-                next_word = predict_bigram(current_last);
-            if (!next_word ||
-                strcmp(next_word, START_TOKEN) == 0 ||
-                strcmp(next_word, END_TOKEN) == 0)
+            int retries = 0;
+            const char *candidate = NULL;
+            do {
+                candidate = predict_trigram(current_prev, current_last);
+                if (!candidate)
+                    candidate = predict_bigram(current_last);
+                if (candidate && strcmp(candidate, current_last) == 0)
+                    retries++;
+                else
+                    break;
+            } while (retries < 3);
+            if (!candidate || strcmp(candidate, current_last) == 0 ||
+                strcmp(candidate, START_TOKEN) == 0 ||
+                strcmp(candidate, END_TOKEN) == 0)
                 break;
             strncat(response, " ", sizeof(response) - strlen(response) - 1);
-            strncat(response, next_word, sizeof(response) - strlen(response) - 1);
+            strncat(response, candidate, sizeof(response) - strlen(response) - 1);
             /* Shift context: update the sliding window */
             strncpy(current_prev, current_last, WORD_LEN - 1);
             current_prev[WORD_LEN - 1] = '\0';
-            strncpy(current_last, next_word, WORD_LEN - 1);
+            strncpy(current_last, candidate, WORD_LEN - 1);
             current_last[WORD_LEN - 1] = '\0';
         }
 
@@ -850,3 +893,12 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 #endif
+
+/*
+References:
+- Dan Bernstein's djb2 hash function: http://www.cse.yorku.ca/~oz/hash.html
+- C Standard Library documentation (ISO/IEC 9899)
+- Techniques for repetition avoidance in natural language generation, e.g., 
+  Holtzman, A., Buys, J., Du, L., Forbes, M., & Choi, Y. (2020). The Curious Case of Neural Text Degeneration.
+- OpenAI API documentation and general language model heuristics.
+*/

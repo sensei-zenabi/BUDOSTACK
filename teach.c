@@ -1218,33 +1218,59 @@ void cmd_run_sv(char *model_filename) {
         trim_whitespace(input);
         if (strcmp(input, "exit") == 0)
             break;
+
+        // Make a copy for tokenization (since tokenize modifies its input)
         char input_copy[MAX_INPUT_SIZE];
         strncpy(input_copy, input, sizeof(input_copy)-1);
         input_copy[sizeof(input_copy)-1] = '\0';
+
         char *tokens[MAX_TOKENS];
         int count = tokenize(input_copy, tokens, MAX_TOKENS);
-        if (count < CONTEXT_LENGTH) {
-            printf("Not enough context. Please enter at least %d words.\n", CONTEXT_LENGTH);
-            continue;
-        }
+
         int context[CONTEXT_LENGTH];
         int valid = 1;
-        for (int i = 0; i < CONTEXT_LENGTH; i++) {
-            context[i] = find_in_vocab(tokens[count - CONTEXT_LENGTH + i]);
-            if (context[i] < 0) {
-                printf("Unknown word '%s' in context. Please teach it first.\n", tokens[count - CONTEXT_LENGTH + i]);
-                valid = 0;
-                break;
+        if (count < CONTEXT_LENGTH) {
+            // Pad the missing tokens with the START_TOKEN
+            int pad = CONTEXT_LENGTH - count;
+            for (int i = 0; i < pad; i++) {
+                int idx = find_in_vocab(START_TOKEN);
+                if (idx < 0) {
+                    printf("Start token '%s' missing from vocabulary.\n", START_TOKEN);
+                    valid = 0;
+                    break;
+                }
+                context[i] = idx;
+            }
+            for (int i = 0; i < count; i++) {
+                int idx = find_in_vocab(tokens[i]);
+                if (idx < 0) {
+                    printf("Unknown word '%s' in input. Please teach it first.\n", tokens[i]);
+                    valid = 0;
+                    break;
+                }
+                context[pad + i] = idx;
+            }
+        } else {
+            // If there are five or more words, take the last five words as context.
+            for (int i = 0; i < CONTEXT_LENGTH; i++) {
+                int idx = find_in_vocab(tokens[count - CONTEXT_LENGTH + i]);
+                if (idx < 0) {
+                    printf("Unknown word '%s' in context. Please teach it first.\n", tokens[count - CONTEXT_LENGTH + i]);
+                    valid = 0;
+                    break;
+                }
+                context[i] = idx;
             }
         }
         if (!valid)
             continue;
+
         response[0] = '\0';
         if (is_question(input)) {
             const char *question_prefixes[] = {"I think", "Well", "Perhaps", "In my opinion"};
             int num_prefixes = sizeof(question_prefixes) / sizeof(question_prefixes[0]);
             int idx = rand() % num_prefixes;
-            strncat(response, question_prefixes[idx], sizeof(response)-strlen(response)-1);
+            strncat(response, question_prefixes[idx], sizeof(response) - strlen(response) - 1);
         }
         int pred = sample_prediction(context, input);
         if (pred < 0 || pred >= vocab.size ||
@@ -1253,8 +1279,8 @@ void cmd_run_sv(char *model_filename) {
             printf("No valid prediction.\n");
             continue;
         }
-        strncat(response, " ", sizeof(response)-strlen(response)-1);
-        strncat(response, vocab.words[pred], sizeof(response)-strlen(response)-1);
+        strncat(response, " ", sizeof(response) - strlen(response) - 1);
+        strncat(response, vocab.words[pred], sizeof(response) - strlen(response) - 1);
         int current_context[CONTEXT_LENGTH];
         for (int i = 0; i < CONTEXT_LENGTH - 1; i++) {
             current_context[i] = context[i+1];
@@ -1266,8 +1292,8 @@ void cmd_run_sv(char *model_filename) {
                 strcmp(vocab.words[next_pred], START_TOKEN) == 0 ||
                 strcmp(vocab.words[next_pred], END_TOKEN) == 0)
                 break;
-            strncat(response, " ", sizeof(response)-strlen(response)-1);
-            strncat(response, vocab.words[next_pred], sizeof(response)-strlen(response)-1);
+            strncat(response, " ", sizeof(response) - strlen(response) - 1);
+            strncat(response, vocab.words[next_pred], sizeof(response) - strlen(response) - 1);
             for (int j = 0; j < CONTEXT_LENGTH - 1; j++) {
                 current_context[j] = current_context[j+1];
             }
@@ -1277,6 +1303,7 @@ void cmd_run_sv(char *model_filename) {
         printf("Prediction: %s\n", response);
     }
 }
+
 
 /*-----------------------*/
 /* Main (for Testing)    */

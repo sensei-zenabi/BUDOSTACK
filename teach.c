@@ -6,6 +6,7 @@
 #include <time.h>
 #include <math.h>
 #include <sys/stat.h>
+#include <omp.h>  // OpenMP header for multi-threading
 
 /*-----------------------*/
 /* Configuration Macros  */
@@ -129,7 +130,7 @@ void free_forward_cache(ForwardCache *cache);
 double compute_temperature(const char *input);
 void softmax_temp(double *z, int n, double temp);
 
-/* (Other prototypes are omitted for brevity; assume they appear in the same order as their definitions.) */
+/* (Other prototypes omitted for brevity; assume they appear in the same order as their definitions.) */
 
 /*-----------------------*/
 /* Utility Functions     */
@@ -734,17 +735,209 @@ void update_parameters(Gradients *avg_grad) {
 }
 
 /*-----------------------*/
-/* Training Functions    */
+/* Training Data Builder */
 /*-----------------------*/
-void train_on_batch(TrainingExample batch[], int batch_size) {
-    Gradients *batch_grad = alloc_gradients();
+void process_training_line(char *input, int allow_new_words) {
+    char buffer[MAX_INPUT_SIZE*2];
+    snprintf(buffer, sizeof(buffer), "%s %s %s", START_TOKEN, input, END_TOKEN);
+    char *words[MAX_TOKENS];
+    int count = tokenize(buffer, words, MAX_TOKENS);
+    if (count < CONTEXT_LENGTH + 1)
+        return;
+    int indices[MAX_TOKENS];
     int i;
-    for (i = 0; i < batch_size; i++) {
-        Gradients *g = compute_gradients(batch[i].context, batch[i].target);
-        accumulate_gradients(batch_grad, g);
-        free_gradients(g);
+    for (i = 0; i < count; i++) {
+        int idx = find_in_vocab(words[i]);
+        if (idx < 0) {
+            if (!allow_new_words) {
+                fprintf(stderr, "Word '%s' is unknown. Please teach it first in automatic mode.\n", words[i]);
+                return;
+            }
+            idx = add_word(words[i]);
+        }
+        indices[i] = idx;
     }
     int j;
+    for (i = 0; i < count - CONTEXT_LENGTH; i++) {
+        if (train_example_count >= MAX_TRAIN_EXAMPLES)
+            break;
+        for (j = 0; j < CONTEXT_LENGTH; j++) {
+            train_examples[train_example_count].context[j] = indices[i+j];
+        }
+        train_examples[train_example_count].target = indices[i + CONTEXT_LENGTH];
+        train_example_count++;
+    }
+}
+
+void shuffle_training_examples() {
+    int i;
+    for (i = train_example_count - 1; i > 0; i--) {
+        int j = rand() % (i + 1);
+        TrainingExample temp = train_examples[i];
+        train_examples[i] = train_examples[j];
+        train_examples[j] = temp;
+    }
+}
+
+/*-----------------------*/
+/* Helper for Run Mode   */
+/*-----------------------*/
+void humanize_response(char *response) {
+    if (response[0] != '\0')
+        response[0] = toupper((unsigned char)response[0]);
+    size_t len = strlen(response);
+    if (len > 0 && response[len-1] != '.' && response[len-1] != '!' && response[len-1] != '?')
+        strncat(response, ".", MAX_INPUT_SIZE - strlen(response) - 1);
+}
+
+int is_question(const char *input) {
+    size_t len = strlen(input);
+    while (len > 0 && isspace((unsigned char)input[len-1]))
+        len--;
+    return (len > 0 && input[len-1] == '?');
+}
+
+/*-----------------------*/
+/* Network Resizing      */
+/*-----------------------*/
+// Resizes the network and corresponding Adam states if the new vocabulary size is larger.
+void resize_network(int new_vocab_size) {
+    if (new_vocab_size <= net.vocab_size)
+        return;
+
+    int old_vocab_size = net.vocab_size;
+    int emb_dim = net.emb_dim;
+    int hidden2 = net.hidden2;
+    double r_emb = 0.5;
+    double r_W3 = 0.5;
+
+    // Resize Embedding Matrix
+    double **new_embedding = alloc_matrix(new_vocab_size, emb_dim);
+    for (int i = 0; i < old_vocab_size; i++) {
+        for (int j = 0; j < emb_dim; j++) {
+            new_embedding[i][j] = net.embedding[i][j];
+        }
+    }
+    for (int i = old_vocab_size; i < new_vocab_size; i++) {
+        for (int j = 0; j < emb_dim; j++) {
+            new_embedding[i][j] = rand_uniform(r_emb);
+        }
+    }
+    free_matrix(net.embedding, net.vocab_size);
+    net.embedding = new_embedding;
+
+    // Resize Output Layer Weights (W3)
+    double **new_W3 = alloc_matrix(hidden2, new_vocab_size);
+    for (int i = 0; i < hidden2; i++) {
+        for (int j = 0; j < old_vocab_size; j++) {
+            new_W3[i][j] = net.W3[i][j];
+        }
+        for (int j = old_vocab_size; j < new_vocab_size; j++) {
+            new_W3[i][j] = rand_uniform(r_W3);
+        }
+    }
+    free_matrix(net.W3, net.hidden2);
+    net.W3 = new_W3;
+
+    // Resize Output Bias Vector (b3)
+    double *new_b3 = alloc_vector(new_vocab_size);
+    for (int j = 0; j < old_vocab_size; j++) {
+        new_b3[j] = net.b3[j];
+    }
+    for (int j = old_vocab_size; j < new_vocab_size; j++) {
+        new_b3[j] = 0.0;
+    }
+    free(net.b3);
+    net.b3 = new_b3;
+
+    // Update network vocabulary size
+    net.vocab_size = new_vocab_size;
+
+    // Resize Adam States for Embedding
+    double **new_m_embedding = alloc_matrix(new_vocab_size, emb_dim);
+    double **new_v_embedding = alloc_matrix(new_vocab_size, emb_dim);
+    for (int i = 0; i < old_vocab_size; i++) {
+        for (int j = 0; j < emb_dim; j++) {
+            new_m_embedding[i][j] = adam.m_embedding[i][j];
+            new_v_embedding[i][j] = adam.v_embedding[i][j];
+        }
+    }
+    for (int i = old_vocab_size; i < new_vocab_size; i++) {
+        for (int j = 0; j < emb_dim; j++) {
+            new_m_embedding[i][j] = 0.0;
+            new_v_embedding[i][j] = 0.0;
+        }
+    }
+    free_matrix(adam.m_embedding, old_vocab_size);
+    free_matrix(adam.v_embedding, old_vocab_size);
+    adam.m_embedding = new_m_embedding;
+    adam.v_embedding = new_v_embedding;
+
+    // Resize Adam States for W3
+    double **new_m_W3 = alloc_matrix(hidden2, new_vocab_size);
+    double **new_v_W3 = alloc_matrix(hidden2, new_vocab_size);
+    for (int i = 0; i < hidden2; i++) {
+        for (int j = 0; j < old_vocab_size; j++) {
+            new_m_W3[i][j] = adam.m_W3[i][j];
+            new_v_W3[i][j] = adam.v_W3[i][j];
+        }
+        for (int j = old_vocab_size; j < new_vocab_size; j++) {
+            new_m_W3[i][j] = 0.0;
+            new_v_W3[i][j] = 0.0;
+        }
+    }
+    free_matrix(adam.m_W3, hidden2);
+    free_matrix(adam.v_W3, hidden2);
+    adam.m_W3 = new_m_W3;
+    adam.v_W3 = new_v_W3;
+
+    // Resize Adam States for b3
+    double *new_m_b3 = alloc_vector(new_vocab_size);
+    double *new_v_b3 = alloc_vector(new_vocab_size);
+    for (int j = 0; j < old_vocab_size; j++) {
+        new_m_b3[j] = adam.m_b3[j];
+        new_v_b3[j] = adam.v_b3[j];
+    }
+    for (int j = old_vocab_size; j < new_vocab_size; j++) {
+        new_m_b3[j] = 0.0;
+        new_v_b3[j] = 0.0;
+    }
+    free(adam.m_b3);
+    free(adam.v_b3);
+    adam.m_b3 = new_m_b3;
+    adam.v_b3 = new_v_b3;
+}
+
+/*-----------------------*/
+/* Training Functions    */
+/*-----------------------*/
+/* OpenMP-accelerated training on mini-batches */
+void train_on_batch(TrainingExample batch[], int batch_size) {
+    // Allocate a global accumulator for gradients.
+    Gradients *batch_grad = alloc_gradients();
+
+    // Parallel region: each thread computes gradients on a subset of the batch.
+    #pragma omp parallel
+    {
+        // Each thread gets its own local gradient accumulator.
+        Gradients *local_grad = alloc_gradients();
+        int i;
+        #pragma omp for
+        for (i = 0; i < batch_size; i++) {
+            Gradients *g = compute_gradients(batch[i].context, batch[i].target);
+            accumulate_gradients(local_grad, g);
+            free_gradients(g);
+        }
+        // Merge local gradients into the global accumulator.
+        #pragma omp critical
+        {
+            accumulate_gradients(batch_grad, local_grad);
+        }
+        free_gradients(local_grad);
+    }
+
+    // Average gradients over the batch.
+    int i, j;
     for (i = 0; i < net.vocab_size; i++)
         for (j = 0; j < net.emb_dim; j++)
             batch_grad->d_embedding[i][j] /= batch_size;
@@ -763,6 +956,7 @@ void train_on_batch(TrainingExample batch[], int batch_size) {
             batch_grad->d_W3[i][j] /= batch_size;
     for (j = 0; j < net.vocab_size; j++)
         batch_grad->d_b3[j] /= batch_size;
+
     update_parameters(batch_grad);
     free_gradients(batch_grad);
 }
@@ -853,25 +1047,20 @@ void load_model(const char *filename) {
         fclose(fp);
         return;
     }
-    // Load existing vocabulary from file into a temporary array.
-    // We assume that if a model exists, then the in-memory vocab will be updated by appending.
     char buffer[256];
     fgets(buffer, sizeof(buffer), fp);
     for (int i = 0; i < file_vocab_size; i++) {
         if (!fgets(buffer, sizeof(buffer), fp))
             break;
         buffer[strcspn(buffer, "\n")] = '\0';
-        // If the word is not already in the current vocabulary, append it.
         if (find_in_vocab(buffer) < 0) {
             add_word(buffer);
         }
     }
-    // Read network dimensions from file.
     if (fscanf(fp, "%d %d %d %d", &net.vocab_size, &net.emb_dim, &net.hidden1, &net.hidden2) != 4) {
         fclose(fp);
         return;
     }
-    // If a network already exists, free it.
     if (net.embedding != NULL)
         free_network();
     init_network();
@@ -902,180 +1091,6 @@ void load_model(const char *filename) {
 }
 
 /*-----------------------*/
-/* Network Resizing      */
-/*-----------------------*/
-// This function resizes the network (and Adam states) if the new vocabulary size is larger.
-void resize_network(int new_vocab_size) {
-    if (new_vocab_size <= net.vocab_size)
-        return;  // no resizing needed
-
-    int old_vocab_size = net.vocab_size;
-    int emb_dim = net.emb_dim;
-    int hidden2 = net.hidden2;
-    double r_emb = 0.5;
-    double r_W3 = 0.5;
-
-    // --- Resize the Embedding Matrix ---
-    double **new_embedding = alloc_matrix(new_vocab_size, emb_dim);
-    for (int i = 0; i < old_vocab_size; i++) {
-        for (int j = 0; j < emb_dim; j++) {
-            new_embedding[i][j] = net.embedding[i][j];
-        }
-    }
-    for (int i = old_vocab_size; i < new_vocab_size; i++) {
-        for (int j = 0; j < emb_dim; j++) {
-            new_embedding[i][j] = rand_uniform(r_emb);
-        }
-    }
-    free_matrix(net.embedding, net.vocab_size);
-    net.embedding = new_embedding;
-
-    // --- Resize the Output Layer weights W3 ---
-    double **new_W3 = alloc_matrix(hidden2, new_vocab_size);
-    for (int i = 0; i < hidden2; i++) {
-        for (int j = 0; j < old_vocab_size; j++) {
-            new_W3[i][j] = net.W3[i][j];
-        }
-        for (int j = old_vocab_size; j < new_vocab_size; j++) {
-            new_W3[i][j] = rand_uniform(r_W3);
-        }
-    }
-    free_matrix(net.W3, net.hidden2);
-    net.W3 = new_W3;
-
-    // --- Resize the output bias vector b3 ---
-    double *new_b3 = alloc_vector(new_vocab_size);
-    for (int j = 0; j < old_vocab_size; j++) {
-        new_b3[j] = net.b3[j];
-    }
-    for (int j = old_vocab_size; j < new_vocab_size; j++) {
-        new_b3[j] = 0.0;
-    }
-    free(net.b3);
-    net.b3 = new_b3;
-
-    // --- Update network vocabulary size ---
-    net.vocab_size = new_vocab_size;
-
-    // --- Resize Adam states for the embedding ---
-    double **new_m_embedding = alloc_matrix(new_vocab_size, emb_dim);
-    double **new_v_embedding = alloc_matrix(new_vocab_size, emb_dim);
-    for (int i = 0; i < old_vocab_size; i++) {
-        for (int j = 0; j < emb_dim; j++) {
-            new_m_embedding[i][j] = adam.m_embedding[i][j];
-            new_v_embedding[i][j] = adam.v_embedding[i][j];
-        }
-    }
-    for (int i = old_vocab_size; i < new_vocab_size; i++) {
-        for (int j = 0; j < emb_dim; j++) {
-            new_m_embedding[i][j] = 0.0;
-            new_v_embedding[i][j] = 0.0;
-        }
-    }
-    free_matrix(adam.m_embedding, old_vocab_size);
-    free_matrix(adam.v_embedding, old_vocab_size);
-    adam.m_embedding = new_m_embedding;
-    adam.v_embedding = new_v_embedding;
-
-    // --- Resize Adam states for W3 ---
-    double **new_m_W3 = alloc_matrix(hidden2, new_vocab_size);
-    double **new_v_W3 = alloc_matrix(hidden2, new_vocab_size);
-    for (int i = 0; i < hidden2; i++) {
-        for (int j = 0; j < old_vocab_size; j++) {
-            new_m_W3[i][j] = adam.m_W3[i][j];
-            new_v_W3[i][j] = adam.v_W3[i][j];
-        }
-        for (int j = old_vocab_size; j < new_vocab_size; j++) {
-            new_m_W3[i][j] = 0.0;
-            new_v_W3[i][j] = 0.0;
-        }
-    }
-    free_matrix(adam.m_W3, hidden2);
-    free_matrix(adam.v_W3, hidden2);
-    adam.m_W3 = new_m_W3;
-    adam.v_W3 = new_v_W3;
-
-    // --- Resize Adam states for b3 ---
-    double *new_m_b3 = alloc_vector(new_vocab_size);
-    double *new_v_b3 = alloc_vector(new_vocab_size);
-    for (int j = 0; j < old_vocab_size; j++) {
-        new_m_b3[j] = adam.m_b3[j];
-        new_v_b3[j] = adam.v_b3[j];
-    }
-    for (int j = old_vocab_size; j < new_vocab_size; j++) {
-        new_m_b3[j] = 0.0;
-        new_v_b3[j] = 0.0;
-    }
-    free(adam.m_b3);
-    free(adam.v_b3);
-    adam.m_b3 = new_m_b3;
-    adam.v_b3 = new_v_b3;
-}
-
-/*-----------------------*/
-/* Training Data Builder */
-/*-----------------------*/
-void process_training_line(char *input, int allow_new_words) {
-    char buffer[MAX_INPUT_SIZE*2];
-    snprintf(buffer, sizeof(buffer), "%s %s %s", START_TOKEN, input, END_TOKEN);
-    char *words[MAX_TOKENS];
-    int count = tokenize(buffer, words, MAX_TOKENS);
-    if (count < CONTEXT_LENGTH + 1)
-        return;
-    int indices[MAX_TOKENS];
-    int i;
-    for (i = 0; i < count; i++) {
-        int idx = find_in_vocab(words[i]);
-        if (idx < 0) {
-            if (!allow_new_words) {
-                fprintf(stderr, "Word '%s' is unknown. Please teach it first in automatic mode.\n", words[i]);
-                return;
-            }
-            idx = add_word(words[i]);
-        }
-        indices[i] = idx;
-    }
-    int j;
-    for (i = 0; i < count - CONTEXT_LENGTH; i++) {
-        if (train_example_count >= MAX_TRAIN_EXAMPLES)
-            break;
-        for (j = 0; j < CONTEXT_LENGTH; j++) {
-            train_examples[train_example_count].context[j] = indices[i+j];
-        }
-        train_examples[train_example_count].target = indices[i + CONTEXT_LENGTH];
-        train_example_count++;
-    }
-}
-
-void shuffle_training_examples() {
-    int i;
-    for (i = train_example_count - 1; i > 0; i--) {
-        int j = rand() % (i + 1);
-        TrainingExample temp = train_examples[i];
-        train_examples[i] = train_examples[j];
-        train_examples[j] = temp;
-    }
-}
-
-/*-----------------------*/
-/* Helper for Run Mode   */
-/*-----------------------*/
-void humanize_response(char *response) {
-    if (response[0] != '\0')
-        response[0] = toupper((unsigned char)response[0]);
-    size_t len = strlen(response);
-    if (len > 0 && response[len-1] != '.' && response[len-1] != '!' && response[len-1] != '?')
-        strncat(response, ".", MAX_INPUT_SIZE - strlen(response) - 1);
-}
-
-int is_question(const char *input) {
-    size_t len = strlen(input);
-    while (len > 0 && isspace((unsigned char)input[len-1]))
-        len--;
-    return (len > 0 && input[len-1] == '?');
-}
-
-/*-----------------------*/
 /* API Functions         */
 /*-----------------------*/
 void cmd_teach_sv(char *model_filename) {
@@ -1084,20 +1099,16 @@ void cmd_teach_sv(char *model_filename) {
     int fileExists = (stat(model_filename, &st) == 0);
     int fileEmpty = fileExists && st.st_size == 0;
 
-    // Load model if file exists and is non-empty.
     if (fileExists && !fileEmpty) {
         load_model(model_filename);
     }
-    // If vocabulary is empty (first time), initialize it.
     if (vocab.size == 0) {
         init_vocab();
         add_word(START_TOKEN);
         add_word(END_TOKEN);
     }
-    // If network is not initialized (first time), do so.
     if (net.embedding == NULL)
         init_network();
-    // If Adam state is not initialized, set it up.
     if (adam.m_embedding == NULL)
         init_adam();
 
@@ -1152,12 +1163,9 @@ void cmd_teach_sv(char *model_filename) {
         }
         fclose(materialFile);
         printf("Built vocabulary of size %d with %d training examples.\n", vocab.size, train_example_count);
-
-        // Resize the network if new words have been appended.
         if (vocab.size > net.vocab_size) {
             resize_network(vocab.size);
         }
-
         char epochs_str[32];
         int num_epochs = 0;
         printf("Enter the number of epochs for training: ");
@@ -1279,16 +1287,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Usage: %s <mode: teach|run> <model_filename>\n", argv[0]);
         return 1;
     }
-    // Seed random number generator once for the entire run.
     srand((unsigned int)time(NULL));
-
     if (strcmp(argv[1], "teach") == 0)
         cmd_teach_sv(argv[2]);
     else if (strcmp(argv[1], "run") == 0)
         cmd_run_sv(argv[2]);
     else
         fprintf(stderr, "Unknown mode: %s. Use 'teach' or 'run'.\n", argv[1]);
-
     free_network();
     free_adam();
     free_vocab();

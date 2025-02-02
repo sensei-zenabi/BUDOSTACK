@@ -1,3 +1,16 @@
+/* teach.c - A simple teaching/prediction tool using bigrams and trigrams
+ * 
+ * This version includes improvements to the run mode:
+ *   1. The prompt is no longer repeated as part of the output.
+ *   2. A simple heuristic distinguishes questions (by checking for '?')
+ *      and, if so, prepends a fixed conversational phrase.
+ *   3. The final generated response is “humanized” by capitalizing its first letter
+ *      and appending appropriate punctuation.
+ *
+ * Author: Your Name
+ * Date: 2025-02-02
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,15 +50,12 @@ typedef struct TrigramEntry {
 /*------------------------------------------
           Global Hash Table Variables
 ------------------------------------------*/
-
-/* These arrays hold pointers to the first element of each chain */
 BigramEntry *bigramTable[BIGRAM_TABLE_SIZE];
 TrigramEntry *trigramTable[TRIGRAM_TABLE_SIZE];
 
 /*------------------------------------------
-          Hash Function
+              Hash Function
 ------------------------------------------*/
-
 /* djb2 hash function */
 unsigned long hash_djb2(const char *str) {
     unsigned long hash = 5381;
@@ -56,7 +66,7 @@ unsigned long hash_djb2(const char *str) {
 }
 
 /*------------------------------------------
-          Utility Functions for String Processing
+       Utility Functions for String Processing
 ------------------------------------------*/
 
 /* Remove leading and trailing whitespace from str in place */
@@ -117,7 +127,7 @@ int tokenize(char *input, char **words, int max_tokens) {
 }
 
 /*------------------------------------------
-          Initialization of Hash Tables
+        Initialization of Hash Tables
 ------------------------------------------*/
 
 /* Set all hash table buckets to NULL */
@@ -129,7 +139,7 @@ void init_tables(void) {
 }
 
 /*------------------------------------------
-          Updating the Models
+            Updating the Models
 ------------------------------------------*/
 
 /* Update bigram model: if the bigram exists, increment count; else, create a new entry */
@@ -209,7 +219,7 @@ void process_input(char *input) {
 }
 
 /*------------------------------------------
-          Model Persistence: Saving and Loading
+        Model Persistence: Saving and Loading
 ------------------------------------------*/
 
 /* Save both models to a file in text format */
@@ -348,9 +358,8 @@ void load_models(const char *filename) {
 }
 
 /*------------------------------------------
-          Memory Cleanup Functions
+         Memory Cleanup Functions
 ------------------------------------------*/
-
 void free_bigrams(void) {
     for (int i = 0; i < BIGRAM_TABLE_SIZE; i++) {
         BigramEntry *entry = bigramTable[i];
@@ -376,7 +385,7 @@ void free_trigrams(void) {
 }
 
 /*------------------------------------------
-          Prediction Functions
+         Prediction Functions
 ------------------------------------------*/
 
 /* Predict the next word using the trigram model with weighted random selection.
@@ -409,7 +418,7 @@ const char* predict_trigram(const char *prev_word, const char *last_word) {
             entry = entry->next;
         }
     }
-    return NULL;  // Should not reach here.
+    return NULL;  /* Should not reach here. */
 }
 
 /* Predict the next word using the bigram model with weighted random selection.
@@ -439,7 +448,7 @@ const char* predict_bigram(const char *word) {
             entry = entry->next;
         }
     }
-    return NULL;  // Should not reach here.
+    return NULL;  /* Should not reach here. */
 }
 
 /*------------------------------------------
@@ -470,18 +479,36 @@ int count_trigrams(void) {
 }
 
 /*------------------------------------------
+      Additional Helper Functions for Run Mode
+------------------------------------------*/
+/* Check if the input prompt ends with a '?' */
+int is_question(const char *input) {
+    size_t len = strlen(input);
+    while (len > 0 && isspace((unsigned char)input[len - 1]))
+        len--;
+    return (len > 0 && input[len - 1] == '?');
+}
+
+/* Humanize the generated response:
+   - Capitalize the first letter.
+   - Append a period if no ending punctuation exists.
+*/
+void humanize_response(char *response) {
+    if (response[0] != '\0') {
+        response[0] = toupper((unsigned char)response[0]);
+    }
+    size_t len = strlen(response);
+    if (len > 0 && response[len - 1] != '.' &&
+        response[len - 1] != '!' && response[len - 1] != '?') {
+        strncat(response, ".", sizeof(response) - strlen(response) - 1);
+    }
+}
+
+/*------------------------------------------
           API Functions for Teaching and Running
 ------------------------------------------*/
 
-/* 
- * cmd_teach_sv:
- *
- * Modified to first prompt the user:
- *   - If the user types "y" (manual mode), the original interactive teaching mode is used.
- *   - Otherwise, the tool enters automatic mode: it prompts for a teaching material file and a run prompts file.
- *     The material file is used to update the model (teaching phase), and then each prompt from the run prompts file
- *     is fed to the model to generate predictions. The results (along with performance metrics) are saved to results.txt.
- */
+/* Teaching mode: interactive or automatic teaching of the model */
 void cmd_teach_sv(char *filename) {
     char input[MAX_INPUT_SIZE];
     
@@ -693,10 +720,17 @@ void cmd_teach_sv(char *filename) {
     }
 }
 
-/* Run mode: loads models and predicts additional words based on the input context. */
+/* 
+ * Improved Run Mode:
+ *
+ * The run mode now:
+ *  - Uses the input only for context, not as part of the output.
+ *  - Detects if the prompt ends with a question and, if so, prepends a fixed conversational phrase.
+ *  - Post-processes the generated sentence to capitalize its first letter and append a period if needed.
+ */
 void cmd_run_sv(char *filename) {
     char input[MAX_INPUT_SIZE];
-    char generated_sentence[MAX_INPUT_SIZE] = {0};
+    char response[MAX_INPUT_SIZE] = {0};
 
     srand((unsigned int)time(NULL));
 
@@ -715,11 +749,10 @@ void cmd_run_sv(char *filename) {
         if (strcmp(input, "exit") == 0)
             break;
 
-        /* Copy input into generated_sentence */
-        strncpy(generated_sentence, input, sizeof(generated_sentence) - 1);
-        generated_sentence[sizeof(generated_sentence) - 1] = '\0';
+        /* Determine if input is a question */
+        int input_is_question = is_question(input);
 
-        /* Tokenize the input to determine context */
+        /* Tokenize the input for context (do not echo prompt in response) */
         char input_copy[MAX_INPUT_SIZE];
         strncpy(input_copy, input, sizeof(input_copy) - 1);
         input_copy[sizeof(input_copy) - 1] = '\0';
@@ -731,24 +764,31 @@ void cmd_run_sv(char *filename) {
             continue;
         }
 
+        /* Start with an empty response. If the input is a question, add a conversational prefix. */
+        response[0] = '\0';
+        if (input_is_question) {
+            const char *question_prefixes[] = {"I think", "Well", "Perhaps", "In my opinion"};
+            int num_prefixes = sizeof(question_prefixes) / sizeof(question_prefixes[0]);
+            int idx = rand() % num_prefixes;
+            strncat(response, question_prefixes[idx], sizeof(response) - strlen(response) - 1);
+        }
+
+        /* Predict the next word using context from the prompt */
         const char *next_word = NULL;
-        /* Use trigram prediction if at least two words are available */
         if (count >= 2)
             next_word = predict_trigram(words[count - 2], words[count - 1]);
-        /* Fallback to bigram prediction */
         if (!next_word)
             next_word = predict_bigram(words[count - 1]);
-        if (!next_word) {
-            printf("Prediction: %s\n", generated_sentence);
-            continue;
-        }
-        if (strcmp(next_word, START_TOKEN) == 0 || strcmp(next_word, END_TOKEN) == 0) {
-            printf("Prediction: %s\n", generated_sentence);
+        if (!next_word ||
+            strcmp(next_word, START_TOKEN) == 0 ||
+            strcmp(next_word, END_TOKEN) == 0) {
+            printf("No valid continuation predicted.\n");
             continue;
         }
 
-        strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
-        strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
+        /* Append the first predicted word */
+        strncat(response, " ", sizeof(response) - strlen(response) - 1);
+        strncat(response, next_word, sizeof(response) - strlen(response) - 1);
 
         /* Set up context for iterative prediction */
         char current_prev[WORD_LEN];
@@ -770,30 +810,29 @@ void cmd_run_sv(char *filename) {
             next_word = predict_trigram(current_prev, current_last);
             if (!next_word)
                 next_word = predict_bigram(current_last);
-            if (!next_word)
+            if (!next_word ||
+                strcmp(next_word, START_TOKEN) == 0 ||
+                strcmp(next_word, END_TOKEN) == 0)
                 break;
-            if (strcmp(next_word, START_TOKEN) == 0 || strcmp(next_word, END_TOKEN) == 0)
-                break;
-            strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
-            strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
-            /* Update context: shift window by one word */
+            strncat(response, " ", sizeof(response) - strlen(response) - 1);
+            strncat(response, next_word, sizeof(response) - strlen(response) - 1);
+            /* Shift context: update the sliding window */
             strncpy(current_prev, current_last, WORD_LEN - 1);
             current_prev[WORD_LEN - 1] = '\0';
             strncpy(current_last, next_word, WORD_LEN - 1);
             current_last[WORD_LEN - 1] = '\0';
         }
-        printf("Prediction: %s\n", generated_sentence);
+
+        /* Final cosmetic touches to humanize the output */
+        humanize_response(response);
+        printf("Prediction: %s\n", response);
     }
-    /* Optionally free memory if no further processing is needed.
-       free_bigrams();
-       free_trigrams();
-    */
 }
 
 /*------------------------------------------
           (Optional) Main Function for Testing
 ------------------------------------------*/
-/*
+#if 0
 int main(int argc, char *argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Usage: %s <mode: teach|run> <model_filename>\n", argv[0]);
@@ -810,4 +849,4 @@ int main(int argc, char *argv[]) {
     free_trigrams();
     return 0;
 }
-*/
+#endif

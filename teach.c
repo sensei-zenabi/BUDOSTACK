@@ -8,12 +8,17 @@
  *      retrying predictions up to a fixed number of times.
  *   4. The final generated response is “humanized” by capitalizing its first letter
  *      and appending appropriate punctuation.
+ *   5. The prediction context is updated so that the new predicted word is used
+ *      as part of the context for subsequent predictions, avoiding duplicate output.
  *
  * Author: Your Name
  * Date: 2025-02-02
  *
- * Improvements based on industry standard heuristics for repetition avoidance
- * and contextual prompt handling.
+ * References:
+ * - Dan Bernstein's djb2 hash function: http://www.cse.yorku.ca/~oz/hash.html
+ * - C Standard Library documentation (ISO/IEC 9899)
+ * - Holtzman, A., Buys, J., Du, L., Forbes, M., & Choi, Y. (2020). The Curious Case of Neural Text Degeneration.
+ * - OpenAI API documentation and general language model heuristics.
  */
 
 #include <stdio.h>
@@ -676,23 +681,18 @@ void cmd_teach_sv(char *filename) {
                 continue;
             }
             
+            /* Append the first predicted word */
             strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
             strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
             
-            /* Set up context for iterative prediction */
+            /* Set up context for iterative prediction:
+               Use the last token from the input prompt and the first predicted word */
             char current_prev[WORD_LEN];
             char current_last[WORD_LEN];
-            if (count >= 2) {
-                strncpy(current_prev, words[count - 2], WORD_LEN - 1);
-                current_prev[WORD_LEN - 1] = '\0';
-                strncpy(current_last, words[count - 1], WORD_LEN - 1);
-                current_last[WORD_LEN - 1] = '\0';
-            } else {
-                strncpy(current_prev, words[count - 1], WORD_LEN - 1);
-                current_prev[WORD_LEN - 1] = '\0';
-                strncpy(current_last, next_word, WORD_LEN - 1);
-                current_last[WORD_LEN - 1] = '\0';
-            }
+            strncpy(current_prev, words[count - 1], WORD_LEN - 1);
+            current_prev[WORD_LEN - 1] = '\0';
+            strncpy(current_last, next_word, WORD_LEN - 1);
+            current_last[WORD_LEN - 1] = '\0';
             
             /* Generate up to 10 additional words with duplicate avoidance */
             for (int i = 1; i < 10; i++) {
@@ -702,7 +702,6 @@ void cmd_teach_sv(char *filename) {
                     candidate = predict_trigram(current_prev, current_last);
                     if (!candidate)
                         candidate = predict_bigram(current_last);
-                    /* Retry if the candidate is NULL or duplicates the previous word */
                     if (candidate && strcmp(candidate, current_last) == 0)
                         retries++;
                     else
@@ -749,6 +748,7 @@ void cmd_teach_sv(char *filename) {
  *  - Uses the input only for context, not as part of the output.
  *  - Detects if the prompt ends with a question and, if so, prepends a fixed conversational phrase.
  *  - Avoids generating consecutive duplicate words by retrying predictions up to three times.
+ *  - Updates the prediction context to incorporate the new word, avoiding duplicate predictions.
  *  - Post-processes the generated sentence to capitalize its first letter and append a period if needed.
  */
 void cmd_run_sv(char *filename) {
@@ -825,20 +825,14 @@ void cmd_run_sv(char *filename) {
         strncat(response, " ", sizeof(response) - strlen(response) - 1);
         strncat(response, next_word, sizeof(response) - strlen(response) - 1);
 
-        /* Set up context for iterative prediction */
+        /* Set up context for iterative prediction:
+           Use the last token from the prompt and the first predicted word */
         char current_prev[WORD_LEN];
         char current_last[WORD_LEN];
-        if (count >= 2) {
-            strncpy(current_prev, words[count - 2], WORD_LEN - 1);
-            current_prev[WORD_LEN - 1] = '\0';
-            strncpy(current_last, words[count - 1], WORD_LEN - 1);
-            current_last[WORD_LEN - 1] = '\0';
-        } else {
-            strncpy(current_prev, words[count - 1], WORD_LEN - 1);
-            current_prev[WORD_LEN - 1] = '\0';
-            strncpy(current_last, next_word, WORD_LEN - 1);
-            current_last[WORD_LEN - 1] = '\0';
-        }
+        strncpy(current_prev, words[count - 1], WORD_LEN - 1);
+        current_prev[WORD_LEN - 1] = '\0';
+        strncpy(current_last, next_word, WORD_LEN - 1);
+        current_last[WORD_LEN - 1] = '\0';
 
         /* Generate up to 10 additional words with duplicate avoidance */
         for (int i = 1; i < 10; i++) {
@@ -859,7 +853,7 @@ void cmd_run_sv(char *filename) {
                 break;
             strncat(response, " ", sizeof(response) - strlen(response) - 1);
             strncat(response, candidate, sizeof(response) - strlen(response) - 1);
-            /* Shift context: update the sliding window */
+            /* Update context: shift window by one word */
             strncpy(current_prev, current_last, WORD_LEN - 1);
             current_prev[WORD_LEN - 1] = '\0';
             strncpy(current_last, candidate, WORD_LEN - 1);
@@ -893,12 +887,3 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 #endif
-
-/*
-References:
-- Dan Bernstein's djb2 hash function: http://www.cse.yorku.ca/~oz/hash.html
-- C Standard Library documentation (ISO/IEC 9899)
-- Techniques for repetition avoidance in natural language generation, e.g., 
-  Holtzman, A., Buys, J., Du, L., Forbes, M., & Choi, Y. (2020). The Curious Case of Neural Text Degeneration.
-- OpenAI API documentation and general language model heuristics.
-*/

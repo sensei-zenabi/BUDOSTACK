@@ -433,35 +433,246 @@ const char* predict_bigram(const char *word) {
 }
 
 /*------------------------------------------
+      Helper Functions for Performance Metrics
+------------------------------------------*/
+int count_bigrams(void) {
+    int total = 0;
+    for (int i = 0; i < BIGRAM_TABLE_SIZE; i++) {
+        BigramEntry *entry = bigramTable[i];
+        while (entry) {
+            total++;
+            entry = entry->next;
+        }
+    }
+    return total;
+}
+
+int count_trigrams(void) {
+    int total = 0;
+    for (int i = 0; i < TRIGRAM_TABLE_SIZE; i++) {
+        TrigramEntry *entry = trigramTable[i];
+        while (entry) {
+            total++;
+            entry = entry->next;
+        }
+    }
+    return total;
+}
+
+/*------------------------------------------
           API Functions for Teaching and Running
 ------------------------------------------*/
 
-/* Teach mode: loads models, accepts input to update the models, and saves upon exit. */
+/* 
+ * cmd_teach_sv:
+ *
+ * Modified to first prompt the user:
+ *   - If the user types "y" (manual mode), the original interactive teaching mode is used.
+ *   - Otherwise, the tool enters automatic mode: it prompts for a teaching material file and a run prompts file.
+ *     The material file is used to update the model (teaching phase), and then each prompt from the run prompts file
+ *     is fed to the model to generate predictions. The results (along with performance metrics) are saved to results.txt.
+ */
 void cmd_teach_sv(char *filename) {
     char input[MAX_INPUT_SIZE];
-
+    
     init_tables();
     load_models(filename);
-
-    printf("Entering teach mode. Type input sentences to update the model.\n");
-    printf("Type 'exit' to save the model and quit.\n");
-    while (1) {
-        printf("teach> ");
-        if (!fgets(input, sizeof(input), stdin))
-            break;
-        input[strcspn(input, "\n")] = '\0';
-        trim_whitespace(input);
-
-        if (strcmp(input, "exit") == 0) {
-            save_models(filename);
-            break;
-        }
-        process_input(input);
+    
+    printf("Welcome to the SV Teaching Tool.\n");
+    printf("Would you like to use manual teaching mode?\n");
+    printf("Type 'y' (followed by Enter) for manual mode,\n"
+           "or simply press Enter (or any key other than 'y') to use automatic mode.\n");
+    printf("Your choice: ");
+    if (!fgets(input, sizeof(input), stdin)) {
+        fprintf(stderr, "Input error.\n");
+        return;
     }
-    /* Optionally free memory if no further processing is needed.
-       free_bigrams();
-       free_trigrams();
-    */
+    input[strcspn(input, "\n")] = '\0';
+    trim_whitespace(input);
+    
+    /* If user entered exactly "y", go to manual teaching mode */
+    if (strcmp(input, "y") == 0 || strcmp(input, "Y") == 0) {
+        printf("Manual teaching mode selected.\n");
+        printf("Enter sentences to update the model. Type 'exit' to save and quit.\n");
+        while (1) {
+            printf("teach> ");
+            if (!fgets(input, sizeof(input), stdin))
+                break;
+            input[strcspn(input, "\n")] = '\0';
+            trim_whitespace(input);
+            if (strcmp(input, "exit") == 0) {
+                save_models(filename);
+                break;
+            }
+            process_input(input);
+        }
+    }
+    /* Otherwise, run automatic teaching mode */
+    else {
+        char materialFilename[256];
+        char promptsFilename[256];
+        FILE *materialFile, *promptsFile, *resultsFile;
+        clock_t teach_start, teach_end, predict_start, predict_end;
+        double teach_time, predict_time;
+        
+        printf("Automatic teaching mode selected.\n");
+        printf("You will now be prompted to enter the filenames for the teaching material and run prompts.\n\n");
+        
+        /* Get the teaching material filename */
+        printf("Enter the filename for teaching material (e.g., material.txt): ");
+        if (!fgets(materialFilename, sizeof(materialFilename), stdin)) {
+            fprintf(stderr, "Input error.\n");
+            return;
+        }
+        materialFilename[strcspn(materialFilename, "\n")] = '\0';
+        trim_whitespace(materialFilename);
+        if (strlen(materialFilename) == 0) {
+            fprintf(stderr, "No filename provided for teaching material.\n");
+            return;
+        }
+        
+        /* Get the run prompts filename */
+        printf("Enter the filename for run prompts (e.g., prompts.txt): ");
+        if (!fgets(promptsFilename, sizeof(promptsFilename), stdin)) {
+            fprintf(stderr, "Input error.\n");
+            return;
+        }
+        promptsFilename[strcspn(promptsFilename, "\n")] = '\0';
+        trim_whitespace(promptsFilename);
+        if (strlen(promptsFilename) == 0) {
+            fprintf(stderr, "No filename provided for run prompts.\n");
+            return;
+        }
+        
+        /* Teaching Phase */
+        teach_start = clock();
+        materialFile = fopen(materialFilename, "r");
+        if (!materialFile) {
+            fprintf(stderr, "Error: Could not open teaching material file %s\n", materialFilename);
+            return;
+        }
+        printf("\nProcessing teaching material from %s...\n", materialFilename);
+        while (fgets(input, sizeof(input), materialFile)) {
+            input[strcspn(input, "\n")] = '\0';
+            trim_whitespace(input);
+            if (strlen(input) > 0) {
+                process_input(input);
+            }
+        }
+        fclose(materialFile);
+        teach_end = clock();
+        teach_time = ((double)(teach_end - teach_start)) / CLOCKS_PER_SEC;
+        printf("Teaching material processed in %.2f seconds.\n", teach_time);
+        
+        /* Prediction (Validation) Phase */
+        predict_start = clock();
+        promptsFile = fopen(promptsFilename, "r");
+        if (!promptsFile) {
+            fprintf(stderr, "Error: Could not open run prompts file %s\n", promptsFilename);
+            return;
+        }
+        resultsFile = fopen("results.txt", "w");
+        if (!resultsFile) {
+            fprintf(stderr, "Error: Could not open results.txt for writing.\n");
+            fclose(promptsFile);
+            return;
+        }
+        printf("Processing run prompts from %s and saving predictions to results.txt...\n", promptsFilename);
+        
+        while (fgets(input, sizeof(input), promptsFile)) {
+            char prompt[MAX_INPUT_SIZE];
+            char generated_sentence[MAX_INPUT_SIZE];
+            char input_copy[MAX_INPUT_SIZE];
+            char *words[MAX_TOKENS];
+            int count;
+            const char *next_word = NULL;
+            
+            /* Remove newline and trim the prompt */
+            input[strcspn(input, "\n")] = '\0';
+            trim_whitespace(input);
+            if (strlen(input) == 0)
+                continue;
+            
+            /* Copy the prompt for processing */
+            strncpy(prompt, input, sizeof(prompt) - 1);
+            prompt[sizeof(prompt) - 1] = '\0';
+            strncpy(generated_sentence, prompt, sizeof(generated_sentence) - 1);
+            generated_sentence[sizeof(generated_sentence) - 1] = '\0';
+            
+            /* Tokenize the prompt */
+            strncpy(input_copy, prompt, sizeof(input_copy) - 1);
+            input_copy[sizeof(input_copy) - 1] = '\0';
+            count = tokenize(input_copy, words, MAX_TOKENS);
+            
+            if (count == 0) {
+                fprintf(resultsFile, "Prompt: %s\nNo valid input detected.\n\n", prompt);
+                continue;
+            }
+            
+            /* First prediction: try trigram then bigram */
+            if (count >= 2)
+                next_word = predict_trigram(words[count - 2], words[count - 1]);
+            if (!next_word)
+                next_word = predict_bigram(words[count - 1]);
+            if (!next_word) {
+                fprintf(resultsFile, "Prompt: %s\nPrediction: %s\n\n", prompt, generated_sentence);
+                continue;
+            }
+            
+            strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
+            strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
+            
+            /* Set up context for iterative prediction */
+            char current_prev[WORD_LEN];
+            char current_last[WORD_LEN];
+            if (count >= 2) {
+                strncpy(current_prev, words[count - 2], WORD_LEN - 1);
+                current_prev[WORD_LEN - 1] = '\0';
+                strncpy(current_last, words[count - 1], WORD_LEN - 1);
+                current_last[WORD_LEN - 1] = '\0';
+            } else {
+                strncpy(current_prev, words[count - 1], WORD_LEN - 1);
+                current_prev[WORD_LEN - 1] = '\0';
+                strncpy(current_last, next_word, WORD_LEN - 1);
+                current_last[WORD_LEN - 1] = '\0';
+            }
+            
+            /* Generate up to 10 additional words */
+            for (int i = 1; i < 10; i++) {
+                next_word = predict_trigram(current_prev, current_last);
+                if (!next_word)
+                    next_word = predict_bigram(current_last);
+                if (!next_word)
+                    break;
+                strncat(generated_sentence, " ", sizeof(generated_sentence) - strlen(generated_sentence) - 1);
+                strncat(generated_sentence, next_word, sizeof(generated_sentence) - strlen(generated_sentence) - 1);
+                /* Update context: shift window by one word */
+                strncpy(current_prev, current_last, WORD_LEN - 1);
+                current_prev[WORD_LEN - 1] = '\0';
+                strncpy(current_last, next_word, WORD_LEN - 1);
+                current_last[WORD_LEN - 1] = '\0';
+            }
+            
+            fprintf(resultsFile, "Prompt: %s\nPrediction: %s\n\n", prompt, generated_sentence);
+        }
+        fclose(promptsFile);
+        predict_end = clock();
+        predict_time = ((double)(predict_end - predict_start)) / CLOCKS_PER_SEC;
+        
+        /* Append performance metrics */
+        int total_bigrams = count_bigrams();
+        int total_trigrams = count_trigrams();
+        int total_parameters = total_bigrams + total_trigrams;
+        fprintf(resultsFile, "----- Performance Metrics -----\n");
+        fprintf(resultsFile, "Total number of parameters (bigrams + trigrams): %d\n", total_parameters);
+        fprintf(resultsFile, "Teaching time: %.2f seconds\n", teach_time);
+        fprintf(resultsFile, "Prediction time: %.2f seconds\n", predict_time);
+        fclose(resultsFile);
+        printf("Automatic teaching and prediction complete. Results (including performance metrics) are saved in results.txt\n");
+        
+        /* Save the updated model */
+        save_models(filename);
+    }
 }
 
 /* Run mode: loads models and predicts additional words based on the input context. */

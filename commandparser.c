@@ -1,45 +1,60 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
+#define _POSIX_C_SOURCE 200809L  /* For POSIX functions if available */
+#include "commandparser.h"
+#include <limits.h>  /* For PATH_MAX */
 
-#define MAX_ATTRIBUTES 10
-#define MAX_ARGUMENTS 10
-#define MAX_COMMAND_LENGTH 100
+/* Provide a fallback definition for PATH_MAX if it's not defined */
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
-typedef struct {
-    char command[MAX_COMMAND_LENGTH];
-    char *attributes[MAX_ATTRIBUTES];
-    char *arguments[MAX_ARGUMENTS];
-    int attr_count;
-    int arg_count;
-} CommandStruct;
+/* Custom implementation of strdup since it's not part of standard C11 */
+static char *my_strdup(const char *s) {
+    size_t len = strlen(s);
+    char *dup = malloc(len + 1);
+    if (dup)
+        memcpy(dup, s, len + 1);
+    return dup;
+}
+#ifndef strdup
+#define strdup(s) my_strdup(s)
+#endif
 
 void parse_input(const char *input, CommandStruct *cmd) {
-    char buffer[1024];
+    char buffer[INPUT_SIZE];
+    /* Copy input into a local buffer safely */
     strncpy(buffer, input, sizeof(buffer) - 1);
     buffer[sizeof(buffer) - 1] = '\0';
 
     char *token = strtok(buffer, " ");
-    if (token == NULL) return;
+    if (token == NULL)
+        return;
 
-    // Store command
+    /* Store the command */
     strncpy(cmd->command, token, sizeof(cmd->command) - 1);
     cmd->command[sizeof(cmd->command) - 1] = '\0';
 
-    cmd->attr_count = 0;
-    cmd->arg_count = 0;
+    cmd->param_count = 0;
+    cmd->opt_count = 0;
 
+    /* Process remaining tokens */
     while ((token = strtok(NULL, " ")) != NULL) {
         if (token[0] == '-') {
-            if (cmd->arg_count < MAX_ARGUMENTS) {
-                cmd->arguments[cmd->arg_count++] = strdup(token);
+            if (cmd->opt_count < MAX_OPTIONS) {
+                char *dup = strdup(token);
+                if (dup == NULL) {
+                    perror("strdup failed");
+                    exit(EXIT_FAILURE);
+                }
+                cmd->options[cmd->opt_count++] = dup;
             }
         } else {
-            if (cmd->attr_count < MAX_ATTRIBUTES) {
-                cmd->attributes[cmd->attr_count++] = strdup(token);
+            if (cmd->param_count < MAX_PARAMETERS) {
+                char *dup = strdup(token);
+                if (dup == NULL) {
+                    perror("strdup failed");
+                    exit(EXIT_FAILURE);
+                }
+                cmd->parameters[cmd->param_count++] = dup;
             }
         }
     }
@@ -49,38 +64,57 @@ void execute_command(const CommandStruct *cmd) {
     char command_path[128];
     snprintf(command_path, sizeof(command_path), "./commands/%s", cmd->command);
 
-    // Prepare arguments array (execvp format)
-    char *args[cmd->attr_count + cmd->arg_count + 2];
-    args[0] = cmd->command;
-    int index = 1;
-
-    for (int i = 0; i < cmd->attr_count; i++) {
-        args[index++] = cmd->attributes[i];
+    /* Check if the command exists and is executable */
+    if (access(command_path, X_OK) != 0) {
+        fprintf(stderr, "Command not found or not executable: %s\n", cmd->command);
+        return;
     }
-    for (int i = 0; i < cmd->arg_count; i++) {
-        args[index++] = cmd->arguments[i];
+
+    /* Convert the relative path to an absolute path */
+    char abs_path[PATH_MAX];
+    if (realpath(command_path, abs_path) == NULL) {
+        perror("realpath failed");
+        return;
+    }
+
+    /* Prepare the arguments array for execv.
+       Use the absolute path as argv[0]. */
+    int total_args = 1 + cmd->param_count + cmd->opt_count;
+    char *args[total_args + 1];  // +1 for the NULL terminator
+
+    args[0] = abs_path;
+    int index = 1;
+    for (int i = 0; i < cmd->param_count; i++) {
+        args[index++] = cmd->parameters[i];
+    }
+    for (int i = 0; i < cmd->opt_count; i++) {
+        args[index++] = cmd->options[i];
     }
     args[index] = NULL;
 
-    // Execute command
-    if (access(command_path, X_OK) == 0) {
-        if (fork() == 0) { // Child process
-            execvp(command_path, args);
-            perror("execvp failed");
-            exit(EXIT_FAILURE);
-        } else { // Parent process
-            wait(NULL);
-        }
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork failed");
+        return;
+    } else if (pid == 0) {
+        /* Child process: execute the command */
+        execv(abs_path, args);
+        perror("execv failed");
+        exit(EXIT_FAILURE);
     } else {
-        printf("Command not found: %s\n", cmd->command);
+        /* Parent process waits for the child */
+        int status;
+        if (waitpid(pid, &status, 0) < 0) {
+            perror("waitpid failed");
+        }
     }
 }
 
 void free_command_struct(CommandStruct *cmd) {
-    for (int i = 0; i < cmd->attr_count; i++) {
-        free(cmd->attributes[i]);
+    for (int i = 0; i < cmd->param_count; i++) {
+        free(cmd->parameters[i]);
     }
-    for (int i = 0; i < cmd->arg_count; i++) {
-        free(cmd->arguments[i]);
+    for (int i = 0; i < cmd->opt_count; i++) {
+        free(cmd->options[i]);
     }
 }

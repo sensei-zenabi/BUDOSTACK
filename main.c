@@ -3,8 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
-#include <unistd.h>   // For chdir() and getcwd()
+#include <unistd.h>
 #include "commandparser.h"
+#include "input.h"  // include the new header
 
 void display_prompt(void) {
     char cwd[PATH_MAX];
@@ -15,37 +16,43 @@ void display_prompt(void) {
 }
 
 int main(void) {
-    char input[INPUT_SIZE];
+    char *input;
     CommandStruct cmd;
-    
-    printf("Welcome to the Linux-like Terminal!\nType 'exit' to quit.\n");
 
+    printf("Welcome to the Linux-like Terminal!\nType 'exit' to quit.\n");
     while (1) {
         display_prompt();
-        if (fgets(input, sizeof(input), stdin) == NULL) {
+        input = read_input();
+        if (input == NULL) {
             printf("\n");
             break;
         }
-        /* Remove the trailing newline character */
+        /* Remove the trailing newline if any */
         input[strcspn(input, "\n")] = '\0';
+
         if (strcmp(input, "exit") == 0) {
+            free(input);
             break;
         }
+
         parse_input(input, &cmd);
+
         /* Handle built-in "cd" command */
         if (strcmp(cmd.command, "cd") == 0) {
             if (cmd.param_count > 0) {
-                if (chdir(cmd.parameters[0]) != 0) {
+                if (chdir(cmd.parameters[0]) != 0)
                     perror("cd");
-                }
             } else {
                 fprintf(stderr, "cd: missing operand\n");
             }
+            free(input);
             free_command_struct(&cmd);
             continue;
         }
-        /* For all other commands, execute normally using the fixed COMMANDS_DIR */
+
+        /* Execute other commands */
         execute_command(&cmd);
+        free(input);
         free_command_struct(&cmd);
     }
     printf("Exiting terminal...\n");

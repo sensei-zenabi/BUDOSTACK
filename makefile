@@ -1,19 +1,19 @@
 CC = gcc
-CFLAGS = -std=c11 -Wall
+CFLAGS = -std=c11 -Wall -Wextra -pedantic -Wno-format-truncation
+LDFLAGS =
+SOURCES = main.c commandparser.c input.c
+OBJECTS = $(SOURCES:.c=.o)
+TARGET = terminal
 
-# Define commands directory and the list of commands (single words)
-COMMANDS = hello help list display copy move remove update makedir rmdir
-CMD_DIR = commands
+.PHONY: all clean
 
-all: terminal $(COMMANDS)
+all: $(TARGET)
 
-# Compile the main terminal program
-terminal: main.c commandparser.c
-	$(CC) $(CFLAGS) -o terminal main.c commandparser.c
+$(TARGET): $(OBJECTS)
+	$(CC) $(LDFLAGS) -o $(TARGET) $(OBJECTS)
 
-# Compile each command in the commands directory
-$(COMMANDS): %: $(CMD_DIR)/%.c
-	$(CC) $(CFLAGS) -o $(CMD_DIR)/$@ $<
+%.o: %.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:
-	rm -f terminal $(CMD_DIR)/*
+	rm -f $(TARGET) $(OBJECTS)

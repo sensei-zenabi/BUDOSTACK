@@ -2,7 +2,7 @@ CC = gcc
 CFLAGS = -std=c11 -Wall
 
 # Define commands directory and the list of commands
-COMMANDS = hello help
+COMMANDS = hello help list
 CMD_DIR = commands
 
 all: terminal $(COMMANDS)

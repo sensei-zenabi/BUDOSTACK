@@ -1,17 +1,19 @@
 CC = gcc
-CFLAGS = -std=c11 -Wall -Wextra -pedantic
+CFLAGS = -std=c11 -Wall
 
-COMMANDS = hello help list
+# Define commands directory and the list of commands (single words)
+COMMANDS = hello help list display copy move remove update makedir rmdir
 CMD_DIR = commands
 
 all: terminal $(COMMANDS)
 
-terminal: main.c commandparser.c commandparser.h
+# Compile the main terminal program
+terminal: main.c commandparser.c
 	$(CC) $(CFLAGS) -o terminal main.c commandparser.c
 
+# Compile each command in the commands directory
 $(COMMANDS): %: $(CMD_DIR)/%.c
 	$(CC) $(CFLAGS) -o $(CMD_DIR)/$@ $<
 
-.PHONY: all clean
 clean:
 	rm -f terminal $(CMD_DIR)/*

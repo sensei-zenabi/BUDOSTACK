@@ -1,0 +1,18 @@
+# Compiled object files
+*.o
+
+# Main compiled binary
+terminal
+
+# In the commands directory, ignore everything except source files
+commands/*
+!commands/*.c
+
+# Backup files and temporary files
+*~
+*.swp
+*.swo
+
+# OS-specific files
+.DS_Store
+Thumbs.db

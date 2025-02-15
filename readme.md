@@ -1,23 +1,22 @@
-# Linux-like Terminal
+Preferred editor: sudo apt install micro
 
-This project implements a simple Linux-like terminal in C using the C11 standard. It allows you to execute commands from a custom `commands` directory.
+# All around Linux Terminal
 
-## Features
+## Usage:
+  command [options] [arguments]
 
-- **Basic Command Parsing:** Supports splitting input into a command, parameters (non-option tokens), and options (tokens starting with `-`).
-- **Modular Design:** Shared structures and functions are declared in `commandparser.h` for better maintainability.
-- **Error Handling:** Robust error checking for dynamic memory allocation and system calls (fork, execvp, waitpid).
-- **Build Process:** A provided Makefile compiles the main program and commands with enhanced warning flags.
+## Available Commands:
+  - **hello**   : Print a greeting message.
+  - **help**    : Display this help message.
+  - **list**    : List contents of a directory (default is current directory).
+  - **display** : Display the contents of a file.
+  - **copy**    : Copy a file from source to destination.
+  - **move**    : Move (rename) a file from source to destination.
+  - **remove**  : Remove a file.
+  - **update**  : Create an empty file or update its modification time.
+  - **makedir** : Create a new directory.
+  - **rmdir**   : Remove an empty directory.
+  - **exit**    : Exit the terminal.
 
-## Files
-
-- **main.c:** Contains the main loop and prompt logic.
-- **commandparser.c / commandparser.h:** Contains command parsing and execution functions.
-- **makefile:** Build instructions.
-- **readme.md:** This file.
-
-## Build Instructions
-
-Ensure you have GCC installed, then run:
-```bash
-make
+## Auto-Completion:
+  - Press the Tab key while typing a command to auto-complete based on available commands.

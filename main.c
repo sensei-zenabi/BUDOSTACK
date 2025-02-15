@@ -15,6 +15,13 @@
  *   sequences to allow scrolling. In search mode, all matches are listed, and the
  *   active match is highlighted.
  * - **Minimal Dependencies:** Uses only standard C libraries and POSIX APIs.
+ *
+ * Modification:
+ * - Added a global variable `paging_enabled` to control paging.
+ * - Provided a function `disable_paging()` which can be called by applications (from
+ *   the commands folder) to disable paging.
+ * - Updated the output display logic in execute_command_with_paging() so that if paging
+ *   is disabled, the output is printed directly regardless of its length.
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -24,13 +31,24 @@
 #include <string.h>
 #include <limits.h>
 #include <unistd.h>
-#include <termios.h>   // For terminal control (raw mode)
-#include <sys/ioctl.h> // For querying terminal window size
+#include <termios.h>    // For terminal control (raw mode)
+#include <sys/ioctl.h>  // For querying terminal window size
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
 #include "commandparser.h"
-#include "input.h"     // Include the new header
+#include "input.h" // Include the new header
+
+/* Global variable to control paging.
+ * 1: paging enabled (default)
+ * 0: paging disabled */
+int paging_enabled = 1;
+
+/* This function can be called by any command (in the commands folder)
+ * to disable paging in the terminal output. */
+void disable_paging(void) {
+    paging_enabled = 0;
+}
 
 // Forward declaration for search mode.
 int search_mode(const char **lines, size_t line_count, const char *query);
@@ -67,16 +85,13 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
         getchar();
         return -1;
     }
-    
-    int active = 0;  // active match index in the matches array
+    int active = 0; // active match index in the matches array
     int menu_start = 0; // starting index for display
-
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
         w.ws_row = 24;
     }
     int menu_height = w.ws_row - 1; // lines available for menu
-
     while (1) {
         // Clear screen.
         printf("\033[H\033[J");
@@ -100,19 +115,15 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
         // Display instructions.
         printf("\nUse Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
         fflush(stdout);
-
         // Set terminal to raw mode.
         struct termios oldt, newt;
         tcgetattr(STDIN_FILENO, &oldt);
         newt = oldt;
         newt.c_lflag &= ~(ICANON | ECHO);
         tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-
         int ch = getchar();
-
         // Restore terminal settings.
         tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-
         if (ch == 'q') {
             active = -1;
             break;
@@ -158,7 +169,6 @@ void pager(const char **lines, size_t line_count) {
     int page_height = w.ws_row - 1;
     if (page_height < 1)
         page_height = 10;
-
     int start = 0;
     while (1) {
         // Clear the screen.
@@ -171,21 +181,17 @@ void pager(const char **lines, size_t line_count) {
         printf("\nPage %d/%d - Use Up/Down arrows to scroll, 'f' to search, 'q' to quit.", 
                start / page_height + 1, (int)((line_count + page_height - 1) / page_height));
         fflush(stdout);
-
         // Set terminal to raw mode.
         struct termios oldt, newt;
         tcgetattr(STDIN_FILENO, &oldt);
         newt = oldt;
         newt.c_lflag &= ~(ICANON | ECHO);
         tcsetattr(STDIN_FILENO, TCSANOW, &newt);
-
         int c = getchar();
-
         // Restore terminal settings.
         tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-
         if (c == 'q') {
-            break;  // Quit pager.
+            break; // Quit pager.
         } else if (c == '\033') { // Arrow keys.
             if (getchar() == '[') {
                 int code = getchar();
@@ -221,14 +227,14 @@ void pager(const char **lines, size_t line_count) {
 
 // execute_command_with_paging:
 // Wraps execute_command() to capture its output and, if needed,
-// display it through the pager. If the output fits on one screen, it is printed directly.
+// display it through the pager. If the output fits on one screen or if paging is disabled,
+// it is printed directly.
 void execute_command_with_paging(CommandStruct *cmd) {
     int pipefd[2];
     if (pipe(pipefd) == -1) {
         perror("pipe");
         return;
     }
-    
     int saved_stdout = dup(STDOUT_FILENO);
     if (saved_stdout == -1) {
         perror("dup");
@@ -236,7 +242,6 @@ void execute_command_with_paging(CommandStruct *cmd) {
         close(pipefd[1]);
         return;
     }
-    
     if (dup2(pipefd[1], STDOUT_FILENO) == -1) {
         perror("dup2");
         close(pipefd[0]);
@@ -244,16 +249,13 @@ void execute_command_with_paging(CommandStruct *cmd) {
         return;
     }
     close(pipefd[1]);
-
     // Execute the command.
     execute_command(cmd);
-    
     fflush(stdout);
     if (dup2(saved_stdout, STDOUT_FILENO) == -1) {
         perror("dup2 restore");
     }
     close(saved_stdout);
-    
     // Read the captured output.
     char buffer[4096];
     size_t total_size = 0;
@@ -281,13 +283,11 @@ void execute_command_with_paging(CommandStruct *cmd) {
         total_size += bytes;
     }
     close(pipefd[0]);
-    
     if (total_size == 0) {
         free(output);
         return;
     }
     output[total_size] = '\0';
-
     // Split the captured output into lines.
     size_t line_count = 0;
     for (size_t i = 0; i < total_size; i++) {
@@ -307,7 +307,6 @@ void execute_command_with_paging(CommandStruct *cmd) {
         lines[current_line++] = token;
         token = strtok_r(NULL, "\n", &saveptr);
     }
-    
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
         ws.ws_row = 24;
@@ -315,15 +314,14 @@ void execute_command_with_paging(CommandStruct *cmd) {
     int page_height = ws.ws_row - 1;
     if (page_height < 1)
         page_height = 10;
-    
-    if ((int)current_line <= page_height) {
+    // If paging is disabled or the output fits in one page, print directly.
+    if (!paging_enabled || (int)current_line <= page_height) {
         for (size_t i = 0; i < current_line; i++) {
             printf("%s\n", lines[i]);
         }
     } else {
         pager((const char **)lines, current_line);
     }
-    
     free(lines);
     free(output);
 }
@@ -340,12 +338,10 @@ int main(void) {
             break;
         }
         input[strcspn(input, "\n")] = '\0';
-
         if (strcmp(input, "exit") == 0) {
             free(input);
             break;
         }
-
         if (strncmp(input, "cd", 2) == 0) {
             parse_input(input, &cmd);
             if (cmd.param_count > 0) {
@@ -358,7 +354,6 @@ int main(void) {
             free_command_struct(&cmd);
             continue;
         }
-
         parse_input(input, &cmd);
         execute_command_with_paging(&cmd);
         free(input);

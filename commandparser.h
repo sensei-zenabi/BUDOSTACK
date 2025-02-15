@@ -1,40 +1,29 @@
 #ifndef COMMANDPARSER_H
 #define COMMANDPARSER_H
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
+#define INPUT_SIZE 256
+#define MAX_PARAMETERS 10
+#define MAX_OPTIONS 10
 
-#define INPUT_SIZE 1024
-#define MAX_PARAMETERS 10   // For tokens that are not options
-#define MAX_OPTIONS 10      // For tokens starting with '-'
-#define MAX_COMMAND_LENGTH 100
+/* 
+ * Absolute path to the commands directory.
+ * Override this at build time if needed:
+ *   gcc -std=c11 -Wall -DCOMMANDS_DIR="\"/your/absolute/path/to/commands\"" ...
+ */
+#ifndef COMMANDS_DIR
+#define COMMANDS_DIR "/home/suoravi/git/C/commands"
+#endif
 
 typedef struct {
-    char command[MAX_COMMAND_LENGTH];
+    char command[INPUT_SIZE];
     char *parameters[MAX_PARAMETERS];
     char *options[MAX_OPTIONS];
     int param_count;
     int opt_count;
 } CommandStruct;
 
-/* 
- * Parses the input line into a CommandStruct.
- * Tokens starting with '-' are treated as options.
- */
 void parse_input(const char *input, CommandStruct *cmd);
-
-/*
- * Executes the command by searching for an executable in the "./commands" directory.
- */
 void execute_command(const CommandStruct *cmd);
-
-/*
- * Frees all dynamically allocated memory in CommandStruct.
- */
 void free_command_struct(CommandStruct *cmd);
 
-#endif // COMMANDPARSER_H
+#endif

@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,7 @@ static const char *commands[] = {
     "move", "remove", "update", "makedir", "rmdir",
     "exit", "cd"
 };
+
 static const int num_commands = sizeof(commands) / sizeof(commands[0]);
 
 /* Helper function prototypes */
@@ -42,7 +44,7 @@ char* read_input(void) {
         if (c == '\n') {
             putchar('\n');
             break;
-        } else if (c == '\t') {  // TAB pressed: trigger autocomplete
+        } else if (c == '\t') { // TAB pressed: trigger autocomplete
             /* Find the beginning of the current token */
             size_t token_start = pos;
             while (token_start > 0 && buffer[token_start - 1] != ' ')
@@ -51,9 +53,8 @@ char* read_input(void) {
             size_t token_len = pos - token_start;
             strncpy(token, buffer + token_start, token_len);
             token[token_len] = '\0';
-
             if (token_len == 0)
-                continue;  // nothing to complete
+                continue; // nothing to complete
 
             /* If this is the first token, complete a command;
                otherwise, complete a filename */
@@ -62,12 +63,25 @@ char* read_input(void) {
                 int count = autocomplete_command(token, completion, sizeof(completion));
                 if (count == 1) {
                     size_t comp_len = strlen(completion);
-                    if (comp_len > token_len) {
-                        strcpy(buffer + pos, completion + token_len);
-                        pos += comp_len - token_len;
-                        printf("%s", completion + token_len);
-                        fflush(stdout);
+                    size_t num_backspaces = pos - token_start;
+                    // Erase current token from display
+                    for (size_t i = 0; i < num_backspaces; i++) {
+                        printf("\b");
                     }
+                    // Print full completion
+                    printf("%s", completion);
+                    // If new token is shorter than old, clear leftovers
+                    if (comp_len < num_backspaces) {
+                        for (size_t i = 0; i < (num_backspaces - comp_len); i++) {
+                            printf(" ");
+                        }
+                        for (size_t i = 0; i < (num_backspaces - comp_len); i++) {
+                            printf("\b");
+                        }
+                    }
+                    fflush(stdout);
+                    memmove(buffer + token_start, completion, comp_len + 1);
+                    pos = token_start + comp_len;
                 } else if (count > 1) {
                     printf("\n");
                     list_command_matches(token);
@@ -79,12 +93,22 @@ char* read_input(void) {
                 int count = autocomplete_filename(token, completion, sizeof(completion));
                 if (count == 1) {
                     size_t comp_len = strlen(completion);
-                    if (comp_len > token_len) {
-                        strcpy(buffer + pos, completion + token_len);
-                        pos += comp_len - token_len;
-                        printf("%s", completion + token_len);
-                        fflush(stdout);
+                    size_t num_backspaces = pos - token_start;
+                    for (size_t i = 0; i < num_backspaces; i++) {
+                        printf("\b");
                     }
+                    printf("%s", completion);
+                    if (comp_len < num_backspaces) {
+                        for (size_t i = 0; i < (num_backspaces - comp_len); i++) {
+                            printf(" ");
+                        }
+                        for (size_t i = 0; i < (num_backspaces - comp_len); i++) {
+                            printf("\b");
+                        }
+                    }
+                    fflush(stdout);
+                    memmove(buffer + token_start, completion, comp_len + 1);
+                    pos = token_start + comp_len;
                 } else if (count > 1) {
                     printf("\n");
                     /* Split token into directory and prefix */
@@ -105,7 +129,7 @@ char* read_input(void) {
                     fflush(stdout);
                 }
             }
-        } else if (c == 127 || c == 8) {  // handle backspace
+        } else if (c == 127 || c == 8) { // handle backspace
             if (pos > 0) {
                 pos--;
                 printf("\b \b");
@@ -122,7 +146,7 @@ char* read_input(void) {
     buffer[pos] = '\0';
     /* Restore terminal settings */
     tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-    return strdup(buffer);  // caller is responsible for freeing
+    return strdup(buffer); // caller is responsible for freeing
 }
 
 static int autocomplete_command(const char *token, char *completion, size_t completion_size) {
@@ -144,7 +168,7 @@ static int autocomplete_command(const char *token, char *completion, size_t comp
 static void list_command_matches(const char *token) {
     for (int i = 0; i < num_commands; i++) {
         if (strncmp(commands[i], token, strlen(token)) == 0)
-            printf("%s    ", commands[i]);
+            printf("%s ", commands[i]);
     }
     printf("\n");
 }
@@ -192,7 +216,7 @@ static void list_filename_matches(const char *dir, const char *prefix) {
     struct dirent *entry;
     while ((entry = readdir(d)) != NULL) {
         if (strncmp(entry->d_name, prefix, strlen(prefix)) == 0)
-            printf("%s    ", entry->d_name);
+            printf("%s ", entry->d_name);
     }
     closedir(d);
     printf("\n");

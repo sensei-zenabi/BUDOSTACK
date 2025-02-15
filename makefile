@@ -10,9 +10,11 @@ TARGET = terminal
 all: $(TARGET)
 
 $(TARGET): $(OBJECTS)
+	@echo "Linking $(TARGET)..."
 	$(CC) $(LDFLAGS) -o $(TARGET) $(OBJECTS)
 
 %.o: %.c
+	@echo "Compiling $<..."
 	$(CC) $(CFLAGS) -c $< -o $@
 
 clean:

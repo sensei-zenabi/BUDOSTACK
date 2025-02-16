@@ -32,6 +32,7 @@
 #include <limits.h>
 #include <unistd.h>
 #include <termios.h>    // For terminal control (raw mode)
+#include <time.h>		// For time delay function
 #include <sys/ioctl.h>  // For querying terminal window size
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -43,6 +44,28 @@
  * 1: paging enabled (default)
  * 0: paging disabled */
 int paging_enabled = 1;
+
+// delay function using busy-wait based on clock()
+void delay(double seconds) {
+    // Capture the starting clock time
+    clock_t start_time = clock();
+    // Loop until the elapsed time in seconds is at least the desired delay
+    while ((double)(clock() - start_time) / CLOCKS_PER_SEC < seconds) {
+        // Busy waiting: doing nothing while waiting for the time to pass.
+    }
+}
+
+// delayPrint() prints the provided string one character at a time,
+// waiting for delayTime seconds between each character.
+void delayPrint(const char *str, double delayTime) {
+    // Iterate through each character of the string until the null terminator.
+    for (int i = 0; str[i] != '\0'; i++) {
+        putchar(str[i]);         // Print the current character.
+        fflush(stdout);          // Flush the output buffer to display the character immediately.
+        delay(delayTime);        // Wait for delayTime seconds before printing the next character.
+    }
+    //putchar('\n');  // Optionally, print a newline at the end.
+}
 
 /* This function can be called by any command (in the commands folder)
  * to disable paging in the terminal output. */
@@ -329,7 +352,27 @@ void execute_command_with_paging(CommandStruct *cmd) {
 int main(void) {
     char *input;
     CommandStruct cmd;
-    printf("Welcome to the Linux-like Terminal!\nType 'exit' to quit.\n");
+    system("clear");
+    printf("Starting kernel");
+    delayPrint("...", 0.3);
+    printf("\nKernel started!");
+	printf("\n\nSTARTING SYSTEM:");
+    printf("\n\n  Calibrating Zero‑Point Data Modules");
+    delayPrint("..........", 0.3);
+    printf("\n  Synchronizing Temporal Data Vectors");
+    delayPrint("..", 0.3);
+	printf("\n  Finalizing inter-module diagnostics");
+    delayPrint(".....", 0.3);
+	printf("\n  Creating hyper-threading");
+    delayPrint("...", 0.3);
+	printf("\n  Performing system integrity checks");
+    delayPrint("...........", 0.3);
+	printf("\n  Cleaning");
+    delayPrint("....", 0.3);
+
+    printf("\n\nSYSTEM READY");
+	printf("\nType 'help' for instructions.");
+    printf("\nType 'exit' to quit.\n\n");
     while (1) {
         display_prompt();
         input = read_input();

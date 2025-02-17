@@ -16,6 +16,10 @@
  * Usage:
  *   ./runtask taskfile [-d]
  *
+ * Help:
+ *   To display this help, type:
+ *       ./runtask -help
+ *
  * Example TASK script:
  *   10 PRINT "THIS IS MY TASK:"
  *   20 PRINT "HELLO WORLD"
@@ -34,9 +38,7 @@
 #include <time.h>
 #include <signal.h>
 #include <threads.h>   // For thrd_sleep
-
-// Added for fork, exec, and waitpid:
-#include <unistd.h>
+#include <unistd.h>    // For fork, execv, and sleep functions
 #include <sys/wait.h>
 #include <errno.h>
 
@@ -47,6 +49,69 @@ volatile sig_atomic_t stop = 0;
 void sigint_handler(int signum) {
     (void)signum;  // Unused parameter
     stop = 1;
+}
+
+// ---------------------------
+// Function: print_help
+// ---------------------------
+// Displays an extensive help message when "runtask -help" is invoked.
+// Design comments: This function centralizes help text into a single location,
+// making it easier to update or translate in the future.
+void print_help(void) {
+    printf("\nRuntask Help\n");
+    printf("============\n\n");
+    printf("Runtask is a simplified script engine that processes a task script\n");
+    printf("composed of numbered lines, each containing a single command. The supported\n");
+    printf("commands are PRINT, WAIT, GOTO, and RUN. The engine is designed with minimalism\n");
+    printf("and portability in mind, using standard C11 and only standard libraries.\n\n");
+    
+    printf("Usage:\n");
+    printf("  ./runtask taskfile [-d]\n\n");
+    printf("  taskfile  : A file containing the task script with numbered lines.\n");
+    printf("  -d        : (Optional) Enables debug mode, providing detailed error messages.\n\n");
+    
+    printf("Supported Commands:\n");
+    printf("  PRINT \"message\"\n");
+    printf("      Prints the specified message to the console. The message must be enclosed\n");
+    printf("      in double quotes.\n\n");
+    
+    printf("  WAIT milliseconds\n");
+    printf("      Pauses execution for the specified number of milliseconds. For example, WAIT 1000\n");
+    printf("      pauses the script for 1000 ms (1 second).\n\n");
+    
+    printf("  GOTO line_number\n");
+    printf("      Jumps to the script line with the given line number. This is used to create loops\n");
+    printf("      or jump to specific sections of the script.\n\n");
+    
+    printf("  RUN executable\n");
+    printf("      Executes an external program located in the 'apps/' directory. The executable\n");
+    printf("      name is appended to 'apps/' to form the full path. For instance, RUN example\n");
+    printf("      will attempt to run 'apps/example'.\n\n");
+    
+    printf("Example TASK Script:\n");
+    printf("--------------------\n");
+    printf("  10 PRINT \"THIS IS MY TASK:\"\n");
+    printf("  20 PRINT \"HELLO WORLD\"\n");
+    printf("  30 WAIT 1000\n");
+    printf("  40 PRINT \"I WAITED 1000ms\"\n");
+    printf("  50 WAIT 2000\n");
+    printf("  60 PRINT \"I WAITED 2000ms\"\n");
+    printf("  70 RUN example\n");
+    printf("  80 GOTO 10\n\n");
+    
+    printf("Additional Details:\n");
+    printf("  - The script is read completely into memory, and the lines are sorted by their\n");
+    printf("    line numbers before execution.\n");
+    printf("  - A program counter (pc) is used to step through the sorted commands, simulating\n");
+    printf("    jumps with the GOTO command.\n");
+    printf("  - Debug mode (-d) will output diagnostic messages to stderr, including errors such as\n");
+    printf("    missing quotes in PRINT commands or invalid command formats.\n");
+    printf("  - The engine gracefully handles interruptions (CTRL+C) during execution.\n\n");
+    
+    printf("Compilation:\n");
+    printf("  gcc -std=c11 -o runtask runtask.c\n\n");
+    
+    printf("For more information or to report issues, please refer to the source comments in runtask.c.\n\n");
 }
 
 // ---------------------------
@@ -68,8 +133,7 @@ char *trim(char *str) {
 // ---------------------------
 // Helper: Delay Function
 // ---------------------------
-// Instead of a single blocking call, we sleep in small increments (max 50ms)
-// to periodically check if a SIGINT (CTRL+C) was received.
+// Sleeps in small increments to periodically check for CTRL+C (SIGINT).
 void delay_ms(int ms) {
     int elapsed = 0;
     while (elapsed < ms && !stop) {
@@ -87,7 +151,7 @@ void delay_ms(int ms) {
 // ---------------------------
 typedef struct {
     int number;           // The line number (e.g., 10, 20, ...)
-    char text[256];       // The command part of the line (e.g., PRINT "HELLO WORLD")
+    char text[256];       // The command (e.g., PRINT "HELLO WORLD")
 } ScriptLine;
 
 // Comparison function for qsort based on line numbers.
@@ -98,11 +162,17 @@ int cmpScriptLine(const void *a, const void *b) {
 }
 
 // ---------------------------
-// Main Function: Task Runner with PRINT, WAIT, GOTO, and RUN Commands
+// Main Function: Task Runner
 // ---------------------------
 int main(int argc, char *argv[]) {
     // Install the signal handler for SIGINT (CTRL+C)
     signal(SIGINT, sigint_handler);
+
+    // Check if the help option is requested.
+    if (argc >= 2 && strcmp(argv[1], "-help") == 0) {
+        print_help();
+        return 0;
+    }
 
     if (argc < 2) {
         fprintf(stderr, "Usage: %s taskfile [-d]\n", argv[0]);
@@ -137,7 +207,6 @@ int main(int argc, char *argv[]) {
             // Skip empty lines.
             continue;
         }
-        // Each line should start with a line number.
         int lineNumber = 0;
         int offset = 0;
         if (sscanf(line, "%d%n", &lineNumber, &offset) != 1) {
@@ -146,7 +215,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
         scriptLines[count].number = lineNumber;
-        // The rest of the line is the command part.
         char *commandPart = trim(line + offset);
         strncpy(scriptLines[count].text, commandPart, sizeof(scriptLines[count].text) - 1);
         scriptLines[count].text[sizeof(scriptLines[count].text) - 1] = '\0';
@@ -165,9 +233,8 @@ int main(int argc, char *argv[]) {
         if (debug)
             fprintf(stderr, "Executing line %d: %s\n", scriptLines[pc].number, scriptLines[pc].text);
 
-        // Check for PRINT command.
+        // PRINT command
         if (strncmp(scriptLines[pc].text, "PRINT", 5) == 0) {
-            // Locate the first double quote.
             char *start = strchr(scriptLines[pc].text, '\"');
             if (!start) {
                 if (debug)
@@ -176,7 +243,6 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             start++; // Move past the opening quote.
-            // Locate the closing double quote.
             char *end = strchr(start, '\"');
             if (!end) {
                 if (debug)
@@ -195,7 +261,7 @@ int main(int argc, char *argv[]) {
             message[len] = '\0';
             printf("%s\n", message);
         }
-        // Check for WAIT command.
+        // WAIT command
         else if (strncmp(scriptLines[pc].text, "WAIT", 4) == 0) {
             int ms;
             if (sscanf(scriptLines[pc].text, "WAIT %d", &ms) == 1) {
@@ -206,11 +272,10 @@ int main(int argc, char *argv[]) {
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
-        // Check for GOTO command.
+        // GOTO command
         else if (strncmp(scriptLines[pc].text, "GOTO", 4) == 0) {
             int target;
             if (sscanf(scriptLines[pc].text, "GOTO %d", &target) == 1) {
-                // Search for the target line number.
                 int found = -1;
                 for (int i = 0; i < count; i++) {
                     if (scriptLines[i].number == target) {
@@ -223,9 +288,8 @@ int main(int argc, char *argv[]) {
                         fprintf(stderr, "Error: GOTO target %d not found from line %d.\n",
                                 target, scriptLines[pc].number);
                 } else {
-                    // Jump to the target line.
                     pc = found;
-                    continue; // Skip the normal pc increment.
+                    continue;
                 }
             } else {
                 if (debug)
@@ -233,31 +297,25 @@ int main(int argc, char *argv[]) {
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
-        // Check for RUN command.
+        // RUN command
         else if (strncmp(scriptLines[pc].text, "RUN", 3) == 0) {
             char executable[256];
             if (sscanf(scriptLines[pc].text, "RUN %s", executable) == 1) {
                 char path[512];
-                // Prepend the "apps/" folder to the executable name.
                 snprintf(path, sizeof(path), "apps/%s", executable);
                 if (debug)
                     fprintf(stderr, "Running executable: %s\n", path);
-
-                // Use fork/exec instead of system()
                 pid_t pid = fork();
                 if (pid < 0) {
                     if (debug)
                         fprintf(stderr, "Error: fork() failed for %s\n", path);
                 } else if (pid == 0) {
-                    // Child process: replace with new executable
                     char *argv[] = { path, NULL };
                     execv(path, argv);
-                    // If execv returns, an error occurred
                     if (debug)
                         fprintf(stderr, "Error: execv() failed for %s\n", path);
                     exit(EXIT_FAILURE);
                 } else {
-                    // Parent process: wait for child to finish
                     int status;
                     while (waitpid(pid, &status, 0) < 0) {
                         if (errno != EINTR) {
@@ -273,7 +331,7 @@ int main(int argc, char *argv[]) {
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
-        // Unrecognized command.
+        // Unrecognized command
         else {
             if (debug)
                 fprintf(stderr, "Diagnostic: Unrecognized command at line %d: %s\n",
@@ -281,13 +339,11 @@ int main(int argc, char *argv[]) {
         }
         pc++;
 
-        // Check for CTRL+C interruption after each command.
         if (stop) {
             if (debug)
                 fprintf(stderr, "Execution interrupted by user (CTRL+C).\n");
             break;
         }
     }
-
     return 0;
 }

@@ -35,6 +35,11 @@
 #include <signal.h>
 #include <threads.h>   // For thrd_sleep
 
+// Added for fork, exec, and waitpid:
+#include <unistd.h>
+#include <sys/wait.h>
+#include <errno.h>
+
 // Global flag to signal termination (set by SIGINT handler)
 volatile sig_atomic_t stop = 0;
 
@@ -237,9 +242,31 @@ int main(int argc, char *argv[]) {
                 snprintf(path, sizeof(path), "apps/%s", executable);
                 if (debug)
                     fprintf(stderr, "Running executable: %s\n", path);
-                int ret = system(path);
-                if (ret == -1 && debug)
-                    fprintf(stderr, "Error: Could not run executable %s\n", path);
+
+                // Use fork/exec instead of system()
+                pid_t pid = fork();
+                if (pid < 0) {
+                    if (debug)
+                        fprintf(stderr, "Error: fork() failed for %s\n", path);
+                } else if (pid == 0) {
+                    // Child process: replace with new executable
+                    char *argv[] = { path, NULL };
+                    execv(path, argv);
+                    // If execv returns, an error occurred
+                    if (debug)
+                        fprintf(stderr, "Error: execv() failed for %s\n", path);
+                    exit(EXIT_FAILURE);
+                } else {
+                    // Parent process: wait for child to finish
+                    int status;
+                    while (waitpid(pid, &status, 0) < 0) {
+                        if (errno != EINTR) {
+                            if (debug)
+                                fprintf(stderr, "Error: waitpid() failed for %s\n", path);
+                            break;
+                        }
+                    }
+                }
             } else {
                 if (debug)
                     fprintf(stderr, "Error: Invalid RUN command format at line %d: %s\n",

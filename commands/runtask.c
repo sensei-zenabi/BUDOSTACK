@@ -1,8 +1,8 @@
 /*
- * runtask.c - A simplified script engine with PRINT, WAIT, and GOTO commands.
+ * runtask.c - A simplified script engine with PRINT, WAIT, GOTO, and RUN commands.
  *
  * Design Principles:
- *   - Minimalism: Only the PRINT, WAIT, and GOTO commands are supported.
+ *   - Minimalism: Only the PRINT, WAIT, GOTO, and now RUN commands are supported.
  *   - Script Organization: The engine reads the entire script (with numbered lines)
  *                          into memory, sorts them by line number, and uses a program
  *                          counter to simulate jumps (GOTO).
@@ -23,7 +23,8 @@
  *   40 PRINT "I WAITED 1000ms"
  *   50 WAIT 2000
  *   60 PRINT "I WAITED 2000ms"
- *   70 GOTO 10
+ *   70 RUN example
+ *   80 GOTO 10
  */
 
 #include <stdio.h>
@@ -75,7 +76,7 @@ int cmpScriptLine(const void *a, const void *b) {
 }
 
 // ---------------------------
-// Main Function: Task Runner with PRINT, WAIT, and GOTO Commands
+// Main Function: Task Runner with PRINT, WAIT, GOTO, and RUN Commands
 // ---------------------------
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -203,6 +204,23 @@ int main(int argc, char *argv[]) {
             } else {
                 if (debug)
                     fprintf(stderr, "Error: Invalid GOTO command format at line %d: %s\n", scriptLines[pc].number, scriptLines[pc].text);
+            }
+        }
+        // Check for RUN command.
+        else if (strncmp(scriptLines[pc].text, "RUN", 3) == 0) {
+            char executable[256];
+            if (sscanf(scriptLines[pc].text, "RUN %s", executable) == 1) {
+                char path[512];
+                // Prepend the "apps/" folder to the executable name.
+                snprintf(path, sizeof(path), "apps/%s", executable);
+                if (debug)
+                    fprintf(stderr, "Running executable: %s\n", path);
+                int ret = system(path);
+                if (ret == -1 && debug)
+                    fprintf(stderr, "Error: Could not run executable %s\n", path);
+            } else {
+                if (debug)
+                    fprintf(stderr, "Error: Invalid RUN command format at line %d: %s\n", scriptLines[pc].number, scriptLines[pc].text);
             }
         }
         // Unrecognized command.

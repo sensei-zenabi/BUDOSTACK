@@ -2,7 +2,7 @@
  * runtask.c - A simplified script engine with PRINT, WAIT, GOTO, and RUN commands.
  *
  * Design Principles:
- *   - Minimalism: Only the PRINT, WAIT, GOTO, and now RUN commands are supported.
+ *   - Minimalism: Only the PRINT, WAIT, GOTO, and RUN commands are supported.
  *   - Script Organization: The engine reads the entire script (with numbered lines)
  *                          into memory, sorts them by line number, and uses a program
  *                          counter to simulate jumps (GOTO).
@@ -32,6 +32,17 @@
 #include <string.h>
 #include <ctype.h>
 #include <time.h>
+#include <signal.h>
+#include <threads.h>   // For thrd_sleep
+
+// Global flag to signal termination (set by SIGINT handler)
+volatile sig_atomic_t stop = 0;
+
+// Signal handler for CTRL+C (SIGINT)
+void sigint_handler(int signum) {
+    (void)signum;  // Unused parameter
+    stop = 1;
+}
 
 // ---------------------------
 // Helper: Trim Function
@@ -52,12 +63,18 @@ char *trim(char *str) {
 // ---------------------------
 // Helper: Delay Function
 // ---------------------------
-// Busy-waits for the specified number of milliseconds.
+// Instead of a single blocking call, we sleep in small increments (max 50ms)
+// to periodically check if a SIGINT (CTRL+C) was received.
 void delay_ms(int ms) {
-    double seconds = ms / 1000.0;
-    clock_t start = clock();
-    while ((double)(clock() - start) / CLOCKS_PER_SEC < seconds)
-        ; // Busy waiting
+    int elapsed = 0;
+    while (elapsed < ms && !stop) {
+        int sleep_time = (ms - elapsed > 50) ? 50 : (ms - elapsed);
+        struct timespec ts;
+        ts.tv_sec = sleep_time / 1000;
+        ts.tv_nsec = (sleep_time % 1000) * 1000000L;
+        thrd_sleep(&ts, NULL);
+        elapsed += sleep_time;
+    }
 }
 
 // ---------------------------
@@ -79,6 +96,9 @@ int cmpScriptLine(const void *a, const void *b) {
 // Main Function: Task Runner with PRINT, WAIT, GOTO, and RUN Commands
 // ---------------------------
 int main(int argc, char *argv[]) {
+    // Install the signal handler for SIGINT (CTRL+C)
+    signal(SIGINT, sigint_handler);
+
     if (argc < 2) {
         fprintf(stderr, "Usage: %s taskfile [-d]\n", argv[0]);
         return 1;
@@ -136,7 +156,7 @@ int main(int argc, char *argv[]) {
     // Execute the Script
     // ---------------------------
     int pc = 0; // Program counter: index into scriptLines[]
-    while (pc < count) {
+    while (pc < count && !stop) {
         if (debug)
             fprintf(stderr, "Executing line %d: %s\n", scriptLines[pc].number, scriptLines[pc].text);
 
@@ -177,7 +197,8 @@ int main(int argc, char *argv[]) {
                 delay_ms(ms);
             } else {
                 if (debug)
-                    fprintf(stderr, "Error: Invalid WAIT command format at line %d: %s\n", scriptLines[pc].number, scriptLines[pc].text);
+                    fprintf(stderr, "Error: Invalid WAIT command format at line %d: %s\n",
+                            scriptLines[pc].number, scriptLines[pc].text);
             }
         }
         // Check for GOTO command.
@@ -194,8 +215,8 @@ int main(int argc, char *argv[]) {
                 }
                 if (found == -1) {
                     if (debug)
-                        fprintf(stderr, "Error: GOTO target %d not found from line %d.\n", target, scriptLines[pc].number);
-                    // Continue to next command if target not found.
+                        fprintf(stderr, "Error: GOTO target %d not found from line %d.\n",
+                                target, scriptLines[pc].number);
                 } else {
                     // Jump to the target line.
                     pc = found;
@@ -203,7 +224,8 @@ int main(int argc, char *argv[]) {
                 }
             } else {
                 if (debug)
-                    fprintf(stderr, "Error: Invalid GOTO command format at line %d: %s\n", scriptLines[pc].number, scriptLines[pc].text);
+                    fprintf(stderr, "Error: Invalid GOTO command format at line %d: %s\n",
+                            scriptLines[pc].number, scriptLines[pc].text);
             }
         }
         // Check for RUN command.
@@ -220,15 +242,24 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "Error: Could not run executable %s\n", path);
             } else {
                 if (debug)
-                    fprintf(stderr, "Error: Invalid RUN command format at line %d: %s\n", scriptLines[pc].number, scriptLines[pc].text);
+                    fprintf(stderr, "Error: Invalid RUN command format at line %d: %s\n",
+                            scriptLines[pc].number, scriptLines[pc].text);
             }
         }
         // Unrecognized command.
         else {
             if (debug)
-                fprintf(stderr, "Diagnostic: Unrecognized command at line %d: %s\n", scriptLines[pc].number, scriptLines[pc].text);
+                fprintf(stderr, "Diagnostic: Unrecognized command at line %d: %s\n",
+                        scriptLines[pc].number, scriptLines[pc].text);
         }
         pc++;
+
+        // Check for CTRL+C interruption after each command.
+        if (stop) {
+            if (debug)
+                fprintf(stderr, "Execution interrupted by user (CTRL+C).\n");
+            break;
+        }
     }
 
     return 0;

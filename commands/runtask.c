@@ -1,18 +1,18 @@
 /*
- * runtask.c - A simplified script engine with diagnostic messages.
+ * runtask.c - A simplified script engine with optional diagnostic messages.
  *
  * Design Principles:
  *   - Minimalism: Only the PRINT command is supported.
- *   - Diagnostics: Detailed error messages are printed to stderr to help
- *                  interpret issues during execution.
+ *   - Diagnostics: Detailed error messages are printed to stderr only when
+ *                  the debug flag (-d) is provided.
  *   - Portability: Uses standard C11 (-std=c11) and only standard libraries.
  *
  * Compilation:
  *   gcc -std=c11 -o runtask runtask.c
  *
  * Usage:
- *   ./runtask mytask.task
- *   (Where mytask.task contains lines like: PRINT "HELLO WORLD")
+ *   ./runtask taskfile [-d]
+ *   (Where taskfile contains lines like: PRINT "HELLO WORLD")
  */
 
 #include <stdio.h>
@@ -37,12 +37,21 @@ char *trim(char *str) {
 }
 
 // ---------------------------
-// Main Function: Task Runner with Diagnostics
+// Main Function: Task Runner with Optional Diagnostics
 // ---------------------------
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s taskfile\n", argv[0]);
+        fprintf(stderr, "Usage: %s taskfile [-d]\n", argv[0]);
         return 1;
+    }
+
+    int debug = 0;
+    // Check for the debug flag in additional arguments.
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-d") == 0) {
+            debug = 1;
+            break;
+        }
     }
 
     FILE *fp = fopen(argv[1], "r");
@@ -62,33 +71,36 @@ int main(int argc, char *argv[]) {
         }
         // Check if the line starts with "PRINT"
         if (strncmp(line, "PRINT", 5) == 0) {
-            // Diagnostic: log processing of PRINT command.
-            fprintf(stderr, "Processing PRINT command at line %d: %s\n", lineNumber, line);
+            if (debug)
+                fprintf(stderr, "Processing PRINT command at line %d: %s\n", lineNumber, line);
             // Locate the first double quote.
             char *start = strchr(line, '\"');
             if (!start) {
-                fprintf(stderr, "Error: Missing opening quote for PRINT command at line %d.\n", lineNumber);
+                if (debug)
+                    fprintf(stderr, "Error: Missing opening quote for PRINT command at line %d.\n", lineNumber);
                 continue;
             }
             start++; // Move past the opening quote.
             // Locate the closing double quote.
             char *end = strchr(start, '\"');
             if (!end) {
-                fprintf(stderr, "Error: Missing closing quote for PRINT command at line %d.\n", lineNumber);
+                if (debug)
+                    fprintf(stderr, "Error: Missing closing quote for PRINT command at line %d.\n", lineNumber);
                 continue;
             }
             size_t len = end - start;
             char message[256];
             if (len >= sizeof(message)) {
-                fprintf(stderr, "Warning: Message truncated at line %d.\n", lineNumber);
+                if (debug)
+                    fprintf(stderr, "Warning: Message truncated at line %d.\n", lineNumber);
                 len = sizeof(message) - 1;
             }
             strncpy(message, start, len);
             message[len] = '\0';
             printf("%s\n", message);
         } else {
-            // If the command is not recognized, output a diagnostic message.
-            fprintf(stderr, "Diagnostic: Unrecognized command at line %d: %s\n", lineNumber, line);
+            if (debug)
+                fprintf(stderr, "Diagnostic: Unrecognized command at line %d: %s\n", lineNumber, line);
         }
     }
 

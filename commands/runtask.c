@@ -1,8 +1,8 @@
 /*
- * runtask.c - A simplified script engine with optional diagnostic messages.
+ * runtask.c - A simplified script engine with PRINT and WAIT commands.
  *
  * Design Principles:
- *   - Minimalism: Only the PRINT command is supported.
+ *   - Minimalism: Only the PRINT and WAIT commands are supported.
  *   - Diagnostics: Detailed error messages are printed to stderr only when
  *                  the debug flag (-d) is provided.
  *   - Portability: Uses standard C11 (-std=c11) and only standard libraries.
@@ -12,13 +12,16 @@
  *
  * Usage:
  *   ./runtask taskfile [-d]
- *   (Where taskfile contains lines like: PRINT "HELLO WORLD")
+ *   (Where taskfile contains commands such as:
+ *      PRINT "HELLO WORLD"
+ *      WAIT 1000   --> Waits 1000ms)
  */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 
 // ---------------------------
 // Helper: Trim Function
@@ -27,7 +30,7 @@
 char *trim(char *str) {
     while (isspace((unsigned char)*str))
         str++;
-    if (*str == 0)
+    if (*str == '\0')
         return str;
     char *end = str + strlen(str) - 1;
     while (end > str && isspace((unsigned char)*end))
@@ -37,7 +40,18 @@ char *trim(char *str) {
 }
 
 // ---------------------------
-// Main Function: Task Runner with Optional Diagnostics
+// Helper: Delay Function
+// ---------------------------
+// Busy-waits for the specified number of milliseconds.
+void delay_ms(int ms) {
+    double seconds = ms / 1000.0;
+    clock_t start = clock();
+    while ((double)(clock() - start) / CLOCKS_PER_SEC < seconds)
+        ; // Busy waiting
+}
+
+// ---------------------------
+// Main Function: Task Runner with PRINT and WAIT Commands
 // ---------------------------
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -66,10 +80,11 @@ int main(int argc, char *argv[]) {
         lineNumber++;
         char *line = trim(buffer);
         if (line[0] == '\0') {
-            // Empty line, skip it.
+            // Empty line; skip it.
             continue;
         }
-        // Check if the line starts with "PRINT"
+        
+        // Process PRINT command.
         if (strncmp(line, "PRINT", 5) == 0) {
             if (debug)
                 fprintf(stderr, "Processing PRINT command at line %d: %s\n", lineNumber, line);
@@ -98,7 +113,21 @@ int main(int argc, char *argv[]) {
             strncpy(message, start, len);
             message[len] = '\0';
             printf("%s\n", message);
-        } else {
+        }
+        // Process WAIT command.
+        else if (strncmp(line, "WAIT", 4) == 0) {
+            if (debug)
+                fprintf(stderr, "Processing WAIT command at line %d: %s\n", lineNumber, line);
+            int ms;
+            if (sscanf(line, "WAIT %d", &ms) == 1) {
+                delay_ms(ms);
+            } else {
+                if (debug)
+                    fprintf(stderr, "Error: Invalid WAIT command format at line %d: %s\n", lineNumber, line);
+            }
+        }
+        // Unrecognized command.
+        else {
             if (debug)
                 fprintf(stderr, "Diagnostic: Unrecognized command at line %d: %s\n", lineNumber, line);
         }

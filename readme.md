@@ -1,5 +1,5 @@
-All around Linux Terminal
-==========================
+All around linux terminal automation engine.
+============================================
 
 Welcome to the All around Linux Terminal project – a simple Linux-like terminal emulator written in plain C (compiled with -std=c11). This project demonstrates modular design, real-time command execution with paging, and built-in support for features like TAB autocompletion.
 

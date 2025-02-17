@@ -349,29 +349,32 @@ void execute_command_with_paging(CommandStruct *cmd) {
     free(output);
 }
 
-int main(void) {
+int main(int argc, char *argv[]) {
     char *input;
     CommandStruct cmd;
     
     system("clear");
-    
-    // Startup messages.
-    printf("Starting kernel");
-    delayPrint("...", 0.3);
-    printf("\nKernel started!");
-    printf("\n\nSTARTING SYSTEM:");
-    printf("\n\n Calibrating Zero‑Point Data Modules");
-    delayPrint("..........", 0.3);
-    printf("\n Synchronizing Temporal Data Vectors");
-    delayPrint("..", 0.3);
-    printf("\n Finalizing inter-module diagnostics");
-    delayPrint(".....", 0.3);
-    printf("\n Creating hyper-threading");
-    delayPrint("...", 0.3);
-    printf("\n Performing system integrity checks");
-    delayPrint("...........", 0.3);
-    printf("\n Cleaning");
-    delayPrint("....", 0.3);
+
+	if (!(argc > 1 && strcmp(argv[1], "-f") == 0)) {    
+	    // Startup messages.
+	    printf("Starting kernel");
+	    delayPrint("...", 0.3);
+	    printf("\nKernel started!");
+	    printf("\n\nSTARTING SYSTEM:");
+	    printf("\n\n Calibrating Zero‑Point Data Modules");
+	    delayPrint("..........", 0.3);
+	    printf("\n Synchronizing Temporal Data Vectors");
+	    delayPrint("..", 0.3);
+	    printf("\n Finalizing inter-module diagnostics");
+	    delayPrint(".....", 0.3);
+	    printf("\n Creating hyper-threading");
+	    delayPrint("...", 0.3);
+	    printf("\n Performing system integrity checks");
+	    delayPrint("...........", 0.3);
+	    printf("\n Cleaning");
+	    delayPrint("....", 0.3);
+	}
+	
     printf("\n\nSYSTEM READY");
 
     if (0) {

@@ -46,7 +46,7 @@ int paging_enabled = 1;
 
 // List of commands that use realtime mode (no paging or buffering).
 const char *realtime_commands[] = {
-    "runtask", NULL
+    "help", "runtask", NULL
 };
 
 /* Helper function to check if a command is to be executed in realtime mode. */
@@ -241,7 +241,7 @@ void pager(const char **lines, size_t line_count) {
 void execute_command_with_paging(CommandStruct *cmd) {
     if (is_realtime_command(cmd->command)) {
         // Realtime mode: Print debug message and execute command directly.
-        printf("[DEBUG] Executing realtime command: %s\n", cmd->command);
+        printf("Paging disabled for: %s\n", cmd->command);
         fflush(stdout);
         execute_command(cmd);
         return;

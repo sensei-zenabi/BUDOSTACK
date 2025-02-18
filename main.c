@@ -12,6 +12,9 @@
  *   is displayed to the user.
  * - When a realtime command is executed, a debug message is printed and the command's
  *   output is displayed immediately.
+ * - **Modified:** If the application is started with a single argument (not "-f"),
+ *   it automatically simulates starting in "-f" mode and then executes the command
+ *   "runtask <argument>".
  *
  * Design Principles:
  * - **Modularity & Separation of Concerns:** Command parsing, execution, and paging are
@@ -34,9 +37,8 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
-
 #include "commandparser.h"
-#include "input.h" // Include the input handling header
+#include "input.h"      // Include the input handling header
 
 /* Global variable to control paging.
  * 1: paging enabled (default)
@@ -235,7 +237,7 @@ void pager(const char **lines, size_t line_count) {
 /*
  * Modified execute_command_with_paging():
  * - If the command is in the realtime list (as determined by is_realtime_command()),
- *   print a debug message and execute it directly.
+ *   print a debug message and execute command directly.
  * - Otherwise, capture its output and page it as needed.
  */
 void execute_command_with_paging(CommandStruct *cmd) {
@@ -246,7 +248,6 @@ void execute_command_with_paging(CommandStruct *cmd) {
         execute_command(cmd);
         return;
     }
-    
     int pipefd[2];
     if (pipe(pipefd) == -1) {
         perror("pipe");
@@ -266,16 +267,13 @@ void execute_command_with_paging(CommandStruct *cmd) {
         return;
     }
     close(pipefd[1]);
-    
     // Execute the command.
     execute_command(cmd);
     fflush(stdout);
-    
     if (dup2(saved_stdout, STDOUT_FILENO) == -1) {
         perror("dup2 restore");
     }
     close(saved_stdout);
-    
     // Read the captured output.
     char buffer[4096];
     size_t total_size = 0;
@@ -303,13 +301,11 @@ void execute_command_with_paging(CommandStruct *cmd) {
         total_size += bytes;
     }
     close(pipefd[0]);
-    
     if (total_size == 0) {
         free(output);
         return;
     }
     output[total_size] = '\0';
-    
     // Split the captured output into lines.
     size_t line_count = 0;
     for (size_t i = 0; i < total_size; i++) {
@@ -329,7 +325,6 @@ void execute_command_with_paging(CommandStruct *cmd) {
         lines[current_line++] = token;
         token = strtok_r(NULL, "\n", &saveptr);
     }
-    
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
         ws.ws_row = 24;
@@ -352,40 +347,63 @@ void execute_command_with_paging(CommandStruct *cmd) {
 int main(int argc, char *argv[]) {
     char *input;
     CommandStruct cmd;
-    
+    // Clear the screen
     system("clear");
 
-	if (!(argc > 1 && strcmp(argv[1], "-f") == 0)) {    
-	    // Startup messages.
-	    printf("Starting kernel");
-	    delayPrint("...", 0.3);
-	    printf("\nKernel started!");
-	    printf("\n\nSTARTING SYSTEM:");
-	    printf("\n\n Calibrating Zero‑Point Data Modules");
-	    delayPrint("..........", 0.3);
-	    printf("\n Synchronizing Temporal Data Vectors");
-	    delayPrint("..", 0.3);
-	    printf("\n Finalizing inter-module diagnostics");
-	    delayPrint(".....", 0.3);
-	    printf("\n Creating hyper-threading");
-	    delayPrint("...", 0.3);
-	    printf("\n Performing system integrity checks");
-	    delayPrint("...........", 0.3);
-	    printf("\n Cleaning");
-	    delayPrint("....", 0.3);
-	}
-	
-    printf("\n\nSYSTEM READY");
+    // Modified: Determine if we need to auto-run a command.
+    // If a single argument is provided and it is not "-f", build the auto-run command.
+    char *auto_command = NULL;
+    if (argc == 2 && strcmp(argv[1], "-f") != 0) {
+        size_t len = strlen("runtask ") + strlen(argv[1]) + 1;
+        auto_command = malloc(len);
+        if (auto_command == NULL) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
+        snprintf(auto_command, len, "runtask %s", argv[1]);
+    }
 
+    // Modified: Skip startup messages if in forced mode (-f) or auto_command mode.
+    if ((argc > 1 && strcmp(argv[1], "-f") == 0) || auto_command != NULL) {
+        // Do not print startup messages.
+    } else {
+        // Startup messages.
+        printf("Starting kernel");
+        delayPrint("...", 0.3);
+        printf("\nKernel started!");
+        printf("\n\nSTARTING SYSTEM:");
+        printf("\n\n Calibrating Zero‑Point Data Modules");
+        delayPrint("..........", 0.3);
+        printf("\n Synchronizing Temporal Data Vectors");
+        delayPrint("..", 0.3);
+        printf("\n Finalizing inter-module diagnostics");
+        delayPrint(".....", 0.3);
+        printf("\n Creating hyper-threading");
+        delayPrint("...", 0.3);
+        printf("\n Performing system integrity checks");
+        delayPrint("...........", 0.3);
+        printf("\n Cleaning");
+        delayPrint("....", 0.3);
+    }
+
+    printf("\n\nSYSTEM READY");
     if (0) {
-	    // Print the list of realtime commands.
-	    printf("\n\nRealtime Mode Commands (output will be displayed immediately):\n");
-	    for (int i = 0; realtime_commands[i] != NULL; i++) {
-	        printf("  %s\n", realtime_commands[i]);
-	    }
+        // Print the list of realtime commands.
+        printf("\n\nRealtime Mode Commands (output will be displayed immediately):\n");
+        for (int i = 0; realtime_commands[i] != NULL; i++) {
+            printf(" %s\n", realtime_commands[i]);
+        }
     }
     printf("\nType 'exit' to quit.\n\n");
-    
+
+    // Modified: If an auto_command was built, execute it once before entering the main loop.
+    if (auto_command != NULL) {
+        parse_input(auto_command, &cmd);
+        execute_command_with_paging(&cmd);
+        free_command_struct(&cmd);
+        free(auto_command);
+    }
+
     // Main loop.
     while (1) {
         display_prompt();
@@ -395,13 +413,10 @@ int main(int argc, char *argv[]) {
             break;
         }
         input[strcspn(input, "\n")] = '\0';
-        
-        // Check for built-in commands.
         if (strcmp(input, "exit") == 0) {
             free(input);
             break;
         }
-        // Handle "cd" command separately.
         if (strncmp(input, "cd", 2) == 0) {
             parse_input(input, &cmd);
             if (cmd.param_count > 0) {
@@ -414,8 +429,6 @@ int main(int argc, char *argv[]) {
             free_command_struct(&cmd);
             continue;
         }
-        
-        // Parse and execute the command.
         parse_input(input, &cmd);
         execute_command_with_paging(&cmd);
         free(input);

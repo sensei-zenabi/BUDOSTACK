@@ -1,35 +1,34 @@
 /*
- * runtask.c - A simplified script engine with PRINT, WAIT, GOTO, and RUN commands.
- *
- * Design Principles:
- * - Minimalism: Only the PRINT, WAIT, GOTO, and RUN commands are supported.
- * - Script Organization: The engine reads the entire script (with numbered lines)
- *   into memory, sorts them by line number, and uses a program
- *   counter to simulate jumps (GOTO).
- * - Diagnostics: Detailed error messages are printed to stderr only when the
- *   debug flag (-d) is provided.
- * - Portability: Uses standard C11 (-std=c11) and only standard libraries.
- *
- * Compilation:
- * gcc -std=c11 -o runtask runtask.c
- *
- * Usage:
- * ./runtask taskfile [-d]
- *
- * Help:
- * To display this help, type:
- * ./runtask -help
- *
- * Example TASK script:
- * 10 PRINT "THIS IS MY TASK:"
- * 20 PRINT "HELLO WORLD"
- * 30 WAIT 1000
- * 40 PRINT "I WAITED 1000ms"
- * 50 WAIT 2000
- * 60 PRINT "I WAITED 2000ms"
- * 70 RUN example
- * 80 GOTO 10
- */
+* runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, and CLEAR commands.
+*
+* Design Principles:
+* - Minimalism: Only the PRINT, WAIT, GOTO, RUN, and now CLEAR commands are supported.
+* - Script Organization: The engine reads the entire script (with numbered lines)
+*   into memory, sorts them by line number, and uses a program counter to simulate jumps (GOTO).
+* - Diagnostics: Detailed error messages are printed to stderr only when the debug flag (-d) is provided.
+* - Portability: Uses standard C11 (-std=c11) and only standard libraries.
+*
+* Compilation:
+* gcc -std=c11 -o runtask runtask.c
+*
+* Usage:
+* ./runtask taskfile [-d]
+*
+* Help:
+* To display this help, type:
+* ./runtask -help
+*
+* Example TASK script:
+* 10 PRINT "THIS IS MY TASK:"
+* 20 PRINT "HELLO WORLD"
+* 30 WAIT 1000
+* 40 PRINT "I WAITED 1000ms"
+* 50 WAIT 2000
+* 60 PRINT "I WAITED 2000ms"
+* 70 RUN example
+* 80 GOTO 10
+* 90 CLEAR         <-- New CLEAR command to clear the screen
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -60,7 +59,7 @@ void print_help(void) {
     printf("============\n\n");
     printf("Runtask is a simplified script engine that processes a task script\n");
     printf("composed of numbered lines, each containing a single command. The supported\n");
-    printf("commands are PRINT, WAIT, GOTO, and RUN. The engine is designed with minimalism\n");
+    printf("commands are PRINT, WAIT, GOTO, RUN, and CLEAR. The engine is designed with minimalism\n");
     printf("and portability in mind, using standard C11 and only standard libraries.\n\n");
     printf("Usage:\n");
     printf(" ./runtask taskfile [-d]\n\n");
@@ -68,18 +67,20 @@ void print_help(void) {
     printf(" -d : (Optional) Enables debug mode, providing detailed error messages.\n\n");
     printf("Supported Commands:\n");
     printf(" PRINT \"message\"\n");
-    printf("  Prints the specified message to the console. The message must be enclosed\n");
-    printf("  in double quotes.\n\n");
+    printf("   Prints the specified message to the console. The message must be enclosed\n");
+    printf("   in double quotes.\n\n");
     printf(" WAIT milliseconds\n");
-    printf("  Pauses execution for the specified number of milliseconds. For example, WAIT 1000\n");
-    printf("  pauses the script for 1000 ms (1 second).\n\n");
+    printf("   Pauses execution for the specified number of milliseconds. For example, WAIT 1000\n");
+    printf("   pauses the script for 1000 ms (1 second).\n\n");
     printf(" GOTO line_number\n");
-    printf("  Jumps to the script line with the given line number. This is used to create loops\n");
-    printf("  or jump to specific sections of the script.\n\n");
+    printf("   Jumps to the script line with the given line number. This is used to create loops\n");
+    printf("   or jump to specific sections of the script.\n\n");
     printf(" RUN executable\n");
-    printf("  Executes an external program located in the 'apps/' directory. The executable\n");
-    printf("  name is appended to 'apps/' to form the full path. For instance, RUN example\n");
-    printf("  will attempt to run 'apps/example'.\n\n");
+    printf("   Executes an external program located in the 'apps/' directory. The executable\n");
+    printf("   name is appended to 'apps/' to form the full path. For instance, RUN example\n");
+    printf("   will attempt to run 'apps/example'.\n\n");
+    printf(" CLEAR\n");
+    printf("   Clears the screen by printing ANSI escape sequences.\n\n");
     printf("Example TASK Script:\n");
     printf("--------------------\n");
     printf(" 10 PRINT \"THIS IS MY TASK:\"\n");
@@ -89,7 +90,8 @@ void print_help(void) {
     printf(" 50 WAIT 2000\n");
     printf(" 60 PRINT \"I WAITED 2000ms\"\n");
     printf(" 70 RUN example\n");
-    printf(" 80 GOTO 10\n\n");
+    printf(" 80 GOTO 10\n");
+    printf(" 90 CLEAR\n\n");
     printf("Additional Details:\n");
     printf(" - The script is read completely into memory, and the lines are sorted by their\n");
     printf("   line numbers before execution.\n");
@@ -162,12 +164,10 @@ int main(int argc, char *argv[]) {
         print_help();
         return 0;
     }
-
     if (argc < 2) {
         fprintf(stderr, "Usage: %s taskfile [-d]\n", argv[0]);
         return 1;
     }
-
     int debug = 0;
     // Check for the debug flag in additional arguments.
     for (int i = 2; i < argc; i++) {
@@ -182,7 +182,6 @@ int main(int argc, char *argv[]) {
     // ---------------------------
     char task_path[512];
     snprintf(task_path, sizeof(task_path), "tasks/%s", argv[1]);
-
     FILE *fp = fopen(task_path, "r");
     if (!fp) {
         fprintf(stderr, "Error: Could not open task file '%s'\n", task_path);
@@ -324,6 +323,13 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "Error: Invalid RUN command format at line %d: %s\n",
                             scriptLines[pc].number, scriptLines[pc].text);
             }
+        }
+        // CLEAR command: clears the terminal screen using ANSI escape sequences.
+        else if (strncmp(scriptLines[pc].text, "CLEAR", 5) == 0) {
+            // ANSI escape code: \033[H moves the cursor to the home position,
+            // \033[J clears from the cursor to the end of the screen.
+            printf("\033[H\033[J");
+            fflush(stdout);
         }
         // Unrecognized command
         else {

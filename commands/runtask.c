@@ -1,8 +1,8 @@
 /*
-* runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, and CLEAR commands.
+* runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, CLEAR, and now CMD commands.
 *
 * Design Principles:
-* - Minimalism: Only the PRINT, WAIT, GOTO, RUN, and now CLEAR commands are supported.
+* - Minimalism: Only the PRINT, WAIT, GOTO, RUN, CLEAR, and now CMD commands are supported.
 * - Script Organization: The engine reads the entire script (with numbered lines)
 *   into memory, sorts them by line number, and uses a program counter to simulate jumps (GOTO).
 * - Diagnostics: Detailed error messages are printed to stderr only when the debug flag (-d) is provided.
@@ -26,8 +26,9 @@
 * 50 WAIT 2000
 * 60 PRINT "I WAITED 2000ms"
 * 70 RUN example
-* 80 GOTO 10
-* 90 CLEAR         <-- New CLEAR command to clear the screen
+* 80 CMD help
+* 90 GOTO 10
+* 100 CLEAR  <-- New CLEAR command to clear the screen
 */
 
 #include <stdio.h>
@@ -59,7 +60,7 @@ void print_help(void) {
     printf("============\n\n");
     printf("Runtask is a simplified script engine that processes a task script\n");
     printf("composed of numbered lines, each containing a single command. The supported\n");
-    printf("commands are PRINT, WAIT, GOTO, RUN, and CLEAR. The engine is designed with minimalism\n");
+    printf("commands are PRINT, WAIT, GOTO, RUN, CLEAR, and CMD. The engine is designed with minimalism\n");
     printf("and portability in mind, using standard C11 and only standard libraries.\n\n");
     printf("Usage:\n");
     printf(" ./runtask taskfile [-d]\n\n");
@@ -67,24 +68,15 @@ void print_help(void) {
     printf(" -d : (Optional) Enables debug mode, providing detailed error messages.\n\n");
     printf("Supported Commands:\n");
     printf(" PRINT \"message\"\n");
-    printf("   Prints the specified message to the console. The message must be enclosed\n");
-    printf("   in double quotes.\n\n");
     printf(" WAIT milliseconds\n");
-    printf("   Pauses execution for the specified number of milliseconds. For example, WAIT 1000\n");
-    printf("   pauses the script for 1000 ms (1 second).\n\n");
     printf(" GOTO line_number\n");
-    printf("   Jumps to the script line with the given line number. This is used to create loops\n");
-    printf("   or jump to specific sections of the script.\n\n");
-    printf(" RUN executable\n");
-    printf("   Executes an external program located in the 'apps/' directory. The executable\n");
-    printf("   name is appended to 'apps/' to form the full path. For instance, RUN example\n");
-    printf("   will attempt to run 'apps/example'.\n\n");
-    printf(" CLEAR\n");
-    printf("   Clears the screen by printing ANSI escape sequences.\n\n");
+    printf(" RUN executable    (runs an executable from the 'apps/' directory)\n");
+    printf(" CMD executable    (runs an executable from the 'commands/' directory)\n");
+    printf(" CLEAR             (clears the screen)\n\n");
     printf("Example TASK Script:\n");
     printf("--------------------\n");
     printf(" 10 PRINT \"THIS IS MY TASK:\"\n");
-    printf(" 20 PRINT \"HELLO WORLD\"\n");
+    printf(" 20 CMD help\n");
     printf(" 30 WAIT 1000\n");
     printf(" 40 PRINT \"I WAITED 1000ms\"\n");
     printf(" 50 WAIT 2000\n");
@@ -141,8 +133,8 @@ void delay_ms(int ms) {
 // Data Structure for a Script Line
 // ---------------------------
 typedef struct {
-    int number;         // The line number (e.g., 10, 20, ...)
-    char text[256];     // The command (e.g., PRINT "HELLO WORLD")
+    int number;      // The line number (e.g., 10, 20, ...)
+    char text[256];  // The command (e.g., PRINT "HELLO WORLD")
 } ScriptLine;
 
 // Comparison function for qsort based on line numbers.
@@ -290,7 +282,7 @@ int main(int argc, char *argv[]) {
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
-        // RUN command
+        // RUN command: Executes an external program from the "apps/" directory.
         else if (strncmp(scriptLines[pc].text, "RUN", 3) == 0) {
             char executable[256];
             if (sscanf(scriptLines[pc].text, "RUN %s", executable) == 1) {
@@ -324,7 +316,41 @@ int main(int argc, char *argv[]) {
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
-        // CLEAR command: clears the terminal screen using ANSI escape sequences.
+        // CMD command: Executes an external program from the "commands/" directory.
+        else if (strncmp(scriptLines[pc].text, "CMD", 3) == 0) {
+            char executable[256];
+            if (sscanf(scriptLines[pc].text, "CMD %s", executable) == 1) {
+                char path[512];
+                snprintf(path, sizeof(path), "commands/%s", executable);
+                if (debug)
+                    fprintf(stderr, "Running command: %s\n", path);
+                pid_t pid = fork();
+                if (pid < 0) {
+                    if (debug)
+                        fprintf(stderr, "Error: fork() failed for %s\n", path);
+                } else if (pid == 0) {
+                    char *argv[] = { path, NULL };
+                    execv(path, argv);
+                    if (debug)
+                        fprintf(stderr, "Error: execv() failed for %s\n", path);
+                    exit(EXIT_FAILURE);
+                } else {
+                    int status;
+                    while (waitpid(pid, &status, 0) < 0) {
+                        if (errno != EINTR) {
+                            if (debug)
+                                fprintf(stderr, "Error: waitpid() failed for %s\n", path);
+                            break;
+                        }
+                    }
+                }
+            } else {
+                if (debug)
+                    fprintf(stderr, "Error: Invalid CMD command format at line %d: %s\n",
+                            scriptLines[pc].number, scriptLines[pc].text);
+            }
+        }
+        // CLEAR command: Clears the terminal screen using ANSI escape sequences.
         else if (strncmp(scriptLines[pc].text, "CLEAR", 5) == 0) {
             // ANSI escape code: \033[H moves the cursor to the home position,
             // \033[J clears from the cursor to the end of the screen.

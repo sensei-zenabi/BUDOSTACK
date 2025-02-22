@@ -15,6 +15,7 @@ int main() {
     printf("  rmdir   : Remove an empty directory.\n");
     printf("  runtask : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("            Type: runtask -help for more details.\n");
+	printf("  stats   : Displays basic hardware stats.\n");
     printf("  exit    : Exit the terminal.\n");
 	printf("\n");
     printf("  p.s.\n");

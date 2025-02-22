@@ -2,15 +2,14 @@
 #include <stdlib.h>
 #include <time.h>
 #include <sys/statvfs.h>
+#include <unistd.h>
 #include <dirent.h>
 #include <string.h>
 
-#define POWER_SUPPLY_PATH "/sys/class/power_supply"
-
-// Function to get battery charge if available.
-// Returns the battery capacity (0-100) if found; otherwise returns -1.
+// Function to get battery charge (if available)
+// Returns battery capacity (0–100) if found, or -1 if no battery is found.
 int get_battery_charge(void) {
-    DIR *dir = opendir(POWER_SUPPLY_PATH);
+    DIR *dir = opendir("/sys/class/power_supply");
     if (!dir) {
         return -1;
     }
@@ -22,31 +21,23 @@ int get_battery_charge(void) {
     int battery = -1;
 
     while ((entry = readdir(dir)) != NULL) {
-        // Skip . and ..
         if (entry->d_name[0] == '.')
             continue;
-
-        // Build the path to the "type" file
-        snprintf(type_path, sizeof(type_path), "%s/%s/type", POWER_SUPPLY_PATH, entry->d_name);
+        snprintf(type_path, sizeof(type_path), "/sys/class/power_supply/%s/type", entry->d_name);
         FILE *fp = fopen(type_path, "r");
         if (!fp)
             continue;
-
         if (fgets(type_str, sizeof(type_str), fp) != NULL) {
-            // Remove newline if present.
             type_str[strcspn(type_str, "\n")] = '\0';
-            // Check if type equals "Battery"
             if (strcmp(type_str, "Battery") == 0) {
                 fclose(fp);
-                // Build capacity file path
-                snprintf(capacity_path, sizeof(capacity_path), "%s/%s/capacity", POWER_SUPPLY_PATH, entry->d_name);
+                snprintf(capacity_path, sizeof(capacity_path), "/sys/class/power_supply/%s/capacity", entry->d_name);
                 fp = fopen(capacity_path, "r");
                 if (fp) {
-                    if (fscanf(fp, "%d", &battery) != 1) {
+                    if (fscanf(fp, "%d", &battery) != 1)
                         battery = -1;
-                    }
                     fclose(fp);
-                    break; // Use the first battery found.
+                    break; // Use the first battery found
                 }
             } else {
                 fclose(fp);
@@ -103,6 +94,55 @@ int main(void) {
     fclose(fp);
     double cpu_temp = temp_millideg / 1000.0;
     printf("CPU Temp: %.0f°C\n", cpu_temp);
+
+    // *** Average CPU Utilization ***
+    {
+        FILE *fp_stat;
+        unsigned long long user1, nice1, system1, idle1, iowait1, irq1, softirq1, steal1;
+        unsigned long long total1, idle_all1;
+        unsigned long long user2, nice2, system2, idle2, iowait2, irq2, softirq2, steal2;
+        unsigned long long total2, idle_all2;
+
+        fp_stat = fopen("/proc/stat", "r");
+        if (fp_stat) {
+            if (fscanf(fp_stat, "cpu  %llu %llu %llu %llu %llu %llu %llu %llu",
+                   &user1, &nice1, &system1, &idle1, &iowait1, &irq1, &softirq1, &steal1) != 8) {
+                fprintf(stderr, "Failed to parse /proc/stat\n");
+                fclose(fp_stat);
+                return EXIT_FAILURE;
+            }
+            fclose(fp_stat);
+            total1 = user1 + nice1 + system1 + idle1 + iowait1 + irq1 + softirq1 + steal1;
+            idle_all1 = idle1 + iowait1;
+
+            sleep(1); // wait 1 second for delta
+
+            fp_stat = fopen("/proc/stat", "r");
+            if (fp_stat) {
+                if (fscanf(fp_stat, "cpu  %llu %llu %llu %llu %llu %llu %llu %llu",
+                       &user2, &nice2, &system2, &idle2, &iowait2, &irq2, &softirq2, &steal2) != 8) {
+                    fprintf(stderr, "Failed to parse /proc/stat (second read)\n");
+                    fclose(fp_stat);
+                    return EXIT_FAILURE;
+                }
+                fclose(fp_stat);
+                total2 = user2 + nice2 + system2 + idle2 + iowait2 + irq2 + softirq2 + steal2;
+                idle_all2 = idle2 + iowait2;
+
+                unsigned long long delta_total = total2 - total1;
+                unsigned long long delta_idle = idle_all2 - idle_all1;
+                double cpu_usage = 0.0;
+                if (delta_total > 0) {
+                    cpu_usage = (double)(delta_total - delta_idle) * 100.0 / delta_total;
+                }
+                printf("CPU Average Utilization: %.1f%%\n", cpu_usage);
+            } else {
+                perror("fopen failed for /proc/stat (second read)");
+            }
+        } else {
+            perror("fopen failed for /proc/stat (first read)");
+        }
+    }
 
     // *** System Uptime ***
     fp = fopen("/proc/uptime", "r");

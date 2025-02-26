@@ -1,7 +1,7 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -pedantic -Wno-format-truncation
-LDFLAGS = -lasound
+LDFLAGS = -lasound -lm
 
 # Find all .c files recursively
 ALL_SOURCES = $(shell find . -type f -name '*.c')

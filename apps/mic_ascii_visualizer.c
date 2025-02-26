@@ -59,6 +59,7 @@ void enable_raw_mode(void) {
 
 /* --- Alternate Screen Cleanup --- */
 void cleanup_alternate_screen(void) {
+    // Restore normal screen buffer
     printf("\033[?1049l");
     fflush(stdout);
 }
@@ -156,11 +157,11 @@ int main(int argc, char *argv[]) {
     /* Reserve two rows:
        - Second-to-last row: statistics
        - Last row: menu/instructions
-       In FFT view, the last row of the graph area (i.e. row graph_height-1) is used for the x-axis.
+       In FFT view, the last row of the graph area (row graph_height-1) is used for the x-axis.
     */
     int graph_height = term_height - 2;
 
-    // Allocate graph buffer: one string per graph row
+    // Allocate graph buffer: one string per row in graph area
     char **graph_lines = malloc(graph_height * sizeof(char *));
     if (!graph_lines) {
         fprintf(stderr, "Error: cannot allocate graph buffer.\n");
@@ -202,13 +203,17 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Buffers for statistics and menu/instructions
+    // Buffers for statistics, menu/instructions, and x-axis labels (FFT view)
     char stats_line[term_width + 1];
     char menu_line[term_width + 1];
-    char xaxis_line[term_width + 1];  // For FFT x-axis labels
+    char xaxis_line[term_width + 1];
 
     // Set initial FFT window size (default: 1024)
-    unsigned int fft_window_size = 1024; 
+    unsigned int fft_window_size = 1024;
+
+    // To accumulate a full FFT window, maintain a sliding buffer.
+    int16_t *fft_data = NULL;
+    unsigned int current_fft_size = 0; // current allocated size
 
     // Enable alternate screen mode
     printf("\033[?1049h");
@@ -230,11 +235,23 @@ int main(int argc, char *argv[]) {
                 else if (ch == '2')
                     view_mode = 2;
                 else if (ch == '3' && view_mode == 2) {  // Increase FFT window size
-                    if (fft_window_size < 32768)
+                    if (fft_window_size < 32768) {
                         fft_window_size *= 2;
+                        free(fft_data);
+                        fft_data = malloc(fft_window_size * sizeof(int16_t));
+                        if (fft_data)
+                            memset(fft_data, 0, fft_window_size * sizeof(int16_t));
+                        current_fft_size = fft_window_size;
+                    }
                 } else if (ch == '4' && view_mode == 2) {  // Decrease FFT window size
-                    if (fft_window_size > 128)
+                    if (fft_window_size > 128) {
                         fft_window_size /= 2;
+                        free(fft_data);
+                        fft_data = malloc(fft_window_size * sizeof(int16_t));
+                        if (fft_data)
+                            memset(fft_data, 0, fft_window_size * sizeof(int16_t));
+                        current_fft_size = fft_window_size;
+                    }
                 }
             }
         }
@@ -274,7 +291,7 @@ int main(int argc, char *argv[]) {
             for (int j = 1; j <= bar_right; j++)
                 vis_line[half_width + j] = '*';
             vis_line[term_width] = '\0';
-            // Scroll graph buffer upward
+            // Scroll the graph buffer upward and append the new line
             free(graph_lines[0]);
             for (int i = 1; i < graph_height; i++)
                 graph_lines[i - 1] = graph_lines[i];
@@ -285,19 +302,34 @@ int main(int argc, char *argv[]) {
             }
         } else {
             /* --- FFT View --- */
-            // Allocate FFT input array of size fft_window_size
+            /* Ensure fft_data is allocated to hold fft_window_size samples.
+               If not allocated or if window size has changed, reallocate and clear.
+            */
+            if (!fft_data || current_fft_size != fft_window_size) {
+                free(fft_data);
+                fft_data = malloc(fft_window_size * sizeof(int16_t));
+                if (!fft_data) {
+                    fprintf(stderr, "Error: malloc failed for fft_data\n");
+                    break;
+                }
+                memset(fft_data, 0, fft_window_size * sizeof(int16_t));
+                current_fft_size = fft_window_size;
+            }
+            // Accumulate new samples: slide the fft_data buffer to left and append new samples.
+            unsigned int new_samples = frames_read * channels;
+            if (new_samples > fft_window_size)
+                new_samples = fft_window_size;
+            memmove(fft_data, fft_data + new_samples, (fft_window_size - new_samples) * sizeof(int16_t));
+            memcpy(fft_data + (fft_window_size - new_samples), audio_buffer, new_samples * sizeof(int16_t));
+            
+            // Convert fft_data to a complex array for FFT
             complex double *fft_in = malloc(fft_window_size * sizeof(complex double));
             if (!fft_in) {
                 fprintf(stderr, "Error: malloc failed for FFT input\n");
                 break;
             }
-            // Fill FFT input with audio samples; if fft_window_size > frames_read*channels, pad with 0.
-            for (unsigned long i = 0; i < fft_window_size; i++) {
-                if (i < (unsigned long)(frames_read * channels))
-                    fft_in[i] = audio_buffer[i] + 0.0 * I;
-                else
-                    fft_in[i] = 0.0 + 0.0 * I;
-            }
+            for (unsigned int i = 0; i < fft_window_size; i++)
+                fft_in[i] = fft_data[i] + 0.0 * I;
             fft(fft_in, fft_window_size);
             int num_bins = fft_window_size / 2;
             int bins_per_col = (num_bins > term_width) ? num_bins / term_width : 1;
@@ -320,7 +352,7 @@ int main(int argc, char *argv[]) {
             for (int j = 0; j < term_width; j++)
                 if (col_magnitudes[j] > max_val)
                     max_val = col_magnitudes[j];
-            // In FFT view, use (graph_height - 1) rows for FFT bars, and reserve the last row of graph area for x-axis.
+            // In FFT view, use (graph_height - 1) rows for FFT bars, reserve last row for x-axis.
             for (int row = 0; row < graph_height - 1; row++) {
                 for (int col = 0; col < term_width; col++) {
                     double norm = (max_val > 0.0) ? (col_magnitudes[col] / max_val) : 0.0;
@@ -330,13 +362,12 @@ int main(int argc, char *argv[]) {
                 graph_lines[row][term_width] = '\0';
             }
             free(col_magnitudes);
-            // Build x-axis with evenly spaced frequency labels
+            // Build x-axis labels with evenly spaced frequency markers.
             memset(xaxis_line, '-', term_width);
             xaxis_line[term_width] = '\0';
-            int num_labels = 5; // e.g., 0%, 25%, 50%, 75%, 100%
+            int num_labels = 5; // e.g., 0Hz, ~25%, 50%, 75%, Nyquist
             for (int i = 0; i < num_labels; i++) {
                 int pos = i * (term_width - 1) / (num_labels - 1);
-                // Compute frequency corresponding to pos (0 to Nyquist)
                 double freq = ((double)pos / (term_width - 1)) * (rate / 2.0);
                 char label[16];
                 snprintf(label, sizeof(label), "%.0fHz", freq);
@@ -345,7 +376,7 @@ int main(int argc, char *argv[]) {
                     pos = term_width - label_len;
                 strncpy(&xaxis_line[pos], label, label_len);
             }
-            // Copy x-axis into last row of graph area
+            // Copy x-axis into the last row of graph area
             strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
             graph_lines[graph_height - 1][term_width] = '\0';
         }
@@ -364,9 +395,8 @@ int main(int argc, char *argv[]) {
         double db_level = (current_peak > 0) ? 20.0 * log10((double)current_peak / 32767.0) : -100.0;
         unsigned long checksum = 0;
         for (int i = 0; i < graph_height; i++) {
-            for (int j = 0; j < term_width; j++) {
+            for (int j = 0; j < term_width; j++)
                 checksum += (unsigned char)graph_lines[i][j];
-            }
         }
 
         // Build statistics line (second-to-last row)
@@ -376,27 +406,26 @@ int main(int argc, char *argv[]) {
         // Build menu/instructions line (last row)
         const char *view_str = (view_mode == 1) ? "Waveform" : "FFT";
         snprintf(menu_line, term_width + 1,
-                 "View:%s (Press 1:Waveform  2:FFT  %s3:Increase 4:Decrease FFT win)",
-                 view_str, (view_mode == 2 ? "" : "[FFT win adjustable in FFT view] "));
+                 "View:%s (Press 1:Waveform  2:FFT  3:Increase 4:Decrease FFT win)",
+                 view_str);
         
-        // Clear screen and move cursor to home
+        // Clear screen and reposition cursor to top-left
         printf("\033[H");
-        for (int i = 0; i < graph_height; i++) {
+        for (int i = 0; i < graph_height; i++)
             printf("%s\n", graph_lines[i]);
-        }
         printf("%s\n", stats_line);
         printf("%s\n", menu_line);
         fflush(stdout);
     }
 
-    // Cleanup: alternate screen is restored via cleanup_alternate_screen()
+    // Cleanup: alternate screen mode is restored by cleanup_alternate_screen()
     printf("\033[0m\nStopping capture.\n");
     snd_pcm_close(pcm_handle);
     free(audio_buffer);
     free(vis_line);
-    for (int i = 0; i < graph_height; i++) {
+    for (int i = 0; i < graph_height; i++)
         free(graph_lines[i]);
-    }
     free(graph_lines);
+    free(fft_data);
     return 0;
 }

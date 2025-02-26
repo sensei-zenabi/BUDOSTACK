@@ -8,17 +8,68 @@
 #include <sys/ioctl.h>
 #include <alsa/asoundlib.h>
 #include <math.h>
+#include <complex.h>
+#include <termios.h>
+#include <sys/select.h>
 
-static volatile sig_atomic_t stop_flag = 0;
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
+/* --- FFT Implementation --- */
+/* A simple recursive Cooley–Tukey FFT for arrays of size n (assumed power of 2) */
+void fft(complex double *x, int n) {
+    if (n <= 1)
+        return;
+    int half = n / 2;
+    complex double *even = malloc(half * sizeof(complex double));
+    complex double *odd  = malloc(half * sizeof(complex double));
+    if (!even || !odd) {
+        fprintf(stderr, "Error: malloc failed in fft\n");
+        exit(1);
+    }
+    for (int i = 0; i < half; i++) {
+        even[i] = x[2 * i];
+        odd[i]  = x[2 * i + 1];
+    }
+    fft(even, half);
+    fft(odd, half);
+    for (int k = 0; k < half; k++) {
+        complex double t = cexp(-2.0 * I * M_PI * k / n) * odd[k];
+        x[k] = even[k] + t;
+        x[k + half] = even[k] - t;
+    }
+    free(even);
+    free(odd);
+}
+
+/* --- Terminal Mode Handling --- */
+static struct termios orig_termios;
+
+void disable_raw_mode(void) {
+    tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+}
+
+void enable_raw_mode(void) {
+    struct termios raw;
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    atexit(disable_raw_mode);
+    raw = orig_termios;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+}
+
+/* --- Alternate Screen Cleanup --- */
 void cleanup_alternate_screen(void) {
-    // Disable alternate screen mode before exit
+    // Restore normal screen buffer
     printf("\033[?1049l");
     fflush(stdout);
 }
 
+/* --- Signal Handler --- */
+static volatile sig_atomic_t stop_flag = 0;
 void handle_sigint(int sig) {
-    (void)sig;  // Suppress unused parameter warning
+    (void)sig;
     stop_flag = 1;
 }
 
@@ -35,13 +86,12 @@ int main(int argc, char *argv[]) {
         device = argv[1];
     }
 
-    // Set up signal handling and register cleanup function
     signal(SIGINT, handle_sigint);
     atexit(cleanup_alternate_screen);
+    enable_raw_mode();
 
     if ((err = snd_pcm_open(&pcm_handle, device, SND_PCM_STREAM_CAPTURE, 0)) < 0) {
-        fprintf(stderr, "Error: cannot open audio device '%s' (%s)\n",
-                device, snd_strerror(err));
+        fprintf(stderr, "Error: cannot open audio device '%s' (%s)\n", device, snd_strerror(err));
         return 1;
     }
 
@@ -86,16 +136,13 @@ int main(int argc, char *argv[]) {
     if ((err = snd_pcm_hw_params_set_period_size_near(pcm_handle, hw_params, &period_size, NULL)) < 0) {
         fprintf(stderr, "Warning: cannot set period size (%s). Using default.\n", snd_strerror(err));
     }
-
     if ((err = snd_pcm_hw_params(pcm_handle, hw_params)) < 0) {
         fprintf(stderr, "Error: cannot set HW parameters (%s)\n", snd_strerror(err));
         snd_pcm_hw_params_free(hw_params);
         snd_pcm_close(pcm_handle);
         return 1;
     }
-
     snd_pcm_hw_params_free(hw_params);
-
     if ((err = snd_pcm_prepare(pcm_handle)) < 0) {
         fprintf(stderr, "Error: cannot prepare audio interface (%s)\n", snd_strerror(err));
         snd_pcm_close(pcm_handle);
@@ -113,9 +160,10 @@ int main(int argc, char *argv[]) {
     if (term_width % 2 == 0)
         term_width--;  // Ensure odd width for symmetry
 
-    int graph_height = term_height - 2;  // Reserve bottom two rows for metrics
+    // Reserve two rows: one for statistics and one for menu/instructions.
+    int graph_height = term_height - 2;
 
-    // Allocate a graph buffer: an array of strings (one per graph row)
+    // Allocate graph buffer: an array of strings (one per row in the graph area)
     char **graph_lines = malloc(graph_height * sizeof(char *));
     if (!graph_lines) {
         fprintf(stderr, "Error: cannot allocate graph buffer.\n");
@@ -147,7 +195,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Temporary buffer for the new visualization line
+    // Temporary buffer for the new visualization line (used in waveform view)
     char *vis_line = malloc((term_width + 1) * sizeof(char));
     if (!vis_line) {
         fprintf(stderr, "Error: failed to allocate visualization line buffer\n");
@@ -158,16 +206,33 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Buffers for the two metric lines
-    char metric_line1[term_width + 1];
-    char metric_line2[term_width + 1];
+    // Buffers for the reserved rows: statistics and menu/instructions
+    char stats_line[term_width + 1];
+    char menu_line[term_width + 1];
+    char xaxis_line[term_width + 1];  // Used only in FFT mode
 
-    // Enable alternate screen mode so the output doesn't scroll offscreen
+    // Enable alternate screen mode
     printf("\033[?1049h");
     fflush(stdout);
 
-    // Main capture and display loop
+    int view_mode = 1; // 1 = Waveform, 2 = FFT
+
     while (!stop_flag) {
+        // Non-blocking keyboard input using select()
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+        struct timeval tv = {0, 0};
+        if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0) {
+            char ch;
+            if (read(STDIN_FILENO, &ch, 1) == 1) {
+                if (ch == '1')
+                    view_mode = 1;
+                else if (ch == '2')
+                    view_mode = 2;
+            }
+        }
+
         snd_pcm_sframes_t frames_read = snd_pcm_readi(pcm_handle, audio_buffer, frames);
         if (frames_read < 0) {
             if ((err = snd_pcm_recover(pcm_handle, frames_read, 0)) < 0) {
@@ -179,9 +244,120 @@ int main(int argc, char *argv[]) {
         if (frames_read == 0)
             continue;
 
-        // Compute peak amplitude over the current period
-        int16_t peak_pos = 0;
-        int16_t peak_neg = 0;
+        if (view_mode == 1) {
+            /* --- Waveform (Amplitude) View --- */
+            int16_t peak_pos = 0, peak_neg = 0;
+            for (snd_pcm_sframes_t i = 0; i < frames_read * channels; i++) {
+                int16_t sample = audio_buffer[i];
+                if (sample > peak_pos)
+                    peak_pos = sample;
+                if (sample < peak_neg)
+                    peak_neg = sample;
+            }
+            int peak_neg_mag = (peak_neg == INT16_MIN) ? INT16_MAX : -peak_neg;
+            int current_peak = (peak_pos > peak_neg_mag) ? peak_pos : peak_neg_mag;
+            int half_width = term_width / 2;
+            int bar_left = (current_peak * half_width) / 32767;
+            int bar_right = (current_peak * half_width) / 32767;
+            if (bar_left > half_width)
+                bar_left = half_width;
+            if (bar_right > half_width)
+                bar_right = half_width;
+            memset(vis_line, ' ', term_width);
+            vis_line[half_width] = '|';
+            for (int j = 1; j <= bar_left; j++) {
+                vis_line[half_width - j] = '*';
+            }
+            for (int j = 1; j <= bar_right; j++) {
+                vis_line[half_width + j] = '*';
+            }
+            vis_line[term_width] = '\0';
+            // Scroll the graph buffer upward and append the new line at the bottom
+            free(graph_lines[0]);
+            for (int i = 1; i < graph_height; i++) {
+                graph_lines[i - 1] = graph_lines[i];
+            }
+            graph_lines[graph_height - 1] = strdup(vis_line);
+            if (!graph_lines[graph_height - 1]) {
+                fprintf(stderr, "Error: strdup failed\n");
+                break;
+            }
+        } else {
+            /* --- FFT View --- */
+            // Allocate FFT input array (size = period_size)
+            complex double *fft_in = malloc(period_size * sizeof(complex double));
+            if (!fft_in) {
+                fprintf(stderr, "Error: malloc failed for FFT input\n");
+                break;
+            }
+            // Fill FFT input with audio samples (as double), pad with 0 if needed
+            for (unsigned long i = 0; i < period_size; i++) {
+                if (i < (unsigned long)(frames_read * channels))
+                    fft_in[i] = audio_buffer[i] + 0.0 * I;
+                else
+                    fft_in[i] = 0.0 + 0.0 * I;
+            }
+            fft(fft_in, period_size);
+            // Only use first half (positive frequencies)
+            int num_bins = period_size / 2;
+            int bins_per_col = num_bins / term_width;
+            double *col_magnitudes = calloc(term_width, sizeof(double));
+            if (!col_magnitudes) {
+                fprintf(stderr, "Error: calloc failed for col_magnitudes\n");
+                free(fft_in);
+                break;
+            }
+            for (int col = 0; col < term_width; col++) {
+                double sum = 0.0;
+                int start = col * bins_per_col;
+                int end = start + bins_per_col;
+                for (int k = start; k < end && k < num_bins; k++) {
+                    sum += cabs(fft_in[k]);
+                }
+                col_magnitudes[col] = sum / bins_per_col;
+            }
+            free(fft_in);
+            double max_val = 0.0;
+            for (int j = 0; j < term_width; j++) {
+                if (col_magnitudes[j] > max_val)
+                    max_val = col_magnitudes[j];
+            }
+            // In FFT mode, use (graph_height - 1) rows for bars, last row for x-axis labels.
+            for (int row = 0; row < graph_height - 1; row++) {
+                for (int col = 0; col < term_width; col++) {
+                    double norm = (max_val > 0.0) ? (col_magnitudes[col] / max_val) : 0.0;
+                    int bar_height = (int)(norm * (graph_height - 1));
+                    // Draw bar from bottom up in the FFT region
+                    if ((graph_height - 1 - row) <= bar_height)
+                        graph_lines[row][col] = '*';
+                    else
+                        graph_lines[row][col] = ' ';
+                }
+                graph_lines[row][term_width] = '\0';
+            }
+            free(col_magnitudes);
+            // Build x-axis labels into xaxis_line: fill with '-' then overlay "0Hz" and "Nyq"
+            memset(xaxis_line, '-', term_width);
+            xaxis_line[term_width] = '\0';
+            const char *start_label = "0Hz";
+            const char *end_label;
+            char end_buf[16];
+            unsigned int nyquist = rate / 2;
+            snprintf(end_buf, sizeof(end_buf), "%uHz", nyquist);
+            end_label = end_buf;
+            // Place start_label at beginning
+            strncpy(xaxis_line, start_label, strlen(start_label));
+            // Place end_label at the right end
+            int end_pos = term_width - strlen(end_label);
+            if (end_pos < 0) end_pos = 0;
+            strncpy(xaxis_line + end_pos, end_label, strlen(end_label));
+            // Copy xaxis_line into the last row of graph_lines (FFT view only)
+            strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
+            graph_lines[graph_height - 1][term_width] = '\0';
+        }
+
+        // Compute dB level using waveform samples (for statistics)
+        int16_t peak_pos = 0, peak_neg = 0;
         for (snd_pcm_sframes_t i = 0; i < frames_read * channels; i++) {
             int16_t sample = audio_buffer[i];
             if (sample > peak_pos)
@@ -191,42 +367,7 @@ int main(int argc, char *argv[]) {
         }
         int peak_neg_mag = (peak_neg == INT16_MIN) ? INT16_MAX : -peak_neg;
         int current_peak = (peak_pos > peak_neg_mag) ? peak_pos : peak_neg_mag;
-
-        // Compute a horizontal bar (centered) based on the current peak
-        int half_width = term_width / 2;
-        int bar_left = (current_peak * half_width) / 32767;
-        int bar_right = (current_peak * half_width) / 32767;
-        if (bar_left > half_width)
-            bar_left = half_width;
-        if (bar_right > half_width)
-            bar_right = half_width;
-
-        // Build the visualization line: start with spaces, set center marker, and fill bars
-        memset(vis_line, ' ', term_width);
-        vis_line[half_width] = '|';
-        for (int j = 1; j <= bar_left; j++) {
-            vis_line[half_width - j] = '*';
-        }
-        for (int j = 1; j <= bar_right; j++) {
-            vis_line[half_width + j] = '*';
-        }
-        vis_line[term_width] = '\0';
-
-        // Scroll the graph buffer upward:
-        free(graph_lines[0]);
-        for (int i = 1; i < graph_height; i++) {
-            graph_lines[i - 1] = graph_lines[i];
-        }
-        graph_lines[graph_height - 1] = strdup(vis_line);
-        if (!graph_lines[graph_height - 1]) {
-            fprintf(stderr, "Error: strdup failed\n");
-            break;
-        }
-
-        // Compute dB level using 20*log10(current_peak / 32767)
         double db_level = (current_peak > 0) ? 20.0 * log10((double)current_peak / 32767.0) : -100.0;
-
-        // Compute a simple checksum over the entire graph buffer (sum of character codes)
         unsigned long checksum = 0;
         for (int i = 0; i < graph_height; i++) {
             for (int j = 0; j < term_width; j++) {
@@ -234,29 +375,26 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // Build metric line 1: Capture details
-        snprintf(metric_line1, term_width + 1,
-                 "Device: %s  Rate: %uHz  Period: %lu  Channels: %u  Format: S16_LE",
-                 device, rate, (unsigned long)period_size, channels);
+        // Build statistics line (second-to-last row)
+        snprintf(stats_line, term_width + 1,
+                 "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f Csum:0x%08lx",
+                 device, rate, (unsigned long)period_size, channels, db_level, checksum);
+        // Build menu/instructions line (last row)
+        const char *view_str = (view_mode == 1) ? "Waveform" : "FFT";
+        snprintf(menu_line, term_width + 1,
+                 "View:%s  (Press 1:Waveform  2:FFT)", view_str);
 
-        // Build metric line 2: Window and current audio stats
-        snprintf(metric_line2, term_width + 1,
-                 "Window: %dx%d  dB: %6.2f  Checksum: 0x%08lx",
-                 term_width, graph_height, db_level, checksum);
-
-        // Clear the screen and move the cursor to home position
+        // Clear screen and reposition cursor to top-left
         printf("\033[H");
-        // Print the graph (scrolling region)
         for (int i = 0; i < graph_height; i++) {
             printf("%s\n", graph_lines[i]);
         }
-        // Print the two metric lines at the bottom
-        printf("%s\n", metric_line1);
-        printf("%s\n", metric_line2);
+        printf("%s\n", stats_line);
+        printf("%s\n", menu_line);
         fflush(stdout);
     }
 
-    // Cleanup: alternate screen mode is disabled by cleanup_alternate_screen()
+    // Cleanup: alternate screen is restored by cleanup_alternate_screen()
     printf("\033[0m\nStopping capture.\n");
     snd_pcm_close(pcm_handle);
     free(audio_buffer);

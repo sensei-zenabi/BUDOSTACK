@@ -71,6 +71,9 @@ void handle_sigint(int sig) {
     stop_flag = 1;
 }
 
+//////////////////////
+// Main Application //
+//////////////////////
 int main(int argc, char *argv[]) {
     const char *device = "default";           // Default ALSA capture device
     unsigned int rate = 44100;                // Sample rate in Hz
@@ -157,11 +160,11 @@ int main(int argc, char *argv[]) {
     /* Reserve two rows:
        - Second-to-last row: statistics
        - Last row: menu/instructions
-       In FFT view, the last row of the graph area (row graph_height-1) is used for the x-axis.
+       In FFT and Waterfall modes, the last row of the graph area is used for x‑axis labels.
     */
     int graph_height = term_height - 2;
 
-    // Allocate graph buffer: one string per row in graph area
+    // Allocate graph buffer: one string per row in the graph area
     char **graph_lines = malloc(graph_height * sizeof(char *));
     if (!graph_lines) {
         fprintf(stderr, "Error: cannot allocate graph buffer.\n");
@@ -203,15 +206,14 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Buffers for statistics, menu/instructions, and x-axis labels (FFT view)
+    // Buffers for statistics, menu/instructions, and x-axis labels (FFT/Waterfall view)
     char stats_line[term_width + 1];
     char menu_line[term_width + 1];
     char xaxis_line[term_width + 1];
 
     // Set initial FFT window size (default: 1024)
     unsigned int fft_window_size = 1024;
-
-    // To accumulate a full FFT window, maintain a sliding buffer.
+    // For accumulating a full FFT window, maintain a sliding buffer.
     int16_t *fft_data = NULL;
     unsigned int current_fft_size = 0; // current allocated size
 
@@ -219,7 +221,9 @@ int main(int argc, char *argv[]) {
     printf("\033[?1049h");
     fflush(stdout);
 
-    int view_mode = 1; // 1 = Waveform, 2 = FFT
+    // View modes:
+    // 1 = Waveform; 2 = FFT; 3 = Waterfall (colored rolling spectrogram)
+    int view_mode = 1;
 
     while (!stop_flag) {
         // Non-blocking keyboard input using select()
@@ -234,7 +238,9 @@ int main(int argc, char *argv[]) {
                     view_mode = 1;
                 else if (ch == '2')
                     view_mode = 2;
-                else if (ch == '3' && view_mode == 2) {  // Increase FFT window size
+                else if (ch == '3')
+                    view_mode = 3;
+                else if (ch == '4' && (view_mode == 2 || view_mode == 3)) {  // Increase FFT window size
                     if (fft_window_size < 32768) {
                         fft_window_size *= 2;
                         free(fft_data);
@@ -243,7 +249,7 @@ int main(int argc, char *argv[]) {
                             memset(fft_data, 0, fft_window_size * sizeof(int16_t));
                         current_fft_size = fft_window_size;
                     }
-                } else if (ch == '4' && view_mode == 2) {  // Decrease FFT window size
+                } else if (ch == '5' && (view_mode == 2 || view_mode == 3)) {  // Decrease FFT window size
                     if (fft_window_size > 128) {
                         fft_window_size /= 2;
                         free(fft_data);
@@ -291,7 +297,7 @@ int main(int argc, char *argv[]) {
             for (int j = 1; j <= bar_right; j++)
                 vis_line[half_width + j] = '*';
             vis_line[term_width] = '\0';
-            // Scroll the graph buffer upward and append the new line
+            // Scroll graph buffer upward and append new line
             free(graph_lines[0]);
             for (int i = 1; i < graph_height; i++)
                 graph_lines[i - 1] = graph_lines[i];
@@ -300,11 +306,8 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Error: strdup failed\n");
                 break;
             }
-        } else {
+        } else if (view_mode == 2) {
             /* --- FFT View --- */
-            /* Ensure fft_data is allocated to hold fft_window_size samples.
-               If not allocated or if window size has changed, reallocate and clear.
-            */
             if (!fft_data || current_fft_size != fft_window_size) {
                 free(fft_data);
                 fft_data = malloc(fft_window_size * sizeof(int16_t));
@@ -315,14 +318,14 @@ int main(int argc, char *argv[]) {
                 memset(fft_data, 0, fft_window_size * sizeof(int16_t));
                 current_fft_size = fft_window_size;
             }
-            // Accumulate new samples: slide the fft_data buffer to left and append new samples.
+            // Slide fft_data and append new samples
             unsigned int new_samples = frames_read * channels;
             if (new_samples > fft_window_size)
                 new_samples = fft_window_size;
             memmove(fft_data, fft_data + new_samples, (fft_window_size - new_samples) * sizeof(int16_t));
             memcpy(fft_data + (fft_window_size - new_samples), audio_buffer, new_samples * sizeof(int16_t));
             
-            // Convert fft_data to a complex array for FFT
+            // Prepare FFT input
             complex double *fft_in = malloc(fft_window_size * sizeof(complex double));
             if (!fft_in) {
                 fprintf(stderr, "Error: malloc failed for FFT input\n");
@@ -352,7 +355,7 @@ int main(int argc, char *argv[]) {
             for (int j = 0; j < term_width; j++)
                 if (col_magnitudes[j] > max_val)
                     max_val = col_magnitudes[j];
-            // In FFT view, use (graph_height - 1) rows for FFT bars, reserve last row for x-axis.
+            // Use (graph_height - 1) rows for FFT bars; reserve last row for x-axis labels.
             for (int row = 0; row < graph_height - 1; row++) {
                 for (int col = 0; col < term_width; col++) {
                     double norm = (max_val > 0.0) ? (col_magnitudes[col] / max_val) : 0.0;
@@ -362,10 +365,10 @@ int main(int argc, char *argv[]) {
                 graph_lines[row][term_width] = '\0';
             }
             free(col_magnitudes);
-            // Build x-axis labels with evenly spaced frequency markers.
+            // Build x-axis labels
             memset(xaxis_line, '-', term_width);
             xaxis_line[term_width] = '\0';
-            int num_labels = 5; // e.g., 0Hz, ~25%, 50%, 75%, Nyquist
+            int num_labels = 5;
             for (int i = 0; i < num_labels; i++) {
                 int pos = i * (term_width - 1) / (num_labels - 1);
                 double freq = ((double)pos / (term_width - 1)) * (rate / 2.0);
@@ -376,7 +379,102 @@ int main(int argc, char *argv[]) {
                     pos = term_width - label_len;
                 strncpy(&xaxis_line[pos], label, label_len);
             }
-            // Copy x-axis into the last row of graph area
+            strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
+            graph_lines[graph_height - 1][term_width] = '\0';
+        } else if (view_mode == 3) {
+            /* --- Waterfall (Colored Spectrogram) View --- */
+            if (!fft_data || current_fft_size != fft_window_size) {
+                free(fft_data);
+                fft_data = malloc(fft_window_size * sizeof(int16_t));
+                if (!fft_data) {
+                    fprintf(stderr, "Error: malloc failed for fft_data\n");
+                    break;
+                }
+                memset(fft_data, 0, fft_window_size * sizeof(int16_t));
+                current_fft_size = fft_window_size;
+            }
+            unsigned int new_samples = frames_read * channels;
+            if (new_samples > fft_window_size)
+                new_samples = fft_window_size;
+            memmove(fft_data, fft_data + new_samples, (fft_window_size - new_samples) * sizeof(int16_t));
+            memcpy(fft_data + (fft_window_size - new_samples), audio_buffer, new_samples * sizeof(int16_t));
+            
+            complex double *fft_in = malloc(fft_window_size * sizeof(complex double));
+            if (!fft_in) {
+                fprintf(stderr, "Error: malloc failed for FFT input\n");
+                break;
+            }
+            for (unsigned int i = 0; i < fft_window_size; i++)
+                fft_in[i] = fft_data[i] + 0.0 * I;
+            fft(fft_in, fft_window_size);
+            int num_bins = fft_window_size / 2;
+            int bins_per_col = (num_bins > term_width) ? num_bins / term_width : 1;
+            double *col_magnitudes = calloc(term_width, sizeof(double));
+            if (!col_magnitudes) {
+                fprintf(stderr, "Error: calloc failed for col_magnitudes\n");
+                free(fft_in);
+                break;
+            }
+            for (int col = 0; col < term_width; col++) {
+                double sum = 0.0;
+                int start = col * bins_per_col;
+                int end = start + bins_per_col;
+                for (int k = start; k < end && k < num_bins; k++)
+                    sum += cabs(fft_in[k]);
+                col_magnitudes[col] = sum / bins_per_col;
+            }
+            free(fft_in);
+            double max_val = 0.0;
+            for (int j = 0; j < term_width; j++)
+                if (col_magnitudes[j] > max_val)
+                    max_val = col_magnitudes[j];
+            // Build a colored waterfall line.
+            // We'll use a block character "█" with color determined by normalized amplitude.
+            // Mapping: norm <0.2 -> blue, <0.4 -> cyan, <0.6 -> green, <0.8 -> yellow, else red.
+            char waterfall_line[term_width * 20]; // ample space
+            waterfall_line[0] = '\0';
+            for (int col = 0; col < term_width; col++) {
+                double norm = (max_val > 0.0) ? (col_magnitudes[col] / max_val) : 0.0;
+                const char *color;
+                if (norm < 0.2)
+                    color = "\033[34m"; // blue
+                else if (norm < 0.4)
+                    color = "\033[36m"; // cyan
+                else if (norm < 0.6)
+                    color = "\033[32m"; // green
+                else if (norm < 0.8)
+                    color = "\033[33m"; // yellow
+                else
+                    color = "\033[31m"; // red
+                strcat(waterfall_line, color);
+                strcat(waterfall_line, "█");
+                strcat(waterfall_line, "\033[0m"); // reset color
+            }
+            free(col_magnitudes);
+            // Scroll the graph buffer upward: use (graph_height - 1) rows for waterfall lines,
+            // and reserve the last row for x-axis labels.
+            free(graph_lines[0]);
+            for (int i = 1; i < graph_height - 1; i++)
+                graph_lines[i - 1] = graph_lines[i];
+            graph_lines[graph_height - 2] = strdup(waterfall_line);
+            if (!graph_lines[graph_height - 2]) {
+                fprintf(stderr, "Error: strdup failed\n");
+                break;
+            }
+            // Build x-axis labels as in FFT view.
+            memset(xaxis_line, '-', term_width);
+            xaxis_line[term_width] = '\0';
+            int num_labels = 5;
+            for (int i = 0; i < num_labels; i++) {
+                int pos = i * (term_width - 1) / (num_labels - 1);
+                double freq = ((double)pos / (term_width - 1)) * (rate / 2.0);
+                char label[16];
+                snprintf(label, sizeof(label), "%.0fHz", freq);
+                int label_len = strlen(label);
+                if (pos + label_len > term_width)
+                    pos = term_width - label_len;
+                strncpy(&xaxis_line[pos], label, label_len);
+            }
             strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
             graph_lines[graph_height - 1][term_width] = '\0';
         }
@@ -404,9 +502,9 @@ int main(int argc, char *argv[]) {
                  "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f Csum:0x%08lx FFT_Win:%u",
                  device, rate, (unsigned long)period_size, channels, db_level, checksum, fft_window_size);
         // Build menu/instructions line (last row)
-        const char *view_str = (view_mode == 1) ? "Waveform" : "FFT";
+        const char *view_str = (view_mode == 1) ? "Waveform" : (view_mode == 2) ? "FFT" : "Waterfall";
         snprintf(menu_line, term_width + 1,
-                 "View:%s (Press 1:Waveform  2:FFT  3:Increase 4:Decrease FFT win)",
+                 "View:%s (Press 1:Waveform  2:FFT  3:Waterfall  4:Increase  5:Decrease FFT win)",
                  view_str);
         
         // Clear screen and reposition cursor to top-left
@@ -418,7 +516,7 @@ int main(int argc, char *argv[]) {
         fflush(stdout);
     }
 
-    // Cleanup: alternate screen mode is restored by cleanup_alternate_screen()
+    // Cleanup: alternate screen restored via cleanup_alternate_screen()
     printf("\033[0m\nStopping capture.\n");
     snd_pcm_close(pcm_handle);
     free(audio_buffer);

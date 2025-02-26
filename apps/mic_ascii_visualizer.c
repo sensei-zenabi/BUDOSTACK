@@ -158,6 +158,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // Buffers for the two metric lines
+    char metric_line1[term_width + 1];
+    char metric_line2[term_width + 1];
+
     // Enable alternate screen mode so the output doesn't scroll offscreen
     printf("\033[?1049h");
     fflush(stdout);
@@ -230,15 +234,25 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        // Clear the alternate screen and move the cursor to home position
+        // Build metric line 1: Capture details
+        snprintf(metric_line1, term_width + 1,
+                 "Device: %s  Rate: %uHz  Period: %lu  Channels: %u  Format: S16_LE",
+                 device, rate, (unsigned long)period_size, channels);
+
+        // Build metric line 2: Window and current audio stats
+        snprintf(metric_line2, term_width + 1,
+                 "Window: %dx%d  dB: %6.2f  Checksum: 0x%08lx",
+                 term_width, graph_height, db_level, checksum);
+
+        // Clear the screen and move the cursor to home position
         printf("\033[H");
         // Print the graph (scrolling region)
         for (int i = 0; i < graph_height; i++) {
             printf("%s\n", graph_lines[i]);
         }
-        // Print metrics in the bottom two rows
-        printf("dB level: %6.2f dB\n", db_level);
-        printf("Checksum: 0x%08lx\n", checksum);
+        // Print the two metric lines at the bottom
+        printf("%s\n", metric_line1);
+        printf("%s\n", metric_line2);
         fflush(stdout);
     }
 

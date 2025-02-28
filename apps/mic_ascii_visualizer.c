@@ -1,29 +1,27 @@
 /*
     This code uses a design where we repeatedly capture audio,
-    process it (for waveform, FFT, waterfall, or histogram),
+    process it (for waveform, FFT, or waterfall),
     and then print to an alternate screen buffer. To avoid
     leftover characters from the previous frame, we clear each
     printed line (with "\033[K") immediately before printing
     its content.
 
     Design Patterns:
-    - State Machine for view modes (1..4).
+    - State Machine for view modes (1..3).
     - RAII-like resource management with malloc/free for FFT buffers.
     - Terminal-based visualization with line-by-line updates.
     - New Toggle 'W': Hann Window On/Off
     - New Toggle 'M': Log-scale vs. Linear-scale for FFT-based views
 
-    References:
-    - Harris, F.J. (1978). "On the use of windows for harmonic analysis with the 
-      discrete Fourier transform," Proceedings of the IEEE, 66(1), 51–83.
-    - Window function (Wikipedia): https://en.wikipedia.org/wiki/Window_function
-    - Total Harmonic Distortion (Wikipedia): https://en.wikipedia.org/wiki/Total_harmonic_distortion
-    - Logarithmic frequency axis (common in audio spectrum analysis)
-
     Additional Modification:
     - Establishes a TCP connection to a switchboard server (assumed at 127.0.0.1:12345)
-      and sends the waterfall checksum via the first standard output channel (out0).
-      This demonstrates multi-channel routing as supported by the server.
+      and sends output on 5 channels as follows:
+          Channel 0: dB value from view 1
+          Channel 1: Frequency of 1st largest FFT peak (view 2)
+          Channel 2: Frequency of 2nd largest FFT peak (view 2)
+          Channel 3: Frequency of 3rd largest FFT peak (view 2)
+          Channel 4: Checksum of waterfall view (view 3)
+      If a view is not active, a zero value is sent on its channel.
 */
 
 #define _POSIX_C_SOURCE 200809L  // Must be defined before any headers
@@ -48,7 +46,7 @@
 #endif
 
 // Global variable for the server connection socket.
-// This connection will be used to send the waterfall checksum via "out0:".
+// This connection will be used to send the output channels.
 static int g_server_sock = -1;
 
 // --- FFT Implementation ---
@@ -106,16 +104,6 @@ void handle_sigint(int sig) {
     (void)sig;
     stop_flag = 1;
 }
-
-// --- Histogram View Globals ---
-#define NUM_BINS 40
-unsigned long current_hist[NUM_BINS] = {0};
-unsigned long current_hist_total = 0;
-unsigned long hist_min = ULONG_MAX;
-unsigned long hist_max = 0;
-unsigned long stored_hist[NUM_BINS] = {0};
-unsigned long stored_hist_min = 0, stored_hist_max = 0;
-int stored_hist_loaded = 0;
 
 // --- Additional Toggles ---
 static int use_window = 0;       // 'W' for Hann window
@@ -210,7 +198,7 @@ int main(int argc, char *argv[]) {
 
     int graph_height = term_height - 2; // second-to-last = stats, last = menu
 
-    // Allocate buffers
+    // Allocate buffers for the graph lines (each line of the terminal display)
     char **graph_lines = malloc(graph_height * sizeof(char *));
     if (!graph_lines) {
         fprintf(stderr, "Error: cannot allocate graph buffer.\n");
@@ -284,11 +272,19 @@ int main(int argc, char *argv[]) {
     }
     // --- End server connection setup ---
 
-    // View modes
+    // View modes (only 1: Waveform, 2: FFT, 3: Waterfall are supported)
     int view_mode = 1;
 
+    // Variables to hold output channel values. They will be reset each loop.
+    double out0 = 0.0;  // now holds the dB value for view 1
+    long out1 = 0, out2 = 0, out3 = 0, out4 = 0;
+
     while (!stop_flag) {
-        // Check keyboard
+        // Reset output channels to zero
+        out0 = 0.0;
+        out1 = out2 = out3 = out4 = 0;
+
+        // Check keyboard input
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
@@ -299,9 +295,8 @@ int main(int argc, char *argv[]) {
                 if (ch == '1') view_mode = 1;
                 else if (ch == '2') view_mode = 2;
                 else if (ch == '3') view_mode = 3;
-                else if (ch == '4') view_mode = 4;
-                // FFT window adjustments
-                else if ((ch == '8') && (view_mode == 2 || view_mode == 3 || view_mode == 4)) {
+                // FFT window adjustments (only apply in views 2 and 3)
+                else if ((ch == '8') && (view_mode == 2 || view_mode == 3)) {
                     if (fft_window_size < 32768) {
                         fft_window_size *= 2;
                         free(fft_data);
@@ -310,7 +305,7 @@ int main(int argc, char *argv[]) {
                         current_fft_size = fft_window_size;
                     }
                 }
-                else if ((ch == '9') && (view_mode == 2 || view_mode == 3 || view_mode == 4)) {
+                else if ((ch == '9') && (view_mode == 2 || view_mode == 3)) {
                     if (fft_window_size > 128) {
                         fft_window_size /= 2;
                         free(fft_data);
@@ -319,79 +314,17 @@ int main(int argc, char *argv[]) {
                         current_fft_size = fft_window_size;
                     }
                 }
-                // Reset
+                // Reset buffers
                 else if (ch == 'R' || ch == 'r') {
-                    for (int i = 0; i < NUM_BINS; i++) current_hist[i] = 0;
-                    current_hist_total = 0;
-                    hist_min = ULONG_MAX;
-                    hist_max = 0;
-                    free(fft_data);
-                    fft_data = NULL;
-                    current_fft_size = 0;
                     for (int i = 0; i < graph_height; i++) {
                         free(graph_lines[i]);
                         graph_lines[i] = malloc((term_width + 1) * sizeof(char));
                         memset(graph_lines[i], ' ', term_width);
                         graph_lines[i][term_width] = '\0';
                     }
-                }
-                // Save histogram
-                else if ((ch == 'S' || ch == 's') && view_mode == 4) {
-                    disable_raw_mode();
-                    char filename[256];
-                    printf("\nEnter filename to save (.chist): ");
-                    fflush(stdout);
-                    if (fgets(filename, sizeof(filename), stdin)) {
-                        char *newline = strchr(filename, '\n');
-                        if (newline) *newline = '\0';
-                        if (!strstr(filename, ".chist"))
-                            strcat(filename, ".chist");
-                        FILE *fp = fopen(filename, "w");
-                        if (fp) {
-                            fprintf(fp, "%d\n", NUM_BINS);
-                            fprintf(fp, "%lu %lu\n", hist_min, hist_max);
-                            for (int i = 0; i < NUM_BINS; i++) {
-                                fprintf(fp, "%lu\n", current_hist[i]);
-                            }
-                            fclose(fp);
-                            printf("Histogram saved to %s\n", filename);
-                        } else {
-                            printf("Error: cannot open file %s for writing\n", filename);
-                        }
-                    }
-                    enable_raw_mode();
-                }
-                // Load histogram
-                else if ((ch == 'L' || ch == 'l') && view_mode == 4) {
-                    disable_raw_mode();
-                    char filename[256];
-                    printf("\nEnter filename to load (.chist): ");
-                    fflush(stdout);
-                    if (fgets(filename, sizeof(filename), stdin)) {
-                        char *newline = strchr(filename, '\n');
-                        if (newline) *newline = '\0';
-                        FILE *fp = fopen(filename, "r");
-                        if (fp) {
-                            int num_bins;
-                            if (fscanf(fp, "%d", &num_bins) == 1 && num_bins == NUM_BINS) {
-                                if (fscanf(fp, "%lu %lu", &stored_hist_min, &stored_hist_max) == 2) {
-                                    for (int i = 0; i < NUM_BINS; i++) {
-                                        if (fscanf(fp, "%lu", &stored_hist[i]) != 1) break;
-                                    }
-                                    stored_hist_loaded = 1;
-                                    printf("Histogram loaded from %s\n", filename);
-                                } else {
-                                    printf("Error: invalid file format\n");
-                                }
-                            } else {
-                                printf("Error: invalid number of bins or file format\n");
-                            }
-                            fclose(fp);
-                        } else {
-                            printf("Error: cannot open file %s for reading\n", filename);
-                        }
-                    }
-                    enable_raw_mode();
+                    free(fft_data);
+                    fft_data = NULL;
+                    current_fft_size = 0;
                 }
                 // Toggle Hann window
                 else if (ch == 'W' || ch == 'w') {
@@ -420,7 +353,7 @@ int main(int argc, char *argv[]) {
         //          View Mode Handling      //
         //////////////////////////////////////
         if (view_mode == 1) {
-            // Waveform
+            // Waveform view: compute raw amplitude values
             int16_t peak_pos = 0, peak_neg = 0;
             for (snd_pcm_sframes_t i = 0; i < frames_read * channels; i++) {
                 int16_t s = audio_buffer[i];
@@ -429,6 +362,7 @@ int main(int argc, char *argv[]) {
             }
             int peak_neg_mag = (peak_neg == INT16_MIN) ? INT16_MAX : -peak_neg;
             int current_peak = (peak_pos > peak_neg_mag) ? peak_pos : peak_neg_mag;
+            // Visualization for waveform remains unchanged.
             int half_width = term_width / 2;
             int bar_left  = (current_peak * half_width) / 32767;
             int bar_right = bar_left;
@@ -447,6 +381,11 @@ int main(int argc, char *argv[]) {
             for (int i = 1; i < graph_height; i++)
                 graph_lines[i - 1] = graph_lines[i];
             graph_lines[graph_height - 1] = strdup(vis_line);
+
+            // Compute dB value (now 0 dB corresponds to full scale)
+            double db_level = (current_peak > 0) ? 20.0 * log10((double)current_peak / 32767.0) : -100.0;
+            // Send the dB value in channel 0 when view 1 is active.
+            out0 = db_level;
         }
         else if (view_mode == 2) {
             // FFT view
@@ -467,7 +406,7 @@ int main(int argc, char *argv[]) {
             complex double *fft_in = malloc(fft_window_size * sizeof(complex double));
             if (!fft_in) break;
 
-            // Hann window if enabled
+            // Apply Hann window if enabled
             for (unsigned int i = 0; i < fft_window_size; i++) {
                 if (use_window) {
                     double w = 0.5 * (1.0 - cos((2.0 * M_PI * i) / (fft_window_size - 1)));
@@ -485,27 +424,21 @@ int main(int argc, char *argv[]) {
                 break;
             }
 
-            // If log_scale == 0 => linear bin mapping
-            // If log_scale == 1 => logarithmic frequency mapping
-            double freq_min = 20.0;      // "lowest" freq for log axis
-            double freq_max = (double)rate / 2.0; // Nyquist
+            double freq_min = 20.0;      // lowest frequency for log scale
+            double freq_max = (double)rate / 2.0; // Nyquist frequency
 
             for (int col = 0; col < term_width; col++) {
                 int start_bin, end_bin;
                 if (!log_scale) {
-                    // linear approach
                     int bins_per_col = (num_bins > term_width) ? num_bins / term_width : 1;
                     start_bin = col * bins_per_col;
                     end_bin   = start_bin + bins_per_col;
                     if (end_bin > num_bins) end_bin = num_bins;
                 } else {
-                    // log approach
                     double alpha1 = (double) col      / (term_width - 1);
                     double alpha2 = (double)(col + 1) / (term_width - 1);
-                    // compute freq range for this column
                     double f1 = freq_min * pow(freq_max/freq_min, alpha1);
                     double f2 = freq_min * pow(freq_max/freq_min, alpha2);
-                    // map freq to bin indices
                     start_bin = (int)((f1 / freq_max) * num_bins);
                     end_bin   = (int)((f2 / freq_max) * num_bins);
                     if (start_bin < 0) start_bin = 0;
@@ -518,7 +451,6 @@ int main(int argc, char *argv[]) {
                         end_bin = tmp;
                     }
                 }
-
                 double sum = 0.0;
                 int count  = 0;
                 for (int k = start_bin; k < end_bin; k++) {
@@ -532,7 +464,7 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            // Compute THD
+            // Compute THD (for display only)
             double max_val = 0.0;
             int fundamental_idx = 0;
             for (int j = 0; j < num_bins; j++) {
@@ -556,13 +488,43 @@ int main(int argc, char *argv[]) {
                 last_thd_percent = 100.0 * sqrt(sum_squares) / fundamental_mag;
             }
 
-            // Build the bar graph
+            // --- Compute the three largest peaks from FFT data ---
+            int peak1 = -1, peak2 = -1, peak3 = -1;
+            double peak1_val = 0.0, peak2_val = 0.0, peak3_val = 0.0;
+            for (int j = 1; j < num_bins; j++) { // skip bin 0 (DC)
+                double mag = cabs(fft_in[j]);
+                if (mag > peak1_val) {
+                    peak3_val = peak2_val;
+                    peak3 = peak2;
+                    peak2_val = peak1_val;
+                    peak2 = peak1;
+                    peak1_val = mag;
+                    peak1 = j;
+                } else if (mag > peak2_val) {
+                    peak3_val = peak2_val;
+                    peak3 = peak2;
+                    peak2_val = mag;
+                    peak2 = j;
+                } else if (mag > peak3_val) {
+                    peak3_val = mag;
+                    peak3 = j;
+                }
+            }
+            // Frequency resolution = rate/(2*num_bins)
+            long freq1 = (peak1 >= 0) ? (peak1 * rate) / (2 * num_bins) : 0;
+            long freq2 = (peak2 >= 0) ? (peak2 * rate) / (2 * num_bins) : 0;
+            long freq3 = (peak3 >= 0) ? (peak3 * rate) / (2 * num_bins) : 0;
+            // Set channels 1,2,3 outputs when view 2 is active.
+            out1 = freq1;
+            out2 = freq2;
+            out3 = freq3;
+
+            // Build the FFT bar graph for display
             max_val = 0.0;
             for (int j = 0; j < term_width; j++) {
                 if (col_magnitudes[j] > max_val)
                     max_val = col_magnitudes[j];
             }
-            // top rows -> bars, last row -> axis
             for (int row = 0; row < graph_height - 1; row++) {
                 for (int col = 0; col < term_width; col++) {
                     double norm = (max_val > 0.0) ? col_magnitudes[col] / max_val : 0.0;
@@ -571,13 +533,10 @@ int main(int argc, char *argv[]) {
                 }
                 graph_lines[row][term_width] = '\0';
             }
-            // Build x-axis
+            // Build x-axis with frequency labels
             memset(xaxis_line, '-', term_width);
             xaxis_line[term_width] = '\0';
-
-            // For labeling, place about 5 ticks
             if (!log_scale) {
-                // linear frequency labels
                 int num_labels = 5;
                 for (int i = 0; i < num_labels; i++) {
                     int pos = i * (term_width - 1) / (num_labels - 1);
@@ -589,22 +548,19 @@ int main(int argc, char *argv[]) {
                     strncpy(&xaxis_line[pos], label, label_len);
                 }
             } else {
-                // log scale frequency labels (approx. from 20Hz to Nyquist)
-                // We'll place labels at ~20, 100, 1k, 5k, freq_max
                 double test_freqs[5] = {20.0, 100.0, 1000.0, 5000.0, freq_max};
                 for (int t = 0; t < 5; t++) {
                     double f = test_freqs[t];
-                    if (f > freq_max) f = freq_max; // clamp
-                    double alpha = log10(f / freq_min) / log10(freq_max / freq_min);
+                    if (f > freq_max) f = freq_max;
+                    double alpha = log10(f / 20.0) / log10(freq_max / 20.0);
                     if (alpha < 0.0) alpha = 0.0;
                     if (alpha > 1.0) alpha = 1.0;
                     int pos = (int)(alpha * (term_width - 1));
                     char label[16];
-                    if (f < 1000) {
+                    if (f < 1000)
                         snprintf(label, sizeof(label), "%.0fHz", f);
-                    } else {
+                    else
                         snprintf(label, sizeof(label), "%.1fk", f / 1000.0);
-                    }
                     int label_len = strlen(label);
                     if (pos + label_len > term_width) pos = term_width - label_len;
                     strncpy(&xaxis_line[pos], label, label_len);
@@ -617,7 +573,7 @@ int main(int argc, char *argv[]) {
             free(fft_in);
         }
         else if (view_mode == 3) {
-            // Waterfall
+            // Waterfall view
             if (!fft_data || current_fft_size != fft_window_size) {
                 free(fft_data);
                 fft_data = malloc(fft_window_size * sizeof(int16_t));
@@ -658,13 +614,11 @@ int main(int argc, char *argv[]) {
             for (int col = 0; col < term_width; col++) {
                 int start_bin, end_bin;
                 if (!log_scale) {
-                    // linear
                     int bins_per_col = (num_bins > term_width) ? num_bins / term_width : 1;
                     start_bin = col * bins_per_col;
                     end_bin   = start_bin + bins_per_col;
                     if (end_bin > num_bins) end_bin = num_bins;
                 } else {
-                    // log
                     double alpha1 = (double) col      / (term_width - 1);
                     double alpha2 = (double)(col + 1) / (term_width - 1);
                     double f1 = freq_min * pow(freq_max/freq_min, alpha1);
@@ -681,7 +635,6 @@ int main(int argc, char *argv[]) {
                         end_bin = tmp;
                     }
                 }
-
                 double sum = 0.0;
                 int count = 0;
                 for (int k = start_bin; k < end_bin; k++) {
@@ -718,11 +671,10 @@ int main(int argc, char *argv[]) {
                 graph_lines[i - 1] = graph_lines[i];
             graph_lines[graph_height - 2] = strdup(waterfall_line);
 
-            // build x-axis
+            // Build x-axis for waterfall view
             memset(xaxis_line, '-', term_width);
             xaxis_line[term_width] = '\0';
             if (!log_scale) {
-                // linear
                 int num_labels = 5;
                 for (int i = 0; i < num_labels; i++) {
                     int pos = i * (term_width - 1) / (num_labels - 1);
@@ -734,21 +686,19 @@ int main(int argc, char *argv[]) {
                     strncpy(&xaxis_line[pos], label, label_len);
                 }
             } else {
-                // log
                 double test_freqs[5] = {20.0, 100.0, 1000.0, 5000.0, freq_max};
                 for (int t = 0; t < 5; t++) {
                     double f = test_freqs[t];
                     if (f > freq_max) f = freq_max;
-                    double alpha = log10(f / freq_min) / log10(freq_max / freq_min);
+                    double alpha = log10(f / 20.0) / log10(freq_max / 20.0);
                     if (alpha < 0.0) alpha = 0.0;
                     if (alpha > 1.0) alpha = 1.0;
                     int pos = (int)(alpha * (term_width - 1));
                     char label[16];
-                    if (f < 1000) {
+                    if (f < 1000)
                         snprintf(label, sizeof(label), "%.0fHz", f);
-                    } else {
+                    else
                         snprintf(label, sizeof(label), "%.1fk", f / 1000.0);
-                    }
                     int label_len = strlen(label);
                     if (pos + label_len > term_width) pos = term_width - label_len;
                     strncpy(&xaxis_line[pos], label, label_len);
@@ -757,138 +707,16 @@ int main(int argc, char *argv[]) {
             strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
             graph_lines[graph_height - 1][term_width] = '\0';
             
-            // --- Send waterfall checksum to the server via standard output channel out0 ---
-            unsigned long w_sum = 0;
-            for (int j = 0; j < term_width; j++)
-                w_sum += (unsigned char)waterfall_line[j];
+            // Set channel 4 output (checksum) when view 3 is active.
             {
-                char out_msg[64];
-                snprintf(out_msg, sizeof(out_msg), "out0: %lu\n", w_sum);
-                send(g_server_sock, out_msg, strlen(out_msg), 0);
+                unsigned long w_sum = 0;
+                for (int j = 0; j < term_width; j++)
+                    w_sum += (unsigned char)waterfall_line[j];
+                out4 = w_sum;
             }
         }
-        else if (view_mode == 4) {
-            // CSum Histogram
-            if (!fft_data || current_fft_size != fft_window_size) {
-                free(fft_data);
-                fft_data = malloc(fft_window_size * sizeof(int16_t));
-                if (!fft_data) break;
-                memset(fft_data, 0, fft_window_size * sizeof(int16_t));
-                current_fft_size = fft_window_size;
-            }
-            unsigned int new_samp = frames_read * channels;
-            if (new_samp > fft_window_size) new_samp = fft_window_size;
-            memmove(fft_data, fft_data + new_samp,
-                    (fft_window_size - new_samp) * sizeof(int16_t));
-            memcpy(fft_data + (fft_window_size - new_samp), audio_buffer,
-                   new_samp * sizeof(int16_t));
 
-            complex double *fft_in = malloc(fft_window_size * sizeof(complex double));
-            if (!fft_in) break;
-            for (unsigned int i = 0; i < fft_window_size; i++) {
-                if (use_window) {
-                    double w = 0.5 * (1.0 - cos((2.0 * M_PI * i) / (fft_window_size - 1)));
-                    fft_in[i] = (fft_data[i] * w) + 0.0 * I;
-                } else {
-                    fft_in[i] = fft_data[i] + 0.0 * I;
-                }
-            }
-            fft(fft_in, fft_window_size);
-
-            int num_bins = fft_window_size / 2;
-            double *col_magnitudes = calloc(term_width, sizeof(double));
-            if (!col_magnitudes) {
-                free(fft_in);
-                break;
-            }
-
-            // For histogram, we keep it linear for now (as originally),
-            // but you could incorporate log_scale similarly if you prefer.
-            int bins_per_col = (num_bins > term_width) ? num_bins / term_width : 1;
-            for (int col = 0; col < term_width; col++) {
-                double sum = 0.0;
-                int start = col * bins_per_col;
-                int end   = start + bins_per_col;
-                if (end > num_bins) end = num_bins;
-                for (int k = start; k < end; k++)
-                    sum += cabs(fft_in[k]);
-                col_magnitudes[col] = (bins_per_col > 0) ? sum / bins_per_col : 0.0;
-            }
-            double max_val = 0.0;
-            for (int j = 0; j < term_width; j++)
-                if (col_magnitudes[j] > max_val)
-                    max_val = col_magnitudes[j];
-
-            char waterfall_line[term_width * 20];
-            waterfall_line[0] = '\0';
-            for (int col = 0; col < term_width; col++) {
-                double norm = (max_val > 0.0) ? (col_magnitudes[col] / max_val) : 0.0;
-                const char *color;
-                if      (norm < 0.2) color = "\033[34m";
-                else if (norm < 0.4) color = "\033[36m";
-                else if (norm < 0.6) color = "\033[32m";
-                else if (norm < 0.8) color = "\033[33m";
-                else                 color = "\033[31m";
-                strcat(waterfall_line, color);
-                strcat(waterfall_line, "█");
-                strcat(waterfall_line, "\033[0m");
-            }
-            free(col_magnitudes);
-            free(fft_in);
-
-            // checksum
-            unsigned long w_sum = 0;
-            for (int j = 0; j < term_width; j++)
-                w_sum += (unsigned char)waterfall_line[j];
-
-            if (w_sum < hist_min) hist_min = w_sum;
-            if (w_sum > hist_max) hist_max = w_sum;
-            int bin = 0;
-            if (hist_max > hist_min) {
-                bin = (int)(((w_sum - hist_min) * NUM_BINS) / (hist_max - hist_min + 1));
-            }
-            if (bin < 0) bin = 0;
-            if (bin >= NUM_BINS) bin = NUM_BINS - 1;
-            current_hist[bin]++;
-            current_hist_total++;
-
-            // Build histogram
-            int bin_width = term_width / NUM_BINS;
-            unsigned long max_bin_val = 0;
-            for (int i = 0; i < NUM_BINS; i++)
-                if (current_hist[i] > max_bin_val) max_bin_val = current_hist[i];
-
-            double error_measure = 0.0;
-            if (stored_hist_loaded) {
-                double diff = 0.0;
-                for (int i = 0; i < NUM_BINS; i++)
-                    diff += fabs((double)current_hist[i] - (double)stored_hist[i]);
-                error_measure = diff;
-            }
-            snprintf(graph_lines[0], term_width + 1, "CSum Hist (Error: %.2f)", error_measure);
-
-            for (int row = 1; row < graph_height; row++) {
-                for (int b = 0; b < NUM_BINS; b++) {
-                    int bar_height = 0;
-                    if (max_bin_val > 0)
-                        bar_height = (int)((current_hist[b] * (graph_height - 1)) / max_bin_val);
-                    for (int col = b * bin_width; col < (b+1)*bin_width && col < term_width; col++) {
-                        graph_lines[row][col] = ((graph_height - row) <= bar_height) ? '*' : ' ';
-                    }
-                }
-                // leftover columns
-                int used_cols = NUM_BINS * bin_width;
-                for (int col = used_cols; col < term_width; col++)
-                    graph_lines[row][col] = ' ';
-                graph_lines[row][term_width] = '\0';
-            }
-            memset(xaxis_line, '-', term_width);
-            xaxis_line[term_width] = '\0';
-            strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
-            graph_lines[graph_height - 1][term_width] = '\0';
-        }
-
-        // Compute dB level
+        // Compute dB level from the captured audio (for display only)
         int16_t peak_pos = 0, peak_neg = 0;
         for (snd_pcm_sframes_t i = 0; i < frames_read * channels; i++) {
             int16_t s = audio_buffer[i];
@@ -899,43 +727,38 @@ int main(int argc, char *argv[]) {
         int cur_peak = (peak_pos > peak_neg_mag) ? peak_pos : peak_neg_mag;
         double db_level = (cur_peak > 0) ? 20.0 * log10((double)cur_peak / 32767.0) : -100.0;
 
-        // Non-histogram views: compute checksum from graph_lines
+        // For non-waterfall views, compute checksum for display
         unsigned long checksum = 0;
-        if (view_mode != 4) {
+        if (view_mode != 3) {
             for (int i = 0; i < graph_height; i++) {
                 for (int j = 0; j < term_width; j++)
                     checksum += (unsigned char)graph_lines[i][j];
             }
         }
 
-        // Stats line
+        // Stats line: adjust output based on view mode
         if (view_mode == 2) {
             snprintf(stats_line, term_width + 1,
                      "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f FFT_Win:%u THD:%5.2f%% %s Scale Csum:0x%08lx",
                      device, rate, (unsigned long)period_size, channels, db_level, fft_window_size,
                      last_thd_percent, log_scale ? "Log" : "Lin", checksum);
-        } else if (view_mode != 4) {
+        } else {
             snprintf(stats_line, term_width + 1,
                      "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f FFT_Win:%u %s Scale Csum:0x%08lx",
                      device, rate, (unsigned long)period_size, channels, db_level, fft_window_size,
                      log_scale ? "Log" : "Lin", checksum);
-        } else {
-            snprintf(stats_line, term_width + 1,
-                     "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f FFT_Win:%u %s Scale",
-                     device, rate, (unsigned long)period_size, channels, db_level,
-                     fft_window_size, log_scale ? "Log" : "Lin");
         }
 
-        // Menu line
+        // Menu line: update to reflect only the three supported view modes.
         const char *view_str = (view_mode == 1) ? "Waveform" :
                                (view_mode == 2) ? "FFT" :
-                               (view_mode == 3) ? "Waterfall" : "CSumHist";
+                               (view_mode == 3) ? "Waterfall" : "Unknown";
         snprintf(menu_line, term_width + 1,
-            "View:%s (1:Wave 2:FFT 3:Waterfall 4:CSumHist 8/9:FFT win  R:Reset  S:Save  L:Load  W:Window[%s]  M:%sScale)",
+            "View:%s (1:Wave 2:FFT 3:Waterfall 8/9:FFT win  R:Reset  W:Window[%s]  M:%sScale)",
             view_str, use_window ? "On" : "Off", log_scale ? "Log" : "Lin");
 
-        // Print everything
-        printf("\033[H"); // move cursor top-left
+        // Print the display
+        printf("\033[H"); // move cursor to top-left
         for (int i = 0; i < graph_height; i++) {
             printf("\033[K");    // clear line
             printf("%s\n", graph_lines[i]);
@@ -945,9 +768,25 @@ int main(int argc, char *argv[]) {
         printf("\033[K");
         printf("%s\n", menu_line);
         fflush(stdout);
+
+        // --- Send output channels to the server ---
+        {
+            char out_msg[128];
+            // Send dB value (channel 0) as a floating-point value
+            snprintf(out_msg, sizeof(out_msg), "out0: %.2f\n", out0);
+            send(g_server_sock, out_msg, strlen(out_msg), 0);
+            snprintf(out_msg, sizeof(out_msg), "out1: %ld\n", out1);
+            send(g_server_sock, out_msg, strlen(out_msg), 0);
+            snprintf(out_msg, sizeof(out_msg), "out2: %ld\n", out2);
+            send(g_server_sock, out_msg, strlen(out_msg), 0);
+            snprintf(out_msg, sizeof(out_msg), "out3: %ld\n", out3);
+            send(g_server_sock, out_msg, strlen(out_msg), 0);
+            snprintf(out_msg, sizeof(out_msg), "out4: %ld\n", out4);
+            send(g_server_sock, out_msg, strlen(out_msg), 0);
+        }
     }
 
-    // Cleanup
+    // Cleanup resources
     printf("\033[0m\nStopping capture.\n");
     snd_pcm_close(pcm_handle);
     free(audio_buffer);

@@ -11,13 +11,14 @@
 #include <complex.h>
 #include <termios.h>
 #include <sys/select.h>
+#include <limits.h>  // for ULONG_MAX
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-/* --- FFT Implementation --- */
-/* A simple recursive Cooley–Tukey FFT for arrays of size n (assumed power of 2) */
+// --- FFT Implementation ---
+// A simple recursive Cooley–Tukey FFT for arrays of size n (assumed power of 2)
 void fft(complex double *x, int n) {
     if (n <= 1)
         return;
@@ -43,7 +44,7 @@ void fft(complex double *x, int n) {
     free(odd);
 }
 
-/* --- Terminal Mode Handling --- */
+// --- Terminal Mode Handling ---
 static struct termios orig_termios;
 void disable_raw_mode(void) {
     tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
@@ -57,19 +58,29 @@ void enable_raw_mode(void) {
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
 }
 
-/* --- Alternate Screen Cleanup --- */
+// --- Alternate Screen Cleanup ---
 void cleanup_alternate_screen(void) {
     // Restore normal screen buffer
     printf("\033[?1049l");
     fflush(stdout);
 }
 
-/* --- Signal Handler --- */
+// --- Signal Handler ---
 static volatile sig_atomic_t stop_flag = 0;
 void handle_sigint(int sig) {
     (void)sig;
     stop_flag = 1;
 }
+
+// --- Global Definitions for Histogram View ---
+#define NUM_BINS 20
+unsigned long current_hist[NUM_BINS] = {0}; // Running histogram (current)
+unsigned long current_hist_total = 0;
+unsigned long hist_min = ULONG_MAX;
+unsigned long hist_max = 0;
+unsigned long stored_hist[NUM_BINS] = {0};  // Baseline histogram (loaded from file)
+unsigned long stored_hist_min = 0, stored_hist_max = 0;
+int stored_hist_loaded = 0;  // Flag: 1 if a stored histogram has been loaded
 
 //////////////////////
 // Main Application //
@@ -161,6 +172,7 @@ int main(int argc, char *argv[]) {
        - Second-to-last row: statistics
        - Last row: menu/instructions
        In FFT and Waterfall modes, the last row of the graph area is used for x‑axis labels.
+       In CSum Histogram view, the top row is used for the error measure.
     */
     int graph_height = term_height - 2;
 
@@ -221,8 +233,12 @@ int main(int argc, char *argv[]) {
     printf("\033[?1049h");
     fflush(stdout);
 
-    // View modes:
-    // 1 = Waveform; 2 = FFT; 3 = Waterfall (colored rolling spectrogram)
+    /* View modes:
+       1 = Waveform
+       2 = FFT
+       3 = Waterfall
+       4 = CSum Histogram (new)
+    */
     int view_mode = 1;
 
     while (!stop_flag) {
@@ -240,7 +256,10 @@ int main(int argc, char *argv[]) {
                     view_mode = 2;
                 else if (ch == '3')
                     view_mode = 3;
-                else if (ch == '4' && (view_mode == 2 || view_mode == 3)) {  // Increase FFT window size
+                else if (ch == '4')
+                    view_mode = 4;  // new CSum Histogram view
+                // FFT window adjustments now use keys 8 (increase) and 9 (decrease)
+                else if (ch == '8' && (view_mode == 2 || view_mode == 3 || view_mode == 4)) {
                     if (fft_window_size < 32768) {
                         fft_window_size *= 2;
                         free(fft_data);
@@ -249,7 +268,7 @@ int main(int argc, char *argv[]) {
                             memset(fft_data, 0, fft_window_size * sizeof(int16_t));
                         current_fft_size = fft_window_size;
                     }
-                } else if (ch == '5' && (view_mode == 2 || view_mode == 3)) {  // Decrease FFT window size
+                } else if (ch == '9' && (view_mode == 2 || view_mode == 3 || view_mode == 4)) {
                     if (fft_window_size > 128) {
                         fft_window_size /= 2;
                         free(fft_data);
@@ -259,9 +278,88 @@ int main(int argc, char *argv[]) {
                         current_fft_size = fft_window_size;
                     }
                 }
+                // Reset function: reset all views and data collection when 'R' is pressed
+                else if (ch == 'R' || ch == 'r') {
+                    // Reset histogram data
+                    for (int i = 0; i < NUM_BINS; i++)
+                        current_hist[i] = 0;
+                    current_hist_total = 0;
+                    hist_min = ULONG_MAX;
+                    hist_max = 0;
+                    // Reset FFT sliding buffer
+                    free(fft_data);
+                    fft_data = NULL;
+                    current_fft_size = 0;
+                    // Reset graph display buffer
+                    for (int i = 0; i < graph_height; i++) {
+                        free(graph_lines[i]);
+                        graph_lines[i] = malloc((term_width + 1) * sizeof(char));
+                        memset(graph_lines[i], ' ', term_width);
+                        graph_lines[i][term_width] = '\0';
+                    }
+                }
+                // Save function: in CSum Histogram view, save histogram to a .chist file when 'S' is pressed
+                else if ((ch == 'S' || ch == 's') && view_mode == 4) {
+                    disable_raw_mode();
+                    char filename[256];
+                    printf("\nEnter filename to save (.chist): ");
+                    fflush(stdout);
+                    if (fgets(filename, sizeof(filename), stdin)) {
+                        char *newline = strchr(filename, '\n');
+                        if (newline) *newline = '\0';
+                        if (!strstr(filename, ".chist"))
+                            strcat(filename, ".chist");
+                        FILE *fp = fopen(filename, "w");
+                        if (fp) {
+                            fprintf(fp, "%d\n", NUM_BINS);
+                            fprintf(fp, "%lu %lu\n", hist_min, hist_max);
+                            for (int i = 0; i < NUM_BINS; i++) {
+                                fprintf(fp, "%lu\n", current_hist[i]);
+                            }
+                            fclose(fp);
+                            printf("Histogram saved to %s\n", filename);
+                        } else {
+                            printf("Error: cannot open file %s for writing\n", filename);
+                        }
+                    }
+                    enable_raw_mode();
+                }
+                // Load function: in CSum Histogram view, load a stored .chist histogram when 'L' is pressed
+                else if ((ch == 'L' || ch == 'l') && view_mode == 4) {
+                    disable_raw_mode();
+                    char filename[256];
+                    printf("\nEnter filename to load (.chist): ");
+                    fflush(stdout);
+                    if (fgets(filename, sizeof(filename), stdin)) {
+                        char *newline = strchr(filename, '\n');
+                        if (newline) *newline = '\0';
+                        FILE *fp = fopen(filename, "r");
+                        if (fp) {
+                            int num_bins;
+                            if (fscanf(fp, "%d", &num_bins) == 1 && num_bins == NUM_BINS) {
+                                if (fscanf(fp, "%lu %lu", &stored_hist_min, &stored_hist_max) == 2) {
+                                    for (int i = 0; i < NUM_BINS; i++) {
+                                        if (fscanf(fp, "%lu", &stored_hist[i]) != 1) break;
+                                    }
+                                    stored_hist_loaded = 1;
+                                    printf("Histogram loaded from %s\n", filename);
+                                } else {
+                                    printf("Error: invalid file format\n");
+                                }
+                            } else {
+                                printf("Error: invalid number of bins or file format\n");
+                            }
+                            fclose(fp);
+                        } else {
+                            printf("Error: cannot open file %s for reading\n", filename);
+                        }
+                    }
+                    enable_raw_mode();
+                }
             }
         }
 
+        // Read audio data from PCM interface
         snd_pcm_sframes_t frames_read = snd_pcm_readi(pcm_handle, audio_buffer, frames);
         if (frames_read < 0) {
             if ((err = snd_pcm_recover(pcm_handle, frames_read, 0)) < 0) {
@@ -429,9 +527,7 @@ int main(int argc, char *argv[]) {
                 if (col_magnitudes[j] > max_val)
                     max_val = col_magnitudes[j];
             // Build a colored waterfall line.
-            // We'll use a block character "█" with color determined by normalized amplitude.
-            // Mapping: norm <0.2 -> blue, <0.4 -> cyan, <0.6 -> green, <0.8 -> yellow, else red.
-            char waterfall_line[term_width * 20]; // ample space
+            char waterfall_line[term_width * 20];
             waterfall_line[0] = '\0';
             for (int col = 0; col < term_width; col++) {
                 double norm = (max_val > 0.0) ? (col_magnitudes[col] / max_val) : 0.0;
@@ -451,8 +547,7 @@ int main(int argc, char *argv[]) {
                 strcat(waterfall_line, "\033[0m"); // reset color
             }
             free(col_magnitudes);
-            // Scroll the graph buffer upward: use (graph_height - 1) rows for waterfall lines,
-            // and reserve the last row for x-axis labels.
+            // Scroll the graph buffer upward and append new waterfall line.
             free(graph_lines[0]);
             for (int i = 1; i < graph_height - 1; i++)
                 graph_lines[i - 1] = graph_lines[i];
@@ -477,6 +572,131 @@ int main(int argc, char *argv[]) {
             }
             strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
             graph_lines[graph_height - 1][term_width] = '\0';
+        } else if (view_mode == 4) {
+            /* --- CSum Histogram View --- 
+               This view computes the checksum from a waterfall-like view,
+               updates a running histogram of the checksum values, and displays a normalized histogram.
+               The top row displays an error measure comparing the current histogram to a stored baseline.
+            */
+            if (!fft_data || current_fft_size != fft_window_size) {
+                free(fft_data);
+                fft_data = malloc(fft_window_size * sizeof(int16_t));
+                if (!fft_data) {
+                    fprintf(stderr, "Error: malloc failed for fft_data\n");
+                    break;
+                }
+                memset(fft_data, 0, fft_window_size * sizeof(int16_t));
+                current_fft_size = fft_window_size;
+            }
+            unsigned int new_samples = frames_read * channels;
+            if (new_samples > fft_window_size)
+                new_samples = fft_window_size;
+            memmove(fft_data, fft_data + new_samples, (fft_window_size - new_samples) * sizeof(int16_t));
+            memcpy(fft_data + (fft_window_size - new_samples), audio_buffer, new_samples * sizeof(int16_t));
+            
+            complex double *fft_in = malloc(fft_window_size * sizeof(complex double));
+            if (!fft_in) {
+                fprintf(stderr, "Error: malloc failed for FFT input\n");
+                break;
+            }
+            for (unsigned int i = 0; i < fft_window_size; i++)
+                fft_in[i] = fft_data[i] + 0.0 * I;
+            fft(fft_in, fft_window_size);
+            int num_bins = fft_window_size / 2;
+            int bins_per_col = (num_bins > term_width) ? num_bins / term_width : 1;
+            double *col_magnitudes = calloc(term_width, sizeof(double));
+            if (!col_magnitudes) {
+                fprintf(stderr, "Error: calloc failed for col_magnitudes\n");
+                free(fft_in);
+                break;
+            }
+            for (int col = 0; col < term_width; col++) {
+                double sum = 0.0;
+                int start = col * bins_per_col;
+                int end = start + bins_per_col;
+                for (int k = start; k < end && k < num_bins; k++)
+                    sum += cabs(fft_in[k]);
+                col_magnitudes[col] = sum / bins_per_col;
+            }
+            double max_val = 0.0;
+            for (int j = 0; j < term_width; j++)
+                if (col_magnitudes[j] > max_val)
+                    max_val = col_magnitudes[j];
+            // Build a colored waterfall_line (as in view_mode 3)
+            char waterfall_line[term_width * 20];
+            waterfall_line[0] = '\0';
+            for (int col = 0; col < term_width; col++) {
+                double norm = (max_val > 0.0) ? (col_magnitudes[col] / max_val) : 0.0;
+                const char *color;
+                if (norm < 0.2)
+                    color = "\033[34m";
+                else if (norm < 0.4)
+                    color = "\033[36m";
+                else if (norm < 0.6)
+                    color = "\033[32m";
+                else if (norm < 0.8)
+                    color = "\033[33m";
+                else
+                    color = "\033[31m";
+                strcat(waterfall_line, color);
+                strcat(waterfall_line, "█");
+                strcat(waterfall_line, "\033[0m");
+            }
+            free(col_magnitudes);
+            free(fft_in);
+            // Compute checksum from the generated waterfall_line
+            unsigned long waterfall_checksum = 0;
+            for (int j = 0; j < term_width; j++)
+                waterfall_checksum += (unsigned char)waterfall_line[j];
+            // Update running histogram based on the checksum.
+            if (waterfall_checksum < hist_min) hist_min = waterfall_checksum;
+            if (waterfall_checksum > hist_max) hist_max = waterfall_checksum;
+            int bin = 0;
+            if (hist_max > hist_min)
+                bin = (int)(((waterfall_checksum - hist_min) * NUM_BINS) / (hist_max - hist_min + 1));
+            if (bin < 0) bin = 0;
+            if (bin >= NUM_BINS) bin = NUM_BINS - 1;
+            current_hist[bin]++;
+            current_hist_total++;
+
+            // Prepare to display histogram.
+            // For simplicity, assign each histogram bin a column width.
+            int bin_width = term_width / NUM_BINS;
+            // Compute maximum count in any bin for normalization.
+            unsigned long max_bin = 0;
+            for (int i = 0; i < NUM_BINS; i++) {
+                if (current_hist[i] > max_bin)
+                    max_bin = current_hist[i];
+            }
+            // First, build a top line showing the error measure (if a stored histogram is loaded).
+            double error_measure = 0.0;
+            if (stored_hist_loaded) {
+                double diff = 0.0;
+                for (int i = 0; i < NUM_BINS; i++) {
+                    diff += fabs((double)current_hist[i] - (double)stored_hist[i]);
+                }
+                error_measure = diff;
+            }
+            // In CSum Histogram view, use the first row for error measure text.
+            snprintf(graph_lines[0], term_width + 1, "CSum Hist (Error: %.2f)", error_measure);
+            // Then, fill rows 1 to (graph_height-1) with the histogram bars.
+            for (int row = 1; row < graph_height; row++) {
+                for (int b = 0; b < NUM_BINS; b++) {
+                    int bar_height = 0;
+                    if (max_bin > 0)
+                        bar_height = (int)((current_hist[b] * (graph_height - 1)) / max_bin);
+                    // Fill the columns for this bin: if the (inverted) row index is within bar_height, show '*'
+                    for (int col = b * bin_width; col < (b + 1) * bin_width && col < term_width; col++) {
+                        graph_lines[row][col] = ((graph_height - row) <= bar_height) ? '*' : ' ';
+                    }
+                }
+                graph_lines[row][term_width] = '\0';
+            }
+            // Optionally, you can update the bottom row (x-axis) similar to other views.
+            memset(xaxis_line, '-', term_width);
+            xaxis_line[term_width] = '\0';
+            strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
+            graph_lines[graph_height - 1][term_width] = '\0';
         }
 
         // Compute dB level from waveform samples (for statistics)
@@ -491,20 +711,31 @@ int main(int argc, char *argv[]) {
         int peak_neg_mag = (peak_neg == INT16_MIN) ? INT16_MAX : -peak_neg;
         int current_peak = (peak_pos > peak_neg_mag) ? peak_pos : peak_neg_mag;
         double db_level = (current_peak > 0) ? 20.0 * log10((double)current_peak / 32767.0) : -100.0;
+        // For non-histogram views, compute checksum from graph_lines.
         unsigned long checksum = 0;
-        for (int i = 0; i < graph_height; i++) {
-            for (int j = 0; j < term_width; j++)
-                checksum += (unsigned char)graph_lines[i][j];
+        if (view_mode != 4) {
+            for (int i = 0; i < graph_height; i++) {
+                for (int j = 0; j < term_width; j++)
+                    checksum += (unsigned char)graph_lines[i][j];
+            }
         }
-
         // Build statistics line (second-to-last row)
-        snprintf(stats_line, term_width + 1,
-                 "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f Csum:0x%08lx FFT_Win:%u",
-                 device, rate, (unsigned long)period_size, channels, db_level, checksum, fft_window_size);
+        if (view_mode != 4) {
+            snprintf(stats_line, term_width + 1,
+                     "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f Csum:0x%08lx FFT_Win:%u",
+                     device, rate, (unsigned long)period_size, channels, db_level, checksum, fft_window_size);
+        } else {
+            // In histogram view, display additional info.
+            snprintf(stats_line, term_width + 1,
+                     "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f FFT_Win:%u",
+                     device, rate, (unsigned long)period_size, channels, db_level, fft_window_size);
+        }
         // Build menu/instructions line (last row)
-        const char *view_str = (view_mode == 1) ? "Waveform" : (view_mode == 2) ? "FFT" : "Waterfall";
+        const char *view_str = (view_mode == 1) ? "Waveform" : 
+                               (view_mode == 2) ? "FFT" : 
+                               (view_mode == 3) ? "Waterfall" : "CSumHist";
         snprintf(menu_line, term_width + 1,
-                 "View:%s (Press 1:Waveform  2:FFT  3:Waterfall  4:Increase  5:Decrease FFT win)",
+                 "View:%s (Press 1:Waveform  2:FFT  3:Waterfall  4:CSumHist  8:Increase  9:Decrease FFT win  R:Reset  S:Save  L:Load)",
                  view_str);
         
         // Clear screen and reposition cursor to top-left

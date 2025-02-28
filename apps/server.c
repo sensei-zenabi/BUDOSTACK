@@ -1,32 +1,32 @@
 /*
-    server.c
+ server.c
 
-    A "switchboard" server that:
-    - Listens on TCP port 12345 by default.
-    - Accepts multiple clients (up to MAX_CLIENTS).
-    - Each client is assumed to have 5 outputs (out0..out4) and 5 inputs (in0..in4).
-    - Maintains a routing table so that outX of clientA can be connected to inY of clientB.
-    - Provides a simple text-based console UI to:
-        * list clients
-        * list routes
-        * route <A> outX <B> inY
-        * printdata <clientID>   <-- new command to print latest data for all channels
-        * help
+ A "switchboard" server that:
 
-    The server forwards any line received from a client's "outN:" prefix
-    to the client/channel that is wired in the routing table.
-    
-    This sample is purely textual, used to illustrate multi-channel routing.
-    
-    Design principles for this modification:
-      - We keep a per-client record of the last message seen on each output and each input channel.
-      - We add a new console command without affecting existing functionality.
-      - We use plain C with -std=c11 and only standard libraries.
-    
-    Build:
-      gcc -std=c11 -o server server.c
-    Run:
-      ./server  (optionally specify a port)
+ - Listens on TCP port 12345 by default.
+ - Accepts multiple clients (up to MAX_CLIENTS).
+ - Each client is assumed to have 5 outputs (out0..out4) and 5 inputs (in0..in4).
+ - Maintains a routing table so that outX of clientA can be connected to inY of clientB.
+ - Provides a simple text-based console UI to:
+    * list clients
+    * list routes
+    * route <A> <out-channel> <B> <in-channel>
+    * print <clientID> <-- show last data for all channels of the given client
+    * help
+
+ The server forwards any line received from a client's "outN:" prefix
+ to the client/channel that is wired in the routing table.
+
+ Design principles for this modification:
+ - We keep a per-client record of the last message seen on each output and each input channel.
+ - We add a new console command without affecting existing functionality.
+ - We use plain C with -std=c11 and only standard libraries.
+
+ Build:
+   gcc -std=c11 -o server server.c
+
+ Run:
+   ./server (optionally specify a port)
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -41,10 +41,10 @@
 #include <sys/socket.h>
 #include <sys/select.h>
 
-#define SERVER_PORT        12345
-#define MAX_CLIENTS        20
-#define CHANNELS_PER_APP   5    // 5 outputs, 5 inputs
-#define MAX_MSG_LENGTH     512  // maximum message length for storing channel data
+#define SERVER_PORT 12345
+#define MAX_CLIENTS 20
+#define CHANNELS_PER_APP 5  // 5 outputs, 5 inputs
+#define MAX_MSG_LENGTH 512  // maximum message length for storing channel data
 
 typedef struct {
     int sockfd;
@@ -55,23 +55,21 @@ typedef struct {
 
 // Routing table: route[outClientID][outChannel] -> (inClientID, inChannel)
 typedef struct {
-    int in_client_id;  // -1 if none
-    int in_channel;    // 0..4
+    int in_client_id; // -1 if none
+    int in_channel;   // 0..4
 } Route;
 
-// New structure to keep track of the last message for each channel for a client.
+// Structure to keep track of the last message for each channel for a client.
 typedef struct {
-    char last_out[CHANNELS_PER_APP][MAX_MSG_LENGTH]; // store latest message from out channels
-    char last_in[CHANNELS_PER_APP][MAX_MSG_LENGTH];  // store latest message forwarded to this client (input)
+    char last_out[CHANNELS_PER_APP][MAX_MSG_LENGTH]; // latest message from out channels
+    char last_in[CHANNELS_PER_APP][MAX_MSG_LENGTH];  // latest message forwarded to this client's input
 } ClientData;
 
-static ClientData client_data[MAX_CLIENTS];  // one per client slot
+static ClientData client_data[MAX_CLIENTS]; // one per client slot
+static ClientInfo clients[MAX_CLIENTS];     // all possible clients
+static int next_client_id = 1;                // ID to assign to the next connecting client
 
-// All possible clients, stored in a simple array
-static ClientInfo clients[MAX_CLIENTS];
-static int next_client_id = 1;  // ID to assign to the next connecting client
-
-// Routing table: we map by client_id, so ensure the array is big enough:
+// Routing table: indexed by client_id so ensure the array is big enough.
 static Route routing[MAX_CLIENTS + 1][CHANNELS_PER_APP];
 
 // Forward declarations
@@ -94,7 +92,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Initialize
+    // Initialize arrays
     memset(clients, 0, sizeof(clients));
     memset(routing, -1, sizeof(routing));
     memset(client_data, 0, sizeof(client_data)); // initialize client data buffers
@@ -107,13 +105,11 @@ int main(int argc, char *argv[]) {
     }
     int opt = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family      = AF_INET;
+    serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port        = htons(port);
-
+    serv_addr.sin_port = htons(port);
     if (bind(server_fd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         perror("bind");
         close(server_fd);
@@ -124,18 +120,15 @@ int main(int argc, char *argv[]) {
         close(server_fd);
         return 1;
     }
-
     printf("Switchboard Server listening on port %hu.\n", port);
     printf("Type 'help' for commands.\n");
 
-    // Main loop with select()
+    // Main loop using select()
     while (1) {
         fd_set readfds;
         FD_ZERO(&readfds);
-
         FD_SET(server_fd, &readfds);
         int maxfd = server_fd;
-
         // Add all active clients
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i].active) {
@@ -145,42 +138,36 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
-
         // Add stdin for console commands
         FD_SET(STDIN_FILENO, &readfds);
         if (STDIN_FILENO > maxfd) {
             maxfd = STDIN_FILENO;
         }
-
         int ret = select(maxfd + 1, &readfds, NULL, NULL, NULL);
         if (ret < 0) {
             perror("select");
             break;
         }
-
         // New connection?
         if (FD_ISSET(server_fd, &readfds)) {
             handle_new_connection(server_fd);
         }
-
         // Check each client
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i].active && FD_ISSET(clients[i].sockfd, &readfds)) {
                 handle_client_input(i);
             }
         }
-
         // Check console input
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             handle_console_input();
         }
     }
-
     close(server_fd);
     return 0;
 }
 
-// Accept new client
+// Accept a new client connection.
 static void handle_new_connection(int server_fd) {
     struct sockaddr_in cli_addr;
     socklen_t cli_len = sizeof(cli_addr);
@@ -189,7 +176,6 @@ static void handle_new_connection(int server_fd) {
         perror("accept");
         return;
     }
-
     // Find free slot
     int idx = -1;
     for (int i = 0; i < MAX_CLIENTS; i++) {
@@ -204,24 +190,21 @@ static void handle_new_connection(int server_fd) {
         close(client_sock);
         return;
     }
-
     int cid = next_client_id++;
-    clients[idx].sockfd    = client_sock;
+    clients[idx].sockfd = client_sock;
     clients[idx].client_id = cid;
-    clients[idx].active    = 1;
+    clients[idx].active = 1;
     snprintf(clients[idx].name, sizeof(clients[idx].name), "Client%d", cid);
-
     // Initialize client_data for this slot (already zeroed by memset)
     char greet[128];
     snprintf(greet, sizeof(greet),
              "Welcome to Switchboard. You are client_id=%d, with 5 in / 5 out.\n",
              cid);
     write(client_sock, greet, strlen(greet));
-
     printf("Client %d connected (slot=%d).\n", cid, idx);
 }
 
-// Handle data from client in slot i
+// Handle incoming data from a client.
 static void handle_client_input(int i) {
     char buf[512];
     memset(buf, 0, sizeof(buf));
@@ -233,19 +216,16 @@ static void handle_client_input(int i) {
         clients[i].active = 0;
         return;
     }
-    // Possibly multiple lines in buf, handle each
+    // Process each line in the received buffer.
     char *start = buf;
     while (1) {
         char *nl = strchr(start, '\n');
         if (!nl) break; // no more lines
         *nl = '\0';
-
         // Trim potential CR
         char *cr = strchr(start, '\r');
         if (cr) *cr = '\0';
-
         trim_newline(start);
-
         // Expect lines like "outX: message"
         int out_ch = -1;
         if (strncmp(start, "out", 3) == 0 && isdigit((unsigned char)start[3])) {
@@ -259,10 +239,9 @@ static void handle_client_input(int i) {
                 msg = colon + 1;
                 while (*msg == ' ' || *msg == '\t') { msg++; }
             }
-            // Store this outgoing message for the client
+            // Store the outgoing message for the client.
             strncpy(client_data[i].last_out[out_ch], msg, MAX_MSG_LENGTH - 1);
             client_data[i].last_out[out_ch][MAX_MSG_LENGTH - 1] = '\0';
-
             int out_cid = clients[i].client_id; // which client is sending
             Route r = routing[out_cid][out_ch];
             if (r.in_client_id >= 0) {
@@ -275,7 +254,7 @@ static void handle_client_input(int i) {
                              out_cid,
                              msg);
                     send(clients[idx_in].sockfd, outbuf, strlen(outbuf), 0);
-                    // Also store this message as the latest input on channel r.in_channel for the receiving client
+                    // Also store this message as the latest input on channel r.in_channel for the receiving client.
                     strncpy(client_data[idx_in].last_in[r.in_channel], outbuf, MAX_MSG_LENGTH - 1);
                     client_data[idx_in].last_in[r.in_channel][MAX_MSG_LENGTH - 1] = '\0';
                 }
@@ -285,14 +264,13 @@ static void handle_client_input(int i) {
     }
 }
 
-// Handle server console input
+// Handle console input from the server operator.
 static void handle_console_input(void) {
     char cmdline[256];
     if (!fgets(cmdline, sizeof(cmdline), stdin)) {
         return;
     }
     trim_newline(cmdline);
-
     if (strcmp(cmdline, "") == 0) {
         return;
     }
@@ -308,12 +286,13 @@ static void handle_console_input(void) {
         list_routes();
         return;
     }
-    // New command: printdata <clientID>
-    if (strncmp(cmdline, "printdata", 9) == 0) {
-        char *tok = strtok(cmdline, " ");
+    // Modified command: print <clientID>
+    if (strncmp(cmdline, "print", 5) == 0) {
+        // Skip the command token
+        strtok(cmdline, " ");
         char *pClientID = strtok(NULL, " ");
         if (!pClientID) {
-            printf("Usage: printdata <clientID>\n");
+            printf("Usage: print <clientID>\n");
             return;
         }
         int clientID = atoi(pClientID);
@@ -331,47 +310,55 @@ static void handle_console_input(void) {
         }
         return;
     }
-
-    // Existing route command: route <outCID> outN <inCID> inM
+    // Modified route command: accepts either "route <outCID> <outCH> <inCID> <inCH>"
+    // or the legacy format "route <outCID> outN <inCID> inM"
     if (strncmp(cmdline, "route", 5) == 0) {
-        char *tok = strtok(cmdline, " ");
+        // Skip the command token
+        strtok(cmdline, " ");
         char *pOutCID = strtok(NULL, " ");
         char *pOutStr = strtok(NULL, " ");
-        char *pInCID  = strtok(NULL, " ");
-        char *pInStr  = strtok(NULL, " ");
+        char *pInCID = strtok(NULL, " ");
+        char *pInStr = strtok(NULL, " ");
         if (!pOutCID || !pOutStr || !pInCID || !pInStr) {
-            printf("Usage: route <outCID> outN <inCID> inM\n");
+            printf("Usage: route <outCID> <outCH> <inCID> <inCH>\n");
             return;
         }
         int outCID = atoi(pOutCID);
-        int outCH  = -1;
-        if (strncmp(pOutStr, "out", 3) == 0 && isdigit((unsigned char)pOutStr[3])) {
+        int outCH = -1;
+        // Allow either a plain digit or a string with "out" prefix.
+        if (isdigit((unsigned char)pOutStr[0])) {
+            outCH = atoi(pOutStr);
+        } else if (strncmp(pOutStr, "out", 3) == 0 && isdigit((unsigned char)pOutStr[3])) {
             outCH = pOutStr[3] - '0';
         }
         int inCID = atoi(pInCID);
-        int inCH  = -1;
-        if (strncmp(pInStr, "in", 2) == 0 && isdigit((unsigned char)pInStr[2])) {
+        int inCH = -1;
+        // Allow either a plain digit or a string with "in" prefix.
+        if (isdigit((unsigned char)pInStr[0])) {
+            inCH = atoi(pInStr);
+        } else if (strncmp(pInStr, "in", 2) == 0 && isdigit((unsigned char)pInStr[2])) {
             inCH = pInStr[2] - '0';
         }
         if (outCH < 0 || outCH >= CHANNELS_PER_APP ||
-            inCH < 0  || inCH  >= CHANNELS_PER_APP) {
+            inCH < 0 || inCH >= CHANNELS_PER_APP) {
             printf("Invalid channel. Must be 0..4\n");
             return;
         }
         route_command(outCID, outCH, inCID, inCH);
         return;
     }
-
     printf("Unknown command: %s\n", cmdline);
 }
 
 static void show_help(void) {
     printf("Commands:\n");
-    printf("  help                - show this help\n");
-    printf("  list                - list connected clients\n");
-    printf("  routes              - list routing table\n");
-    printf("  route X outN Y inM  - connect clientX outN -> clientY inM\n");
-    printf("  printdata <clientID>- show last data for all channels of the given client\n");
+    printf(" help              - show this help\n");
+    printf(" list              - list connected clients\n");
+    printf(" routes            - list routing table\n");
+    // Updated usage information for the modified route command.
+    printf(" route X Y Z W     - connect clientX outY -> clientZ inW\n");
+    // Updated usage information for the modified print command.
+    printf(" print <clientID>  - show last data for all channels of the given client\n");
     printf("\n");
 }
 
@@ -387,7 +374,7 @@ static void route_command(int outCID, int outCH, int inCID, int inCH) {
         return;
     }
     routing[outCID][outCH].in_client_id = inCID;
-    routing[outCID][outCH].in_channel   = inCH;
+    routing[outCID][outCH].in_channel = inCH;
     printf("Routed client%d out%d -> client%d in%d\n", outCID, outCH, inCID, inCH);
 }
 
@@ -395,7 +382,7 @@ static void list_clients(void) {
     printf("Active clients:\n");
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].active) {
-            printf("  clientID=%d sockfd=%d name=%s\n", clients[i].client_id, clients[i].sockfd, clients[i].name);
+            printf(" clientID=%d sockfd=%d name=%s\n", clients[i].client_id, clients[i].sockfd, clients[i].name);
         }
     }
 }
@@ -409,7 +396,7 @@ static void list_routes(void) {
             int inCID = routing[cid][ch].in_client_id;
             if (inCID >= 0) {
                 int inCH = routing[cid][ch].in_channel;
-                printf("  client%d.out%d -> client%d.in%d\n", cid, ch, inCID, inCH);
+                printf(" client%d.out%d -> client%d.in%d\n", cid, ch, inCID, inCH);
             }
         }
     }

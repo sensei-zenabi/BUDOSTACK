@@ -10,15 +10,19 @@
         * list clients
         * list routes
         * route <A> outX <B> inY
+        * printdata <clientID>   <-- new command to print latest data for all channels
         * help
 
     The server forwards any line received from a client's "outN:" prefix
-    to the client/ channel that is wired in the routing table.
-
-    This sample is purely textual, used to illustrate multi-channel
-    routing. For real audio bridging, you'd send audio frames rather
-    than lines of text.
-
+    to the client/channel that is wired in the routing table.
+    
+    This sample is purely textual, used to illustrate multi-channel routing.
+    
+    Design principles for this modification:
+      - We keep a per-client record of the last message seen on each output and each input channel.
+      - We add a new console command without affecting existing functionality.
+      - We use plain C with -std=c11 and only standard libraries.
+    
     Build:
       gcc -std=c11 -o server server.c
     Run:
@@ -40,6 +44,7 @@
 #define SERVER_PORT        12345
 #define MAX_CLIENTS        20
 #define CHANNELS_PER_APP   5    // 5 outputs, 5 inputs
+#define MAX_MSG_LENGTH     512  // maximum message length for storing channel data
 
 typedef struct {
     int sockfd;
@@ -54,12 +59,20 @@ typedef struct {
     int in_channel;    // 0..4
 } Route;
 
-// We map by [client_id up to MAX_CLIENTS+1][channels], so keep an array big enough:
-static Route routing[MAX_CLIENTS + 1][CHANNELS_PER_APP];
+// New structure to keep track of the last message for each channel for a client.
+typedef struct {
+    char last_out[CHANNELS_PER_APP][MAX_MSG_LENGTH]; // store latest message from out channels
+    char last_in[CHANNELS_PER_APP][MAX_MSG_LENGTH];  // store latest message forwarded to this client (input)
+} ClientData;
+
+static ClientData client_data[MAX_CLIENTS];  // one per client slot
 
 // All possible clients, stored in a simple array
 static ClientInfo clients[MAX_CLIENTS];
 static int next_client_id = 1;  // ID to assign to the next connecting client
+
+// Routing table: we map by client_id, so ensure the array is big enough:
+static Route routing[MAX_CLIENTS + 1][CHANNELS_PER_APP];
 
 // Forward declarations
 static void handle_new_connection(int server_fd);
@@ -69,7 +82,6 @@ static void show_help(void);
 static void route_command(int outCID, int outCH, int inCID, int inCH);
 static void list_clients(void);
 static void list_routes(void);
-
 static int find_client_index(int cid);
 static void trim_newline(char *s);
 
@@ -85,7 +97,7 @@ int main(int argc, char *argv[]) {
     // Initialize
     memset(clients, 0, sizeof(clients));
     memset(routing, -1, sizeof(routing));
-    // route[*][*].in_client_id = -1 means no route
+    memset(client_data, 0, sizeof(client_data)); // initialize client data buffers
 
     // Create listening socket
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -197,9 +209,9 @@ static void handle_new_connection(int server_fd) {
     clients[idx].sockfd    = client_sock;
     clients[idx].client_id = cid;
     clients[idx].active    = 1;
-    snprintf(clients[idx].name, sizeof(clients[idx].name),
-             "Client%d", cid);
+    snprintf(clients[idx].name, sizeof(clients[idx].name), "Client%d", cid);
 
+    // Initialize client_data for this slot (already zeroed by memset)
     char greet[128];
     snprintf(greet, sizeof(greet),
              "Welcome to Switchboard. You are client_id=%d, with 5 in / 5 out.\n",
@@ -222,7 +234,6 @@ static void handle_client_input(int i) {
         return;
     }
     // Possibly multiple lines in buf, handle each
-    // Look for "outX:" prefix
     char *start = buf;
     while (1) {
         char *nl = strchr(start, '\n');
@@ -235,29 +246,28 @@ static void handle_client_input(int i) {
 
         trim_newline(start);
 
-        // Parse e.g. "out0: some text"
-        // Identify which out channel
+        // Expect lines like "outX: message"
         int out_ch = -1;
         if (strncmp(start, "out", 3) == 0 && isdigit((unsigned char)start[3])) {
-            out_ch = start[3] - '0'; // '0'..'4'
+            out_ch = start[3] - '0'; // channel number
         }
         if (out_ch >= 0 && out_ch < CHANNELS_PER_APP) {
-            // Skip past "outX:"
+            // Find colon and skip to message text
             char *colon = strchr(start, ':');
             const char *msg = "";
             if (colon) {
                 msg = colon + 1;
                 while (*msg == ' ' || *msg == '\t') { msg++; }
             }
-            // We know the out channel
+            // Store this outgoing message for the client
+            strncpy(client_data[i].last_out[out_ch], msg, MAX_MSG_LENGTH - 1);
+            client_data[i].last_out[out_ch][MAX_MSG_LENGTH - 1] = '\0';
+
             int out_cid = clients[i].client_id; // which client is sending
             Route r = routing[out_cid][out_ch];
-            // r.in_client_id might be -1 => not connected
             if (r.in_client_id >= 0) {
-                // find the actual slot for in_client_id
                 int idx_in = find_client_index(r.in_client_id);
                 if (idx_in >= 0 && clients[idx_in].active) {
-                    // forward
                     char outbuf[600];
                     snprintf(outbuf, sizeof(outbuf),
                              "in%d from client%d: %s\n",
@@ -265,6 +275,9 @@ static void handle_client_input(int i) {
                              out_cid,
                              msg);
                     send(clients[idx_in].sockfd, outbuf, strlen(outbuf), 0);
+                    // Also store this message as the latest input on channel r.in_channel for the receiving client
+                    strncpy(client_data[idx_in].last_in[r.in_channel], outbuf, MAX_MSG_LENGTH - 1);
+                    client_data[idx_in].last_in[r.in_channel][MAX_MSG_LENGTH - 1] = '\0';
                 }
             }
         }
@@ -295,12 +308,33 @@ static void handle_console_input(void) {
         list_routes();
         return;
     }
+    // New command: printdata <clientID>
+    if (strncmp(cmdline, "printdata", 9) == 0) {
+        char *tok = strtok(cmdline, " ");
+        char *pClientID = strtok(NULL, " ");
+        if (!pClientID) {
+            printf("Usage: printdata <clientID>\n");
+            return;
+        }
+        int clientID = atoi(pClientID);
+        int idx = find_client_index(clientID);
+        if (idx < 0) {
+            printf("No active client with clientID %d\n", clientID);
+            return;
+        }
+        printf("Data for client%d (%s):\n", clientID, clients[idx].name);
+        // Print table header: Channel | Output Message | Input Message
+        printf("%-8s | %-50s | %-50s\n", "Channel", "Output", "Input");
+        printf("--------------------------------------------------------------------------------\n");
+        for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
+            printf("%-8d | %-50.50s | %-50.50s\n", ch, client_data[idx].last_out[ch], client_data[idx].last_in[ch]);
+        }
+        return;
+    }
 
-    // route <outCID> outN <inCID> inM
-    // e.g. "route 1 out0 2 in0"
+    // Existing route command: route <outCID> outN <inCID> inM
     if (strncmp(cmdline, "route", 5) == 0) {
         char *tok = strtok(cmdline, " ");
-        if (!tok) return; // skip 'route'
         char *pOutCID = strtok(NULL, " ");
         char *pOutStr = strtok(NULL, " ");
         char *pInCID  = strtok(NULL, " ");
@@ -333,15 +367,15 @@ static void handle_console_input(void) {
 
 static void show_help(void) {
     printf("Commands:\n");
-    printf("  help      - show this help\n");
-    printf("  list      - list connected clients\n");
-    printf("  routes    - list routing table\n");
+    printf("  help                - show this help\n");
+    printf("  list                - list connected clients\n");
+    printf("  routes              - list routing table\n");
     printf("  route X outN Y inM  - connect clientX outN -> clientY inM\n");
+    printf("  printdata <clientID>- show last data for all channels of the given client\n");
     printf("\n");
 }
 
 static void route_command(int outCID, int outCH, int inCID, int inCH) {
-    // find them in clients
     int idxO = find_client_index(outCID);
     if (idxO < 0) {
         printf("No such client %d\n", outCID);
@@ -352,39 +386,30 @@ static void route_command(int outCID, int outCH, int inCID, int inCH) {
         printf("No such client %d\n", inCID);
         return;
     }
-
     routing[outCID][outCH].in_client_id = inCID;
     routing[outCID][outCH].in_channel   = inCH;
-
-    printf("Routed client%d out%d -> client%d in%d\n",
-           outCID, outCH, inCID, inCH);
+    printf("Routed client%d out%d -> client%d in%d\n", outCID, outCH, inCID, inCH);
 }
 
 static void list_clients(void) {
     printf("Active clients:\n");
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].active) {
-            printf("  clientID=%d sockfd=%d name=%s\n",
-                   clients[i].client_id,
-                   clients[i].sockfd,
-                   clients[i].name);
+            printf("  clientID=%d sockfd=%d name=%s\n", clients[i].client_id, clients[i].sockfd, clients[i].name);
         }
     }
 }
 
 static void list_routes(void) {
     printf("Routes:\n");
-    // We track only up to next_client_id - 1
     for (int cid = 1; cid < next_client_id; cid++) {
-        // check if client is active
         int idx = find_client_index(cid);
-        if (idx < 0) continue; // not connected
-        for (int c = 0; c < CHANNELS_PER_APP; c++) {
-            int inCID = routing[cid][c].in_client_id;
+        if (idx < 0) continue;
+        for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
+            int inCID = routing[cid][ch].in_client_id;
             if (inCID >= 0) {
-                int inCH = routing[cid][c].in_channel;
-                printf("  client%d.out%d -> client%d.in%d\n",
-                       cid, c, inCID, inCH);
+                int inCH = routing[cid][ch].in_channel;
+                printf("  client%d.out%d -> client%d.in%d\n", cid, ch, inCID, inCH);
             }
         }
     }
@@ -400,7 +425,6 @@ static int find_client_index(int cid) {
 }
 
 static void trim_newline(char *s) {
-    // remove trailing newline or CR
     char *p = strchr(s, '\n');
     if (p) *p = '\0';
     p = strchr(s, '\r');

@@ -36,6 +36,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <stdbool.h>   // Added to support bool type.
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
@@ -310,8 +311,9 @@ static void handle_console_input(void) {
         }
         return;
     }
-    // Modified route command: accepts either "route <outCID> <outCH> <inCID> <inCH>"
-    // or the legacy format "route <outCID> outN <inCID> inM"
+    // Modified route command:
+    // Accepts either the legacy format "route <outCID> <outCH> <inCID> <inCH>"
+    // or the extended format "route <outCID> all <inCID> all" (and combinations)
     if (strncmp(cmdline, "route", 5) == 0) {
         // Skip the command token
         strtok(cmdline, " ");
@@ -320,31 +322,63 @@ static void handle_console_input(void) {
         char *pInCID = strtok(NULL, " ");
         char *pInStr = strtok(NULL, " ");
         if (!pOutCID || !pOutStr || !pInCID || !pInStr) {
-            printf("Usage: route <outCID> <outCH> <inCID> <inCH>\n");
+            printf("Usage: route <outCID> <outCH|all> <inCID> <inCH|all>\n");
             return;
         }
         int outCID = atoi(pOutCID);
-        int outCH = -1;
-        // Allow either a plain digit or a string with "out" prefix.
-        if (isdigit((unsigned char)pOutStr[0])) {
-            outCH = atoi(pOutStr);
-        } else if (strncmp(pOutStr, "out", 3) == 0 && isdigit((unsigned char)pOutStr[3])) {
-            outCH = pOutStr[3] - '0';
-        }
         int inCID = atoi(pInCID);
-        int inCH = -1;
-        // Allow either a plain digit or a string with "in" prefix.
-        if (isdigit((unsigned char)pInStr[0])) {
-            inCH = atoi(pInStr);
-        } else if (strncmp(pInStr, "in", 2) == 0 && isdigit((unsigned char)pInStr[2])) {
-            inCH = pInStr[2] - '0';
+
+        // Determine if the output channel should be all or a fixed channel.
+        bool outAll = (strcmp(pOutStr, "all") == 0);
+        int fixedOut = -1;
+        if (!outAll) {
+            if (isdigit((unsigned char)pOutStr[0])) {
+                fixedOut = atoi(pOutStr);
+            } else if (strncmp(pOutStr, "out", 3) == 0 && isdigit((unsigned char)pOutStr[3])) {
+                fixedOut = pOutStr[3] - '0';
+            }
         }
-        if (outCH < 0 || outCH >= CHANNELS_PER_APP ||
-            inCH < 0 || inCH >= CHANNELS_PER_APP) {
-            printf("Invalid channel. Must be 0..4\n");
+        // Determine if the input channel should be all or a fixed channel.
+        bool inAll = (strcmp(pInStr, "all") == 0);
+        int fixedIn = -1;
+        if (!inAll) {
+            if (isdigit((unsigned char)pInStr[0])) {
+                fixedIn = atoi(pInStr);
+            } else if (strncmp(pInStr, "in", 2) == 0 && isdigit((unsigned char)pInStr[2])) {
+                fixedIn = pInStr[2] - '0';
+            }
+        }
+
+        // Validate fixed channels if provided.
+        if (!outAll && (fixedOut < 0 || fixedOut >= CHANNELS_PER_APP)) {
+            printf("Invalid output channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1);
             return;
         }
-        route_command(outCID, outCH, inCID, inCH);
+        if (!inAll && (fixedIn < 0 || fixedIn >= CHANNELS_PER_APP)) {
+            printf("Invalid input channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1);
+            return;
+        }
+
+        // Now apply routing based on the tokens.
+        if (outAll && inAll) {
+            // Route each channel i: client outCID outi -> client inCID ini
+            for (int i = 0; i < CHANNELS_PER_APP; i++) {
+                route_command(outCID, i, inCID, i);
+            }
+        } else if (outAll && !inAll) {
+            // Route all output channels to the fixed input channel.
+            for (int i = 0; i < CHANNELS_PER_APP; i++) {
+                route_command(outCID, i, inCID, fixedIn);
+            }
+        } else if (!outAll && inAll) {
+            // Route the fixed output channel to all input channels.
+            for (int i = 0; i < CHANNELS_PER_APP; i++) {
+                route_command(outCID, fixedOut, inCID, i);
+            }
+        } else {
+            // Single channel routing.
+            route_command(outCID, fixedOut, inCID, fixedIn);
+        }
         return;
     }
     printf("Unknown command: %s\n", cmdline);
@@ -352,13 +386,14 @@ static void handle_console_input(void) {
 
 static void show_help(void) {
     printf("Commands:\n");
-    printf(" help              - show this help\n");
-    printf(" list              - list connected clients\n");
-    printf(" routes            - list routing table\n");
+    printf(" help                        - show this help\n");
+    printf(" list                        - list connected clients\n");
+    printf(" routes                      - list routing table\n");
     // Updated usage information for the modified route command.
-    printf(" route X Y Z W     - connect clientX outY -> clientZ inW\n");
+    printf(" route X Y Z W               - connect clientX outY -> clientZ inW\n");
+    printf("   (Y and/or W can be 'all' to route multiple channels)\n");
     // Updated usage information for the modified print command.
-    printf(" print <clientID>  - show last data for all channels of the given client\n");
+    printf(" print <clientID>            - show last data for all channels of the given client\n");
     printf("\n");
 }
 

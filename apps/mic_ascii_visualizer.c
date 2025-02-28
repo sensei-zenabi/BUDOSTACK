@@ -19,6 +19,11 @@
     - Window function (Wikipedia): https://en.wikipedia.org/wiki/Window_function
     - Total Harmonic Distortion (Wikipedia): https://en.wikipedia.org/wiki/Total_harmonic_distortion
     - Logarithmic frequency axis (common in audio spectrum analysis)
+
+    Additional Modification:
+    - Establishes a TCP connection to a switchboard server (assumed at 127.0.0.1:12345)
+      and sends the waterfall checksum via the first standard output channel (out0).
+      This demonstrates multi-channel routing as supported by the server.
 */
 
 #define _POSIX_C_SOURCE 200809L  // Must be defined before any headers
@@ -35,10 +40,16 @@
 #include <termios.h>
 #include <sys/select.h>
 #include <limits.h>  // for ULONG_MAX
+#include <sys/socket.h>  // added for TCP connection
+#include <arpa/inet.h>   // added for TCP connection
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+// Global variable for the server connection socket.
+// This connection will be used to send the waterfall checksum via "out0:".
+static int g_server_sock = -1;
 
 // --- FFT Implementation ---
 void fft(complex double *x, int n) {
@@ -252,6 +263,26 @@ int main(int argc, char *argv[]) {
     // Alternate screen mode
     printf("\033[?1049h");
     fflush(stdout);
+
+    // --- Establish TCP connection to the switchboard server ---
+    g_server_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (g_server_sock < 0) {
+        fprintf(stderr, "Error: cannot create socket for server connection.\n");
+        exit(1);
+    }
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(12345); // default server port
+    if (inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr) <= 0) {
+        fprintf(stderr, "Error: invalid server IP address.\n");
+        exit(1);
+    }
+    if (connect(g_server_sock, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        fprintf(stderr, "Error: cannot connect to server at 127.0.0.1:12345.\n");
+        exit(1);
+    }
+    // --- End server connection setup ---
 
     // View modes
     int view_mode = 1;
@@ -725,6 +756,16 @@ int main(int argc, char *argv[]) {
             }
             strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
             graph_lines[graph_height - 1][term_width] = '\0';
+            
+            // --- Send waterfall checksum to the server via standard output channel out0 ---
+            unsigned long w_sum = 0;
+            for (int j = 0; j < term_width; j++)
+                w_sum += (unsigned char)waterfall_line[j];
+            {
+                char out_msg[64];
+                snprintf(out_msg, sizeof(out_msg), "out0: %lu\n", w_sum);
+                send(g_server_sock, out_msg, strlen(out_msg), 0);
+            }
         }
         else if (view_mode == 4) {
             // CSum Histogram
@@ -915,6 +956,9 @@ int main(int argc, char *argv[]) {
         free(graph_lines[i]);
     free(graph_lines);
     free(fft_data);
+    if (g_server_sock != -1) {
+        close(g_server_sock);
+    }
 
     return 0;
 }

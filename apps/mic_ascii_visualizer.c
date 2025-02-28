@@ -1,3 +1,17 @@
+/*
+    This code uses a design where we repeatedly capture audio,
+    process it (for waveform, FFT, waterfall, or histogram),
+    and then print to an alternate screen buffer. To avoid
+    leftover characters from the previous frame, we clear each
+    printed line (with "\033[K") immediately before printing
+    its content.
+
+    Design Patterns:
+    - State Machine for view modes (1..4).
+    - RAII-like resource management with malloc/free for FFT buffers.
+    - Terminal-based visualization with line-by-line updates.
+*/
+
 #define _POSIX_C_SOURCE 200809L  // Must be defined before any headers
 
 #include <stdio.h>
@@ -371,6 +385,9 @@ int main(int argc, char *argv[]) {
         if (frames_read == 0)
             continue;
 
+        // -----------------------------
+        //      View Mode Handling
+        // -----------------------------
         if (view_mode == 1) {
             /* --- Waveform (Amplitude) View --- */
             int16_t peak_pos = 0, peak_neg = 0;
@@ -687,8 +704,7 @@ int main(int argc, char *argv[]) {
                         graph_lines[row][col] = ((graph_height - row) <= bar_height) ? '*' : ' ';
                     }
                 }
-                // >>> THIS IS THE NEW LOOP TO CLEAR REMAINING COLUMNS <<<
-                // If NUM_BINS * bin_width < term_width, clear the leftover columns
+                // Clear any leftover columns if bin_width * NUM_BINS < term_width
                 int used_cols = NUM_BINS * bin_width;
                 for (int col = used_cols; col < term_width; col++) {
                     graph_lines[row][col] = ' ';
@@ -715,6 +731,7 @@ int main(int argc, char *argv[]) {
         int peak_neg_mag = (peak_neg == INT16_MIN) ? INT16_MAX : -peak_neg;
         int current_peak = (peak_pos > peak_neg_mag) ? peak_pos : peak_neg_mag;
         double db_level = (current_peak > 0) ? 20.0 * log10((double)current_peak / 32767.0) : -100.0;
+
         // For non-histogram views, compute checksum from graph_lines.
         unsigned long checksum = 0;
         if (view_mode != 4) {
@@ -723,17 +740,18 @@ int main(int argc, char *argv[]) {
                     checksum += (unsigned char)graph_lines[i][j];
             }
         }
+
         // Build statistics line (second-to-last row)
         if (view_mode != 4) {
             snprintf(stats_line, term_width + 1,
                      "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f Csum:0x%08lx FFT_Win:%u",
                      device, rate, (unsigned long)period_size, channels, db_level, checksum, fft_window_size);
         } else {
-            // In histogram view, display additional info.
             snprintf(stats_line, term_width + 1,
                      "Dev:%s Rate:%uHz Per:%lu Ch:%u Fmt:S16_LE dB:%6.2f FFT_Win:%u",
                      device, rate, (unsigned long)period_size, channels, db_level, fft_window_size);
         }
+
         // Build menu/instructions line (last row)
         const char *view_str = (view_mode == 1) ? "Waveform" : 
                                (view_mode == 2) ? "FFT" : 
@@ -741,13 +759,25 @@ int main(int argc, char *argv[]) {
         snprintf(menu_line, term_width + 1,
                  "View:%s (Press 1:Waveform  2:FFT  3:Waterfall  4:CSumHist  8:Increase  9:Decrease FFT win  R:Reset  S:Save  L:Load)",
                  view_str);
-        
-        // Clear screen and reposition cursor to top-left
+
+        // ---------------------------------------------------------------------
+        // Clear each line before printing to avoid leftover characters:
+        // ---------------------------------------------------------------------
+        // Move cursor to top-left
         printf("\033[H");
-        for (int i = 0; i < graph_height; i++)
+        // Print the graph area
+        for (int i = 0; i < graph_height; i++) {
+            // Clear from cursor to end of line
+            printf("\033[K");
             printf("%s\n", graph_lines[i]);
+        }
+        // Clear line for stats
+        printf("\033[K");
         printf("%s\n", stats_line);
+        // Clear line for menu
+        printf("\033[K");
         printf("%s\n", menu_line);
+
         fflush(stdout);
     }
 

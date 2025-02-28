@@ -73,7 +73,7 @@ void handle_sigint(int sig) {
 }
 
 // --- Global Definitions for Histogram View ---
-#define NUM_BINS 20
+#define NUM_BINS 40
 unsigned long current_hist[NUM_BINS] = {0}; // Running histogram (current)
 unsigned long current_hist_total = 0;
 unsigned long hist_min = ULONG_MAX;
@@ -573,10 +573,8 @@ int main(int argc, char *argv[]) {
             strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
             graph_lines[graph_height - 1][term_width] = '\0';
         } else if (view_mode == 4) {
-            /* --- CSum Histogram View --- 
-               This view computes the checksum from a waterfall-like view,
-               updates a running histogram of the checksum values, and displays a normalized histogram.
-               The top row displays an error measure comparing the current histogram to a stored baseline.
+            /* --- CSum Histogram View ---
+               We only modify this part to clear leftover columns after drawing the bins.
             */
             if (!fft_data || current_fft_size != fft_window_size) {
                 free(fft_data);
@@ -660,7 +658,6 @@ int main(int argc, char *argv[]) {
             current_hist_total++;
 
             // Prepare to display histogram.
-            // For simplicity, assign each histogram bin a column width.
             int bin_width = term_width / NUM_BINS;
             // Compute maximum count in any bin for normalization.
             unsigned long max_bin = 0;
@@ -668,7 +665,7 @@ int main(int argc, char *argv[]) {
                 if (current_hist[i] > max_bin)
                     max_bin = current_hist[i];
             }
-            // First, build a top line showing the error measure (if a stored histogram is loaded).
+            // First row: error measure (if stored histogram is loaded).
             double error_measure = 0.0;
             if (stored_hist_loaded) {
                 double diff = 0.0;
@@ -677,21 +674,28 @@ int main(int argc, char *argv[]) {
                 }
                 error_measure = diff;
             }
-            // In CSum Histogram view, use the first row for error measure text.
             snprintf(graph_lines[0], term_width + 1, "CSum Hist (Error: %.2f)", error_measure);
-            // Then, fill rows 1 to (graph_height-1) with the histogram bars.
+
+            // Fill rows 1 to (graph_height-1) with the histogram bars
             for (int row = 1; row < graph_height; row++) {
                 for (int b = 0; b < NUM_BINS; b++) {
                     int bar_height = 0;
                     if (max_bin > 0)
                         bar_height = (int)((current_hist[b] * (graph_height - 1)) / max_bin);
-                    // Fill the columns for this bin: if the (inverted) row index is within bar_height, show '*'
+                    // Draw bin b in the range of columns for this bin
                     for (int col = b * bin_width; col < (b + 1) * bin_width && col < term_width; col++) {
                         graph_lines[row][col] = ((graph_height - row) <= bar_height) ? '*' : ' ';
                     }
                 }
+                // >>> THIS IS THE NEW LOOP TO CLEAR REMAINING COLUMNS <<<
+                // If NUM_BINS * bin_width < term_width, clear the leftover columns
+                int used_cols = NUM_BINS * bin_width;
+                for (int col = used_cols; col < term_width; col++) {
+                    graph_lines[row][col] = ' ';
+                }
                 graph_lines[row][term_width] = '\0';
             }
+
             // Optionally, you can update the bottom row (x-axis) similar to other views.
             memset(xaxis_line, '-', term_width);
             xaxis_line[term_width] = '\0';

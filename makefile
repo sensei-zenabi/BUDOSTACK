@@ -8,7 +8,7 @@ ALL_SOURCES = $(shell find . -type f -name '*.c')
 # Non-commands and non-app sources (for the main executable)
 NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/%, $(ALL_SOURCES))
 NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)
-TARGET = terminal
+TARGET = aalto
 
 # Find all .c files in the commands folder
 COMMANDS_SRCS = $(shell find ./commands -type f -name '*.c')

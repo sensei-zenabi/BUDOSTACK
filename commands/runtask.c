@@ -1,36 +1,21 @@
 /*
-* runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, CLEAR, CMD, and now ROUTE commands.
+* runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, CMD, CLEAR, ROUTE, and START commands.
 *
-* Design Principles:
-* - Minimalism: Only the PRINT, WAIT, GOTO, RUN, CLEAR, CMD, and now ROUTE commands are supported.
-* - Script Organization: The engine reads the entire script (with numbered lines)
-*   into memory, sorts them by line number, and uses a program counter to simulate jumps (GOTO).
-* - Diagnostics: Detailed error messages are printed to stderr only when the debug flag (-d) is provided.
-* - Portability: Uses standard C11 (-std=c11) and only standard libraries.
+* This version uses tmux with a dedicated socket to run external apps in parallel:
+* - Each .task file generates a unique tmux session (based on the file name and a timestamp)
+*   and a dedicated socket (e.g. /tmp/tmux_<session_name>.sock).
+* - RUN commands add apps (from the "apps/" directory) as new windows in that session.
+*   The first RUN command creates the session (using "unset TMUX;" to avoid nested warnings)
+*   and appends "; exec bash" to keep the window open.
+* - A separate START command attaches to the tmux session.
+* - The use of a dedicated socket allows multiple parallel tasks to coexist.
+* - If tmux is not installed, a warning is issued.
 *
 * Compilation:
-* gcc -std=c11 -o runtask runtask.c
+*   gcc -std=c11 -o runtask runtask.c
 *
 * Usage:
-* ./runtask taskfile [-d]
-*
-* Help:
-* To display this help, type:
-* ./runtask -help
-*
-* Example TASK script:
-* 10 PRINT "THIS IS MY TASK:"
-* 20 PRINT "HELLO WORLD"
-* 30 WAIT 1000
-* 40 PRINT "I WAITED 1000ms"
-* 50 WAIT 2000
-* 60 PRINT "I WAITED 2000ms"
-* 70 RUN example
-* 80 CMD help
-* 90 GOTO 10
-* 100 CLEAR        <-- CLEAR command to clear the screen
-* 110 ROUTE clear  <-- ROUTE command to clear the file route.rt
-* 120 ROUTE 1 1 2 1  <-- Appends "route 1 1 2 1" to route.rt
+*   ./runtask taskfile [-d]
 */
 
 #include <stdio.h>
@@ -40,16 +25,24 @@
 #include <time.h>
 #include <signal.h>
 #include <threads.h> // For thrd_sleep
-#include <unistd.h>  // For fork, execv, and sleep functions
+#include <unistd.h>
 #include <sys/wait.h>
 #include <errno.h>
 
 // Global flag to signal termination (set by SIGINT handler)
 volatile sig_atomic_t stop = 0;
 
-// Signal handler for CTRL+C (SIGINT)
+// Global flag to indicate if any RUN command has been issued.
+int tmux_started = 0;
+
+// The session name for tmux (generated from the task file name and timestamp)
+char session_name[128] = {0};
+
+// The dedicated socket path for this session.
+char socket_path[256] = {0};
+
 void sigint_handler(int signum) {
-    (void)signum; // Unused parameter
+    (void)signum;
     stop = 1;
 }
 
@@ -61,36 +54,21 @@ void print_help(void) {
     printf("============\n\n");
     printf("Runtask is a simplified script engine that processes a task script\n");
     printf("composed of numbered lines, each containing a single command. The supported\n");
-    printf("commands are PRINT, WAIT, GOTO, RUN, CLEAR, CMD, and now ROUTE. The engine is designed with minimalism\n");
-    printf("and portability in mind, using standard C11 and only standard libraries.\n\n");
+    printf("commands are PRINT, WAIT, GOTO, RUN, CMD, CLEAR, ROUTE, and START.\n\n");
     printf("Usage:\n");
-    printf(" ./runtask taskfile [-d]\n\n");
-    printf(" taskfile : A file containing the task script with numbered lines.\n");
-    printf(" -d : (Optional) Enables debug mode, providing detailed error messages.\n\n");
+    printf("  ./runtask taskfile [-d]\n\n");
     printf("Supported Commands:\n");
-    printf(" PRINT \"message\"\n");
-    printf(" WAIT milliseconds\n");
-    printf(" GOTO line_number\n");
-    printf(" RUN executable    (runs an executable from the 'apps/' directory)\n");
-    printf(" CMD executable    (runs an executable from the 'commands/' directory)\n");
-    printf(" CLEAR             (clears the screen)\n");
-    printf(" ROUTE clear       (clears the file route.rt)\n");
-    printf(" ROUTE ...         (appends the command prefixed by 'route ' into route.rt)\n\n");
-    printf("Example TASK Script:\n");
-    printf("--------------------\n");
-    printf(" 10 PRINT \"THIS IS MY TASK:\"\n");
-    printf(" 20 CMD help\n");
-    printf(" 30 WAIT 1000\n");
-    printf(" 40 PRINT \"I WAITED 1000ms\"\n");
-    printf(" 50 WAIT 2000\n");
-    printf(" 60 PRINT \"I WAITED 2000ms\"\n");
-    printf(" 70 RUN example\n");
-    printf(" 80 GOTO 10\n");
-    printf(" 90 CLEAR\n");
-    printf("100 ROUTE clear\n");
-    printf("110 ROUTE 1 1 2 1\n\n");
+    printf("  PRINT \"message\"\n");
+    printf("  WAIT milliseconds\n");
+    printf("  GOTO line_number\n");
+    printf("  RUN executable    (adds an app from the 'apps/' directory as a new tmux window)\n");
+    printf("  CMD executable    (runs an executable from the 'commands/' directory)\n");
+    printf("  CLEAR             (clears the screen)\n");
+    printf("  ROUTE clear       (clears the file route.rt)\n");
+    printf("  ROUTE ...         (appends a route command to route.rt)\n");
+    printf("  START             (attaches to the tmux session with all RUN apps running)\n\n");
     printf("Compilation:\n");
-    printf(" gcc -std=c11 -o runtask runtask.c\n\n");
+    printf("  gcc -std=c11 -o runtask runtask.c\n\n");
 }
 
 // ---------------------------
@@ -127,8 +105,8 @@ void delay_ms(int ms) {
 // Data Structure for a Script Line
 // ---------------------------
 typedef struct {
-    int number;      // The line number (e.g., 10, 20, ...)
-    char text[256];  // The command (e.g., PRINT "HELLO WORLD")
+    int number;
+    char text[256];
 } ScriptLine;
 
 // Comparison function for qsort based on line numbers.
@@ -142,10 +120,9 @@ int cmpScriptLine(const void *a, const void *b) {
 // Main Function: Task Runner
 // ---------------------------
 int main(int argc, char *argv[]) {
-    // Install the signal handler for SIGINT (CTRL+C)
+    // Install signal handler for CTRL+C.
     signal(SIGINT, sigint_handler);
 
-    // Check if the help option is requested.
     if (argc >= 2 && strcmp(argv[1], "-help") == 0) {
         print_help();
         return 0;
@@ -155,13 +132,40 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     int debug = 0;
-    // Check for the debug flag in additional arguments.
     for (int i = 2; i < argc; i++) {
         if (strcmp(argv[i], "-d") == 0) {
             debug = 1;
             break;
         }
     }
+
+    // Check if tmux is installed.
+    if (system("command -v tmux > /dev/null 2>&1") != 0) {
+        fprintf(stderr, "Warning: tmux is not installed. Please install tmux to enable parallel RUN command support.\n");
+    }
+
+    // Generate a unique tmux session name based on the task file name.
+    // Extract the base name (strip directory and extension).
+    char *taskfile_basename = strrchr(argv[1], '/');
+    if (taskfile_basename)
+        taskfile_basename++;
+    else
+        taskfile_basename = argv[1];
+
+    char base_name[64] = {0};
+    strncpy(base_name, taskfile_basename, sizeof(base_name) - 1);
+    // Remove extension if present.
+    char *dot = strrchr(base_name, '.');
+    if (dot)
+        *dot = '\0';
+
+    // Append a timestamp to ensure uniqueness.
+    time_t t = time(NULL);
+    snprintf(session_name, sizeof(session_name), "%s_%ld", base_name, (long)t);
+    // Define a dedicated socket path for this session.
+    snprintf(socket_path, sizeof(socket_path), "/tmp/tmux_%s.sock", session_name);
+    if (debug)
+        fprintf(stderr, "Using tmux session name: %s\nSocket: %s\n", session_name, socket_path);
 
     // Prepend "tasks/" to the taskfile argument.
     char task_path[512];
@@ -172,17 +176,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Read and Parse the Script File
+    // Read and parse the script file.
     ScriptLine scriptLines[1024];
     int count = 0;
     char buffer[256];
     while (fgets(buffer, sizeof(buffer), fp)) {
         char *line = trim(buffer);
-        if (line[0] == '\0') {
+        if (line[0] == '\0')
             continue;
-        }
-        int lineNumber = 0;
-        int offset = 0;
+        int lineNumber = 0, offset = 0;
         if (sscanf(line, "%d%n", &lineNumber, &offset) != 1) {
             if (debug)
                 fprintf(stderr, "Error: Missing or invalid line number in: %s\n", line);
@@ -196,16 +198,15 @@ int main(int argc, char *argv[]) {
     }
     fclose(fp);
 
-    // Sort the script lines by their line numbers.
+    // Sort the script lines by line number.
     qsort(scriptLines, count, sizeof(ScriptLine), cmpScriptLine);
 
-    // Execute the Script
-    int pc = 0; // Program counter: index into scriptLines[]
+    // Process the script.
+    int pc = 0;
     while (pc < count && !stop) {
         if (debug)
             fprintf(stderr, "Executing line %d: %s\n", scriptLines[pc].number, scriptLines[pc].text);
 
-        // PRINT command
         if (strncmp(scriptLines[pc].text, "PRINT", 5) == 0) {
             char *start = strchr(scriptLines[pc].text, '\"');
             if (!start) {
@@ -233,7 +234,6 @@ int main(int argc, char *argv[]) {
             message[len] = '\0';
             printf("%s\n", message);
         }
-        // WAIT command
         else if (strncmp(scriptLines[pc].text, "WAIT", 4) == 0) {
             int ms;
             if (sscanf(scriptLines[pc].text, "WAIT %d", &ms) == 1) {
@@ -244,7 +244,6 @@ int main(int argc, char *argv[]) {
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
-        // GOTO command
         else if (strncmp(scriptLines[pc].text, "GOTO", 4) == 0) {
             int target;
             if (sscanf(scriptLines[pc].text, "GOTO %d", &target) == 1) {
@@ -269,41 +268,40 @@ int main(int argc, char *argv[]) {
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
-        // RUN command: Executes an external program from the "apps/" directory.
         else if (strncmp(scriptLines[pc].text, "RUN", 3) == 0) {
             char executable[256];
             if (sscanf(scriptLines[pc].text, "RUN %s", executable) == 1) {
                 char path[512];
                 snprintf(path, sizeof(path), "apps/%s", executable);
-                if (debug)
-                    fprintf(stderr, "Running executable: %s\n", path);
-                pid_t pid = fork();
-                if (pid < 0) {
-                    if (debug)
-                        fprintf(stderr, "Error: fork() failed for %s\n", path);
-                } else if (pid == 0) {
-                    char *argv[] = { path, NULL };
-                    execv(path, argv);
-                    if (debug)
-                        fprintf(stderr, "Error: execv() failed for %s\n", path);
-                    exit(EXIT_FAILURE);
+                char command[1024];
+
+                // Check if the session exists by querying tmux with our dedicated socket.
+                char check_cmd[256];
+                snprintf(check_cmd, sizeof(check_cmd),
+                         "unset TMUX; tmux -S %s has-session -t %s 2>/dev/null", socket_path, session_name);
+                int session_exists = (system(check_cmd) == 0);
+
+                if (!session_exists) {
+                    // Create a new detached tmux session with the unique session name.
+                    snprintf(command, sizeof(command),
+                             "unset TMUX; tmux -S %s new-session -d -s %s -n %s \"%s; exec bash\"",
+                             socket_path, session_name, executable, path);
+                    tmux_started = 1;
                 } else {
-                    int status;
-                    while (waitpid(pid, &status, 0) < 0) {
-                        if (errno != EINTR) {
-                            if (debug)
-                                fprintf(stderr, "Error: waitpid() failed for %s\n", path);
-                            break;
-                        }
-                    }
+                    // Create a new window in the existing session.
+                    snprintf(command, sizeof(command),
+                             "unset TMUX; tmux -S %s new-window -t %s -n %s \"%s; exec bash\"",
+                             socket_path, session_name, executable, path);
                 }
+                if (debug)
+                    fprintf(stderr, "Executing: %s\n", command);
+                system(command);
             } else {
                 if (debug)
                     fprintf(stderr, "Error: Invalid RUN command format at line %d: %s\n",
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
-        // CMD command: Executes an external program from the "commands/" directory.
         else if (strncmp(scriptLines[pc].text, "CMD", 3) == 0) {
             char executable[256];
             if (sscanf(scriptLines[pc].text, "CMD %s", executable) == 1) {
@@ -337,12 +335,12 @@ int main(int argc, char *argv[]) {
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
-        // ROUTE command: Handles routing commands.
+        else if (strncmp(scriptLines[pc].text, "CLEAR", 5) == 0) {
+            printf("\033[H\033[J");
+            fflush(stdout);
+        }
         else if (strncmp(scriptLines[pc].text, "ROUTE", 5) == 0) {
-            // Get the arguments after "ROUTE"
-            char *args = scriptLines[pc].text + 5;
-            args = trim(args);
-            // If "clear", then clear the route file.
+            char *args = trim(scriptLines[pc].text + 5);
             if (strcmp(args, "clear") == 0) {
                 FILE *rf = fopen("route.rt", "w");
                 if (!rf) {
@@ -351,9 +349,7 @@ int main(int argc, char *argv[]) {
                 } else {
                     fclose(rf);
                 }
-            }
-            // Otherwise, append the route command to route.rt.
-            else {
+            } else {
                 FILE *rf = fopen("route.rt", "a");
                 if (!rf) {
                     if (debug)
@@ -364,12 +360,19 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
-        // CLEAR command: Clears the terminal screen using ANSI escape sequences.
-        else if (strncmp(scriptLines[pc].text, "CLEAR", 5) == 0) {
-            printf("\033[H\033[J");
-            fflush(stdout);
+        else if (strncmp(scriptLines[pc].text, "START", 5) == 0) {
+            // The START command attaches to the tmux session.
+            if (tmux_started) {
+                char attach_cmd[256];
+                snprintf(attach_cmd, sizeof(attach_cmd),
+                         "unset TMUX; tmux -S %s attach -t %s", socket_path, session_name);
+                if (debug)
+                    fprintf(stderr, "Attaching to tmux session '%s'...\n", session_name);
+                system(attach_cmd);
+            } else {
+                fprintf(stderr, "No tmux session created. Please run a RUN command first.\n");
+            }
         }
-        // Unrecognized command
         else {
             if (debug)
                 fprintf(stderr, "Diagnostic: Unrecognized command at line %d: %s\n",

@@ -9,6 +9,7 @@
  *   - UI help text has been added to inform the user of the available key functions.
  *   - Replaced use of clock() with clock_gettime(CLOCK_REALTIME, ...) to use wall‑clock time.
  *   - Added ±10%% buffer to the y‑axis based on the calculated min and max values.
+ *   - Terminal is put into non‑canonical mode to immediately process key presses.
  *
  * Features:
  *   - Connects to a server (default: localhost:12345) and receives routed signals.
@@ -18,7 +19,7 @@
  *   - Records samples from active channels to output.csv when recording is toggled via key 'R'.
  *
  * Design principles:
- *   - Uses only plain C (compiled with -std=c11) and only standard cross-platform libraries.
+ *   - Uses only plain C (compiled with -std=c11) and only standard cross‑platform libraries.
  *   - Implements two additional threads: one for handling keyboard input and one for network input.
  *   - Uses a circular buffer for each channel to store up to MAX_SAMPLES.
  *   - Uses ANSI escape sequences for terminal control (assumes a compatible terminal).
@@ -51,6 +52,9 @@
 #include <netdb.h>
 #include <unistd.h>
 
+/* For terminal control */
+#include <termios.h>
+
 #define NUM_TRENDS      5
 #define MAX_SAMPLES     1200    // Maximum samples per channel (e.g. 120 sec @ 10 Hz)
 #define DISPLAY_WIDTH   80
@@ -58,7 +62,24 @@
 #define SAMPLE_RATE     10      // nominal samples per second (used for display timing)
 #define DT              (1.0 / SAMPLE_RATE)
 
-// Helper function: return current wall-clock time (in seconds with fractions)
+// Global variable to store original terminal settings.
+struct termios orig_termios;
+
+// Disable canonical mode and echo to process individual key presses.
+void disable_input_buffering(void) {
+    struct termios new_termios;
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    new_termios = orig_termios;
+    new_termios.c_lflag &= ~(ICANON | ECHO);  // disable canonical mode and echo
+    tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+}
+
+// Restore original terminal settings.
+void restore_input_buffering(void) {
+    tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+}
+
+// Helper function: return current wall‑clock time (in seconds with fractions)
 double get_wallclock_time(void) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -160,7 +181,7 @@ int network_thread(void *arg) {
 
 /*
  * input_thread:
- * Reads keyboard input from stdin (blocking getchar).
+ * Reads keyboard input from stdin (now in non‑canonical mode).
  * Toggles channels (keys '1'-'5'), adjusts time window (keys '8' and '9'),
  * and toggles recording (key 'R' or 'r').
  */
@@ -209,7 +230,7 @@ void clear_screen() {
 /*
  * display_trends:
  * Draws the ASCII graph for the 5 channels.
- * The x-axis spans the current time_window seconds and the y-axis is auto-scaled
+ * The x-axis spans the current time_window seconds and the y-axis is auto‑scaled
  * based on the minimum and maximum values from active channels with an extra ±10% buffer.
  */
 void display_trends() {
@@ -357,6 +378,7 @@ int connect_to_server(const char *hostname, const char *port) {
  * main:
  * - Connects to the server.
  * - Initializes buffers and synchronization primitives.
+ * - Puts the terminal into non‑canonical mode.
  * - Spawns network and keyboard input threads.
  * - Enters a loop that periodically refreshes the display.
  */
@@ -392,6 +414,12 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Mutex init failed\n");
         return EXIT_FAILURE;
     }
+    
+    // Set terminal to non‑canonical mode to process key presses immediately.
+    disable_input_buffering();
+    
+    // Ensure terminal settings are restored on exit.
+    atexit(restore_input_buffering);
     
     signal(SIGINT, handle_sigint);
     

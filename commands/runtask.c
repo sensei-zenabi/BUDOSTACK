@@ -1,8 +1,8 @@
 /*
-* runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, CLEAR, and now CMD commands.
+* runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, CLEAR, CMD, and now ROUTE commands.
 *
 * Design Principles:
-* - Minimalism: Only the PRINT, WAIT, GOTO, RUN, CLEAR, and now CMD commands are supported.
+* - Minimalism: Only the PRINT, WAIT, GOTO, RUN, CLEAR, CMD, and now ROUTE commands are supported.
 * - Script Organization: The engine reads the entire script (with numbered lines)
 *   into memory, sorts them by line number, and uses a program counter to simulate jumps (GOTO).
 * - Diagnostics: Detailed error messages are printed to stderr only when the debug flag (-d) is provided.
@@ -28,7 +28,9 @@
 * 70 RUN example
 * 80 CMD help
 * 90 GOTO 10
-* 100 CLEAR  <-- New CLEAR command to clear the screen
+* 100 CLEAR        <-- CLEAR command to clear the screen
+* 110 ROUTE clear  <-- ROUTE command to clear the file route.rt
+* 120 ROUTE 1 1 2 1  <-- Appends "route 1 1 2 1" to route.rt
 */
 
 #include <stdio.h>
@@ -54,13 +56,12 @@ void sigint_handler(int signum) {
 // ---------------------------
 // Function: print_help
 // ---------------------------
-// Displays an extensive help message when "runtask -help" is invoked.
 void print_help(void) {
     printf("\nRuntask Help\n");
     printf("============\n\n");
     printf("Runtask is a simplified script engine that processes a task script\n");
     printf("composed of numbered lines, each containing a single command. The supported\n");
-    printf("commands are PRINT, WAIT, GOTO, RUN, CLEAR, and CMD. The engine is designed with minimalism\n");
+    printf("commands are PRINT, WAIT, GOTO, RUN, CLEAR, CMD, and now ROUTE. The engine is designed with minimalism\n");
     printf("and portability in mind, using standard C11 and only standard libraries.\n\n");
     printf("Usage:\n");
     printf(" ./runtask taskfile [-d]\n\n");
@@ -72,7 +73,9 @@ void print_help(void) {
     printf(" GOTO line_number\n");
     printf(" RUN executable    (runs an executable from the 'apps/' directory)\n");
     printf(" CMD executable    (runs an executable from the 'commands/' directory)\n");
-    printf(" CLEAR             (clears the screen)\n\n");
+    printf(" CLEAR             (clears the screen)\n");
+    printf(" ROUTE clear       (clears the file route.rt)\n");
+    printf(" ROUTE ...         (appends the command prefixed by 'route ' into route.rt)\n\n");
     printf("Example TASK Script:\n");
     printf("--------------------\n");
     printf(" 10 PRINT \"THIS IS MY TASK:\"\n");
@@ -83,24 +86,16 @@ void print_help(void) {
     printf(" 60 PRINT \"I WAITED 2000ms\"\n");
     printf(" 70 RUN example\n");
     printf(" 80 GOTO 10\n");
-    printf(" 90 CLEAR\n\n");
-    printf("Additional Details:\n");
-    printf(" - The script is read completely into memory, and the lines are sorted by their\n");
-    printf("   line numbers before execution.\n");
-    printf(" - A program counter (pc) is used to step through the sorted commands, simulating\n");
-    printf("   jumps with the GOTO command.\n");
-    printf(" - Debug mode (-d) will output diagnostic messages to stderr, including errors such as\n");
-    printf("   missing quotes in PRINT commands or invalid command formats.\n");
-    printf(" - The engine gracefully handles interruptions (CTRL+C) during execution.\n\n");
+    printf(" 90 CLEAR\n");
+    printf("100 ROUTE clear\n");
+    printf("110 ROUTE 1 1 2 1\n\n");
     printf("Compilation:\n");
     printf(" gcc -std=c11 -o runtask runtask.c\n\n");
-    printf("For more information or to report issues, please refer to the source comments in runtask.c.\n\n");
 }
 
 // ---------------------------
 // Helper: Trim Function
 // ---------------------------
-// Removes leading and trailing whitespace from a string.
 char *trim(char *str) {
     while (isspace((unsigned char)*str))
         str++;
@@ -116,7 +111,6 @@ char *trim(char *str) {
 // ---------------------------
 // Helper: Delay Function
 // ---------------------------
-// Sleeps in small increments to periodically check for CTRL+C (SIGINT).
 void delay_ms(int ms) {
     int elapsed = 0;
     while (elapsed < ms && !stop) {
@@ -169,9 +163,7 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // ---------------------------
-    // Modified: Prepend "tasks/" to the taskfile argument.
-    // ---------------------------
+    // Prepend "tasks/" to the taskfile argument.
     char task_path[512];
     snprintf(task_path, sizeof(task_path), "tasks/%s", argv[1]);
     FILE *fp = fopen(task_path, "r");
@@ -180,16 +172,13 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // ---------------------------
     // Read and Parse the Script File
-    // ---------------------------
     ScriptLine scriptLines[1024];
     int count = 0;
     char buffer[256];
     while (fgets(buffer, sizeof(buffer), fp)) {
         char *line = trim(buffer);
         if (line[0] == '\0') {
-            // Skip empty lines.
             continue;
         }
         int lineNumber = 0;
@@ -210,9 +199,7 @@ int main(int argc, char *argv[]) {
     // Sort the script lines by their line numbers.
     qsort(scriptLines, count, sizeof(ScriptLine), cmpScriptLine);
 
-    // ---------------------------
     // Execute the Script
-    // ---------------------------
     int pc = 0; // Program counter: index into scriptLines[]
     while (pc < count && !stop) {
         if (debug)
@@ -227,7 +214,7 @@ int main(int argc, char *argv[]) {
                 pc++;
                 continue;
             }
-            start++; // Move past the opening quote.
+            start++;
             char *end = strchr(start, '\"');
             if (!end) {
                 if (debug)
@@ -350,10 +337,35 @@ int main(int argc, char *argv[]) {
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
+        // ROUTE command: Handles routing commands.
+        else if (strncmp(scriptLines[pc].text, "ROUTE", 5) == 0) {
+            // Get the arguments after "ROUTE"
+            char *args = scriptLines[pc].text + 5;
+            args = trim(args);
+            // If "clear", then clear the route file.
+            if (strcmp(args, "clear") == 0) {
+                FILE *rf = fopen("route.rt", "w");
+                if (!rf) {
+                    if (debug)
+                        fprintf(stderr, "Error: Could not clear route file route.rt at line %d.\n", scriptLines[pc].number);
+                } else {
+                    fclose(rf);
+                }
+            }
+            // Otherwise, append the route command to route.rt.
+            else {
+                FILE *rf = fopen("route.rt", "a");
+                if (!rf) {
+                    if (debug)
+                        fprintf(stderr, "Error: Could not open route file route.rt for appending at line %d.\n", scriptLines[pc].number);
+                } else {
+                    fprintf(rf, "route %s\n", args);
+                    fclose(rf);
+                }
+            }
+        }
         // CLEAR command: Clears the terminal screen using ANSI escape sequences.
         else if (strncmp(scriptLines[pc].text, "CLEAR", 5) == 0) {
-            // ANSI escape code: \033[H moves the cursor to the home position,
-            // \033[J clears from the cursor to the end of the screen.
             printf("\033[H\033[J");
             fflush(stdout);
         }

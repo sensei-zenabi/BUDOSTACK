@@ -13,15 +13,20 @@
     * route <A> <out-channel> <B> <in-channel>
     * print <clientID> <-- show last data for all channels of the given client
     * help
-
- The server forwards any line received from a client's "outN:" prefix
- to the client/channel that is wired in the routing table.
+ - At startup, the server now checks for a file named "route.rt". If it exists,
+   the file is read line-by-line to execute routing commands. If the file is missing
+   or a failure occurs during processing, an appropriate message is displayed.
+   Otherwise, the file's content is printed.
 
  Design principles for this modification:
  - We keep a per-client record of the last message seen on each output and each input channel.
- - We add a new console command without affecting existing functionality.
- - We use plain C with -std=c11 and only standard libraries.
-
+ - We add a new startup file processing function without affecting existing functionality.
+ - We use plain C with -std=c11 and only standard cross-platform libraries.
+ - A new helper function (route_command_from_file) is added to bypass client connectivity checks,
+   so that preconfigured routes are stored even if clients are not yet connected.
+ - We do not remove any existing functionality.
+ - Comments throughout explain design choices.
+ 
  Build:
    gcc -std=c11 -o server server.c
 
@@ -84,6 +89,10 @@ static void list_routes(void);
 static int find_client_index(int cid);
 static void trim_newline(char *s);
 
+// New helper functions for processing routing file.
+static void process_routing_file(void);
+static void route_command_from_file(int outCID, int outCH, int inCID, int inCH);
+
 int main(int argc, char *argv[]) {
     unsigned short port = SERVER_PORT;
     if (argc > 1) {
@@ -123,6 +132,9 @@ int main(int argc, char *argv[]) {
     }
     printf("Switchboard Server listening on port %hu.\n", port);
     printf("Type 'help' for commands.\n");
+
+    // Process routing file "route.rt" at startup.
+    process_routing_file();
 
     // Main loop using select()
     while (1) {
@@ -451,4 +463,132 @@ static void trim_newline(char *s) {
     if (p) *p = '\0';
     p = strchr(s, '\r');
     if (p) *p = '\0';
+}
+
+/* 
+ * process_routing_file()
+ *
+ * This function attempts to open "route.rt" for reading.
+ * For each non-empty line that starts with "route", it parses the tokens in the expected format.
+ * A new helper function, route_command_from_file(), is used to update the routing table without checking
+ * for active clients (since preconfiguration occurs before clients connect).
+ *
+ * If the file is not found, or if any command fails to parse, a message is displayed.
+ * If all commands are processed successfully, the contents of the file are re-read and displayed.
+ */
+static void process_routing_file(void) {
+    FILE *fp = fopen("route.rt", "r");
+    if (!fp) {
+        printf("Routing file 'route.rt' not found.\n");
+        return;
+    }
+    char line[256];
+    bool all_success = true;
+    int cmd_count = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        trim_newline(line);
+        // Skip empty lines or lines that do not start with "route"
+        if (strlen(line) == 0 || strncmp(line, "route", 5) != 0) {
+            continue;
+        }
+        cmd_count++;
+        // Tokenize the line.
+        char *token = strtok(line, " ");
+        if (!token || strcmp(token, "route") != 0) {
+            printf("Invalid command in routing file.\n");
+            all_success = false;
+            continue;
+        }
+        char *pOutCID = strtok(NULL, " ");
+        char *pOutStr = strtok(NULL, " ");
+        char *pInCID = strtok(NULL, " ");
+        char *pInStr = strtok(NULL, " ");
+        if (!pOutCID || !pOutStr || !pInCID || !pInStr) {
+            printf("Incomplete routing command in file.\n");
+            all_success = false;
+            continue;
+        }
+        int outCID = atoi(pOutCID);
+        int inCID = atoi(pInCID);
+        bool outAll = (strcmp(pOutStr, "all") == 0);
+        int fixedOut = -1;
+        if (!outAll) {
+            if (isdigit((unsigned char)pOutStr[0])) {
+                fixedOut = atoi(pOutStr);
+            } else if (strncmp(pOutStr, "out", 3) == 0 && isdigit((unsigned char)pOutStr[3])) {
+                fixedOut = pOutStr[3] - '0';
+            } else {
+                printf("Invalid output channel in routing file.\n");
+                all_success = false;
+                continue;
+            }
+        }
+        bool inAll = (strcmp(pInStr, "all") == 0);
+        int fixedIn = -1;
+        if (!inAll) {
+            if (isdigit((unsigned char)pInStr[0])) {
+                fixedIn = atoi(pInStr);
+            } else if (strncmp(pInStr, "in", 2) == 0 && isdigit((unsigned char)pInStr[2])) {
+                fixedIn = pInStr[2] - '0';
+            } else {
+                printf("Invalid input channel in routing file.\n");
+                all_success = false;
+                continue;
+            }
+        }
+        // Validate fixed channels if not "all"
+        if (!outAll && (fixedOut < 0 || fixedOut >= CHANNELS_PER_APP)) {
+            printf("Invalid output channel value in routing file. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1);
+            all_success = false;
+            continue;
+        }
+        if (!inAll && (fixedIn < 0 || fixedIn >= CHANNELS_PER_APP)) {
+            printf("Invalid input channel value in routing file. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1);
+            all_success = false;
+            continue;
+        }
+        // Apply routing based on the tokens using the helper function.
+        if (outAll && inAll) {
+            for (int i = 0; i < CHANNELS_PER_APP; i++) {
+                route_command_from_file(outCID, i, inCID, i);
+            }
+        } else if (outAll && !inAll) {
+            for (int i = 0; i < CHANNELS_PER_APP; i++) {
+                route_command_from_file(outCID, i, inCID, fixedIn);
+            }
+        } else if (!outAll && inAll) {
+            for (int i = 0; i < CHANNELS_PER_APP; i++) {
+                route_command_from_file(outCID, fixedOut, inCID, i);
+            }
+        } else {
+            route_command_from_file(outCID, fixedOut, inCID, fixedIn);
+        }
+    }
+    fclose(fp);
+    if (!all_success || cmd_count == 0) {
+        printf("Error processing routing file or no valid commands found.\n");
+    } else {
+        // Re-open the file to display its contents.
+        fp = fopen("route.rt", "r");
+        if (fp) {
+            printf("Routing file executed successfully. Contents of 'route.rt':\n");
+            while (fgets(line, sizeof(line), fp)) {
+                printf("%s", line);
+            }
+            fclose(fp);
+        }
+    }
+}
+
+/*
+ * route_command_from_file()
+ *
+ * This helper function is similar to route_command but does not check for active clients.
+ * It directly updates the routing table and prints a message indicating the preconfigured route.
+ * This ensures that routing commands from the file are stored even if no clients are connected yet.
+ */
+static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) {
+    routing[outCID][outCH].in_client_id = inCID;
+    routing[outCID][outCH].in_channel = inCH;
+    printf("Preconfigured: client%d out%d -> client%d in%d\n", outCID, outCH, inCID, inCH);
 }

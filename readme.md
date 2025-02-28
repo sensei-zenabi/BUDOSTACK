@@ -1,4 +1,4 @@
-Project: All Around Linux Terminal Operator (AALTO)
+Project: All Around Linux Terminal Operator (AALTO)\n
 Author: Ville Suoranta
 ===============================================================================
 Dependencies:

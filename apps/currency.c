@@ -403,10 +403,15 @@ void display_page(Currency *currencies, size_t total, size_t page, int term_cols
         printf("\n");
     }
     
-    // Print menu/instructions in the last row (using inverse video)
-    printf("\033[7m"); 
-    printf("Page %zu/%zu: 8: Prev  9: Next  S: Sort  U: Update  0: Exit", page + 1, total_pages);
-    int menu_len = (int)strlen("Page X/X: 8: Prev  9: Next  S: Sort  U: Update  0: Exit");
+    // Build menu/instructions with the API source appended.
+    char menu_text[256];
+    snprintf(menu_text, sizeof(menu_text),
+             "Page %zu/%zu: 8: Prev  9: Next  S: Sort  U: Update  0: Exit | Source: http://www.floatrates.com/daily/eur.json",
+             page + 1, total_pages);
+    
+    // Print the menu in inverse video and pad with spaces
+    printf("\033[7m%s", menu_text);
+    int menu_len = (int)strlen(menu_text);
     for (int i = menu_len; i < term_cols; i++) {
         putchar(' ');
     }

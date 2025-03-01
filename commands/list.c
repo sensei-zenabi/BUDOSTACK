@@ -10,6 +10,11 @@
  * - Use plain C (C11 standard) and only standard cross-platform libraries.
  * - Use a custom comparator to separate directories from files.
  * - Use d_type if available; otherwise, fall back to stat() to determine the file type.
+ * - Provide a configurable filter for file types (by extension) that are hidden unless "-a" is specified.
+ *
+ * ChatGPT Requirement #1:
+ * Implement here a configurable list of file types that are not displayed unless the
+ * list command is ran with argument list -a (meaning list all)
  */
 
 #define _DEFAULT_SOURCE
@@ -23,7 +28,20 @@
 #include <time.h>
 #include <errno.h>
 
-static const char *base_path;  // Global base path used in the custom comparator
+/* Global base path used in the comparator and filter function */
+static const char *base_path;
+
+/* Global flag to indicate if all files should be shown */
+static int show_all = 0;
+
+/* Configurable list of file extensions to be hidden unless "-a" is specified */
+static const char *excluded_extensions[] = {
+    ".c",
+    ".h",
+    ".o",
+    ".gitignore",
+    NULL
+};
 
 /* Convert file mode to a permission string (like ls -l) */
 void mode_to_string(mode_t mode, char *str) {
@@ -41,6 +59,47 @@ void mode_to_string(mode_t mode, char *str) {
 }
 
 /*
+ * Filter function for scandir.
+ *
+ * Files whose names end with any extension in the excluded_extensions list are
+ * filtered out unless the global flag show_all is set. Directories (and the entries
+ * "." and "..") are always included.
+ */
+int filter(const struct dirent *entry) {
+    /* Always include the current and parent directory entries */
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        return 1;
+
+    /* Use d_type if available to check if entry is a directory.
+       If so, always include it. If d_type is unknown, fall back to stat(). */
+    if (entry->d_type != DT_UNKNOWN) {
+        if (entry->d_type == DT_DIR)
+            return 1;
+    } else {
+        char fullpath[1024];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", base_path, entry->d_name);
+        struct stat st;
+        if (stat(fullpath, &st) == 0) {
+            if (S_ISDIR(st.st_mode))
+                return 1;
+        }
+    }
+
+    /* If the "-a" flag is provided, show all files */
+    if (show_all)
+        return 1;
+
+    /* Otherwise, filter out files with excluded extensions */
+    for (int i = 0; excluded_extensions[i] != NULL; i++) {
+        size_t ext_len = strlen(excluded_extensions[i]);
+        size_t name_len = strlen(entry->d_name);
+        if (name_len >= ext_len && strcmp(entry->d_name + name_len - ext_len, excluded_extensions[i]) == 0)
+            return 0; // Skip this file
+    }
+    return 1;
+}
+
+/*
  * Custom comparator function for scandir.
  * Directories are sorted before files. If both entries are of the same type,
  * they are compared alphabetically.
@@ -49,11 +108,10 @@ int cmp_entries(const struct dirent **a, const struct dirent **b) {
     int is_dir_a = 0, is_dir_b = 0;
 
     /* First, try using d_type if available */
-    #ifdef DT_DIR
+#ifdef DT_DIR
     if ((*a)->d_type != DT_UNKNOWN) {
         is_dir_a = ((*a)->d_type == DT_DIR);
     } else {
-        /* Fall back to stat if d_type is unknown */
         char fullpath[1024];
         snprintf(fullpath, sizeof(fullpath), "%s/%s", base_path, (*a)->d_name);
         struct stat st;
@@ -71,7 +129,7 @@ int cmp_entries(const struct dirent **a, const struct dirent **b) {
             is_dir_b = S_ISDIR(st.st_mode);
         }
     }
-    #endif
+#endif
 
     /* Directories come before files */
     if (is_dir_a && !is_dir_b)
@@ -84,11 +142,23 @@ int cmp_entries(const struct dirent **a, const struct dirent **b) {
 }
 
 int main(int argc, char *argv[]) {
-    const char *dir_path = (argc < 2) ? "." : argv[1];
-    base_path = dir_path;  // Set the global base path for the comparator
+    /* Parse command-line arguments.
+       If any argument equals "-a", set show_all flag.
+       Any argument that is not "-a" is treated as the directory path.
+       Default directory is "." if none provided.
+    */
+    const char *dir_path = ".";
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-a") == 0) {
+            show_all = 1;
+        } else {
+            dir_path = argv[i];
+        }
+    }
+    base_path = dir_path;  // Set the global base path for comparator and filter
 
     struct dirent **namelist;
-    int n = scandir(dir_path, &namelist, NULL, cmp_entries);
+    int n = scandir(dir_path, &namelist, filter, cmp_entries);
     if (n < 0) {
         perror("scandir");
         return EXIT_FAILURE;

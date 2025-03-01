@@ -394,6 +394,7 @@ int main(int argc, char *argv[]) {
             printf(" %s\n", realtime_commands[i]);
         }
     }
+	printf("\nType 'help' for command list.");
     printf("\nType 'exit' to quit.\n\n");
 
     // Modified: If an auto_command was built, execute it once before entering the main loop.

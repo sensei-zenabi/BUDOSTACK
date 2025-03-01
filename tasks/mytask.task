@@ -11,8 +11,8 @@
 60 PRINT "STARTING SERVER..."
 65 RUN server
 70 WAIT 100
-75 RUN spectrum
+75 RUN cl_spectrum
 80 WAIT 100
-85 RUN trend
+85 RUN cl_trend
 90 WAIT 100 
 95 START

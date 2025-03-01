@@ -3,6 +3,7 @@
     and exchange rate relative to EUR) in a sorted grid that fills the terminal screen. The user may:
       - Press '9' for the next page,
       - Press '8' for the previous page,
+      - Press 'S' (or 's') to toggle sorting order between code and exchange rate,
       - Press 'U' (or 'u') to update the data from the API,
       - Press '0' to exit.
       
@@ -315,11 +316,22 @@ void parse_json_currencies(const char *json, CurrencyArray *arr) {
     }
 }
 
-// Comparison function for qsort (sort by code)
-int cmp_currency(const void *a, const void *b) {
+// Comparator to sort by currency code
+int cmp_currency_by_code(const void *a, const void *b) {
     const Currency *ca = a;
     const Currency *cb = b;
     return strcmp(ca->code, cb->code);
+}
+
+// Comparator to sort by exchange rate
+int cmp_currency_by_rate(const void *a, const void *b) {
+    const Currency *ca = a;
+    const Currency *cb = b;
+    if (ca->rate < cb->rate)
+        return -1;
+    else if (ca->rate > cb->rate)
+        return 1;
+    return 0;
 }
 
 /*
@@ -382,13 +394,10 @@ void display_page(Currency *currencies, size_t total, size_t page, int term_cols
             char cell[cell_width + 1]; // buffer for fixed-width cell (plus null terminator)
             if (idx < total) {
                 Currency *c = &currencies[idx];
-                // Build a cell using fixed width formatting
                 snprintf(cell, sizeof(cell), "%-3.3s %-20.20s %8.4f", c->code, c->name, c->rate);
             } else {
-                // Empty cell if no record exists
                 snprintf(cell, sizeof(cell), "%-*s", cell_width, "");
             }
-            // Print the cell and then a space as a separator
             printf("%-33s ", cell);
         }
         printf("\n");
@@ -396,8 +405,8 @@ void display_page(Currency *currencies, size_t total, size_t page, int term_cols
     
     // Print menu/instructions in the last row (using inverse video)
     printf("\033[7m"); 
-    printf("Page %zu/%zu: 8: Prev  9: Next  U: Update  0: Exit", page + 1, total_pages);
-    int menu_len = (int)strlen("Page X/X: 8: Prev  9: Next  U: Update  0: Exit");
+    printf("Page %zu/%zu: 8: Prev  9: Next  S: Sort  U: Update  0: Exit", page + 1, total_pages);
+    int menu_len = (int)strlen("Page X/X: 8: Prev  9: Next  S: Sort  U: Update  0: Exit");
     for (int i = menu_len; i < term_cols; i++) {
         putchar(' ');
     }
@@ -453,8 +462,8 @@ CurrencyArray fetch_currencies(void) {
     parse_json_currencies(response, &arr);
     free(response);
     
-    // Sort currencies by code
-    qsort(arr.items, arr.count, sizeof(Currency), cmp_currency);
+    // Initially sort currencies by code.
+    qsort(arr.items, arr.count, sizeof(Currency), cmp_currency_by_code);
     return arr;
 }
 
@@ -468,7 +477,7 @@ int main(void) {
     int term_cols, term_rows;
     get_terminal_size(&term_cols, &term_rows);
     
-    // Use effective cell width (34 characters) to compute layout.
+    // Using effective cell width (34 characters) to compute layout.
     const int effective_width = 34;
     int num_cols = term_cols / effective_width;
     if (num_cols < 1)
@@ -476,6 +485,9 @@ int main(void) {
     int grid_rows = term_rows - 1; // reserving last row for menu/instructions
     size_t items_per_page = num_cols * grid_rows;
     size_t total_pages = (arr.count + items_per_page - 1) / items_per_page;
+    
+    // Flag for sorting order: 1 = sort by code, 0 = sort by exchange rate.
+    int sort_by_code = 1;
     
     size_t current_page = 0;
     int choice;
@@ -486,9 +498,24 @@ int main(void) {
             current_page++;
         } else if (choice == '8' && current_page > 0) {
             current_page--;
+        } else if (choice == 'S' || choice == 's') {
+            // Toggle sorting order and re-sort the array.
+            sort_by_code = !sort_by_code;
+            if (sort_by_code) {
+                qsort(arr.items, arr.count, sizeof(Currency), cmp_currency_by_code);
+            } else {
+                qsort(arr.items, arr.count, sizeof(Currency), cmp_currency_by_rate);
+            }
+            current_page = 0;
         } else if (choice == 'U' || choice == 'u') {
             free_currency_array(&arr);
             arr = fetch_currencies();
+            // Restore sorting order based on current flag.
+            if (sort_by_code) {
+                qsort(arr.items, arr.count, sizeof(Currency), cmp_currency_by_code);
+            } else {
+                qsort(arr.items, arr.count, sizeof(Currency), cmp_currency_by_rate);
+            }
             total_pages = (arr.count + items_per_page - 1) / items_per_page;
             current_page = 0;
         }

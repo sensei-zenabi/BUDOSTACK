@@ -33,8 +33,9 @@ Supported commands:
 	the parent device in the list.
     
     search hardware -short
-	1. Search and display all connected hardware specs in a concise, short format
-       for improved human readability.
+	1. Search and display connected hardware specs in a concise, short format,
+       including some key details from the Linux kernel virtual files,
+       and battery information including its charge.
 
  Remarks:
 
@@ -59,11 +60,10 @@ Design Principles and Implementation Notes:
 - The "ping <IP-address>" command uses the system ping utility:
     - On Unix-like systems, it calls "ping -c 5 <IP-address>".
     - On Windows, it calls "ping -n 5 <IP-address>".
-- The "search hardware" command on Unix-like systems has been modified to output plain text,
-  which is typically more human readable than machine-readable JSON, even though it might require extra work
-  if you plan to parse the output in a custom C application.
-- A new command "search hardware -short" is added, which outputs a concise hardware summary using
-  the "lshw -short" option.
+- The "search hardware" command on Unix-like systems has been modified to output detailed hardware information from multiple Linux kernel virtual files,
+  including extended details (via utilities like lscpu, free, lspci, lsusb, ip, sensors, upower) and battery information (status and charge).
+- The "search hardware -short" command provides a concise summary using "lshw -short" and additional short outputs from key commands,
+  including a concise battery info read from /sys/class/power_supply/BAT0.
 - Conditional compilation is used to support both Windows and Unix‑like systems for clearing the console and executing commands.
 - The code is written in plain C with the -std=c11 flag and uses only standard cross-platform libraries.
 - The external function prettyprint is declared as extern and assumed to be provided by a shared library.
@@ -107,7 +107,7 @@ int main() {
             input[len - 1] = '\0';
         }
 
-        // Process the "exit" command to terminate the chatbot.
+        // Process the "exit" command.
         if (strcmp(input, "exit") == 0) {
             break;
         }
@@ -118,17 +118,13 @@ int main() {
             printf("search network - Displays all the MAC, IP addresses and device names from devices in the same network (if possible)\n");
             printf("ping <IP-address> - Ping the device 5 times and report metrics from the results\n");
             printf("search \"string\" - Searches all the files and their contents that contain the string from the current folder and its subfolders\n");
-            printf("search hardware - Lists connected hardware specs and devices from the current machine\n");
-            printf("                 (output is in plain text for easier human readability)\n");
-            printf("search hardware -short - Lists connected hardware specs in a concise, short format\n");
+            printf("search hardware - Displays detailed hardware specs from the current machine\n");
+            printf("                 (including extended info for CPU, memory, PCI/USB devices, network interfaces, sensors, interrupts, I/O ports and battery info)\n");
+            printf("search hardware -short - Displays a concise, summary version of the hardware specs\n");
         }
         // Process the "search network" command.
         else if (strcmp(input, "search network") == 0) {
             printf("Performing network search...\n");
-            /* 
-             * The following system command attempts to display the MAC and IP addresses along with device names.
-             * "arp -a" is used on both Windows and Unix-like systems, although output formatting may vary.
-             */
             int ret = system("arp -a");
             if (ret != 0) {
                 printf("Error: Network search command failed or is not supported on this system.\n");
@@ -143,10 +139,8 @@ int main() {
                 printf("Pinging %s ...\n", ip);
                 char command[512];
 #ifdef _WIN32
-                // Windows: ping with 5 echo requests using "-n 5".
                 snprintf(command, sizeof(command), "ping -n 5 %s", ip);
 #else
-                // Unix-like systems: ping with 5 echo requests using "-c 5".
                 snprintf(command, sizeof(command), "ping -c 5 %s", ip);
 #endif
                 int ret = system(command);
@@ -172,12 +166,8 @@ int main() {
                     
                 char command[512];
 #ifdef _WIN32
-                // Windows: Use findstr to recursively search in current directory.
-                // /S: searches in subdirectories, /I: case-insensitive.
                 snprintf(command, sizeof(command), "findstr /S /I \"%s\" *", search_term);
 #else
-                // Unix-like systems: Use grep to recursively search in current directory.
-                // The -I flag causes grep to ignore binary files.
                 snprintf(command, sizeof(command), "grep -R -I \"%s\" .", search_term);
 #endif
                 int ret = system(command);
@@ -188,38 +178,106 @@ int main() {
                 printf("Error: Search string must be enclosed in double quotes.\n");
             }
         }
-        // Process the "search hardware" command.
+        // Process the "search hardware" command (detailed view).
         else if (strcmp(input, "search hardware") == 0) {
 #ifdef _WIN32
             printf("Hardware search is not supported on Windows in this version.\n");
 #else
-            // On Unix-like systems, output plain text for better human readability.
-            printf("Searching connected hardware specs (plain text output)...\n");
+            printf("Searching detailed hardware specs...\n");
+
+            // Run lshw for basic hardware details.
             int ret = system("lshw 2>/dev/null");
             if (ret != 0) {
-                printf("lshw not available. Trying alternative commands (lspci and lsusb)...\n");
-                ret = system("lspci && lsusb");
-                if (ret != 0) {
-                    printf("Error: Hardware search commands failed or returned no results.\n");
-                }
+                printf("lshw not available. Displaying alternative hardware information...\n");
             }
+            
+            // Extended CPU Information.
+            printf("\n--- CPU Info (from /proc/cpuinfo) ---\n");
+            system("cat /proc/cpuinfo");
+            printf("\n--- CPU Extended Info (lscpu) ---\n");
+            system("lscpu");
+
+            // Extended Memory Information.
+            printf("\n--- Memory Info (from /proc/meminfo) ---\n");
+            system("cat /proc/meminfo");
+            printf("\n--- Memory Extended Info (free -h) ---\n");
+            system("free -h");
+
+            // Extended PCI Devices Information.
+            printf("\n--- PCI Devices (basic) ---\n");
+            system("ls /sys/bus/pci/devices");
+            printf("\n--- PCI Devices Extended Info (lspci -v) ---\n");
+            system("lspci -v");
+
+            // Extended USB Devices Information.
+            printf("\n--- USB Devices (basic) ---\n");
+            system("ls /sys/bus/usb/devices");
+            printf("\n--- USB Devices Extended Info (lsusb -v) ---\n");
+            system("lsusb -v 2>/dev/null | head -n 50");
+
+            // Extended Network Interfaces Information.
+            printf("\n--- Network Interfaces (from /proc/net/dev) ---\n");
+            system("cat /proc/net/dev");
+            printf("\n--- Network Interfaces Extended Info (ip addr) ---\n");
+            system("ip addr");
+
+            // Extended Sensors Information.
+            printf("\n--- Sensors Info (basic from hwmon) ---\n");
+            system("cat /sys/class/hwmon/hwmon*/temp* 2>/dev/null");
+            printf("\n--- Sensors Extended Info (sensors) ---\n");
+            system("sensors 2>/dev/null");
+
+            // Extended Interrupts Information.
+            printf("\n--- Interrupts (from /proc/interrupts) ---\n");
+            system("cat /proc/interrupts");
+
+            // Extended I/O Ports Information.
+            printf("\n--- I/O Ports (from /proc/ioports) ---\n");
+            system("cat /proc/ioports 2>/dev/null");
+
+            // Extended Battery Information.
+            printf("\n--- Battery Info (basic) ---\n");
+            system("cat /sys/class/power_supply/BAT0/status 2>/dev/null");
+            printf("\n--- Battery Charge ---\n");
+            system("cat /sys/class/power_supply/BAT0/capacity 2>/dev/null && echo \"%\"");
+            printf("\n--- Battery Extended Info (upower) ---\n");
+            system("upower -i /org/freedesktop/UPower/devices/battery_BAT0 2>/dev/null");
 #endif
         }
-        // Process the "search hardware -short" command.
+        // Process the "search hardware -short" command (concise view).
         else if (strcmp(input, "search hardware -short") == 0) {
 #ifdef _WIN32
             printf("Hardware search is not supported on Windows in this version.\n");
 #else
-            // On Unix-like systems, output short format for concise hardware specs.
-            printf("Searching connected hardware specs (short format)...\n");
+            printf("Searching concise hardware specs...\n");
+
+            // Attempt to run lshw in short mode for a brief overview.
             int ret = system("lshw -short 2>/dev/null");
             if (ret != 0) {
-                printf("lshw not available. Trying alternative commands (lspci and lsusb)...\n");
-                ret = system("lspci && lsusb");
-                if (ret != 0) {
-                    printf("Error: Hardware search commands failed or returned no results.\n");
-                }
+                printf("lshw not available. Displaying alternative concise hardware information...\n");
             }
+            // Append additional concise details.
+            printf("\n--- CPU Info (concise) ---\n");
+            system("lscpu | grep -E 'Architecture|Model name|CPU\\(s\\)|Thread|Core\\(s\\)'");
+
+            printf("\n--- Memory Info (concise) ---\n");
+            system("free -h");
+
+            printf("\n--- PCI Devices (concise) ---\n");
+            system("lspci | head -n 15");
+
+            printf("\n--- USB Devices (concise) ---\n");
+            system("lsusb | head -n 15");
+
+            printf("\n--- Network Interfaces (concise) ---\n");
+            system("ip -brief addr show");
+
+            printf("\n--- Sensors (concise) ---\n");
+            system("sensors | grep -E 'Core|Package'");
+
+            // Concise Battery Information: display both status and charge.
+            printf("\n--- Battery Info (concise) ---\n");
+            system("cat /sys/class/power_supply/BAT0/status 2>/dev/null; echo -n \" Charge: \"; cat /sys/class/power_supply/BAT0/capacity 2>/dev/null; echo \"%\"");
 #endif
         }
         // For any unrecognized command, output a random default response.
@@ -244,7 +302,7 @@ int main() {
 /*
 References:
 - ISO C11 Standard Documentation for the C Standard Library functions.
-- GeeksforGeeks articles on system commands and time functions in C.
-- Stack Overflow discussions on using system() for network and file search utilities.
-- Documentation for lshw and its output options (plain text vs. -short).
+- Linux kernel documentation for /proc and /sys virtual files.
+- Documentation for lshw, lscpu, free, lspci, lsusb, ip, sensors, and upower.
+- Various Linux resources on accessing detailed hardware information including battery status and charge.
 */

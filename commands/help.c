@@ -2,7 +2,7 @@
 
 int main() {
 	printf("\n");
-	printf("/* All-Around Linus Terminal Operator - AALTO */\n");
+	printf("/* All-Around Linux Terminal Operator - AALTO */\n");
 	printf("Programmed by: Ville Suoranta (and mr. AI)\n\n");
     printf("Available Commands:\n");
     printf("\n");

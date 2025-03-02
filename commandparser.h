@@ -5,13 +5,14 @@
 #define MAX_PARAMETERS 10
 #define MAX_OPTIONS 10
 
-/* 
- * Absolute path to the commands directory.
- * Override this at build time if needed:
- *   gcc -std=c11 -Wall -DCOMMANDS_DIR="\"/your/absolute/path/to/commands\"" ...
+/*
+ * Relative path to the commands directory.
+ * This assumes that the commands directory is located
+ * relative to the current working directory or executable location.
+ * Adjust the path as necessary to match your project's structure.
  */
 #ifndef COMMANDS_DIR
-#define COMMANDS_DIR "/home/suoravi/git/C/commands"
+#define COMMANDS_DIR "./commands"
 #endif
 
 typedef struct {

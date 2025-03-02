@@ -12,7 +12,7 @@
 
 /* List of available commands */
 static const char *commands[] = {
-    "hello", "help", "list", "display", "copy",
+    "discover", "help", "list", "display", "copy",
     "move", "remove", "update", "makedir", "rmdir",
     "exit", "cd"
 };

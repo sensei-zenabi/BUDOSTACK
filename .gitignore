@@ -18,6 +18,8 @@ apps/*
 lib/*
 !lib/*.c
 !lib/*.h
+tasks/*
+!tasks/*.task
 
 # Backup files and temporary files
 *~

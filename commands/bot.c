@@ -15,32 +15,26 @@ Supported commands:
 	1. Displays all the supported commands (from below)
 
 	search network
-	1.Search and display all the MAC, IP addresses, device names and manufacturers
-	from all found devices in the same network.
+	1.Search and display all the MAC, IP addresses and device names from devices in the same network.
 
 	ping <IP-address>
 	1. Ping the device 5 times and report metrics from the results.
 
 	search "string"
-	1. Search and display all the files and their contents that contain the string
-	from current folder and its subfolders.
+	1. Search and display all the files and their contents that contain the string from current folder and its subfolders.
     2. If the file is a binary file, do not search it's content, only filename.
 
 	search hardware
-	1. Search and display all connected hardware specs and devices from the device 
-	where the app is running
-	2. Display the list so, that if a device is a child device it is nested under
-	the parent device in the list.
+	1. Search and display all connected hardware specs and devices from the device where the app is running
+	2. Display the list so, that if a device is a child device it is nested under the parent device in the list.
     
     search hardware -short
 	1. Search and display connected hardware specs in a concise, short format,
-       including some key details from the Linux kernel virtual files,
-       and battery information including its charge.
+       including some key details from the Linux kernel virtual files and battery information (status and charge).
 
  Remarks:
 
-	1. Functions defined as "extern" come from shared libraries and do not need
-	to be implemented.
+	1. Functions defined as "extern" come from shared libraries and do not need to be implemented.
 	2. Implement all above descriptions and requirements.
 	3. Provide the fully updated source code.
 	4. Do not delete or modify this header.
@@ -61,9 +55,10 @@ Design Principles and Implementation Notes:
     - On Unix-like systems, it calls "ping -c 5 <IP-address>".
     - On Windows, it calls "ping -n 5 <IP-address>".
 - The "search hardware" command on Unix-like systems has been modified to output detailed hardware information from multiple Linux kernel virtual files,
-  including extended details (via utilities like lscpu, free, lspci, lsusb, ip, sensors, upower) and battery information (status and charge).
-- The "search hardware -short" command provides a concise summary using "lshw -short" and additional short outputs from key commands,
-  including a concise battery info read from /sys/class/power_supply/BAT0.
+  including extended details (via utilities like lscpu, free, lspci, lsusb, ip, sensors, upower) and battery information.
+  The battery info is obtained by checking common battery paths (e.g. /sys/class/power_supply/BAT0 or BAT1) and using upower.
+- The "search hardware -short" command provides a concise summary using "lshw -short" and additional brief outputs from key commands,
+  including battery status and charge.
 - Conditional compilation is used to support both Windows and Unix‑like systems for clearing the console and executing commands.
 - The code is written in plain C with the -std=c11 flag and uses only standard cross-platform libraries.
 - The external function prettyprint is declared as extern and assumed to be provided by a shared library.
@@ -84,7 +79,7 @@ Design Principles and Implementation Notes:
 // This function is assumed to be provided externally via a shared library.
 extern void prettyprint(const char *message, unsigned int delay_ms);
 
-int main() {
+int main(void) {
     // Clear the console screen using the appropriate command.
     system(CLEAR_COMMAND);
     prettyprint("Hello User! How can I help you?\n", 25);
@@ -237,11 +232,11 @@ int main() {
 
             // Extended Battery Information.
             printf("\n--- Battery Info (basic) ---\n");
-            system("cat /sys/class/power_supply/BAT0/status 2>/dev/null");
+            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/status; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/status; else echo \"No battery found\"; fi'");
             printf("\n--- Battery Charge ---\n");
-            system("cat /sys/class/power_supply/BAT0/capacity 2>/dev/null && echo \"%\"");
+            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/capacity; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/capacity; fi && echo \"%\"'");
             printf("\n--- Battery Extended Info (upower) ---\n");
-            system("upower -i /org/freedesktop/UPower/devices/battery_BAT0 2>/dev/null");
+            system("upower -i $(upower -e | grep battery) 2>/dev/null");
 #endif
         }
         // Process the "search hardware -short" command (concise view).
@@ -275,9 +270,18 @@ int main() {
             printf("\n--- Sensors (concise) ---\n");
             system("sensors | grep -E 'Core|Package'");
 
-            // Concise Battery Information: display both status and charge.
+            // Concise Battery Information: check both BAT0 and BAT1.
             printf("\n--- Battery Info (concise) ---\n");
-            system("cat /sys/class/power_supply/BAT0/status 2>/dev/null; echo -n \" Charge: \"; cat /sys/class/power_supply/BAT0/capacity 2>/dev/null; echo \"%\"");
+            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then "
+                   "cat /sys/class/power_supply/BAT0/status; "
+                   "elif [ -d /sys/class/power_supply/BAT1 ]; then "
+                   "cat /sys/class/power_supply/BAT1/status; "
+                   "else echo \"No battery found\"; fi; "
+                   "echo -n \" Charge: \"; "
+                   "if [ -d /sys/class/power_supply/BAT0 ]; then "
+                   "cat /sys/class/power_supply/BAT0/capacity; "
+                   "elif [ -d /sys/class/power_supply/BAT1 ]; then "
+                   "cat /sys/class/power_supply/BAT1/capacity; fi; echo \"%\"'");
 #endif
         }
         // For any unrecognized command, output a random default response.

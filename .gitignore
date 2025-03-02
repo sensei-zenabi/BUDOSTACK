@@ -2,7 +2,7 @@
 *.o
 
 # Main compiled binary
-terminal
+aalto
 
 # In the commands directory, ignore everything except source files
 /*

@@ -56,7 +56,7 @@ Design Principles and Implementation Notes:
     - On Windows, it calls "ping -n 5 <IP-address>".
 - The "search hardware" command on Unix-like systems has been modified to output detailed hardware information from multiple Linux kernel virtual files,
   including extended details (via utilities like lscpu, free, lspci, lsusb, ip, sensors, upower) and battery information.
-  The battery info is obtained by checking common battery paths (e.g. /sys/class/power_supply/BAT0 or BAT1) and using upower.
+  In addition, all output is aggregated into a temporary file and then paged using "less".
 - The "search hardware -short" command provides a concise summary using "lshw -short" and additional brief outputs from key commands,
   including battery status and charge.
 - Conditional compilation is used to support both Windows and Unix‑like systems for clearing the console and executing commands.
@@ -80,33 +80,29 @@ Design Principles and Implementation Notes:
 extern void prettyprint(const char *message, unsigned int delay_ms);
 
 int main(void) {
-    // Clear the console screen using the appropriate command.
+    // Clear the console screen.
     system(CLEAR_COMMAND);
     prettyprint("Hello User! How can I help you?\n", 25);
 
-    // Seed the random number generator for default responses.
+    // Seed random number generator.
     srand((unsigned) time(NULL));
 
-    // Buffer to hold user input.
     char input[256];
 
-    // Main command loop: read and process commands until "exit" is entered.
+    // Main command loop.
     while (1) {
         printf("> ");
         if (fgets(input, sizeof(input), stdin) == NULL) {
-            break;  // Exit if input reading fails.
+            break;
         }
-        // Remove the trailing newline character, if present.
         size_t len = strlen(input);
         if (len > 0 && input[len - 1] == '\n') {
             input[len - 1] = '\0';
         }
 
-        // Process the "exit" command.
         if (strcmp(input, "exit") == 0) {
             break;
         }
-        // Process the "help" command.
         else if (strcmp(input, "help") == 0) {
             printf("Supported commands:\n");
             printf("help - Displays all the supported commands\n");
@@ -114,10 +110,9 @@ int main(void) {
             printf("ping <IP-address> - Ping the device 5 times and report metrics from the results\n");
             printf("search \"string\" - Searches all the files and their contents that contain the string from the current folder and its subfolders\n");
             printf("search hardware - Displays detailed hardware specs from the current machine\n");
-            printf("                 (including extended info for CPU, memory, PCI/USB devices, network interfaces, sensors, interrupts, I/O ports and battery info)\n");
+            printf("                 (including extended info for CPU, memory, PCI/USB devices, network interfaces, sensors, interrupts, I/O ports and battery info with paging)\n");
             printf("search hardware -short - Displays a concise, summary version of the hardware specs\n");
         }
-        // Process the "search network" command.
         else if (strcmp(input, "search network") == 0) {
             printf("Performing network search...\n");
             int ret = system("arp -a");
@@ -125,7 +120,6 @@ int main(void) {
                 printf("Error: Network search command failed or is not supported on this system.\n");
             }
         }
-        // Process the "ping" command.
         else if (strncmp(input, "ping ", 5) == 0) {
             char *ip = input + 5;
             if (ip[0] == '\0') {
@@ -144,7 +138,6 @@ int main(void) {
                 }
             }
         }
-        // Process commands that start with "search " expecting a quoted string.
         else if (strncmp(input, "search ", 7) == 0 && strchr(input, '\"') != NULL) {
             char *quote1 = strchr(input, '\"');
             char *quote2 = strchr(quote1 + 1, '\"');
@@ -158,7 +151,6 @@ int main(void) {
                 search_term[str_len] = '\0';
 
                 printf("Searching for \"%s\" in files...\n", search_term);
-                    
                 char command[512];
 #ifdef _WIN32
                 snprintf(command, sizeof(command), "findstr /S /I \"%s\" *", search_term);
@@ -173,85 +165,80 @@ int main(void) {
                 printf("Error: Search string must be enclosed in double quotes.\n");
             }
         }
-        // Process the "search hardware" command (detailed view).
+        // Detailed hardware info with paging.
         else if (strcmp(input, "search hardware") == 0) {
 #ifdef _WIN32
             printf("Hardware search is not supported on Windows in this version.\n");
 #else
-            printf("Searching detailed hardware specs...\n");
+            printf("Gathering detailed hardware specs (with paging)...\n");
+            // Remove previous temporary file.
+            system("rm -f /tmp/hwinfo.txt");
 
-            // Run lshw for basic hardware details.
-            int ret = system("lshw 2>/dev/null");
-            if (ret != 0) {
-                printf("lshw not available. Displaying alternative hardware information...\n");
-            }
-            
-            // Extended CPU Information.
-            printf("\n--- CPU Info (from /proc/cpuinfo) ---\n");
-            system("cat /proc/cpuinfo");
-            printf("\n--- CPU Extended Info (lscpu) ---\n");
-            system("lscpu");
+            // Append output of various commands to the temporary file.
+            system("echo \"=== lshw output ===\" >> /tmp/hwinfo.txt");
+            system("lshw 2>/dev/null >> /tmp/hwinfo.txt");
 
-            // Extended Memory Information.
-            printf("\n--- Memory Info (from /proc/meminfo) ---\n");
-            system("cat /proc/meminfo");
-            printf("\n--- Memory Extended Info (free -h) ---\n");
-            system("free -h");
+            system("echo \"\n--- CPU Info (from /proc/cpuinfo) ---\" >> /tmp/hwinfo.txt");
+            system("cat /proc/cpuinfo >> /tmp/hwinfo.txt");
+            system("echo \"\n--- CPU Extended Info (lscpu) ---\" >> /tmp/hwinfo.txt");
+            system("lscpu >> /tmp/hwinfo.txt");
 
-            // Extended PCI Devices Information.
-            printf("\n--- PCI Devices (basic) ---\n");
-            system("ls /sys/bus/pci/devices");
-            printf("\n--- PCI Devices Extended Info (lspci -v) ---\n");
-            system("lspci -v");
+            system("echo \"\n--- Memory Info (from /proc/meminfo) ---\" >> /tmp/hwinfo.txt");
+            system("cat /proc/meminfo >> /tmp/hwinfo.txt");
+            system("echo \"\n--- Memory Extended Info (free -h) ---\" >> /tmp/hwinfo.txt");
+            system("free -h >> /tmp/hwinfo.txt");
 
-            // Extended USB Devices Information.
-            printf("\n--- USB Devices (basic) ---\n");
-            system("ls /sys/bus/usb/devices");
-            printf("\n--- USB Devices Extended Info (lsusb -v) ---\n");
-            system("lsusb -v 2>/dev/null | head -n 50");
+            system("echo \"\n--- PCI Devices (basic) ---\" >> /tmp/hwinfo.txt");
+            system("ls /sys/bus/pci/devices >> /tmp/hwinfo.txt");
+            system("echo \"\n--- PCI Devices Extended Info (lspci -v) ---\" >> /tmp/hwinfo.txt");
+            system("lspci -v >> /tmp/hwinfo.txt");
 
-            // Extended Network Interfaces Information.
-            printf("\n--- Network Interfaces (from /proc/net/dev) ---\n");
-            system("cat /proc/net/dev");
-            printf("\n--- Network Interfaces Extended Info (ip addr) ---\n");
-            system("ip addr");
+            system("echo \"\n--- USB Devices (basic) ---\" >> /tmp/hwinfo.txt");
+            system("ls /sys/bus/usb/devices >> /tmp/hwinfo.txt");
+            system("echo \"\n--- USB Devices Extended Info (lsusb -v) ---\" >> /tmp/hwinfo.txt");
+            system("lsusb -v 2>/dev/null | head -n 50 >> /tmp/hwinfo.txt");
 
-            // Extended Sensors Information.
-            printf("\n--- Sensors Info (basic from hwmon) ---\n");
-            system("cat /sys/class/hwmon/hwmon*/temp* 2>/dev/null");
-            printf("\n--- Sensors Extended Info (sensors) ---\n");
-            system("sensors 2>/dev/null");
+            system("echo \"\n--- Network Interfaces (from /proc/net/dev) ---\" >> /tmp/hwinfo.txt");
+            system("cat /proc/net/dev >> /tmp/hwinfo.txt");
+            system("echo \"\n--- Network Interfaces Extended Info (ip addr) ---\" >> /tmp/hwinfo.txt");
+            system("ip addr >> /tmp/hwinfo.txt");
 
-            // Extended Interrupts Information.
-            printf("\n--- Interrupts (from /proc/interrupts) ---\n");
-            system("cat /proc/interrupts");
+            system("echo \"\n--- Sensors Info (basic from hwmon) ---\" >> /tmp/hwinfo.txt");
+            system("cat /sys/class/hwmon/hwmon*/temp* 2>/dev/null >> /tmp/hwinfo.txt");
+            system("echo \"\n--- Sensors Extended Info (sensors) ---\" >> /tmp/hwinfo.txt");
+            system("sensors 2>/dev/null >> /tmp/hwinfo.txt");
 
-            // Extended I/O Ports Information.
-            printf("\n--- I/O Ports (from /proc/ioports) ---\n");
-            system("cat /proc/ioports 2>/dev/null");
+            system("echo \"\n--- Interrupts (from /proc/interrupts) ---\" >> /tmp/hwinfo.txt");
+            system("cat /proc/interrupts >> /tmp/hwinfo.txt");
 
-            // Extended Battery Information.
-            printf("\n--- Battery Info (basic) ---\n");
-            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/status; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/status; else echo \"No battery found\"; fi'");
-            printf("\n--- Battery Charge ---\n");
-            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/capacity; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/capacity; fi && echo \"%\"'");
-            printf("\n--- Battery Extended Info (upower) ---\n");
-            system("upower -i $(upower -e | grep battery) 2>/dev/null");
+            system("echo \"\n--- I/O Ports (from /proc/ioports) ---\" >> /tmp/hwinfo.txt");
+            system("cat /proc/ioports 2>/dev/null >> /tmp/hwinfo.txt");
+
+            // Battery info: Check both BAT0 and BAT1.
+            system("echo \"\n--- Battery Info (basic) ---\" >> /tmp/hwinfo.txt");
+            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/status; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/status; else echo \"No battery found\"; fi' >> /tmp/hwinfo.txt");
+            system("echo \"\n--- Battery Charge ---\" >> /tmp/hwinfo.txt");
+            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/capacity; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/capacity; fi && echo \"%\"' >> /tmp/hwinfo.txt");
+            system("echo \"\n--- Battery Extended Info (upower) ---\" >> /tmp/hwinfo.txt");
+            system("upower -i $(upower -e | grep battery) 2>/dev/null >> /tmp/hwinfo.txt");
+
+            // Launch pager.
+            system("less /tmp/hwinfo.txt");
+
+            // Remove temporary file.
+            system("rm /tmp/hwinfo.txt");
 #endif
         }
-        // Process the "search hardware -short" command (concise view).
+        // Concise hardware info.
         else if (strcmp(input, "search hardware -short") == 0) {
 #ifdef _WIN32
             printf("Hardware search is not supported on Windows in this version.\n");
 #else
             printf("Searching concise hardware specs...\n");
-
-            // Attempt to run lshw in short mode for a brief overview.
             int ret = system("lshw -short 2>/dev/null");
             if (ret != 0) {
                 printf("lshw not available. Displaying alternative concise hardware information...\n");
             }
-            // Append additional concise details.
             printf("\n--- CPU Info (concise) ---\n");
             system("lscpu | grep -E 'Architecture|Model name|CPU\\(s\\)|Thread|Core\\(s\\)'");
 
@@ -270,21 +257,11 @@ int main(void) {
             printf("\n--- Sensors (concise) ---\n");
             system("sensors | grep -E 'Core|Package'");
 
-            // Concise Battery Information: check both BAT0 and BAT1.
+            // Concise Battery Info.
             printf("\n--- Battery Info (concise) ---\n");
-            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then "
-                   "cat /sys/class/power_supply/BAT0/status; "
-                   "elif [ -d /sys/class/power_supply/BAT1 ]; then "
-                   "cat /sys/class/power_supply/BAT1/status; "
-                   "else echo \"No battery found\"; fi; "
-                   "echo -n \" Charge: \"; "
-                   "if [ -d /sys/class/power_supply/BAT0 ]; then "
-                   "cat /sys/class/power_supply/BAT0/capacity; "
-                   "elif [ -d /sys/class/power_supply/BAT1 ]; then "
-                   "cat /sys/class/power_supply/BAT1/capacity; fi; echo \"%\"'");
+            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/status; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/status; else echo \"No battery found\"; fi; echo -n \" Charge: \"; if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/capacity; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/capacity; fi; echo \"%\"'");
 #endif
         }
-        // For any unrecognized command, output a random default response.
         else {
             const char *default_responses[] = {
                 "I'm not sure how to respond to that.",
@@ -298,7 +275,6 @@ int main(void) {
         }
     }
 
-    // Display farewell message.
     printf("Goodbye!\n");
     return 0;
 }
@@ -308,5 +284,5 @@ References:
 - ISO C11 Standard Documentation for the C Standard Library functions.
 - Linux kernel documentation for /proc and /sys virtual files.
 - Documentation for lshw, lscpu, free, lspci, lsusb, ip, sensors, and upower.
-- Various Linux resources on accessing detailed hardware information including battery status and charge.
+- Various Linux resources on accessing detailed hardware information and implementing paging with a temporary file.
 */

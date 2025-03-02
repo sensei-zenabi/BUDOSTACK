@@ -1,4 +1,4 @@
-/* All-Around Linus Terminal Operator - AALTO */  
+/* All-Around Linux Terminal Operator - AALTO */  
 Programmed by: Ville Suoranta (and mr. AI)  
   
 Available Commands:  

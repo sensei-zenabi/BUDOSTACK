@@ -48,7 +48,10 @@ int paging_enabled = 1;
 
 // List of commands that use realtime mode (no paging or buffering).
 const char *realtime_commands[] = {
-    "help", "runtask", NULL
+    "help", 
+    "runtask",
+    "hello", 
+    NULL
 };
 
 /* Helper function to check if a command is to be executed in realtime mode. */

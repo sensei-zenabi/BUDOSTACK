@@ -31,6 +31,10 @@ Supported commands:
 	where the app is running
 	2. Display the list so, that if a device is a child device it is nested under
 	the parent device in the list.
+    
+    search hardware -short
+	1. Search and display all connected hardware specs in a concise, short format
+       for improved human readability.
 
  Remarks:
 
@@ -55,9 +59,11 @@ Design Principles and Implementation Notes:
 - The "ping <IP-address>" command uses the system ping utility:
     - On Unix-like systems, it calls "ping -c 5 <IP-address>".
     - On Windows, it calls "ping -n 5 <IP-address>".
-- The "search hardware" command on Unix-like systems has been modified to output plain text.
-  Plain text output is typically more human readable than machine-readable JSON,
-  even though it might require extra work if you plan to parse the output in a custom C application.
+- The "search hardware" command on Unix-like systems has been modified to output plain text,
+  which is typically more human readable than machine-readable JSON, even though it might require extra work
+  if you plan to parse the output in a custom C application.
+- A new command "search hardware -short" is added, which outputs a concise hardware summary using
+  the "lshw -short" option.
 - Conditional compilation is used to support both Windows and Unix‑like systems for clearing the console and executing commands.
 - The code is written in plain C with the -std=c11 flag and uses only standard cross-platform libraries.
 - The external function prettyprint is declared as extern and assumed to be provided by a shared library.
@@ -114,6 +120,7 @@ int main() {
             printf("search \"string\" - Searches all the files and their contents that contain the string from the current folder and its subfolders\n");
             printf("search hardware - Lists connected hardware specs and devices from the current machine\n");
             printf("                 (output is in plain text for easier human readability)\n");
+            printf("search hardware -short - Lists connected hardware specs in a concise, short format\n");
         }
         // Process the "search network" command.
         else if (strcmp(input, "search network") == 0) {
@@ -198,6 +205,23 @@ int main() {
             }
 #endif
         }
+        // Process the "search hardware -short" command.
+        else if (strcmp(input, "search hardware -short") == 0) {
+#ifdef _WIN32
+            printf("Hardware search is not supported on Windows in this version.\n");
+#else
+            // On Unix-like systems, output short format for concise hardware specs.
+            printf("Searching connected hardware specs (short format)...\n");
+            int ret = system("lshw -short 2>/dev/null");
+            if (ret != 0) {
+                printf("lshw not available. Trying alternative commands (lspci and lsusb)...\n");
+                ret = system("lspci && lsusb");
+                if (ret != 0) {
+                    printf("Error: Hardware search commands failed or returned no results.\n");
+                }
+            }
+#endif
+        }
         // For any unrecognized command, output a random default response.
         else {
             const char *default_responses[] = {
@@ -222,5 +246,5 @@ References:
 - ISO C11 Standard Documentation for the C Standard Library functions.
 - GeeksforGeeks articles on system commands and time functions in C.
 - Stack Overflow discussions on using system() for network and file search utilities.
-- Documentation for lshw and its output options (plain text vs. JSON).
+- Documentation for lshw and its output options (plain text vs. -short).
 */

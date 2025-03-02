@@ -15,18 +15,24 @@ Description:
 	1. Displays all the supported commands (from below)
 
 	search network
-	1.Displays all the MAC,  IP addresses, device names and manufacturers from 
-	all found devices in the same network.
+	1.Search and display all the MAC, IP addresses, device names and manufacturers
+	from all found devices in the same network.
 
 	ping <IP-address>
 	1. Ping the device 5 times and report metrics from the results.
 
 	search "string"
-	1. Searches all the files and their contents that contain the string from 
-	current folder and its subfolders.
-    2. If the file is a binary file, do not search it's content, only filename.	              
+	1. Search and display all the files and their contents that contain the string
+	from current folder and its subfolders.
+    2. If the file is a binary file, do not search it's content, only filename.
 
-Remarks:
+	search hardware
+	1. Search and display all connected hardware specs and devices from the device 
+	where the app is running
+	2. Display the list so, that if a device is a child device it is nested under
+	the parent device in the list.
+
+ Remarks:
 
 	1. Functions defined as "extern" come from shared libraries and do not need
 	to be implemented.
@@ -49,8 +55,11 @@ Design Principles and Implementation Notes:
 - The "ping <IP-address>" command uses the system ping utility:
     - On Unix-like systems, it calls "ping -c 5 <IP-address>".
     - On Windows, it calls "ping -n 5 <IP-address>".
+- The "search hardware" command on Unix-like systems now attempts to provide machine-readable JSON output
+  by calling "lshw -json". This makes it easier to integrate the output into custom C applications.
+  If lshw is not available, the program falls back to "lspci && lsusb".
 - Conditional compilation is used to support both Windows and Unix‑like systems for clearing the console and executing commands.
-- The code is written in plain C with the -std=c11 flag and uses only standard cross‑platform libraries.
+- The code is written in plain C with the -std=c11 flag and uses only standard cross-platform libraries.
 - The external function prettyprint is declared as extern and assumed to be provided by a shared library.
 */
 
@@ -69,10 +78,10 @@ Design Principles and Implementation Notes:
 // This function is assumed to be provided externally via a shared library.
 extern void prettyprint(const char *message, unsigned int delay_ms);
 
-int main(int argc, char *argv[]) {
+int main() {
     // Clear the console screen using the appropriate command.
     system(CLEAR_COMMAND);
-    prettyprint("Hello User! How can I help you?\n", 100);
+    prettyprint("Hello User! How can I help you?\n", 25);
 
     // Seed the random number generator for default responses.
     srand((unsigned) time(NULL));
@@ -103,6 +112,8 @@ int main(int argc, char *argv[]) {
             printf("search network - Displays all the MAC, IP addresses and device names from devices in the same network (if possible)\n");
             printf("ping <IP-address> - Ping the device 5 times and report metrics from the results\n");
             printf("search \"string\" - Searches all the files and their contents that contain the string from the current folder and its subfolders\n");
+            printf("search hardware - Lists connected hardware specs and devices from the current machine\n");
+            printf("                 (output is in JSON format for easier parsing in custom C applications)\n");
         }
         // Process the "search network" command.
         else if (strcmp(input, "search network") == 0) {
@@ -138,41 +149,55 @@ int main(int argc, char *argv[]) {
             }
         }
         // Process commands that start with "search " expecting a quoted string.
-        else if (strncmp(input, "search ", 7) == 0) {
+        else if (strncmp(input, "search ", 7) == 0 && strchr(input, '\"') != NULL) {
             char *quote1 = strchr(input, '\"');
-            if (quote1 != NULL) {
-                char *quote2 = strchr(quote1 + 1, '\"');
-                if (quote2 != NULL) {
-                    int str_len = (int)(quote2 - quote1 - 1);
-                    char search_term[256];
-                    if (str_len >= (int)sizeof(search_term)) {
-                        str_len = sizeof(search_term) - 1;
-                    }
-                    strncpy(search_term, quote1 + 1, (size_t)str_len);
-                    search_term[str_len] = '\0';
+            char *quote2 = strchr(quote1 + 1, '\"');
+            if (quote1 != NULL && quote2 != NULL) {
+                int str_len = (int)(quote2 - quote1 - 1);
+                char search_term[256];
+                if (str_len >= (int)sizeof(search_term)) {
+                    str_len = sizeof(search_term) - 1;
+                }
+                strncpy(search_term, quote1 + 1, (size_t)str_len);
+                search_term[str_len] = '\0';
 
-                    printf("Searching for \"%s\" in files...\n", search_term);
+                printf("Searching for \"%s\" in files...\n", search_term);
                     
-                    char command[512];
+                char command[512];
 #ifdef _WIN32
-                    // Windows: Use findstr to recursively search in current directory.
-                    // /S: searches in subdirectories, /I: case-insensitive.
-                    snprintf(command, sizeof(command), "findstr /S /I \"%s\" *", search_term);
+                // Windows: Use findstr to recursively search in current directory.
+                // /S: searches in subdirectories, /I: case-insensitive.
+                snprintf(command, sizeof(command), "findstr /S /I \"%s\" *", search_term);
 #else
-                    // Unix-like systems: Use grep to recursively search in current directory.
-                    // The -I flag causes grep to ignore binary files.
-                    snprintf(command, sizeof(command), "grep -R -I \"%s\" .", search_term);
+                // Unix-like systems: Use grep to recursively search in current directory.
+                // The -I flag causes grep to ignore binary files.
+                snprintf(command, sizeof(command), "grep -R -I \"%s\" .", search_term);
 #endif
-                    int ret = system(command);
-                    if (ret != 0) {
-                        printf("Error: File search command failed or returned no matches.\n");
-                    }
-                } else {
-                    printf("Error: Missing closing quote in search command.\n");
+                int ret = system(command);
+                if (ret != 0) {
+                    printf("Error: File search command failed or returned no matches.\n");
                 }
             } else {
                 printf("Error: Search string must be enclosed in double quotes.\n");
             }
+        }
+        // Process the "search hardware" command.
+        else if (strcmp(input, "search hardware") == 0) {
+#ifdef _WIN32
+            printf("Hardware search is not supported on Windows in this version.\n");
+#else
+            // On Unix-like systems, attempt to output machine-readable JSON.
+            printf("Searching connected hardware specs (machine-readable JSON output)...\n");
+            printf("Note: You can redirect this output to a file for easier parsing in your custom C applications.\n");
+            int ret = system("lshw -json 2>/dev/null");
+            if (ret != 0) {
+                printf("lshw not available. Trying alternative commands (lspci and lsusb)...\n");
+                ret = system("lspci && lsusb");
+                if (ret != 0) {
+                    printf("Error: Hardware search commands failed or returned no results.\n");
+                }
+            }
+#endif
         }
         // For any unrecognized command, output a random default response.
         else {
@@ -198,4 +223,5 @@ References:
 - ISO C11 Standard Documentation for the C Standard Library functions.
 - GeeksforGeeks articles on system commands and time functions in C.
 - Stack Overflow discussions on using system() for network and file search utilities.
+- Documentation for lshw (including the -json option), lspci, lsusb, and related hardware listing utilities.
 */

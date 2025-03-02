@@ -1,6 +1,6 @@
 /* ChatGPT: DO NOT MODIFY OR REMOVE THIS HEADER BUT IMPLEMENT IT FULLY!
 
-Filename: bot.c
+Filename: discover.c
 
 Description:
 

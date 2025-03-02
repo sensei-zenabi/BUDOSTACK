@@ -5,9 +5,19 @@
 terminal
 
 # In the commands directory, ignore everything except source files
+/*.rt
+!/*.c
+!/*.h
+!/*.gitignore
 commands/*
 !commands/*.c
 !commands/*.h
+apps/*
+!apps/*.c
+!apps/*.h
+lib/*
+!lib/*.c
+!lib/*.h
 
 # Backup files and temporary files
 *~

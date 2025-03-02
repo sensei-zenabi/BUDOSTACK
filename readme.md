@@ -1,33 +1,25 @@
-/* All-Around Linux Terminal Operator - AALTO */  
-Programmed by: Ville Suoranta (and mr. AI)  
-  
-Available Commands:  
-  
-  help     : Display this help message.  
-  list     : List contents of a directory (default is current directory).  
-  display  : Display the contents of a file.  
-  copy     : Copy a file from source to destination.  
-  move     : Move (rename) a file from source to destination.  
-  remove   : Remove a file.  
-  update   : Create an empty file or update its modification time.  
-  makedir  : Create a new directory.  
-  rmdir    : Remove an empty directory.  
-  runtask  : Run a proprietary .task script until CTRL+c is pressed.  
-             Type: runtask -help for more details.  
-  stats    : Displays basic hardware stats.  
-  exit     : Exit AALTO.  
-  
-Running Applications:  
-  
-  All applications are stored in the apps/ folder and they can be ran only via TASK scripting.  
-  
-  Different types of applications:  
-  
-  server   : A switchboard server that uses route.rt to route client application inputs and outputs.  
-  cl_<app> : A client application that can have up to 5 inputs and 5 outputs.  
-             Requires the server running before starting.  
-  <app>    : Normal application that does not provide any inputs or outputs to be routed.  
-  
-  Tips:  
-  Start AALTO faster: ./aalto -f | Start TASK from cmd line: ./aalto mytask.task  
-  
+# AALTO (All-Around Linux Terminal Operator)
+**Programmed by:** Ville Suoranta (and mr.AI)<br>
+**Status:** Early Access (in development)
+
+### Description:
+Open source linux toolkit that aims to provide a framework for creating autonomous IoT devices. Key capabilities:
+- Automation using TASK scripting
+- Aggregated Audio & Video Input
+- Access to HW Peripherals with Discover mode
+- File System and Memory management
+- Generic API access to public data
+- Data processing algorithms
+- AALTO Mesh Management
+
+## Dependencies
+Following 3rd Party applications are required to run AALTO:
+- tmux
+
+*...if a dependency is not listed, report it using issue!*
+
+## How to Build?
+1. Checkout the repo
+2. Type "make"
+3. Type "./aalto -f" for fast start
+4. Then type "help"

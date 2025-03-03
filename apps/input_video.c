@@ -1,7 +1,7 @@
 /*
  * input_video.c
  *
- * Advanced ANSI Camera App with Performance Modes, FPS Adjustment, and Metrics
+ * Advanced ANSI Camera App with Performance Modes, FPS Adjustment, and Low Latency
  *
  * Description:
  *   This application captures video frames from /dev/video0 using V4L2,
@@ -25,6 +25,10 @@
  *   1,2,3: Change quality mode.
  *   8: Decrease target FPS by 1 (min 1 fps).
  *   9: Increase target FPS by 1.
+ *
+ * Low Latency:
+ *   - The application now requests only 2 buffers instead of 4 to reduce pipeline delay.
+ *   - It attempts to enable a low-latency mode via V4L2_CID_LOW_LATENCY if supported.
  *
  * Design principles:
  *   - Written in plain C (compiled with -std=c11) using only standard POSIX libraries.
@@ -77,7 +81,6 @@ void handle_sigint(int sig) {
     stop = 1;
 }
 
-// Sleep for a specified number of microseconds using nanosleep.
 static void sleep_microseconds(useconds_t usec) {
     struct timespec ts;
     ts.tv_sec = usec / 1000000;
@@ -85,7 +88,6 @@ static void sleep_microseconds(useconds_t usec) {
     nanosleep(&ts, NULL);
 }
 
-// Structure for memory-mapped buffer.
 struct buffer {
     void   *start;
     size_t  length;
@@ -94,13 +96,10 @@ struct buffer {
 #define FRAME_WIDTH  320
 #define FRAME_HEIGHT 240
 
-// Clear the terminal using ANSI escape sequences.
 void clear_terminal(void) {
-    // ANSI: clear screen and move cursor to top-left.
     write(STDOUT_FILENO, "\033[H\033[J", 6);
 }
 
-// Get terminal size (columns and rows).
 void get_terminal_size(int *cols, int *rows) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
@@ -112,7 +111,6 @@ void get_terminal_size(int *cols, int *rows) {
     }
 }
 
-// Convert one pixel from YUYV to RGB using nearest neighbor.
 void yuyv_to_rgb(const unsigned char *frame, int frame_width,
                  int x, int y, unsigned char *r, unsigned char *g, unsigned char *b) {
     int pair_index = x / 2;
@@ -147,7 +145,6 @@ void yuyv_to_rgb(const unsigned char *frame, int frame_width,
     *b = (unsigned char)B_temp;
 }
 
-// Mode 2: Simple average of 4 nearest pixels.
 void get_rgb_average(const unsigned char *frame, int frame_width, int frame_height,
                      double fx, double fy, unsigned char *r, unsigned char *g, unsigned char *b) {
     int x0 = (int)floor(fx), y0 = (int)floor(fy);
@@ -166,7 +163,6 @@ void get_rgb_average(const unsigned char *frame, int frame_width, int frame_heig
     *b = (b00 + b10 + b01 + b11) / 4;
 }
 
-// Mode 3: Bilinear interpolation.
 void get_rgb_bilinear(const unsigned char *frame, int frame_width, int frame_height,
                       double fx, double fy, unsigned char *r, unsigned char *g, unsigned char *b) {
     int x0 = (int)floor(fx), y0 = (int)floor(fy);
@@ -201,12 +197,6 @@ void get_rgb_bilinear(const unsigned char *frame, int frame_width, int frame_hei
     *b = (unsigned char)B;
 }
 
-/*
- * Render the camera frame using half-block (▀) characters.
- *
- * Each text cell maps to one column (width) and two rows (height) of source pixels.
- * The sampling method depends on the current quality mode.
- */
 void frame_to_halfblock_ascii(const unsigned char *frame, int frame_width, int frame_height,
                                 int term_cols, int term_rows, int quality) {
     int target_width = term_cols;
@@ -253,7 +243,6 @@ void frame_to_halfblock_ascii(const unsigned char *frame, int frame_width, int f
     free(line_buffer);
 }
 
-// Set terminal to raw mode (non-canonical, no echo).
 struct termios orig_termios;
 void enable_raw_mode() {
     tcgetattr(STDIN_FILENO, &orig_termios);
@@ -264,14 +253,10 @@ void enable_raw_mode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-// Restore terminal settings.
 void disable_raw_mode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
-// Process key input to change quality mode or adjust target FPS.
-// '1','2','3' set quality mode.
-// '8' decreases target FPS by 1 (min 1fps); '9' increases target FPS by 1.
 void process_input() {
     fd_set set;
     struct timeval timeout;
@@ -294,7 +279,6 @@ void process_input() {
     }
 }
 
-// Draw a menu bar at the bottom displaying measured FPS, target FPS, and current mode.
 void draw_menu_bar(double fps, int term_cols, int term_rows) {
     printf("\033[%d;1H", term_rows);
     printf("\033[7m");
@@ -335,7 +319,6 @@ int main(void) {
     unsigned int n_buffers;
     int term_cols, term_rows;
 
-    // Disable stdout buffering.
     setbuf(stdout, NULL);
     
     enable_raw_mode();
@@ -360,8 +343,23 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
+    /* Attempt to enable low latency mode via control, if supported.
+     * Note: V4L2_CID_LOW_LATENCY may not be defined on all systems.
+     */
+#ifdef V4L2_CID_LOW_LATENCY
+    {
+        struct v4l2_control ctrl;
+        ctrl.id = V4L2_CID_LOW_LATENCY;
+        ctrl.value = 1;
+        if (ioctl(fd, VIDIOC_S_CTRL, &ctrl) == -1) {
+            perror("Setting low latency mode");
+        }
+    }
+#endif
+
+    // Request only 2 buffers to reduce pipeline latency.
     memset(&req, 0, sizeof(req));
-    req.count = 4;
+    req.count = 2;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
     if (ioctl(fd, VIDIOC_REQBUFS, &req) == -1) {
@@ -461,7 +459,6 @@ int main(void) {
             start_time = current_time;
         }
         draw_menu_bar(fps, term_cols, term_rows);
-        // Calculate delay based on target_fps.
         useconds_t delay = 1000000 / target_fps;
         sleep_microseconds(delay);
     }

@@ -1,7 +1,7 @@
 /*
  * input_video.c
  *
- * Advanced ANSI Camera App with Performance Modes and Metrics
+ * Advanced ANSI Camera App with Performance Modes, FPS Adjustment, and Metrics
  *
  * Description:
  *   This application captures video frames from /dev/video0 using V4L2,
@@ -12,13 +12,19 @@
  *     - The top pixel is shown as the foreground color.
  *     - The bottom pixel is shown as the background color.
  *
- *   A bottom menu bar displays performance metrics (FPS, current mode) and
- *   allows the user to switch between three modes (1, 2, and 3) in real time.
+ *   A bottom menu bar displays performance metrics (measured FPS, target FPS, current mode)
+ *   and allows the user to switch between three quality modes (1, 2, and 3) as well as
+ *   adjust the target FPS using keys 8 (decrease) and 9 (increase) in real time.
  *
  * Modes:
  *   1: Fast (Nearest Neighbor)
  *   2: Balanced (Simple 2x2 average)
  *   3: Quality (Bilinear Interpolation)
+ *
+ * Controls:
+ *   1,2,3: Change quality mode.
+ *   8: Decrease target FPS by 1 (min 1 fps).
+ *   9: Increase target FPS by 1.
  *
  * Design principles:
  *   - Written in plain C (compiled with -std=c11) using only standard POSIX libraries.
@@ -62,6 +68,9 @@ volatile sig_atomic_t stop = 0;
 
 // Global quality mode (1: fast, 2: balanced, 3: quality)
 volatile int quality_mode = 1;
+
+// Global target FPS, initial value 10.
+volatile int target_fps = 10;
 
 void handle_sigint(int sig) {
     (void)sig;
@@ -196,7 +205,7 @@ void get_rgb_bilinear(const unsigned char *frame, int frame_width, int frame_hei
  * Render the camera frame using half-block (▀) characters.
  *
  * Each text cell maps to one column (width) and two rows (height) of source pixels.
- * Sampling method depends on quality mode.
+ * The sampling method depends on the current quality mode.
  */
 void frame_to_halfblock_ascii(const unsigned char *frame, int frame_width, int frame_height,
                                 int term_cols, int term_rows, int quality) {
@@ -244,7 +253,7 @@ void frame_to_halfblock_ascii(const unsigned char *frame, int frame_width, int f
     free(line_buffer);
 }
 
-// Set terminal to raw mode.
+// Set terminal to raw mode (non-canonical, no echo).
 struct termios orig_termios;
 void enable_raw_mode() {
     tcgetattr(STDIN_FILENO, &orig_termios);
@@ -260,7 +269,9 @@ void disable_raw_mode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
-// Process key input (non-blocking) to change quality mode.
+// Process key input to change quality mode or adjust target FPS.
+// '1','2','3' set quality mode.
+// '8' decreases target FPS by 1 (min 1fps); '9' increases target FPS by 1.
 void process_input() {
     fd_set set;
     struct timeval timeout;
@@ -273,12 +284,17 @@ void process_input() {
         if (read(STDIN_FILENO, &c, 1) > 0) {
             if (c == '1' || c == '2' || c == '3') {
                 quality_mode = c - '0';
+            } else if (c == '8') {
+                if (target_fps > 1)
+                    target_fps--;
+            } else if (c == '9') {
+                target_fps++;
             }
         }
     }
 }
 
-// Draw a menu bar at the bottom displaying FPS and current mode.
+// Draw a menu bar at the bottom displaying measured FPS, target FPS, and current mode.
 void draw_menu_bar(double fps, int term_cols, int term_rows) {
     printf("\033[%d;1H", term_rows);
     printf("\033[7m");
@@ -290,7 +306,8 @@ void draw_menu_bar(double fps, int term_cols, int term_rows) {
         return;
     }
     
-    snprintf(menu, bufsize, " Mode: %d  FPS: %.1f  [Press 1: Fast, 2: Balanced, 3: Quality] ", quality_mode, fps);
+    snprintf(menu, bufsize, " Mode: %d  FPS: %.1f  Target: %d  [Press 1: Fast, 2: Balanced, 3: Quality, 8: - FPS, 9: + FPS] ",
+             quality_mode, fps, target_fps);
     int len = strlen(menu);
     while (len < term_cols) {
         if (len + 2 > bufsize) {
@@ -307,7 +324,7 @@ void draw_menu_bar(double fps, int term_cols, int term_rows) {
     printf("%s", menu);
     free(menu);
     printf("\033[0m");
-    fflush(stdout); // Flush output to ensure menu bar is displayed.
+    fflush(stdout);
 }
 
 int main(void) {
@@ -444,7 +461,9 @@ int main(void) {
             start_time = current_time;
         }
         draw_menu_bar(fps, term_cols, term_rows);
-        sleep_microseconds(33333);
+        // Calculate delay based on target_fps.
+        useconds_t delay = 1000000 / target_fps;
+        sleep_microseconds(delay);
     }
 
     if (ioctl(fd, VIDIOC_STREAMOFF, &type) == -1) {

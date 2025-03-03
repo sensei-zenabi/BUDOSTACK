@@ -1,7 +1,7 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -pedantic -Wno-format-truncation
-LDFLAGS = -lasound -lm
+LDFLAGS = -lasound -lm -pthread
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

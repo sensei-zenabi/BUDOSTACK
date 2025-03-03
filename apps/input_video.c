@@ -1,52 +1,32 @@
 /*
- * input_video.c
+ * apps/input_video.c
  *
  * Advanced ANSI Camera App with Performance Modes, FPS Adjustment, and Low Latency
  *
- * Description:
- *   This application captures video frames from /dev/video0 using V4L2,
- *   converts each frame into a colored, high-detail representation using
- *   Unicode half-block characters (▀) and outputs it to the terminal.
+ * Design Principles:
+ *   - Written in plain C (compiled with -std=c11) using only standard cross-platform libraries.
+ *   - Single-file implementation (no additional header files).
+ *   - Uses ANSI 24-bit color escape codes.
+ *   - Adapts to the current terminal size.
+ *   - Processes keyboard input in raw mode (non-canonical, no echo) for mode toggling.
+ *   - Implements asynchronous frame capture using POSIX threads.
  *
- *   Each terminal cell displays two vertical pixels:
- *     - The top pixel is shown as the foreground color.
- *     - The bottom pixel is shown as the background color.
- *
- *   A bottom menu bar displays performance metrics (measured FPS, target FPS, current mode)
- *   and allows the user to switch between three quality modes (1, 2, and 3) as well as
- *   adjust the target FPS using keys 8 (decrease) and 9 (increase) in real time.
- *
- * Modes:
- *   1: Fast (Nearest Neighbor)
- *   2: Balanced (Simple 2x2 average)
- *   3: Quality (Bilinear Interpolation)
+ * Improvements for Lower Latency:
+ *   1. Pre-allocate the full output buffer and pre-compute scaling factors.
+ *   2. Batch terminal writes rather than per-line calls.
+ *   3. Use a dedicated capture thread that continuously updates a shared frame buffer.
+ *   4. Dynamically adjust sleep delay based on target FPS.
+ *   5. Retain original quality modes (Fast, Balanced, Quality) without altering functionality.
  *
  * Controls:
  *   1,2,3: Change quality mode.
  *   8: Decrease target FPS by 1 (min 1 fps).
  *   9: Increase target FPS by 1.
  *
- * Low Latency:
- *   - The application now requests only 2 buffers instead of 4 to reduce pipeline delay.
- *   - It attempts to enable a low-latency mode via V4L2_CID_LOW_LATENCY if supported.
- *
- * Design principles:
- *   - Written in plain C (compiled with -std=c11) using only standard POSIX libraries.
- *   - Single-file implementation (no additional header files).
- *   - Uses ANSI 24-bit color escape codes.
- *   - Adapts to the current terminal size.
- *   - Processes keyboard input in raw mode (non-canonical, no echo) to allow mode toggling.
- *
- * Note:
- *   The video device is assumed to support YUYV at 320x240.
- *
- * References:
- *   :contentReference[oaicite:0]{index=0} - V4L2 capture examples.
- *   :contentReference[oaicite:1]{index=1} - ANSI 24-bit color techniques.
- *   :contentReference[oaicite:2]{index=2} - Using Unicode half-blocks.
+ * Compilation:
+ *   cc -std=c11 -Wall -Wextra -pedantic -pthread -o apps/input_video apps/input_video.c
  */
 
-// Define _POSIX_C_SOURCE early.
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
@@ -66,8 +46,11 @@
 #include <termios.h>
 #include <sys/select.h>
 #include <math.h>
+#include <pthread.h>
 
-// Global flag for graceful exit.
+// ---------------------- Global Variables ----------------------
+
+// Graceful exit flag.
 volatile sig_atomic_t stop = 0;
 
 // Global quality mode (1: fast, 2: balanced, 3: quality)
@@ -76,10 +59,57 @@ volatile int quality_mode = 1;
 // Global target FPS, initial value 10.
 volatile int target_fps = 10;
 
+// Terminal raw mode original settings.
+struct termios orig_termios;
+
+// Shared frame buffer for captured frame.
+// This buffer is updated by the capture thread and read by the rendering (main) thread.
+unsigned char *shared_frame = NULL;
+size_t shared_frame_size = 0;
+int frame_ready = 0;  // 1 if a new frame is available
+
+// Mutex and condition variable for synchronizing frame access.
+pthread_mutex_t frame_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t frame_cond = PTHREAD_COND_INITIALIZER;
+
+// ---------------------- V4L2 Buffer Structures ----------------------
+
+struct buffer {
+    void   *start;
+    size_t  length;
+};
+
+// Define frame dimensions.
+#define FRAME_WIDTH  320
+#define FRAME_HEIGHT 240
+
+// ---------------------- Signal & Raw Mode Handling ----------------------
+
 void handle_sigint(int sig) {
     (void)sig;
     stop = 1;
 }
+
+void enable_raw_mode(void) {
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+    struct termios raw = orig_termios;
+    raw.c_lflag &= ~(ECHO | ICANON);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+}
+
+void disable_raw_mode(void) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+}
+
+// ---------------------- Time Utilities ----------------------
 
 static void sleep_microseconds(useconds_t usec) {
     struct timespec ts;
@@ -88,15 +118,10 @@ static void sleep_microseconds(useconds_t usec) {
     nanosleep(&ts, NULL);
 }
 
-struct buffer {
-    void   *start;
-    size_t  length;
-};
-
-#define FRAME_WIDTH  320
-#define FRAME_HEIGHT 240
+// ---------------------- Terminal Utilities ----------------------
 
 void clear_terminal(void) {
+    // Move cursor to home and clear screen.
     write(STDOUT_FILENO, "\033[H\033[J", 6);
 }
 
@@ -111,6 +136,9 @@ void get_terminal_size(int *cols, int *rows) {
     }
 }
 
+// ---------------------- YUYV to RGB Conversion ----------------------
+
+// Converts a single YUYV pixel pair to RGB values.
 void yuyv_to_rgb(const unsigned char *frame, int frame_width,
                  int x, int y, unsigned char *r, unsigned char *g, unsigned char *b) {
     int pair_index = x / 2;
@@ -177,9 +205,12 @@ void get_rgb_bilinear(const unsigned char *frame, int frame_width, int frame_hei
     yuyv_to_rgb(frame, frame_width, x1, y0, &r10, &g10, &b10);
     yuyv_to_rgb(frame, frame_width, x0, y1, &r01, &g01, &b01);
     yuyv_to_rgb(frame, frame_width, x1, y1, &r11, &g11, &b11);
-    double R = (1 - wx) * (1 - wy) * r00 + wx * (1 - wy) * r10 + (1 - wx) * wy * r01 + wx * wy * r11;
-    double G = (1 - wx) * (1 - wy) * g00 + wx * (1 - wy) * g10 + (1 - wx) * wy * g01 + wx * wy * g11;
-    double B = (1 - wx) * (1 - wy) * b00 + wx * (1 - wy) * b10 + (1 - wx) * wy * b01 + wx * wy * b11;
+    double R = (1 - wx) * (1 - wy) * r00 + wx * (1 - wy) * r10 +
+               (1 - wx) * wy * r01 + wx * wy * r11;
+    double G = (1 - wx) * (1 - wy) * g00 + wx * (1 - wy) * g10 +
+               (1 - wx) * wy * g01 + wx * wy * g11;
+    double B = (1 - wx) * (1 - wy) * b00 + wx * (1 - wy) * b10 +
+               (1 - wx) * wy * b01 + wx * wy * b11;
     if (R < 0)
         R = 0;
     if (R > 255)
@@ -197,26 +228,24 @@ void get_rgb_bilinear(const unsigned char *frame, int frame_width, int frame_hei
     *b = (unsigned char)B;
 }
 
-void frame_to_halfblock_ascii(const unsigned char *frame, int frame_width, int frame_height,
-                                int term_cols, int term_rows, int quality) {
-    int target_width = term_cols;
-    int target_height = term_rows * 2;
-    double x_scale = (double)frame_width / target_width;
-    double y_scale = (double)frame_height / target_height;
-    
-    char *line_buffer = malloc(term_cols * 64);
-    if (!line_buffer) {
-        perror("malloc");
-        return;
-    }
-    line_buffer[0] = '\0';
+// ---------------------- Precomputed Scaling Arrays ----------------------
+//
+// These arrays map terminal column/row indices to frame pixel coordinates.
+double *fx_arr = NULL;
+double *fy_top_arr = NULL;
+double *fy_bot_arr = NULL;
 
+// ---------------------- ASCII Rendering with Batch Output ----------------------
+//
+// Renders the frame (YUYV) into the pre-allocated output buffer.
+void frame_to_halfblock_ascii(const unsigned char *frame, int frame_width, int frame_height,
+                                int term_cols, int term_rows, int quality, char *output_buf, size_t buf_size) {
+    size_t pos = 0;
     for (int row = 0; row < term_rows; row++) {
-        line_buffer[0] = '\0';
         for (int col = 0; col < term_cols; col++) {
-            double fx = col * x_scale;
-            double fy_top = row * 2 * y_scale;
-            double fy_bot = (row * 2 + 1) * y_scale;
+            double fx = fx_arr[col];
+            double fy_top = fy_top_arr[row];
+            double fy_bot = fy_bot_arr[row];
             unsigned char top_r, top_g, top_b;
             unsigned char bot_r, bot_g, bot_b;
             if (quality == 1) {
@@ -232,30 +261,17 @@ void frame_to_halfblock_ascii(const unsigned char *frame, int frame_width, int f
                 yuyv_to_rgb(frame, frame_width, (int)fx, (int)fy_top, &top_r, &top_g, &top_b);
                 yuyv_to_rgb(frame, frame_width, (int)fx, (int)fy_bot, &bot_r, &bot_g, &bot_b);
             }
-            char cell[64];
-            sprintf(cell, "\033[38;2;%d;%d;%dm\033[48;2;%d;%d;%dm▀",
-                    top_r, top_g, top_b, bot_r, bot_g, bot_b);
-            strcat(line_buffer, cell);
+            pos += snprintf(output_buf + pos, buf_size - pos,
+                            "\033[38;2;%d;%d;%dm\033[48;2;%d;%d;%dm▀",
+                            top_r, top_g, top_b, bot_r, bot_g, bot_b);
         }
-        strcat(line_buffer, "\033[0m\n");
-        fputs(line_buffer, stdout);
+        pos += snprintf(output_buf + pos, buf_size - pos, "\033[0m\n");
     }
-    free(line_buffer);
+    if (pos < buf_size)
+        output_buf[pos] = '\0';
 }
 
-struct termios orig_termios;
-void enable_raw_mode() {
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    struct termios raw = orig_termios;
-    raw.c_lflag &= ~(ECHO | ICANON);
-    raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
-}
-
-void disable_raw_mode() {
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
-}
+// ---------------------- Input Processing ----------------------
 
 void process_input() {
     fd_set set;
@@ -279,37 +295,63 @@ void process_input() {
     }
 }
 
+// ---------------------- Menu Bar Drawing ----------------------
+
 void draw_menu_bar(double fps, int term_cols, int term_rows) {
-    printf("\033[%d;1H", term_rows);
-    printf("\033[7m");
-    
-    int bufsize = term_cols + 1;
-    char *menu = malloc(bufsize);
-    if (!menu) {
-        perror("malloc");
-        return;
-    }
-    
-    snprintf(menu, bufsize, " Mode: %d  FPS: %.1f  Target: %d  [Press 1: Fast, 2: Balanced, 3: Quality, 8: - FPS, 9: + FPS] ",
-             quality_mode, fps, target_fps);
+    char menu[512];
+    snprintf(menu, sizeof(menu),
+             "\033[%d;1H\033[7m Mode: %d  FPS: %.1f  Target: %d  [Press 1: Fast, 2: Balanced, 3: Quality, 8: - FPS, 9: + FPS] ",
+             term_rows, quality_mode, fps, target_fps);
     int len = strlen(menu);
-    while (len < term_cols) {
-        if (len + 2 > bufsize) {
-            bufsize *= 2;
-            menu = realloc(menu, bufsize);
-            if (!menu) {
-                perror("realloc");
-                return;
-            }
-        }
+    for (int i = len; i < term_cols; i++) {
         strcat(menu, " ");
-        len++;
     }
-    printf("%s", menu);
-    free(menu);
-    printf("\033[0m");
+    strcat(menu, "\033[0m");
+    write(STDOUT_FILENO, menu, strlen(menu));
     fflush(stdout);
 }
+
+// ---------------------- V4L2 Capture Thread ----------------------
+
+// Context structure for capture thread.
+struct capture_context {
+    int fd;
+    struct buffer *buffers;
+    unsigned int n_buffers;
+};
+
+void *capture_thread_func(void *arg) {
+    struct capture_context *ctx = (struct capture_context *)arg;
+    struct v4l2_buffer buf;
+    enum v4l2_buf_type type;
+    
+    while (!stop) {
+        memset(&buf, 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        if (ioctl(ctx->fd, VIDIOC_DQBUF, &buf) == -1) {
+            perror("Dequeue Buffer");
+            continue;
+        }
+        pthread_mutex_lock(&frame_mutex);
+        memcpy(shared_frame, ctx->buffers[buf.index].start, buf.bytesused);
+        shared_frame_size = buf.bytesused;
+        frame_ready = 1;
+        pthread_cond_signal(&frame_cond);
+        pthread_mutex_unlock(&frame_mutex);
+        
+        if (ioctl(ctx->fd, VIDIOC_QBUF, &buf) == -1) {
+            perror("Requeue Buffer");
+        }
+    }
+    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (ioctl(ctx->fd, VIDIOC_STREAMOFF, &type) == -1) {
+        perror("Stop Capture");
+    }
+    return NULL;
+}
+
+// ---------------------- Main Function ----------------------
 
 int main(void) {
     int fd;
@@ -318,19 +360,19 @@ int main(void) {
     struct buffer *buffers;
     unsigned int n_buffers;
     int term_cols, term_rows;
-
+    
     setbuf(stdout, NULL);
     
     enable_raw_mode();
     atexit(disable_raw_mode);
     signal(SIGINT, handle_sigint);
-
+    
     fd = open("/dev/video0", O_RDWR);
     if (fd == -1) {
         perror("Opening video device");
         return EXIT_FAILURE;
     }
-
+    
     memset(&fmt, 0, sizeof(fmt));
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     fmt.fmt.pix.width       = FRAME_WIDTH;
@@ -342,10 +384,7 @@ int main(void) {
         close(fd);
         return EXIT_FAILURE;
     }
-
-    /* Attempt to enable low latency mode via control, if supported.
-     * Note: V4L2_CID_LOW_LATENCY may not be defined on all systems.
-     */
+    
 #ifdef V4L2_CID_LOW_LATENCY
     {
         struct v4l2_control ctrl;
@@ -356,10 +395,9 @@ int main(void) {
         }
     }
 #endif
-
-    // Request only 2 buffers to reduce pipeline latency.
+    
     memset(&req, 0, sizeof(req));
-    req.count = 2;
+    req.count = 2;  // Only 2 buffers for lower latency.
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
     if (ioctl(fd, VIDIOC_REQBUFS, &req) == -1) {
@@ -367,7 +405,7 @@ int main(void) {
         close(fd);
         return EXIT_FAILURE;
     }
-
+    
     buffers = calloc(req.count, sizeof(*buffers));
     if (!buffers) {
         perror("Out of memory");
@@ -375,7 +413,7 @@ int main(void) {
         return EXIT_FAILURE;
     }
     n_buffers = req.count;
-
+    
     for (unsigned int i = 0; i < n_buffers; i++) {
         struct v4l2_buffer buf;
         memset(&buf, 0, sizeof(buf));
@@ -389,8 +427,8 @@ int main(void) {
             return EXIT_FAILURE;
         }
         buffers[i].length = buf.length;
-        buffers[i].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED,
-                                fd, buf.m.offset);
+        buffers[i].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE,
+                                MAP_SHARED, fd, buf.m.offset);
         if (buffers[i].start == MAP_FAILED) {
             perror("Buffer map error");
             free(buffers);
@@ -398,7 +436,7 @@ int main(void) {
             return EXIT_FAILURE;
         }
     }
-
+    
     for (unsigned int i = 0; i < n_buffers; i++) {
         struct v4l2_buffer buf;
         memset(&buf, 0, sizeof(buf));
@@ -412,7 +450,7 @@ int main(void) {
             return EXIT_FAILURE;
         }
     }
-
+    
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(fd, VIDIOC_STREAMON, &type) == -1) {
         perror("Start Capture");
@@ -420,35 +458,85 @@ int main(void) {
         close(fd);
         return EXIT_FAILURE;
     }
-
+    
+    // Initialize terminal parameters and precomputed scaling arrays.
     get_terminal_size(&term_cols, &term_rows);
-
+    int render_rows = term_rows - 1;  // Reserve last row for menu.
+    
+    fx_arr = malloc(term_cols * sizeof(double));
+    for (int col = 0; col < term_cols; col++) {
+        double x_scale = (double)FRAME_WIDTH / term_cols;
+        fx_arr[col] = col * x_scale;
+    }
+    fy_top_arr = malloc(render_rows * sizeof(double));
+    fy_bot_arr = malloc(render_rows * sizeof(double));
+    {
+        double y_scale = (double)FRAME_HEIGHT / (render_rows * 2);
+        for (int row = 0; row < render_rows; row++) {
+            fy_top_arr[row] = row * 2 * y_scale;
+            fy_bot_arr[row] = (row * 2 + 1) * y_scale;
+        }
+    }
+    
+    // Pre-allocate output buffer.
+    size_t output_buf_size = render_rows * (term_cols * 64) + 128;
+    char *output_buf = malloc(output_buf_size);
+    if (!output_buf) {
+        perror("Allocating output buffer");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Allocate local frame buffer for rendering.
+    unsigned char *local_frame = malloc(buffers[0].length);
+    if (!local_frame) {
+        perror("Allocating local frame buffer");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Allocate shared frame buffer.
+    shared_frame = malloc(buffers[0].length);
+    if (!shared_frame) {
+        perror("Allocating shared frame buffer");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Set up capture context and start capture thread.
+    struct capture_context cap_ctx = { fd, buffers, n_buffers };
+    pthread_t cap_thread;
+    if (pthread_create(&cap_thread, NULL, capture_thread_func, &cap_ctx) != 0) {
+        perror("Creating capture thread");
+        exit(EXIT_FAILURE);
+    }
+    
+    // FPS computation variables.
     struct timespec start_time, current_time;
     clock_gettime(CLOCK_MONOTONIC, &start_time);
     int frame_count = 0;
     double fps = 0.0;
-
+    
+    // Main rendering loop.
     while (!stop) {
         process_input();
-
-        struct v4l2_buffer buf;
-        memset(&buf, 0, sizeof(buf));
-        buf.type   = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_MMAP;
-        if (ioctl(fd, VIDIOC_DQBUF, &buf) == -1) {
-            perror("Dequeue Buffer");
-            break;
+        
+        pthread_mutex_lock(&frame_mutex);
+        while (!frame_ready && !stop) {
+            struct timespec ts;
+            clock_gettime(CLOCK_REALTIME, &ts);
+            ts.tv_nsec += 10 * 1000000; // 10 ms timeout.
+            pthread_cond_timedwait(&frame_cond, &frame_mutex, &ts);
         }
-
+        if (frame_ready) {
+            memcpy(local_frame, shared_frame, shared_frame_size);
+            frame_ready = 0;
+        }
+        pthread_mutex_unlock(&frame_mutex);
+        
         clear_terminal();
-        frame_to_halfblock_ascii(buffers[buf.index].start, FRAME_WIDTH, FRAME_HEIGHT,
-                                   term_cols, term_rows - 1, quality_mode);
-
-        if (ioctl(fd, VIDIOC_QBUF, &buf) == -1) {
-            perror("Requeue Buffer");
-            break;
-        }
-
+        frame_to_halfblock_ascii(local_frame, FRAME_WIDTH, FRAME_HEIGHT,
+                                 term_cols, render_rows, quality_mode,
+                                 output_buf, output_buf_size);
+        write(STDOUT_FILENO, output_buf, strlen(output_buf));
+        
         frame_count++;
         clock_gettime(CLOCK_MONOTONIC, &current_time);
         double elapsed = (current_time.tv_sec - start_time.tv_sec) +
@@ -459,19 +547,24 @@ int main(void) {
             start_time = current_time;
         }
         draw_menu_bar(fps, term_cols, term_rows);
-        useconds_t delay = 1000000 / target_fps;
-        sleep_microseconds(delay);
+        
+        useconds_t desired_delay = 1000000 / target_fps;
+        sleep_microseconds(desired_delay);
     }
-
-    if (ioctl(fd, VIDIOC_STREAMOFF, &type) == -1) {
-        perror("Stop Capture");
-    }
-
+    
+    pthread_join(cap_thread, NULL);
+    
     for (unsigned int i = 0; i < n_buffers; i++) {
         munmap(buffers[i].start, buffers[i].length);
     }
     free(buffers);
+    free(output_buf);
+    free(local_frame);
+    free(shared_frame);
+    free(fx_arr);
+    free(fy_top_arr);
+    free(fy_bot_arr);
     close(fd);
-
+    
     return EXIT_SUCCESS;
 }

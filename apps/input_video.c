@@ -4,7 +4,7 @@
  * Advanced ANSI Camera App with Performance Modes, FPS Adjustment, and Low Latency
  *
  * Design Principles:
- *   - Written in plain C (compiled with -std=c11) using only standard cross-platform libraries.
+ *   - Written in plain C (-std=c11) using only standard cross-platform libraries.
  *   - Single-file implementation (no additional header files).
  *   - Uses ANSI 24-bit color escape codes.
  *   - Adapts to the current terminal size.
@@ -24,7 +24,7 @@
  *   9: Increase target FPS by 1.
  *
  * Compilation:
- *   cc -std=c11 -Wall -Wextra -pedantic -pthread -o apps/input_video apps/input_video.c
+ *   cc -std=c11 -Wall -Wextra -pedantic -pthread -o apps/input_video apps/input_video.c object_recognition.c
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -351,6 +351,13 @@ void *capture_thread_func(void *arg) {
     return NULL;
 }
 
+// ---------------------- External Object Recognition ----------------------
+//
+// The object recognition module is entirely separated into object_recognition.c.
+// Any overlay (rectangles, text, etc.) will be drawn on the frame by that module.
+// This declaration ensures the main file can call process_frame() without further modifications.
+extern void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int frame_height);
+
 // ---------------------- Main Function ----------------------
 
 int main(void) {
@@ -530,6 +537,10 @@ int main(void) {
             frame_ready = 0;
         }
         pthread_mutex_unlock(&frame_mutex);
+        
+        // Process frame for object recognition and overlay.
+        // This call (defined in object_recognition.c) will add rectangle(s) and text.
+        process_frame(local_frame, shared_frame_size, FRAME_WIDTH, FRAME_HEIGHT);
         
         clear_terminal();
         frame_to_halfblock_ascii(local_frame, FRAME_WIDTH, FRAME_HEIGHT,

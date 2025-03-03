@@ -5,10 +5,6 @@
 aalto
 
 # In the commands directory, ignore everything except source files
-/*
-!/*.c
-!/*.h
-!/*.gitignore
 commands/*
 !commands/*.c
 !commands/*.h

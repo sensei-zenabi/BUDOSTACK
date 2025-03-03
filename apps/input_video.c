@@ -1,7 +1,8 @@
 /*
  * apps/input_video.c
  *
- * Advanced ANSI Camera App with Performance Modes, FPS Adjustment, and Low Latency
+ * Advanced ANSI Camera App with Performance Modes, FPS Adjustment, Low Latency,
+ * and Toggle-able Object Detection.
  *
  * Design Principles:
  *   - Written in plain C (-std=c11) using only standard cross-platform libraries.
@@ -10,18 +11,13 @@
  *   - Adapts to the current terminal size.
  *   - Processes keyboard input in raw mode (non-canonical, no echo) for mode toggling.
  *   - Implements asynchronous frame capture using POSIX threads.
- *
- * Improvements for Lower Latency:
- *   1. Pre-allocate the full output buffer and pre-compute scaling factors.
- *   2. Batch terminal writes rather than per-line calls.
- *   3. Use a dedicated capture thread that continuously updates a shared frame buffer.
- *   4. Dynamically adjust sleep delay based on target FPS.
- *   5. Retain original quality modes (Fast, Balanced, Quality) without altering functionality.
+ *   - Adds a new toggle for object detection via the 'D' key.
  *
  * Controls:
  *   1,2,3: Change quality mode.
  *   8: Decrease target FPS by 1 (min 1 fps).
  *   9: Increase target FPS by 1.
+ *   D/d: Toggle object detection on/off.
  *
  * Compilation:
  *   cc -std=c11 -Wall -Wextra -pedantic -pthread -o apps/input_video apps/input_video.c object_recognition.c
@@ -58,6 +54,10 @@ volatile int quality_mode = 1;
 
 // Global target FPS, initial value 10.
 volatile int target_fps = 10;
+
+// Global flag to enable/disable object detection.
+// 1 = enabled, 0 = disabled.
+volatile int object_detection_enabled = 1;
 
 // Terminal raw mode original settings.
 struct termios orig_termios;
@@ -271,8 +271,56 @@ void frame_to_halfblock_ascii(const unsigned char *frame, int frame_width, int f
         output_buf[pos] = '\0';
 }
 
-// ---------------------- Input Processing ----------------------
+// ---------------------- Helper: Visible Length Computation ----------------------
+//
+// This function computes the visible length of a string by skipping ANSI escape codes.
+int visible_length(const char *str) {
+    int len = 0;
+    while (*str) {
+        if (*str == '\033') {  // Start of an escape sequence.
+            while (*str && *str != 'm') {
+                str++;
+            }
+            if (*str == 'm')
+                str++;
+        } else {
+            len++;
+            str++;
+        }
+    }
+    return len;
+}
 
+// ---------------------- Menu Bar Drawing ----------------------
+//
+// Draws a menu bar at the bottom of the terminal with current mode, FPS, target FPS,
+// and the object detection status.
+void draw_menu_bar(double fps, int term_cols, int term_rows) {
+    char menu[512];
+    // Build menu string including object detection status.
+    snprintf(menu, sizeof(menu),
+             "\033[%d;1H\033[7m Mode: %d  FPS: %.1f  Target: %d  [Press 1: Fast, 2: Balanced, 3: Quality, 8: - FPS, 9: + FPS, D: ObjDetect %s] ",
+             term_rows,
+             quality_mode,
+             fps,
+             target_fps,
+             object_detection_enabled ? "On" : "Off");
+    
+    // Calculate visible length (ignoring ANSI escape codes).
+    int vis_len = visible_length(menu);
+    // Pad with spaces until the visible length matches terminal columns.
+    while (vis_len < term_cols && strlen(menu) < sizeof(menu) - 2) {
+        strcat(menu, " ");
+        vis_len++;
+    }
+    strcat(menu, "\033[0m");
+    write(STDOUT_FILENO, menu, strlen(menu));
+    fflush(stdout);
+}
+
+// ---------------------- Input Processing ----------------------
+//
+// Processes keyboard input and updates global states.
 void process_input() {
     fd_set set;
     struct timeval timeout;
@@ -290,25 +338,12 @@ void process_input() {
                     target_fps--;
             } else if (c == '9') {
                 target_fps++;
+            } else if (c == 'D' || c == 'd') {
+                // Toggle object detection on/off.
+                object_detection_enabled = !object_detection_enabled;
             }
         }
     }
-}
-
-// ---------------------- Menu Bar Drawing ----------------------
-
-void draw_menu_bar(double fps, int term_cols, int term_rows) {
-    char menu[512];
-    snprintf(menu, sizeof(menu),
-             "\033[%d;1H\033[7m Mode: %d  FPS: %.1f  Target: %d  [Press 1: Fast, 2: Balanced, 3: Quality, 8: - FPS, 9: + FPS] ",
-             term_rows, quality_mode, fps, target_fps);
-    int len = strlen(menu);
-    for (int i = len; i < term_cols; i++) {
-        strcat(menu, " ");
-    }
-    strcat(menu, "\033[0m");
-    write(STDOUT_FILENO, menu, strlen(menu));
-    fflush(stdout);
 }
 
 // ---------------------- V4L2 Capture Thread ----------------------
@@ -538,9 +573,10 @@ int main(void) {
         }
         pthread_mutex_unlock(&frame_mutex);
         
-        // Process frame for object recognition and overlay.
-        // This call (defined in object_recognition.c) will add rectangle(s) and text.
-        process_frame(local_frame, shared_frame_size, FRAME_WIDTH, FRAME_HEIGHT);
+        // Conditionally process frame for object recognition and overlay.
+        if (object_detection_enabled) {
+            process_frame(local_frame, shared_frame_size, FRAME_WIDTH, FRAME_HEIGHT);
+        }
         
         clear_terminal();
         frame_to_halfblock_ascii(local_frame, FRAME_WIDTH, FRAME_HEIGHT,

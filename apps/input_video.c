@@ -1,7 +1,7 @@
 /*
  * input_video.c
  *
- * Advanced ANSI Camera App with Half-Block Rendering
+ * Advanced ANSI Camera App with Half-Block Rendering at 30 FPS
  *
  * Description:
  *   This application captures video frames from /dev/video0 using V4L2,
@@ -173,7 +173,6 @@ void frame_to_halfblock_ascii(const unsigned char *frame, int frame_width, int f
             }
             // Append ANSI escape sequence for true color:
             // Set foreground (top pixel) and background (bottom pixel), then print half-block (▀).
-            // Using sprintf to append into the line buffer.
             char cell[64];
             sprintf(cell, "\033[38;2;%d;%d;%dm\033[48;2;%d;%d;%dm▀",
                     top_r, top_g, top_b, bot_r, bot_g, bot_b);
@@ -310,8 +309,8 @@ int main(void) {
             break;
         }
 
-        // Short delay (~20 FPS).
-        sleep_microseconds(50000);
+        // Short delay (~33ms for ~30 FPS).
+        sleep_microseconds(33333);
     }
 
     // Stop streaming.

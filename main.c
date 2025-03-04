@@ -357,13 +357,13 @@ int main(int argc, char *argv[]) {
     // If a single argument is provided and it is not "-f", build the auto-run command.
     char *auto_command = NULL;
     if (argc == 2 && strcmp(argv[1], "-f") != 0) {
-        size_t len = strlen("runtask ") + strlen(argv[1]) + 1;
+        size_t len = strlen("runtask ") + strlen(argv[1]) + strlen(".task") + 1;
         auto_command = malloc(len);
         if (auto_command == NULL) {
             perror("malloc");
             exit(EXIT_FAILURE);
         }
-        snprintf(auto_command, len, "runtask %s", argv[1]);
+        snprintf(auto_command, len, "runtask %s.task", argv[1]);
     }
 
     // Modified: Skip startup messages if in forced mode (-f) or auto_command mode.

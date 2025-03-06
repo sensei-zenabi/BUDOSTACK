@@ -49,6 +49,10 @@
 #define CROSSHAIR_SIZE 10              // Size of the crosshair marker
 #define MIN_MOVEMENT_PIXELS 50         // Minimum number of motion pixels required
 
+// Low pass filter constant for stabilizing the crosshair position (0 < alpha <= 1)
+// A lower alpha gives more smoothing.
+#define CROSSHAIR_LPF_ALPHA 0.3f
+
 // Define the red color (used to overlay detected motion) in YUYV format.
 const unsigned char redY = 76;
 const unsigned char redU = 84;
@@ -120,9 +124,10 @@ void draw_crosshair(unsigned char *frame, int frame_width, int frame_height,
  *    - Calculate the average brightness (Y channel) from paired pixels.
  *    - Compare it to the background and update the background model.
  *    - Mark the cell as "motion" if the difference exceeds a threshold.
- * 3. Reduce noise using a 3×3 erosion followed by a 3×3 dilation.
- * 4. Calculate the center of mass for the motion pixels.
- * 5. Draw a crosshair at the detected (or last known) center if enough motion is detected.
+ * 3. Reduce noise using a 3×3 erosion followed by dilation.
+ * 4. Calculate the center of mass for the motion pixels and apply a
+ *    low pass filter to stabilize the crosshair position.
+ * 5. Always draw the crosshair at the last known (filtered) position.
  *
  * The function assumes the frame is in YUYV format.
  **********************************************************/
@@ -247,6 +252,7 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
      * Sum the coordinates of all cells marked as motion in the dilated mask.
      * If the number of motion cells is at least MIN_MOVEMENT_PIXELS, update the center.
      * Convert grid coordinates to frame coordinates (x is scaled by 2 and offset).
+     * A low pass filter is then applied to stabilize the crosshair position.
      */
     long sum_x = 0, sum_y = 0;
     int count = 0;
@@ -261,21 +267,22 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
         }
     }
     if (count >= MIN_MOVEMENT_PIXELS) {
-        int center_x = (int)((sum_x / (float)count) * 2) + 1;
-        int center_y = (int)(sum_y / (float)count);
-        last_center_x = center_x;
-        last_center_y = center_y;
-        fprintf(stderr, "Center-of-mass detected at (%d, %d) with %d motion pixels.\n", center_x, center_y, count);
+        int measured_center_x = (int)((sum_x / (float)count) * 2) + 1;
+        int measured_center_y = (int)(sum_y / (float)count);
+        // Apply low pass filter to blend the new measurement with the last known position.
+        last_center_x = (int)(CROSSHAIR_LPF_ALPHA * measured_center_x +
+                              (1.0f - CROSSHAIR_LPF_ALPHA) * last_center_x);
+        last_center_y = (int)(CROSSHAIR_LPF_ALPHA * measured_center_y +
+                              (1.0f - CROSSHAIR_LPF_ALPHA) * last_center_y);
+        fprintf(stderr, "Center-of-mass detected at (%d, %d) with %d motion pixels.\n",
+                measured_center_x, measured_center_y, count);
     } else {
         fprintf(stderr, "Insufficient motion detected (only %d pixels).\n", count);
     }
 
-    /* Step 5: Draw a crosshair at the detected or last known center.
-     * The crosshair is drawn only when sufficient motion is detected.
+    /* Step 5: Always draw the crosshair at the last known (filtered) center position.
      */
-    if (count >= MIN_MOVEMENT_PIXELS) {
-        draw_crosshair(frame, frame_width, frame_height, last_center_x, last_center_y, marker_color);
-    }
+    draw_crosshair(frame, frame_width, frame_height, last_center_x, last_center_y, marker_color);
 }
 
 /*
@@ -284,5 +291,5 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
  * Notes:
  * - Adaptive thresholding adjusts the motion detection threshold using local brightness.
  * - The parameters (MIN_MOVEMENT_PIXELS, CROSSHAIR_SIZE, etc.) are tuned for a 320×240 camera.
- * - The center-of-mass is calculated after noise reduction.
+ * - A low pass filter is applied to the detected center-of-mass to stabilize the crosshair.
  */

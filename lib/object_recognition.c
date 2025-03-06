@@ -85,17 +85,6 @@ static float *backgroundY = NULL;             // Background model for Y channel
 static int *motion_mask = NULL;               // Binary mask for motion detection
 static int *eroded_mask = NULL;               // Buffer for erosion operation
 static int *dilated_mask = NULL;              // Buffer for dilation operation
-
-/* --------------------------------------------------------------------------
- * Crosshair Display Control
- *
- * crosshair_mode:
- *   0 = draw crosshair only if movement is detected
- *   1 = always draw crosshair at the last known position (toggle with letter 'T')
- *
- * last_center_x and last_center_y store the last computed center-of-mass (in full-frame coordinates).
- * -------------------------------------------------------------------------- */
-static int crosshair_mode = 0;
 static int last_center_x = CAM_WIDTH / 2;   // Default center is mid-frame
 static int last_center_y = CAM_HEIGHT / 2;
 
@@ -124,19 +113,6 @@ void draw_crosshair(unsigned char *frame, int frame_width, int frame_height,
     for (int y = center_y - CROSSHAIR_SIZE; y <= center_y + CROSSHAIR_SIZE; y++) {
         set_pixel(frame, frame_width, frame_height, center_x, y, color);
     }
-}
-
-/* --------------------------------------------------------------------------
- * Toggle function for crosshair mode.
- *
- * When called (for example, upon detecting a 'T' key press), this function
- * toggles the crosshair mode between:
- *   0: Only display crosshair if movement is detected.
- *   1: Always display the crosshair at the last known center-of-mass.
- * -------------------------------------------------------------------------- */
-void toggle_crosshair_mode(void) {
-    crosshair_mode = !crosshair_mode;
-    fprintf(stderr, "Crosshair mode %s\n", crosshair_mode ? "enabled (always drawn)" : "disabled (only on movement)");
 }
 
 /* --------------------------------------------------------------------------
@@ -293,7 +269,7 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
      * If crosshair_mode is enabled, the crosshair is always drawn at last_center_x/last_center_y.
      * Otherwise, only draw the crosshair if movement was detected in the current frame.
      */
-    if (count >= MIN_MOVEMENT_PIXELS || crosshair_mode) {
+    if (count >= MIN_MOVEMENT_PIXELS) {
         draw_crosshair(frame, frame_width, frame_height, last_center_x, last_center_y, marker_color);
     }
 }

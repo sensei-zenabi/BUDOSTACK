@@ -1,29 +1,23 @@
 /*
  * object_recognition.c
  *
- * Object Recognition and Tracking Module for 320×240 resolution cameras.
- * Features:
- *   - Running-average background model for motion detection.
- *   - Adaptive background learning rates.
- *   - 3×3 morphological opening (erosion followed by dilation) for noise reduction.
- *   - Center-of-mass calculation based on the number and distribution of movement pixels.
- *   - Optional toggling of a crosshair display to always show the object's placement.
+ * This module detects and tracks objects in video frames from a 320×240 camera.
+ * It updates a background model, detects moving regions, reduces noise, and
+ * calculates the center position of detected motion. An optional crosshair is
+ * drawn at the calculated position.
  *
- * Design Principles:
- *   - Written in plain C (-std=c11) using only standard cross-platform libraries.
- *   - Single file, no header files.
- *   - All modifications are commented, with no original functionality removed.
+ * Implementation details:
+ *   - Uses a running average to update the background model.
+ *   - Detects motion by comparing the current frame against the background.
+ *   - Applies a 3×3 erosion followed by a 3×3 dilation to remove noise.
+ *   - Calculates the center of mass of the moving pixels.
+ *   - Written in plain C (using -std=c11) with only standard libraries.
+ *   - All code is in one file.
  *
- * Improvements for 320×240 resolution:
- *   1. Resolution-specific defines for width and height.
- *   2. Static allocation and reuse of buffers to avoid frequent dynamic allocations.
- *   3. Parameter tuning (e.g., MIN_BLOCKS_FOR_OBJECT, CROSSHAIR_SIZE) for the smaller resolution.
- *
- * References:
- *   [1] Mathematical morphology techniques for image processing.
- *   [2] Running average for background modeling.
- *   [3] Center-of-mass computation methods.
- *   [4] Adaptive thresholding for uneven illumination.
+ * Optimizations for 320×240 resolution:
+ *   1. Resolution-specific constants.
+ *   2. Static allocation of buffers to avoid repeated memory allocation.
+ *   3. Tuned parameters (e.g., motion threshold, crosshair size) for this resolution.
  */
 
 #include <stdio.h>
@@ -31,36 +25,31 @@
 #include <string.h>
 #include <math.h>
 
-/* --------------------------------------------------------------------------
- * RESOLUTION DEFINES (for 320×240 camera)
- * -------------------------------------------------------------------------- */
+/* Camera resolution settings for a 320×240 camera */
 #define CAM_WIDTH    320
 #define CAM_HEIGHT   240
 
-// The grid represents the Y channel in YUYV format, where we average pairs:
-// grid_width = CAM_WIDTH / 2 and grid_height = CAM_HEIGHT.
+// For YUYV format, the Y channel is used from paired pixels.
+// GRID_WIDTH is half of CAM_WIDTH, GRID_HEIGHT is equal to CAM_HEIGHT.
 #define GRID_WIDTH   (CAM_WIDTH / 2)
 #define GRID_HEIGHT  (CAM_HEIGHT)
 #define GRID_SIZE    (GRID_WIDTH * GRID_HEIGHT)
 
-/* --------------------------------------------------------------------------
- * ADJUSTABLE DEFINES FOR NOISE REDUCTION & BACKGROUND LEARNING
- * -------------------------------------------------------------------------- */
-#define MOTION_THRESHOLD 1            // Base threshold for "motion" vs. "no motion" (in Y)
-#define BG_MOTION_DIFF_THRESHOLD 1.0f  // If diff > this, use faster alpha to reduce trailing
-#define BG_ALPHA_NO_MOTION 0.001f      // Slow update for background when diff is small
-// Use a faster learning rate when significant motion is detected.
-#define BG_ALPHA_MOTION 0.010f         // Faster update for background when diff is large
+/* Parameters for motion detection and background update */
+#define MOTION_THRESHOLD 1            // Threshold for detecting motion in the Y channel
+#define BG_MOTION_DIFF_THRESHOLD 1.0f  // Difference above which the background is updated faster
+#define BG_ALPHA_NO_MOTION 0.001f      // Slow update rate for the background when there is little change
+#define BG_ALPHA_MOTION 0.010f         // Fast update rate for the background when there is significant change
 
-// NEW DEFINES FOR ADAPTIVE THRESHOLD
-#define ENABLE_ADAPTIVE_THRESHOLD 1    // Set to 0 to disable adaptive threshold
-#define ADAPTIVE_FACTOR 0.2f           // Fraction of local background used as an additional threshold
+// Adaptive threshold: adjust the motion threshold based on local brightness.
+#define ENABLE_ADAPTIVE_THRESHOLD 1    // Set to 0 to disable adaptive thresholding
+#define ADAPTIVE_FACTOR 0.2f           // Fraction used to adjust the threshold based on the background
 
-// Drawing parameters (tuned for 320×240)
-#define CROSSHAIR_SIZE 10              // Crosshair size (may be scaled for a smaller resolution)
-#define MIN_MOVEMENT_PIXELS 50         // Minimum pixels to consider a valid movement
+/* Drawing parameters tuned for 320×240 resolution */
+#define CROSSHAIR_SIZE 10              // Size of the crosshair marker
+#define MIN_MOVEMENT_PIXELS 50         // Minimum number of motion pixels required
 
-// Define the red color (for motion overlay) in YUYV format.
+// Define the red color (used to overlay detected motion) in YUYV format.
 const unsigned char redY = 76;
 const unsigned char redU = 84;
 const unsigned char redV = 255;
@@ -71,26 +60,27 @@ typedef struct {
     unsigned char V;
 } Color;
 
-// The marker color used for drawing the crosshair
+/* Color used for drawing the crosshair marker */
 Color marker_color = {41, 240, 110};
 
-/* --------------------------------------------------------------------------
- * STATIC GLOBAL BUFFERS (allocated once for 320×240 resolution)
- *
- * These buffers are used repeatedly for processing frames to avoid dynamic
- * allocation overhead on each frame.
- * -------------------------------------------------------------------------- */
-static unsigned char *orig_frame = NULL;      // Copy of the original frame
-static float *backgroundY = NULL;             // Background model for Y channel
-static int *motion_mask = NULL;               // Binary mask for motion detection
-static int *eroded_mask = NULL;               // Buffer for erosion operation
-static int *dilated_mask = NULL;              // Buffer for dilation operation
-static int last_center_x = CAM_WIDTH / 2;   // Default center is mid-frame
-static int last_center_y = CAM_HEIGHT / 2;
+/* 
+ * Static buffers for processing frames.
+ * These are allocated once to avoid repeated dynamic memory allocation.
+ */
+static unsigned char *orig_frame = NULL;      // Copy of the input frame
+static float *backgroundY = NULL;             // Background model (Y channel)
+static int *motion_mask = NULL;               // Binary mask for detected motion
+static int *eroded_mask = NULL;               // Buffer for the erosion step
+static int *dilated_mask = NULL;              // Buffer for the dilation step
+static int last_center_x = CAM_WIDTH / 2;       // Last known x-coordinate of the motion center
+static int last_center_y = CAM_HEIGHT / 2;      // Last known y-coordinate of the motion center
 
-/* --------------------------------------------------------------------------
- * Helper functions: set_pixel and draw_crosshair
- * -------------------------------------------------------------------------- */
+/**********************************************************
+ * set_pixel
+ *
+ * Updates the color of a single pixel at (x, y) in the frame.
+ * The frame is in YUYV format where pixels are stored in pairs.
+ **********************************************************/
 void set_pixel(unsigned char *frame, int frame_width, int frame_height, int x, int y, Color color) {
     if (x < 0 || x >= frame_width || y < 0 || y >= frame_height)
         return;
@@ -103,6 +93,12 @@ void set_pixel(unsigned char *frame, int frame_width, int frame_height, int x, i
     frame[offset + 3] = color.V;
 }
 
+/**********************************************************
+ * draw_crosshair
+ *
+ * Draws a crosshair at the specified center (center_x, center_y).
+ * It draws a horizontal and a vertical line with a fixed size.
+ **********************************************************/
 void draw_crosshair(unsigned char *frame, int frame_width, int frame_height,
                     int center_x, int center_y, Color color) {
     // Draw horizontal line
@@ -115,22 +111,23 @@ void draw_crosshair(unsigned char *frame, int frame_width, int frame_height,
     }
 }
 
-/* --------------------------------------------------------------------------
- * process_frame:
+/**********************************************************
+ * process_frame
  *
- * This function:
- *   1. Initializes or updates the background model (Y channel).
- *   2. Generates a motion mask by comparing the frame to the background.
- *   3. Applies 3×3 morphological opening (erosion then dilation) for noise reduction.
- *   4. Computes the center-of-mass of all detected movement pixels.
- *   5. Draws a crosshair at the computed center-of-mass.
+ * Processes a video frame by performing these steps:
+ * 1. On the first call, allocate buffers and initialize the background.
+ * 2. For each grid cell:
+ *    - Calculate the average brightness (Y channel) from paired pixels.
+ *    - Compare it to the background and update the background model.
+ *    - Mark the cell as "motion" if the difference exceeds a threshold.
+ * 3. Reduce noise using a 3×3 erosion followed by a 3×3 dilation.
+ * 4. Calculate the center of mass for the motion pixels.
+ * 5. Draw a crosshair at the detected (or last known) center if enough motion is detected.
  *
- * When crosshair_mode is enabled, the crosshair is drawn using the last known
- * center-of-mass even if no movement is detected.
- *
- * -------------------------------------------------------------------------- */
+ * The function assumes the frame is in YUYV format.
+ **********************************************************/
 void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int frame_height) {
-    // On the first call, allocate the static buffers.
+    // Allocate buffers on the first call and initialize the background model.
     if (orig_frame == NULL) {
         orig_frame = malloc(frame_size);
         backgroundY = malloc(GRID_SIZE * sizeof(float));
@@ -141,7 +138,7 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
             fprintf(stderr, "Initialization: Out of memory.\n");
             exit(EXIT_FAILURE);
         }
-        // Initialize background from the first frame.
+        // Initialize background model from the first frame.
         memcpy(orig_frame, frame, frame_size);
         for (int i = 0; i < GRID_SIZE; i++) {
             int base = i * 4;
@@ -152,9 +149,17 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
         return;
     }
 
+    // Keep a copy of the original frame.
     memcpy(orig_frame, frame, frame_size);
 
-    /* Step 1 & 2: Update background model and form motion mask */
+    /* Step 1 & 2: Update background model and mark motion.
+     * For each grid cell:
+     *   - Compute the average brightness from the paired pixels.
+     *   - Calculate the absolute difference from the background.
+     *   - Choose a fast or slow background update rate based on the difference.
+     *   - Optionally adjust the threshold based on the background brightness.
+     *   - If the difference exceeds the threshold, mark the cell as motion and overlay red.
+     */
     for (int i = 0; i < GRID_SIZE; i++) {
         int base = i * 4;
         float y1 = (float)orig_frame[base];
@@ -170,20 +175,21 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
 
         float dynamic_thresh = MOTION_THRESHOLD;
 #if ENABLE_ADAPTIVE_THRESHOLD
+        // Adjust threshold based on the background brightness.
         float adaptive_component = ADAPTIVE_FACTOR * (backgroundY[i] + 1.0f);
         if (adaptive_component > dynamic_thresh) {
             dynamic_thresh = adaptive_component;
         }
 #endif
         if (diff > dynamic_thresh) {
-            // Mark pixel as motion: overlay with red.
+            // Mark cell as motion and overlay red.
             frame[base]   = redY;
             frame[base+1] = redU;
             frame[base+2] = redY;
             frame[base+3] = redV;
             motion_mask[i] = 1;
         } else {
-            // Restore original pixel.
+            // No motion: restore the original pixel.
             frame[base]   = orig_frame[base];
             frame[base+1] = orig_frame[base+1];
             frame[base+2] = orig_frame[base+2];
@@ -192,8 +198,10 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
         }
     }
 
-    /* Step 3: Morphological Opening (3×3 erosion then 3×3 dilation) */
-    // Erosion: keep pixel only if all neighbors are motion pixels.
+    /* Step 3: Noise reduction using a 3×3 erosion followed by dilation.
+     * Erosion: A cell is marked as motion only if all its 3×3 neighbors are marked.
+     * Dilation: Expand motion regions by marking cells that are adjacent to motion.
+     */
     memset(eroded_mask, 0, GRID_SIZE * sizeof(int));
     for (int y = 1; y < GRID_HEIGHT - 1; y++) {
         for (int x = 1; x < GRID_WIDTH - 1; x++) {
@@ -213,7 +221,6 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
             eroded_mask[idx] = all_one;
         }
     }
-    // Dilation: expand motion regions from eroded_mask.
     memset(dilated_mask, 0, GRID_SIZE * sizeof(int));
     for (int y = 1; y < GRID_HEIGHT - 1; y++) {
         for (int x = 1; x < GRID_WIDTH - 1; x++) {
@@ -236,10 +243,10 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
         }
     }
 
-    /* Step 4: Center-of-Mass Calculation for movement pixels.
-     *
-     * Compute the weighted average (centroid) of all pixels in the dilated_mask.
-     * If enough movement is detected (at least MIN_MOVEMENT_PIXELS), update the last known center.
+    /* Step 4: Calculate the center of mass of the motion.
+     * Sum the coordinates of all cells marked as motion in the dilated mask.
+     * If the number of motion cells is at least MIN_MOVEMENT_PIXELS, update the center.
+     * Convert grid coordinates to frame coordinates (x is scaled by 2 and offset).
      */
     long sum_x = 0, sum_y = 0;
     int count = 0;
@@ -254,20 +261,17 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
         }
     }
     if (count >= MIN_MOVEMENT_PIXELS) {
-        // Convert grid coordinates to full frame coordinates (x scaled by 2 and offset by 1).
         int center_x = (int)((sum_x / (float)count) * 2) + 1;
         int center_y = (int)(sum_y / (float)count);
         last_center_x = center_x;
         last_center_y = center_y;
-        fprintf(stderr, "Center-of-mass detected at (%d, %d) with %d movement pixels.\n", center_x, center_y, count);
+        fprintf(stderr, "Center-of-mass detected at (%d, %d) with %d motion pixels.\n", center_x, center_y, count);
     } else {
-        fprintf(stderr, "No sufficient movement detected (only %d pixels).\n", count);
+        fprintf(stderr, "Insufficient motion detected (only %d pixels).\n", count);
     }
 
-    /* Step 5: Draw crosshair at the computed (or last known) center-of-mass.
-     *
-     * If crosshair_mode is enabled, the crosshair is always drawn at last_center_x/last_center_y.
-     * Otherwise, only draw the crosshair if movement was detected in the current frame.
+    /* Step 5: Draw a crosshair at the detected or last known center.
+     * The crosshair is drawn only when sufficient motion is detected.
      */
     if (count >= MIN_MOVEMENT_PIXELS) {
         draw_crosshair(frame, frame_width, frame_height, last_center_x, last_center_y, marker_color);
@@ -277,18 +281,8 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
 /*
  * End of object_recognition.c
  *
- * Usage Notes:
- *   - The adaptive threshold (ADAPTIVE_FACTOR) scales the motion threshold based on
- *     the local background; this helps with both dark and bright scenes.
- *   - The parameters (such as MIN_MOVEMENT_PIXELS and CROSSHAIR_SIZE) have been
- *     tuned for a 320×240 camera. Adjust these values if your scene characteristics change.
- *   - The center-of-mass is computed over all movement pixels after noise reduction.
- *   - Call toggle_crosshair_mode() (for example, when letter 'T' is pressed) to enable
- *     or disable always drawing the crosshair.
- *
- * References:
- *   [1] Mathematical morphology for image processing.
- *   [2] Running average for background modeling.
- *   [3] Center-of-mass computation methods.
- *   [4] Adaptive thresholding for uneven illumination.
+ * Notes:
+ * - Adaptive thresholding adjusts the motion detection threshold using local brightness.
+ * - The parameters (MIN_MOVEMENT_PIXELS, CROSSHAIR_SIZE, etc.) are tuned for a 320×240 camera.
+ * - The center-of-mass is calculated after noise reduction.
  */

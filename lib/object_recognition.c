@@ -3,21 +3,22 @@
  *
  * This module detects and tracks objects in video frames from a 320×240 camera.
  * It updates a background model, detects moving regions, reduces noise, and
- * calculates the center position of detected motion. An optional crosshair is
- * drawn at the calculated position.
+ * calculates the center position of detected motion. A filled square marker is
+ * drawn at the calculated (and filtered) position.
  *
  * Implementation details:
  *   - Uses a running average to update the background model.
  *   - Detects motion by comparing the current frame against the background.
  *   - Applies a 3×3 erosion followed by a 3×3 dilation to remove noise.
  *   - Calculates the center of mass of the moving pixels.
+ *   - Applies a low pass filter to the center position for stabilization.
  *   - Written in plain C (using -std=c11) with only standard libraries.
  *   - All code is in one file.
  *
  * Optimizations for 320×240 resolution:
  *   1. Resolution-specific constants.
  *   2. Static allocation of buffers to avoid repeated memory allocation.
- *   3. Tuned parameters (e.g., motion threshold, crosshair size) for this resolution.
+ *   3. Tuned parameters (e.g., motion threshold, marker size) for this resolution.
  */
 
 #include <stdio.h>
@@ -38,20 +39,22 @@
 /* Parameters for motion detection and background update */
 #define MOTION_THRESHOLD 1            // Threshold for detecting motion in the Y channel
 #define BG_MOTION_DIFF_THRESHOLD 1.0f  // Difference above which the background is updated faster
-#define BG_ALPHA_NO_MOTION 0.001f      // Slow update rate for the background when there is little change
-#define BG_ALPHA_MOTION 0.010f         // Fast update rate for the background when there is significant change
+#define BG_ALPHA_NO_MOTION 0.001f      // Slow update rate when there is little change
+#define BG_ALPHA_MOTION 0.010f         // Fast update rate when there is significant change
 
 // Adaptive threshold: adjust the motion threshold based on local brightness.
 #define ENABLE_ADAPTIVE_THRESHOLD 1    // Set to 0 to disable adaptive thresholding
-#define ADAPTIVE_FACTOR 0.2f           // Fraction used to adjust the threshold based on the background
+#define ADAPTIVE_FACTOR 0.2f           // Fraction to adjust the threshold based on the background
 
 /* Drawing parameters tuned for 320×240 resolution */
-#define CROSSHAIR_SIZE 10              // Size of the crosshair marker
 #define MIN_MOVEMENT_PIXELS 50         // Minimum number of motion pixels required
 
-// Low pass filter constant for stabilizing the crosshair position (0 < alpha <= 1)
+// Low pass filter constant for stabilizing the marker position (0 < alpha <= 1)
 // A lower alpha gives more smoothing.
-#define CROSSHAIR_LPF_ALPHA 0.3f
+#define CROSSHAIR_LPF_ALPHA 0.5f
+
+// Marker size for the filled square (default is 3x3 pixels)
+#define MARKER_SIZE 6
 
 // Define the red color (used to overlay detected motion) in YUYV format.
 const unsigned char redY = 76;
@@ -64,7 +67,7 @@ typedef struct {
     unsigned char V;
 } Color;
 
-/* Color used for drawing the crosshair marker */
+/* Color used for drawing the marker */
 Color marker_color = {41, 240, 110};
 
 /* 
@@ -98,20 +101,18 @@ void set_pixel(unsigned char *frame, int frame_width, int frame_height, int x, i
 }
 
 /**********************************************************
- * draw_crosshair
+ * draw_marker
  *
- * Draws a crosshair at the specified center (center_x, center_y).
- * It draws a horizontal and a vertical line with a fixed size.
+ * Draws a filled square marker of size MARKER_SIZE x MARKER_SIZE.
+ * The marker is centered at (center_x, center_y) and filled with the given color.
  **********************************************************/
-void draw_crosshair(unsigned char *frame, int frame_width, int frame_height,
-                    int center_x, int center_y, Color color) {
-    // Draw horizontal line
-    for (int x = center_x - CROSSHAIR_SIZE; x <= center_x + CROSSHAIR_SIZE; x++) {
-        set_pixel(frame, frame_width, frame_height, x, center_y, color);
-    }
-    // Draw vertical line
-    for (int y = center_y - CROSSHAIR_SIZE; y <= center_y + CROSSHAIR_SIZE; y++) {
-        set_pixel(frame, frame_width, frame_height, center_x, y, color);
+void draw_marker(unsigned char *frame, int frame_width, int frame_height,
+                 int center_x, int center_y, Color color) {
+    int half = MARKER_SIZE / 2;
+    for (int y = center_y - half; y <= center_y + half; y++) {
+        for (int x = center_x - half; x <= center_x + half; x++) {
+            set_pixel(frame, frame_width, frame_height, x, y, color);
+        }
     }
 }
 
@@ -126,8 +127,8 @@ void draw_crosshair(unsigned char *frame, int frame_width, int frame_height,
  *    - Mark the cell as "motion" if the difference exceeds a threshold.
  * 3. Reduce noise using a 3×3 erosion followed by dilation.
  * 4. Calculate the center of mass for the motion pixels and apply a
- *    low pass filter to stabilize the crosshair position.
- * 5. Always draw the crosshair at the last known (filtered) position.
+ *    low pass filter to stabilize the marker position.
+ * 5. Always draw the marker at the last known (filtered) position.
  *
  * The function assumes the frame is in YUYV format.
  **********************************************************/
@@ -252,7 +253,7 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
      * Sum the coordinates of all cells marked as motion in the dilated mask.
      * If the number of motion cells is at least MIN_MOVEMENT_PIXELS, update the center.
      * Convert grid coordinates to frame coordinates (x is scaled by 2 and offset).
-     * A low pass filter is then applied to stabilize the crosshair position.
+     * A low pass filter is then applied to stabilize the marker position.
      */
     long sum_x = 0, sum_y = 0;
     int count = 0;
@@ -280,9 +281,9 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
         fprintf(stderr, "Insufficient motion detected (only %d pixels).\n", count);
     }
 
-    /* Step 5: Always draw the crosshair at the last known (filtered) center position.
+    /* Step 5: Always draw the marker at the last known (filtered) center position.
      */
-    draw_crosshair(frame, frame_width, frame_height, last_center_x, last_center_y, marker_color);
+    draw_marker(frame, frame_width, frame_height, last_center_x, last_center_y, marker_color);
 }
 
 /*
@@ -290,6 +291,6 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
  *
  * Notes:
  * - Adaptive thresholding adjusts the motion detection threshold using local brightness.
- * - The parameters (MIN_MOVEMENT_PIXELS, CROSSHAIR_SIZE, etc.) are tuned for a 320×240 camera.
- * - A low pass filter is applied to the detected center-of-mass to stabilize the crosshair.
+ * - The parameters (MIN_MOVEMENT_PIXELS, MARKER_SIZE, etc.) are tuned for a 320×240 camera.
+ * - A low pass filter is applied to the detected center-of-mass to stabilize the marker.
  */

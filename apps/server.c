@@ -2,7 +2,6 @@
  server.c
 
  A "switchboard" server that:
-
  - Listens on TCP port 12345 by default.
  - Accepts multiple clients (up to MAX_CLIENTS).
  - Each client is assumed to have 5 outputs (out0..out4) and 5 inputs (in0..in4).
@@ -13,6 +12,7 @@
     * route <A> <out-channel> <B> <in-channel>
     * print <clientID> <-- show last data for all channels of the given client
     * help
+    * monitor      <-- display in real time the five output values of all connected clients (exit with Q)
  - At startup, the server now checks for a file named "route.rt". If it exists,
    the file is read line-by-line to execute routing commands. If the file is missing
    or a failure occurs during processing, an appropriate message is displayed.
@@ -20,10 +20,10 @@
 
  Design principles for this modification:
  - We keep a per-client record of the last message seen on each output and each input channel.
- - We add a new startup file processing function without affecting existing functionality.
+ - We add a new monitor mode that polls the client sockets every time the view is updated.
  - We use plain C with -std=c11 and only standard cross-platform libraries.
- - A new helper function (route_command_from_file) is added to bypass client connectivity checks,
-   so that preconfigured routes are stored even if clients are not yet connected.
+ - A new helper function monitor_mode() is added that temporarily sets the terminal into non-canonical mode
+   so that a single keystroke (Q) can stop the monitoring.
  - We do not remove any existing functionality.
  - Comments throughout explain design choices.
  
@@ -41,16 +41,20 @@
 #include <string.h>
 #include <unistd.h>
 #include <ctype.h>
-#include <stdbool.h>   // Added to support bool type.
+#include <stdbool.h>   // Support for bool type.
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/select.h>
+#include <termios.h>   // For non-canonical mode in monitor command
 
 #define SERVER_PORT 12345
 #define MAX_CLIENTS 20
 #define CHANNELS_PER_APP 5  // 5 outputs, 5 inputs
 #define MAX_MSG_LENGTH 512  // maximum message length for storing channel data
+
+// Define the monitoring update FPS.
+#define MONITOR_FPS 2
 
 typedef struct {
     int sockfd;
@@ -92,6 +96,9 @@ static void trim_newline(char *s);
 // New helper functions for processing routing file.
 static void process_routing_file(void);
 static void route_command_from_file(int outCID, int outCH, int inCID, int inCH);
+
+// New helper function for monitor mode.
+static void monitor_mode(void);
 
 int main(int argc, char *argv[]) {
     unsigned short port = SERVER_PORT;
@@ -299,6 +306,11 @@ static void handle_console_input(void) {
         list_routes();
         return;
     }
+    // New monitor command: enter monitoring mode to display output values.
+    if (strcmp(cmdline, "monitor") == 0) {
+        monitor_mode();
+        return;
+    }
     // Modified command: print <clientID>
     if (strncmp(cmdline, "print", 5) == 0) {
         // Skip the command token
@@ -406,6 +418,8 @@ static void show_help(void) {
     printf("   (Y and/or W can be 'all' to route multiple channels)\n");
     // Updated usage information for the modified print command.
     printf(" print <clientID>            - show last data for all channels of the given client\n");
+    // New usage information for the monitor command.
+    printf(" monitor                     - display in real time all five output values of all connected clients (exit with Q)\n");
     printf("\n");
 }
 
@@ -591,4 +605,98 @@ static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) 
     routing[outCID][outCH].in_client_id = inCID;
     routing[outCID][outCH].in_channel = inCH;
     printf("Preconfigured: client%d out%d -> client%d in%d\n", outCID, outCH, inCID, inCH);
+}
+
+/*
+ * monitor_mode()
+ *
+ * This function implements the new "monitor" command. It switches the terminal into non-canonical mode
+ * to allow real-time key detection and polls all active client sockets to read fresh data.
+ * Every cycle (with a refresh rate defined by MONITOR_FPS), it:
+ *  - Checks STDIN for the quit key ('Q' or 'q').
+ *  - Processes any new data from all active clients.
+ *  - Clears the screen and displays a table of all connected clients and their 5 output channel messages.
+ */
+static void monitor_mode(void) {
+    struct termios orig_termios, new_termios;
+    // Save original terminal settings.
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+        perror("tcgetattr");
+        return;
+    }
+    new_termios = orig_termios;
+    new_termios.c_lflag &= ~(ICANON | ECHO); // disable canonical mode and echo
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &new_termios) == -1) {
+        perror("tcsetattr");
+        return;
+    }
+
+    printf("Entering monitor mode. Press 'Q' to quit.\n");
+    fflush(stdout);
+
+    bool quit = false;
+    while (!quit) {
+        // Build a file descriptor set for STDIN and all active client sockets.
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+        int maxfd = STDIN_FILENO;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].active) {
+                FD_SET(clients[i].sockfd, &readfds);
+                if (clients[i].sockfd > maxfd)
+                    maxfd = clients[i].sockfd;
+            }
+        }
+
+        // Calculate timeout based on MONITOR_FPS.
+        struct timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 1000000 / MONITOR_FPS; // e.g., 500000 us for 2 FPS
+
+        int ret = select(maxfd + 1, &readfds, NULL, NULL, &tv);
+        if (ret < 0) {
+            perror("select in monitor_mode");
+            break;
+        }
+
+        // Process any new data from active client sockets.
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].active && FD_ISSET(clients[i].sockfd, &readfds)) {
+                handle_client_input(i);
+            }
+        }
+
+        // Check STDIN for quit command.
+        if (FD_ISSET(STDIN_FILENO, &readfds)) {
+            char ch;
+            if (read(STDIN_FILENO, &ch, 1) > 0) {
+                if (ch == 'Q' || ch == 'q') {
+                    quit = true;
+                }
+            }
+        }
+
+        // Clear the screen and display the updated monitoring view.
+        system("clear");
+        printf("=== Monitoring Mode (press 'Q' to quit) ===\n\n");
+        printf("%-10s | %-50s\n", "Client", "Output Channels (0..4)");
+        printf("-------------------------------------------------------------\n");
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].active) {
+                printf("client%-4d | ", clients[i].client_id);
+                for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
+                    printf("[%d]: %-10.10s ", ch, client_data[i].last_out[ch]);
+                }
+                printf("\n");
+            }
+        }
+        fflush(stdout);
+    }
+
+    // Restore original terminal settings.
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios) == -1) {
+        perror("tcsetattr");
+    }
+    printf("Exiting monitor mode.\n");
 }

@@ -15,6 +15,7 @@
     * monitor [FPS]  <-- display in real time the five output values of all connected clients 
                       (update rate set by FPS argument, default if not given) 
                       and allow recording of data (toggle recording with 'R'; exit with 'Q')
+    * exit        <-- shut down the current tmux session (i.e. all windows)
  - At startup, the server now checks for a file named "route.rt". If it exists,
    the file is read line-by-line to execute routing commands. If the file is missing
    or a failure occurs during processing, an appropriate message is displayed.
@@ -27,8 +28,9 @@
  - While in monitor mode, the operator can press 'R' to toggle recording of the outputs into a CSV file.
  - When recording starts, a snapshot of the active clients is taken and their outputs are written
    to the CSV with each client occupying CHANNELS_PER_APP columns. The very first column is a timestamp
-   (relative to the start of monitoring) with microsecond accuracy.
+   (relative to the start of monitor mode) with microsecond accuracy.
  - The CSV file is saved in the "logs" directory with a filename of the form "monitor_<timestamp>.csv".
+ - A new "exit" command shuts down the whole tmux session (using tmux kill-session).
  - All modifications adhere to plain C with -std=c11 and only use standard cross-platform libraries.
  - We do not remove any existing functionality.
  
@@ -101,6 +103,7 @@ static void list_clients(void);
 static void list_routes(void);
 static int find_client_index(int cid);
 static void trim_newline(char *s);
+static void shutdown_tmux(void);  // New function to shutdown tmux
 
 // New helper functions for processing routing file.
 static void process_routing_file(void);
@@ -315,9 +318,12 @@ static void handle_console_input(void) {
         list_routes();
         return;
     }
+    if (strcmp(cmdline, "exit") == 0) {
+        shutdown_tmux();
+        return;
+    }
     // Monitor command: support optional FPS argument.
     if (strncmp(cmdline, "monitor", 7) == 0) {
-        // Discard the first token.
         strtok(cmdline, " ");
         int fps = DEFAULT_MONITOR_FPS;
         char *arg = strtok(NULL, " ");
@@ -351,9 +357,7 @@ static void handle_console_input(void) {
         }
         return;
     }
-    // Modified route command:
-    // Accepts either the legacy format "route <outCID> <outCH> <inCID> <inCH>"
-    // or the extended format "route <outCID> all <inCID> all" (and combinations)
+    // Modified route command.
     if (strncmp(cmdline, "route", 5) == 0) {
         strtok(cmdline, " ");
         char *pOutCID = strtok(NULL, " ");
@@ -423,6 +427,7 @@ static void show_help(void) {
     printf(" monitor [FPS]               - display real time output of all clients\n");
     printf("                              Optional FPS sets update rate (default %d FPS).\n", DEFAULT_MONITOR_FPS);
     printf("                              In monitor mode, press 'R' to toggle recording to CSV, 'Q' to quit.\n");
+    printf(" exit                        - shutdown the current tmux session (all windows)\n");
     printf("\n");
 }
 
@@ -606,6 +611,39 @@ static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) 
 }
 
 /*
+ * shutdown_tmux()
+ *
+ * This function retrieves the current tmux session name using
+ * "tmux display-message -p '#S'" and then issues a system command to kill the session.
+ * This shuts down the whole tmux session including all windows.
+ */
+static void shutdown_tmux(void) {
+    FILE *fp = popen("tmux display-message -p '#S'", "r");
+    if (!fp) {
+        perror("popen");
+        return;
+    }
+    char session_name[64];
+    if (fgets(session_name, sizeof(session_name), fp) == NULL) {
+        pclose(fp);
+        fprintf(stderr, "Failed to get tmux session name.\n");
+        return;
+    }
+    // Remove any trailing newline.
+    trim_newline(session_name);
+    pclose(fp);
+    
+    char cmd[128];
+    snprintf(cmd, sizeof(cmd), "tmux kill-session -t %s", session_name);
+    printf("Executing: %s\n", cmd);
+    int ret = system(cmd);
+    if (ret != 0) {
+        fprintf(stderr, "tmux kill-session command failed with code %d.\n", ret);
+    }
+    exit(0);
+}
+
+/*
  * monitor_mode()
  *
  * This function implements the new "monitor" command.
@@ -619,7 +657,7 @@ static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) 
  *    When recording is started, a new CSV file "logs/monitor_<timestamp>.csv" is created
  *    and a snapshot of the currently active clients is taken.
  *    Their outputs are written to the CSV with each client occupying CHANNELS_PER_APP columns.
- *    The very first column is a timestamp (relative to the start of monitor mode) with microsecond accuracy.
+ *    The very first column is a relative timestamp (starting from zero) with microsecond accuracy.
  *    Pressing 'R' stops recording; starting recording again creates a new file.
  *  - All statuses and instructions are displayed.
  */
@@ -735,7 +773,6 @@ static void monitor_mode(int fps) {
 
         // If recording, write current outputs to log file.
         if (recording && log_file) {
-            // Get current time and compute relative time from start_time.
             struct timeval now, delta;
             gettimeofday(&now, NULL);
             delta.tv_sec = now.tv_sec - start_time.tv_sec;
@@ -746,7 +783,6 @@ static void monitor_mode(int fps) {
             }
             // Write relative timestamp as the first column.
             fprintf(log_file, "\"%ld.%06ld\",", delta.tv_sec, delta.tv_usec);
-            // Write one line: for each recorded client, output its 5 last_out values.
             for (int j = 0; j < recorded_client_count; j++) {
                 int idx = recorded_client_indices[j];
                 for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {

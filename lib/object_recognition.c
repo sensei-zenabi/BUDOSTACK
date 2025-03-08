@@ -55,7 +55,7 @@
 #define ADAPTIVE_FACTOR 0.2f           // Fraction to adjust threshold based on background brightness
 
 /* Drawing parameters tuned for 320×240 resolution */
-#define MIN_MOVEMENT_PIXELS 25         // Minimum number of motion pixels required
+#define MIN_MOVEMENT_PIXELS 2         // Minimum number of motion pixels required
 
 // Low pass filter constant for stabilizing the marker position (0 < alpha <= 1)
 #define CROSSHAIR_LPF_ALPHA 0.5f

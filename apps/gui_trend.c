@@ -1,32 +1,15 @@
 /*
- * trend.c
+ * trend.c (Visualization Updated for Aligned Y-Axis, Statistical Grid Lines, and UI Instructions)
  *
- * A plain C (C11) client that connects to the Switchboard server (see server.c)
- * and displays routed signals from 5 standard input channels as an ASCII trend.
+ * This version of the terminal trend tool improves the visualization by:
+ *   1. Aligning the y‑axis labels using a fixed width computed from the largest number.
+ *   2. Drawing grid lines corresponding to the mean and ±1 standard deviation (std)
+ *      of the visible samples from active channels.
+ *   3. Including UI instructions so that the available key functions are visible.
  *
- * Modifications made:
- *   - All 5 channels are enabled by default.
- *   - UI help text has been added to inform the user of the available key functions.
- *   - Replaced use of clock() with clock_gettime(CLOCK_REALTIME, ...) to use wall‑clock time.
- *   - Added ±10%% buffer to the y‑axis based on the calculated min and max values.
- *   - Terminal is put into non‑canonical mode to immediately process key presses.
+ * Note: The recording functionality (triggered by key 'R') has been removed.
  *
- * Features:
- *   - Connects to a server (default: localhost:12345) and receives routed signals.
- *   - Displays a default 30 sec time window (adjustable between 5 and 120 sec via keys 8/9).
- *   - Dynamically scales the y‑axis (with an extra 10%% buffer) based on the minimum and maximum values from active channels.
- *   - Supports toggling each channel on/off with keys '1'–'5'.
- *   - Records samples from active channels to output.csv when recording is toggled via key 'R'.
- *
- * Design principles:
- *   - Uses only plain C (compiled with -std=c11) and only standard cross‑platform libraries.
- *   - Implements two additional threads: one for handling keyboard input and one for network input.
- *   - Uses a circular buffer for each channel to store up to MAX_SAMPLES.
- *   - Uses ANSI escape sequences for terminal control (assumes a compatible terminal).
- *   - Integrates with the server.c routing protocol (expects messages in the form:
- *         "inN from clientX: <value>\n")
- *
- * To compile: cc -std=c11 -pthread trend.c -o trend
+ * Compile with: cc -std=c11 -pthread trend.c -o trend
  *
  * Usage:
  *   ./trend [hostname] [port]
@@ -45,12 +28,12 @@
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#include <unistd.h>
 
 /* For networking */
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
-#include <unistd.h>
 
 /* For terminal control */
 #include <termios.h>
@@ -61,6 +44,16 @@
 #define DISPLAY_HEIGHT  20
 #define SAMPLE_RATE     10      // nominal samples per second (used for display timing)
 #define DT              (1.0 / SAMPLE_RATE)
+
+// ANSI color codes for channels 1-5.
+const char *channel_colors[NUM_TRENDS] = {
+    "\033[31m", // Red
+    "\033[32m", // Green
+    "\033[33m", // Yellow
+    "\033[34m", // Blue
+    "\033[35m"  // Magenta
+};
+#define COLOR_RESET "\033[0m"
 
 // Global variable to store original terminal settings.
 struct termios orig_termios;
@@ -77,6 +70,16 @@ void disable_input_buffering(void) {
 // Restore original terminal settings.
 void restore_input_buffering(void) {
     tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+}
+
+// Enable alternate screen buffer to avoid cluttering the main terminal.
+void enable_alternate_screen(void) {
+    printf("\033[?1049h");
+}
+
+// Restore main screen from alternate screen buffer.
+void disable_alternate_screen(void) {
+    printf("\033[?1049l");
 }
 
 // Helper function: return current wall‑clock time (in seconds with fractions)
@@ -99,8 +102,6 @@ typedef struct {
 
 /* Global state and configuration */
 volatile bool run = true;         // Set to false to exit
-volatile bool recording = false;  // Toggled by key 'R'
-FILE *record_file = NULL;         // CSV output file pointer
 
 int time_window = 30;             // Time window (sec) for display; default 30, range 5..120
 // All 5 channels enabled by default
@@ -155,16 +156,12 @@ int network_thread(void *arg) {
                 int in_ch = -1;
                 int dummy_client = -1;
                 double value = 0;
-                /* Expected format: "inN from clientX: <value>" */
+                /* Expected format: "in%d from client%d: %lf" */
                 if (sscanf(line_start, "in%d from client%d: %lf", &in_ch, &dummy_client, &value) == 3) {
                     if (in_ch >= 0 && in_ch < NUM_TRENDS) {
                         double current_time = get_wallclock_time();
                         mtx_lock(&lock);
                         add_sample(&trends[in_ch], current_time, value);
-                        // If recording is active and channel is toggled on, record the sample
-                        if (recording && trend_active[in_ch] && record_file) {
-                            fprintf(record_file, "%.2f,%d,%.2f\n", current_time, in_ch + 1, value);
-                        }
                         mtx_unlock(&lock);
                     }
                 }
@@ -181,9 +178,8 @@ int network_thread(void *arg) {
 
 /*
  * input_thread:
- * Reads keyboard input from stdin (now in non‑canonical mode).
- * Toggles channels (keys '1'-'5'), adjusts time window (keys '8' and '9'),
- * and toggles recording (key 'R' or 'r').
+ * Reads keyboard input from stdin (in non‑canonical mode).
+ * Toggles channels (keys '1'-'5') and adjusts time window (keys '8' and '9').
  */
 int input_thread(void *arg) {
     (void)arg; // unused
@@ -201,17 +197,6 @@ int input_thread(void *arg) {
             } else if (ch == '9') {
                 if (time_window - 5 >= 5)
                     time_window -= 5;
-            } else if (ch == 'R' || ch == 'r') {
-                recording = !recording;
-                if (recording && record_file == NULL) {
-                    record_file = fopen("output.csv", "w");
-                    if (record_file) {
-                        fprintf(record_file, "timestamp,channel,value\n");
-                    }
-                } else if (!recording && record_file != NULL) {
-                    fclose(record_file);
-                    record_file = NULL;
-                }
             }
             mtx_unlock(&lock);
         }
@@ -224,14 +209,17 @@ int input_thread(void *arg) {
  * Clears the terminal using ANSI escape sequences.
  */
 void clear_screen() {
+    // Use alternate screen buffer to avoid cluttering the main terminal.
     printf("\033[2J\033[H");
 }
 
 /*
  * display_trends:
- * Draws the ASCII graph for the 5 channels.
- * The x-axis spans the current time_window seconds and the y-axis is auto‑scaled
- * based on the minimum and maximum values from active channels with an extra ±10% buffer.
+ * Draws the ASCII graph for the 5 channels with improved visualization.
+ * Changes made:
+ *   - Y‑axis labels are printed with a fixed width to ensure the vertical line stays aligned.
+ *   - Grid lines are drawn at the mean and ±1 std positions computed from visible samples.
+ *   - UI instructions are printed at the bottom so the user sees available controls.
  */
 void display_trends() {
     clear_screen();
@@ -261,12 +249,41 @@ void display_trends() {
         global_min -= 1;
         global_max += 1;
     }
-    // Add ±10% buffer
+    // Add ±10% buffer for display scaling.
     double range = global_max - global_min;
     global_min -= 0.1 * range;
     global_max += 0.1 * range;
 
-    // Create a display buffer for the graph.
+    // Calculate mean and standard deviation of visible samples.
+    double sum = 0.0, sum_sq = 0.0;
+    int sample_count = 0;
+    for (int ch = 0; ch < NUM_TRENDS; ch++) {
+        if (!trend_active[ch]) continue;
+        TrendBuffer *buf = &trends[ch];
+        for (int i = 0; i < buf->count; i++) {
+            int idx = (buf->head + MAX_SAMPLES - buf->count + i) % MAX_SAMPLES;
+            double sample_time = buf->samples[idx].t;
+            if (sample_time >= t_min && sample_time <= current_time) {
+                double v = buf->samples[idx].value;
+                sum += v;
+                sum_sq += v * v;
+                sample_count++;
+            }
+        }
+    }
+    double mean = (sample_count > 0) ? (sum / sample_count) : ((global_min + global_max) / 2);
+    double std = 0.0;
+    if (sample_count > 0) {
+        double variance = (sum_sq / sample_count) - (mean * mean);
+        std = (variance > 0) ? sqrt(variance) : 0;
+    }
+    
+    // Compute row indices for mean and ±1 std.
+    int row_mean = (int)((global_max - mean) / (global_max - global_min) * (DISPLAY_HEIGHT - 1));
+    int row_p1 = (int)((global_max - (mean + std)) / (global_max - global_min) * (DISPLAY_HEIGHT - 1));
+    int row_m1 = (int)((global_max - (mean - std)) / (global_max - global_min) * (DISPLAY_HEIGHT - 1));
+
+    // Create a display buffer for the graph (initialize with spaces).
     char display[DISPLAY_HEIGHT][DISPLAY_WIDTH + 1];
     for (int r = 0; r < DISPLAY_HEIGHT; r++) {
         for (int c = 0; c < DISPLAY_WIDTH; c++) {
@@ -274,8 +291,25 @@ void display_trends() {
         }
         display[r][DISPLAY_WIDTH] = '\0';
     }
-
-    // For each active channel, plot its samples onto the display buffer.
+    
+    // Overlay grid lines for mean and ±1 std.
+    if (row_mean >= 0 && row_mean < DISPLAY_HEIGHT) {
+        for (int c = 0; c < DISPLAY_WIDTH; c++) {
+            display[row_mean][c] = '=';
+        }
+    }
+    if (row_p1 >= 0 && row_p1 < DISPLAY_HEIGHT) {
+        for (int c = 0; c < DISPLAY_WIDTH; c++) {
+            display[row_p1][c] = '-';
+        }
+    }
+    if (row_m1 >= 0 && row_m1 < DISPLAY_HEIGHT) {
+        for (int c = 0; c < DISPLAY_WIDTH; c++) {
+            display[row_m1][c] = '-';
+        }
+    }
+    
+    // Plot each active channel's samples onto the display buffer.
     for (int ch = 0; ch < NUM_TRENDS; ch++) {
         if (!trend_active[ch]) continue;
         TrendBuffer *buf = &trends[ch];
@@ -291,38 +325,62 @@ void display_trends() {
                 display[row][col] = '1' + ch;
         }
     }
+    
+    // Compute fixed width for the y-axis labels (using global extremes).
+    char buf_min[32], buf_max[32];
+    snprintf(buf_min, sizeof(buf_min), "%.2f", global_min);
+    snprintf(buf_max, sizeof(buf_max), "%.2f", global_max);
+    int label_width = (int) (strlen(buf_min) > strlen(buf_max) ? strlen(buf_min) : strlen(buf_max));
 
     // Print the graph with y-axis labels.
     for (int r = 0; r < DISPLAY_HEIGHT; r++) {
         double y_value = global_max - (global_max - global_min) * r / (DISPLAY_HEIGHT - 1);
-        printf("%6.2f | %s\n", y_value, display[r]);
+        // Use fixed width to align the vertical axis.
+        printf("%*.*f | ", label_width, 2, y_value);
+        for (int c = 0; c < DISPLAY_WIDTH; c++) {
+            char ch = display[r][c];
+            if (ch >= '1' && ch <= '5') {
+                int channel = ch - '1';
+                printf("%s%c%s", channel_colors[channel], ch, COLOR_RESET);
+            } else {
+                printf("%c", ch);
+            }
+        }
+        printf("\n");
     }
-    // x-axis
-    printf("       +");
+    // Draw the x-axis.
+    printf("%*s +", label_width, "");
     for (int c = 0; c < DISPLAY_WIDTH; c++) {
         printf("-");
     }
     printf("\n");
-    // Time labels
-    printf("       ");
+    // Print time labels.
+    printf("%*s ", label_width, "");
     printf("%-6.1f", t_min);
     for (int c = 0; c < DISPLAY_WIDTH - 12; c++) {
         printf(" ");
     }
     printf("%6.1f\n", current_time);
 
-    // Additional info: time window, active channels, recording status.
+    // Additional info: time window and active channels.
     printf("Time window: %d sec. Active trends: ", time_window);
     for (int ch = 0; ch < NUM_TRENDS; ch++) {
         if (trend_active[ch])
-            printf("%d ", ch + 1);
+            printf("%s%d%s ", channel_colors[ch], ch + 1, COLOR_RESET);
     }
-    if (recording)
-        printf(" | Recording to output.csv");
     printf("\n");
-
-    // Display help/instructions for user interface
-    printf("Controls: 1-5: Toggle channels, 8: Increase time window, 9: Decrease time window, R: Toggle recording, Ctrl+C: Exit\n");
+    
+    // Display statistical info.
+    printf("Mean: %.2f, Std: %.2f\n", mean, std);
+    // Display legend for channel colors.
+    printf("Legend: ");
+    for (int ch = 0; ch < NUM_TRENDS; ch++) {
+        printf("%s%d%s ", channel_colors[ch], ch + 1, COLOR_RESET);
+    }
+    printf("\n");
+    
+    // UI instructions for available key functions.
+    printf("Controls: 1-5: Toggle channels, 8: Increase time window, 9: Decrease time window, Ctrl+C: Exit\n");
 }
 
 /*
@@ -379,6 +437,7 @@ int connect_to_server(const char *hostname, const char *port) {
  * - Connects to the server.
  * - Initializes buffers and synchronization primitives.
  * - Puts the terminal into non‑canonical mode.
+ * - Enables the alternate screen buffer.
  * - Spawns network and keyboard input threads.
  * - Enters a loop that periodically refreshes the display.
  */
@@ -417,9 +476,12 @@ int main(int argc, char *argv[]) {
     
     // Set terminal to non‑canonical mode to process key presses immediately.
     disable_input_buffering();
+    // Enable alternate screen buffer for improved display.
+    enable_alternate_screen();
     
     // Ensure terminal settings are restored on exit.
     atexit(restore_input_buffering);
+    atexit(disable_alternate_screen);
     
     signal(SIGINT, handle_sigint);
     
@@ -445,8 +507,6 @@ int main(int argc, char *argv[]) {
     }
     
     // Cleanup
-    if (record_file)
-        fclose(record_file);
     close(sock_fd);
     mtx_destroy(&lock);
     return EXIT_SUCCESS;

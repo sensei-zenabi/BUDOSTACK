@@ -12,7 +12,9 @@
     * route <A> <out-channel> <B> <in-channel>
     * print <clientID> <-- show last data for all channels of the given client
     * help
-    * monitor      <-- display in real time the five output values of all connected clients (exit with Q)
+    * monitor [FPS]  <-- display in real time the five output values of all connected clients 
+                      (update rate set by FPS argument, default if not given) 
+                      and allow recording of data (toggle recording with 'R'; exit with 'Q')
  - At startup, the server now checks for a file named "route.rt". If it exists,
    the file is read line-by-line to execute routing commands. If the file is missing
    or a failure occurs during processing, an appropriate message is displayed.
@@ -21,11 +23,13 @@
  Design principles for this modification:
  - We keep a per-client record of the last message seen on each output and each input channel.
  - We add a new monitor mode that polls the client sockets every time the view is updated.
- - We use plain C with -std=c11 and only standard cross-platform libraries.
- - A new helper function monitor_mode() is added that temporarily sets the terminal into non-canonical mode
-   so that a single keystroke (Q) can stop the monitoring.
+ - The monitor mode uses an FPS value that can be specified as a command argument.
+ - While in monitor mode, the operator can press 'R' to toggle recording of the outputs into a CSV file.
+ - When recording starts, a snapshot of the active clients is taken and their outputs are written
+   to the CSV with each client occupying CHANNELS_PER_APP columns.
+ - The CSV file is saved in the "logs" directory with a filename of the form "monitor_<timestamp>.csv".
+ - All modifications adhere to plain C with -std=c11 and only use standard cross-platform libraries.
  - We do not remove any existing functionality.
- - Comments throughout explain design choices.
  
  Build:
    gcc -std=c11 -o server server.c
@@ -41,20 +45,23 @@
 #include <string.h>
 #include <unistd.h>
 #include <ctype.h>
-#include <stdbool.h>   // Support for bool type.
+#include <stdbool.h>    // Support for bool type.
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/select.h>
-#include <termios.h>   // For non-canonical mode in monitor command
+#include <termios.h>    // For non-canonical mode in monitor command
+#include <time.h>       // For timestamping
+#include <sys/stat.h>   // For mkdir
+#include <errno.h>
 
 #define SERVER_PORT 12345
 #define MAX_CLIENTS 20
-#define CHANNELS_PER_APP 5  // 5 outputs, 5 inputs
-#define MAX_MSG_LENGTH 512  // maximum message length for storing channel data
+#define CHANNELS_PER_APP 5    // 5 outputs, 5 inputs
+#define MAX_MSG_LENGTH 512    // maximum message length for storing channel data
 
-// Define the monitoring update FPS.
-#define MONITOR_FPS 2
+// Default FPS if none is specified in monitor command.
+#define DEFAULT_MONITOR_FPS 2
 
 typedef struct {
     int sockfd;
@@ -76,8 +83,8 @@ typedef struct {
 } ClientData;
 
 static ClientData client_data[MAX_CLIENTS]; // one per client slot
-static ClientInfo clients[MAX_CLIENTS];     // all possible clients
-static int next_client_id = 1;                // ID to assign to the next connecting client
+static ClientInfo clients[MAX_CLIENTS];      // all possible clients
+static int next_client_id = 1;                 // ID to assign to the next connecting client
 
 // Routing table: indexed by client_id so ensure the array is big enough.
 static Route routing[MAX_CLIENTS + 1][CHANNELS_PER_APP];
@@ -97,8 +104,8 @@ static void trim_newline(char *s);
 static void process_routing_file(void);
 static void route_command_from_file(int outCID, int outCH, int inCID, int inCH);
 
-// New helper function for monitor mode.
-static void monitor_mode(void);
+// New helper function for monitor mode. Accepts an FPS parameter.
+static void monitor_mode(int fps);
 
 int main(int argc, char *argv[]) {
     unsigned short port = SERVER_PORT;
@@ -306,14 +313,22 @@ static void handle_console_input(void) {
         list_routes();
         return;
     }
-    // New monitor command: enter monitoring mode to display output values.
-    if (strcmp(cmdline, "monitor") == 0) {
-        monitor_mode();
+    // Monitor command: support optional FPS argument.
+    if (strncmp(cmdline, "monitor", 7) == 0) {
+        // Discard the first token.
+        strtok(cmdline, " ");
+        int fps = DEFAULT_MONITOR_FPS;
+        char *arg = strtok(NULL, " ");
+        if (arg) {
+            int temp = atoi(arg);
+            if (temp > 0)
+                fps = temp;
+        }
+        monitor_mode(fps);
         return;
     }
     // Modified command: print <clientID>
     if (strncmp(cmdline, "print", 5) == 0) {
-        // Skip the command token
         strtok(cmdline, " ");
         char *pClientID = strtok(NULL, " ");
         if (!pClientID) {
@@ -327,7 +342,6 @@ static void handle_console_input(void) {
             return;
         }
         printf("Data for client%d (%s):\n", clientID, clients[idx].name);
-        // Print table header: Channel | Output Message | Input Message
         printf("%-8s | %-50s | %-50s\n", "Channel", "Output", "Input");
         printf("--------------------------------------------------------------------------------\n");
         for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
@@ -339,7 +353,6 @@ static void handle_console_input(void) {
     // Accepts either the legacy format "route <outCID> <outCH> <inCID> <inCH>"
     // or the extended format "route <outCID> all <inCID> all" (and combinations)
     if (strncmp(cmdline, "route", 5) == 0) {
-        // Skip the command token
         strtok(cmdline, " ");
         char *pOutCID = strtok(NULL, " ");
         char *pOutStr = strtok(NULL, " ");
@@ -351,8 +364,6 @@ static void handle_console_input(void) {
         }
         int outCID = atoi(pOutCID);
         int inCID = atoi(pInCID);
-
-        // Determine if the output channel should be all or a fixed channel.
         bool outAll = (strcmp(pOutStr, "all") == 0);
         int fixedOut = -1;
         if (!outAll) {
@@ -362,7 +373,6 @@ static void handle_console_input(void) {
                 fixedOut = pOutStr[3] - '0';
             }
         }
-        // Determine if the input channel should be all or a fixed channel.
         bool inAll = (strcmp(pInStr, "all") == 0);
         int fixedIn = -1;
         if (!inAll) {
@@ -372,8 +382,6 @@ static void handle_console_input(void) {
                 fixedIn = pInStr[2] - '0';
             }
         }
-
-        // Validate fixed channels if provided.
         if (!outAll && (fixedOut < 0 || fixedOut >= CHANNELS_PER_APP)) {
             printf("Invalid output channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1);
             return;
@@ -382,25 +390,19 @@ static void handle_console_input(void) {
             printf("Invalid input channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1);
             return;
         }
-
-        // Now apply routing based on the tokens.
         if (outAll && inAll) {
-            // Route each channel i: client outCID outi -> client inCID ini
             for (int i = 0; i < CHANNELS_PER_APP; i++) {
                 route_command(outCID, i, inCID, i);
             }
         } else if (outAll && !inAll) {
-            // Route all output channels to the fixed input channel.
             for (int i = 0; i < CHANNELS_PER_APP; i++) {
                 route_command(outCID, i, inCID, fixedIn);
             }
         } else if (!outAll && inAll) {
-            // Route the fixed output channel to all input channels.
             for (int i = 0; i < CHANNELS_PER_APP; i++) {
                 route_command(outCID, fixedOut, inCID, i);
             }
         } else {
-            // Single channel routing.
             route_command(outCID, fixedOut, inCID, fixedIn);
         }
         return;
@@ -413,13 +415,12 @@ static void show_help(void) {
     printf(" help                        - show this help\n");
     printf(" list                        - list connected clients\n");
     printf(" routes                      - list routing table\n");
-    // Updated usage information for the modified route command.
     printf(" route X Y Z W               - connect clientX outY -> clientZ inW\n");
     printf("   (Y and/or W can be 'all' to route multiple channels)\n");
-    // Updated usage information for the modified print command.
     printf(" print <clientID>            - show last data for all channels of the given client\n");
-    // New usage information for the monitor command.
-    printf(" monitor                     - display in real time all five output values of all connected clients (exit with Q)\n");
+    printf(" monitor [FPS]               - display real time output of all clients\n");
+    printf("                              Optional FPS sets update rate (default %d FPS).\n", DEFAULT_MONITOR_FPS);
+    printf("                              In monitor mode, press 'R' to toggle recording to CSV, 'Q' to quit.\n");
     printf("\n");
 }
 
@@ -501,12 +502,10 @@ static void process_routing_file(void) {
     int cmd_count = 0;
     while (fgets(line, sizeof(line), fp)) {
         trim_newline(line);
-        // Skip empty lines or lines that do not start with "route"
         if (strlen(line) == 0 || strncmp(line, "route", 5) != 0) {
             continue;
         }
         cmd_count++;
-        // Tokenize the line.
         char *token = strtok(line, " ");
         if (!token || strcmp(token, "route") != 0) {
             printf("Invalid command in routing file.\n");
@@ -550,7 +549,6 @@ static void process_routing_file(void) {
                 continue;
             }
         }
-        // Validate fixed channels if not "all"
         if (!outAll && (fixedOut < 0 || fixedOut >= CHANNELS_PER_APP)) {
             printf("Invalid output channel value in routing file. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1);
             all_success = false;
@@ -561,7 +559,6 @@ static void process_routing_file(void) {
             all_success = false;
             continue;
         }
-        // Apply routing based on the tokens using the helper function.
         if (outAll && inAll) {
             for (int i = 0; i < CHANNELS_PER_APP; i++) {
                 route_command_from_file(outCID, i, inCID, i);
@@ -582,7 +579,6 @@ static void process_routing_file(void) {
     if (!all_success || cmd_count == 0) {
         printf("Error processing routing file or no valid commands found.\n");
     } else {
-        // Re-open the file to display its contents.
         fp = fopen("route.rt", "r");
         if (fp) {
             printf("Routing file executed successfully. Contents of 'route.rt':\n");
@@ -610,33 +606,45 @@ static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) 
 /*
  * monitor_mode()
  *
- * This function implements the new "monitor" command. It switches the terminal into non-canonical mode
- * to allow real-time key detection and polls all active client sockets to read fresh data.
- * Every cycle (with a refresh rate defined by MONITOR_FPS), it:
- *  - Checks STDIN for the quit key ('Q' or 'q').
- *  - Processes any new data from all active clients.
- *  - Clears the screen and displays a table of all connected clients and their 5 output channel messages.
+ * This function implements the new "monitor" command.
+ * It switches the terminal into non-canonical mode for immediate key detection,
+ * and polls all active client sockets to fetch fresh data.
+ * The update rate is determined by the provided fps value.
+ *
+ * In the monitor view:
+ *  - Press 'Q' to quit monitor mode.
+ *  - Press 'R' to toggle recording.
+ *    When recording is started, a new CSV file "logs/monitor_<timestamp>.csv" is created
+ *    and a snapshot of the currently active clients is taken.
+ *    Their outputs are written to the CSV with each client occupying CHANNELS_PER_APP columns.
+ *    Pressing 'R' stops recording; starting recording again creates a new file.
+ *  - All statuses and instructions are displayed.
  */
-static void monitor_mode(void) {
+static void monitor_mode(int fps) {
     struct termios orig_termios, new_termios;
-    // Save original terminal settings.
     if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
         perror("tcgetattr");
         return;
     }
     new_termios = orig_termios;
-    new_termios.c_lflag &= ~(ICANON | ECHO); // disable canonical mode and echo
+    new_termios.c_lflag &= ~(ICANON | ECHO);
     if (tcsetattr(STDIN_FILENO, TCSANOW, &new_termios) == -1) {
         perror("tcsetattr");
         return;
     }
 
-    printf("Entering monitor mode. Press 'Q' to quit.\n");
+    // Variables for recording.
+    bool recording = false;
+    FILE *log_file = NULL;
+    char log_filename[256] = "";
+    int recorded_client_indices[MAX_CLIENTS];
+    int recorded_client_count = 0;
+
+    printf("Entering monitor mode at %d FPS.\nPress 'Q' to quit, 'R' to toggle recording.\n", fps);
     fflush(stdout);
 
     bool quit = false;
     while (!quit) {
-        // Build a file descriptor set for STDIN and all active client sockets.
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
@@ -649,10 +657,9 @@ static void monitor_mode(void) {
             }
         }
 
-        // Calculate timeout based on MONITOR_FPS.
         struct timeval tv;
         tv.tv_sec = 0;
-        tv.tv_usec = 1000000 / MONITOR_FPS; // e.g., 500000 us for 2 FPS
+        tv.tv_usec = 1000000 / fps;
 
         int ret = select(maxfd + 1, &readfds, NULL, NULL, &tv);
         if (ret < 0) {
@@ -660,26 +667,93 @@ static void monitor_mode(void) {
             break;
         }
 
-        // Process any new data from active client sockets.
+        // Process new data from client sockets.
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i].active && FD_ISSET(clients[i].sockfd, &readfds)) {
                 handle_client_input(i);
             }
         }
 
-        // Check STDIN for quit command.
+        // Check for keypresses.
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             char ch;
             if (read(STDIN_FILENO, &ch, 1) > 0) {
                 if (ch == 'Q' || ch == 'q') {
                     quit = true;
+                } else if (ch == 'R' || ch == 'r') {
+                    // Toggle recording.
+                    if (!recording) {
+                        if (mkdir("logs", 0755) == -1 && errno != EEXIST) {
+                            perror("mkdir");
+                        }
+                        time_t now = time(NULL);
+                        struct tm *tm_info = localtime(&now);
+                        char timestamp[64];
+                        strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm_info);
+                        snprintf(log_filename, sizeof(log_filename), "logs/monitor_%s.csv", timestamp);
+                        log_file = fopen(log_filename, "w");
+                        if (!log_file) {
+                            perror("fopen for log file");
+                        } else {
+                            recorded_client_count = 0;
+                            for (int i = 0; i < MAX_CLIENTS; i++) {
+                                if (clients[i].active) {
+                                    recorded_client_indices[recorded_client_count++] = i;
+                                }
+                            }
+                            for (int j = 0; j < recorded_client_count; j++) {
+                                int idx = recorded_client_indices[j];
+                                for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
+                                    fprintf(log_file, "client%d_ch%d", clients[idx].client_id, ch);
+                                    if (j != recorded_client_count - 1 || ch != CHANNELS_PER_APP - 1)
+                                        fprintf(log_file, ",");
+                                }
+                            }
+                            fprintf(log_file, "\n");
+                            fflush(log_file);
+                            recording = true;
+                        }
+                    } else {
+                        if (log_file) {
+                            fclose(log_file);
+                            log_file = NULL;
+                        }
+                        recording = false;
+                    }
                 }
             }
         }
 
-        // Clear the screen and display the updated monitoring view.
+        // If recording, write current outputs to log file.
+        if (recording && log_file) {
+            for (int j = 0; j < recorded_client_count; j++) {
+                int idx = recorded_client_indices[j];
+                for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
+                    char data[MAX_MSG_LENGTH];
+                    strncpy(data, client_data[idx].last_out[ch], MAX_MSG_LENGTH - 1);
+                    data[MAX_MSG_LENGTH - 1] = '\0';
+                    for (char *p = data; *p; p++) {
+                        if (*p == '\n' || *p == '\r')
+                            *p = ' ';
+                    }
+                    fprintf(log_file, "\"%s\"", data);
+                    if (j != recorded_client_count - 1 || ch != CHANNELS_PER_APP - 1)
+                        fprintf(log_file, ",");
+                }
+            }
+            fprintf(log_file, "\n");
+            fflush(log_file);
+        }
+
+        // Clear the screen and display the monitoring view.
         system("clear");
-        printf("=== Monitoring Mode (press 'Q' to quit) ===\n\n");
+        printf("=== Monitoring Mode (FPS: %d) ===\n", fps);
+        printf("Press 'Q' to quit, 'R' to toggle recording.\n");
+        if (recording)
+            printf("Recording: ON (file: %s)\n", log_filename);
+        else
+            printf("Recording: OFF\n");
+        printf("-------------------------------------------------------------\n");
         printf("%-10s | %-50s\n", "Client", "Output Channels (0..4)");
         printf("-------------------------------------------------------------\n");
         for (int i = 0; i < MAX_CLIENTS; i++) {
@@ -694,7 +768,10 @@ static void monitor_mode(void) {
         fflush(stdout);
     }
 
-    // Restore original terminal settings.
+    if (log_file) {
+        fclose(log_file);
+        log_file = NULL;
+    }
     if (tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios) == -1) {
         perror("tcsetattr");
     }

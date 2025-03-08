@@ -6,13 +6,18 @@
  * calculates the center position of detected motion. A filled square marker is
  * drawn at the calculated (and filtered) position.
  *
+ * Design modification:
+ *   - A new struct 'Position' is defined to hold x and y coordinates.
+ *   - The process_frame() function now returns a Position containing the center
+ *     of mass calculated from the detected motion.
+ *
  * Implementation details:
  *   - Uses a running average to update the background model.
  *   - Detects motion by comparing the current frame against the background.
  *   - Applies a 3×3 erosion followed by a 3×3 dilation to remove noise.
  *   - Calculates the center of mass of the moving pixels.
  *   - Applies a low pass filter to the center position for stabilization.
- *   - Written in plain C (using -std=c11) with only standard libraries.
+ *   - Written in plain C (-std=c11) with only standard libraries.
  *   - All code is in one file.
  *
  * Optimizations for 320×240 resolution:
@@ -83,6 +88,16 @@ static int last_center_x = CAM_WIDTH / 2;       // Last known x-coordinate of th
 static int last_center_y = CAM_HEIGHT / 2;      // Last known y-coordinate of the motion center
 
 /**********************************************************
+ * Position structure
+ *
+ * Used to return the x and y coordinates from process_frame.
+ **********************************************************/
+typedef struct {
+    int x;
+    int y;
+} Position;
+
+/**********************************************************
  * set_pixel
  *
  * Updates the color of a single pixel at (x, y) in the frame.
@@ -129,10 +144,11 @@ void draw_marker(unsigned char *frame, int frame_width, int frame_height,
  * 4. Calculate the center of mass for the motion pixels and apply a
  *    low pass filter to stabilize the marker position.
  * 5. Always draw the marker at the last known (filtered) position.
+ * 6. Return the current center position as a Position structure.
  *
  * The function assumes the frame is in YUYV format.
  **********************************************************/
-void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int frame_height) {
+Position process_frame(unsigned char *frame, size_t frame_size, int frame_width, int frame_height) {
     // Allocate buffers on the first call and initialize the background model.
     if (orig_frame == NULL) {
         orig_frame = malloc(frame_size);
@@ -152,7 +168,8 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
             float y2 = (float)frame[base + 2];
             backgroundY[i] = (y1 + y2) / 2.0f;
         }
-        return;
+        // Return initial center position (center of the frame).
+        return (Position){CAM_WIDTH / 2, CAM_HEIGHT / 2};
     }
 
     // Keep a copy of the original frame.
@@ -253,7 +270,7 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
      * Sum the coordinates of all cells marked as motion in the dilated mask.
      * If the number of motion cells is at least MIN_MOVEMENT_PIXELS, update the center.
      * Convert grid coordinates to frame coordinates (x is scaled by 2 and offset).
-     * A low pass filter is then applied to stabilize the marker position.
+     * A low pass filter is then applied to blend the new measurement with the last known position.
      */
     long sum_x = 0, sum_y = 0;
     int count = 0;
@@ -284,10 +301,17 @@ void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int
     /* Step 5: Always draw the marker at the last known (filtered) center position.
      */
     draw_marker(frame, frame_width, frame_height, last_center_x, last_center_y, marker_color);
+
+    // Return the current center position.
+    return (Position){last_center_x, last_center_y};
 }
 
 /*
  * End of object_recognition.c
+ *
+ * References:
+ * - The original object recognition module design as provided.
+ * - C11 standard library usage.
  *
  * Notes:
  * - Adaptive thresholding adjusts the motion detection threshold using local brightness.

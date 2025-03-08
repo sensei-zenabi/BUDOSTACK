@@ -13,11 +13,11 @@
  *   - Implements asynchronous frame capture using POSIX threads.
  *   - Adds a new toggle for object detection via the 'D' key.
  *
- * Controls:
- *   1,2,3: Change quality mode.
- *   8: Decrease target FPS by 1 (min 1 fps).
- *   9: Increase target FPS by 1.
- *   D/d: Toggle object detection on/off.
+ * Modification:
+ *   - Establishes a TCP connection to a server (default 127.0.0.1:12345 or as passed in via argv).
+ *   - Sends the x and y coordinates (from object detection) as messages in the format:
+ *         "out0: <x>\n"  and  "out1: <y>\n"
+ *     mimicking the client template implementation.
  *
  * Compilation:
  *   cc -std=c11 -Wall -Wextra -pedantic -pthread -o apps/input_video apps/input_video.c object_recognition.c
@@ -43,6 +43,14 @@
 #include <sys/select.h>
 #include <math.h>
 #include <pthread.h>
+#include <arpa/inet.h>      // For inet_pton, htons, etc.
+#include <sys/socket.h>     // For socket functions
+#include <ctype.h>
+
+// ---------------------- TCP Client Constants ----------------------
+#define DEFAULT_SERVER_IP "127.0.0.1"
+#define DEFAULT_SERVER_PORT 12345
+#define TCP_BUFFER_SIZE 128
 
 // ---------------------- Global Variables ----------------------
 
@@ -294,21 +302,20 @@ int visible_length(const char *str) {
 // ---------------------- Menu Bar Drawing ----------------------
 //
 // Draws a menu bar at the bottom of the terminal with current mode, FPS, target FPS,
-// and the object detection status.
-void draw_menu_bar(double fps, int term_cols, int term_rows) {
+// object detection status, and displays the latest outputs.
+void draw_menu_bar(double fps, int term_cols, int term_rows, int out0, int out1) {
     char menu[512];
-    // Build menu string including object detection status.
     snprintf(menu, sizeof(menu),
-             "\033[%d;1H\033[7m Mode: %d  FPS: %.1f  Target: %d  [Press 1: Fast, 2: Balanced, 3: Quality, 8: - FPS, 9: + FPS, D: ObjDetect %s] ",
+             "\033[%d;1H\033[7m Mode: %d  FPS: %.1f  Target: %d  [Press 1: Fast, 2: Balanced, 3: Quality, 8: - FPS, 9: + FPS, D: ObjDetect %s]  Out0: %d, Out1: %d",
              term_rows,
              quality_mode,
              fps,
              target_fps,
-             object_detection_enabled ? "On" : "Off");
+             object_detection_enabled ? "On" : "Off",
+             out0,
+             out1);
     
-    // Calculate visible length (ignoring ANSI escape codes).
     int vis_len = visible_length(menu);
-    // Pad with spaces until the visible length matches terminal columns.
     while (vis_len < term_cols && strlen(menu) < sizeof(menu) - 2) {
         strcat(menu, " ");
         vis_len++;
@@ -339,7 +346,6 @@ void process_input() {
             } else if (c == '9') {
                 target_fps++;
             } else if (c == 'D' || c == 'd') {
-                // Toggle object detection on/off.
                 object_detection_enabled = !object_detection_enabled;
             }
         }
@@ -388,26 +394,69 @@ void *capture_thread_func(void *arg) {
 
 // ---------------------- External Object Recognition ----------------------
 //
-// The object recognition module is entirely separated into object_recognition.c.
-// Any overlay (rectangles, text, etc.) will be drawn on the frame by that module.
-// This declaration ensures the main file can call process_frame() without further modifications.
-extern void process_frame(unsigned char *frame, size_t frame_size, int frame_width, int frame_height);
+// Forward-declare the Position structure (matching object_recognition.c) and
+// update the extern declaration so that process_frame() returns a Position.
+typedef struct {
+    int x;
+    int y;
+} Position;
+
+extern Position process_frame(unsigned char *frame, size_t frame_size, int frame_width, int frame_height);
+
+// ---------------------- Global Variables for TCP Connection ----------------------
+int tcp_sockfd = -1;  // TCP socket file descriptor
 
 // ---------------------- Main Function ----------------------
-
-int main(void) {
+//
+// Now accepts optional command-line arguments for server IP and port.
+// Also sends object detection outputs to the TCP server as "out0:" and "out1:" messages.
+int main(int argc, char *argv[]) {
     int fd;
     struct v4l2_format fmt;
     struct v4l2_requestbuffers req;
     struct buffer *buffers;
     unsigned int n_buffers;
     int term_cols, term_rows;
+    const char *server_ip = DEFAULT_SERVER_IP;
+    unsigned short server_port = DEFAULT_SERVER_PORT;
+    
+    // Allow overriding server IP and port via command-line arguments.
+    if (argc >= 2) {
+        server_ip = argv[1];
+    }
+    if (argc >= 3) {
+        server_port = (unsigned short)atoi(argv[2]);
+        if (server_port == 0) {
+            server_port = DEFAULT_SERVER_PORT;
+        }
+    }
     
     setbuf(stdout, NULL);
     
     enable_raw_mode();
     atexit(disable_raw_mode);
     signal(SIGINT, handle_sigint);
+    
+    // Establish TCP connection to the server.
+    tcp_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (tcp_sockfd < 0) {
+        perror("TCP socket");
+        // Continue without TCP if connection fails.
+    } else {
+        struct sockaddr_in serv_addr;
+        memset(&serv_addr, 0, sizeof(serv_addr));
+        serv_addr.sin_family = AF_INET;
+        serv_addr.sin_port = htons(server_port);
+        if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0) {
+            fprintf(stderr, "Invalid server IP: %s\n", server_ip);
+            close(tcp_sockfd);
+            tcp_sockfd = -1;
+        } else if (connect(tcp_sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+            perror("TCP connect");
+            close(tcp_sockfd);
+            tcp_sockfd = -1;
+        }
+    }
     
     fd = open("/dev/video0", O_RDWR);
     if (fd == -1) {
@@ -556,6 +605,10 @@ int main(void) {
     int frame_count = 0;
     double fps = 0.0;
     
+    // Global outputs (initially set to center).
+    int output0 = FRAME_WIDTH / 2;
+    int output1 = FRAME_HEIGHT / 2;
+    
     // Main rendering loop.
     while (!stop) {
         process_input();
@@ -573,9 +626,23 @@ int main(void) {
         }
         pthread_mutex_unlock(&frame_mutex);
         
-        // Conditionally process frame for object recognition and overlay.
+        // Process frame for object recognition and overlay if enabled.
         if (object_detection_enabled) {
-            process_frame(local_frame, shared_frame_size, FRAME_WIDTH, FRAME_HEIGHT);
+            Position pos = process_frame(local_frame, shared_frame_size, FRAME_WIDTH, FRAME_HEIGHT);
+            output0 = pos.x;
+            output1 = pos.y;
+            // Send outputs to server if TCP connection is active.
+            if (tcp_sockfd != -1) {
+                char tcp_buf[TCP_BUFFER_SIZE];
+                int len = snprintf(tcp_buf, sizeof(tcp_buf), "out0: %d\n", output0);
+                if (send(tcp_sockfd, tcp_buf, (size_t)len, 0) < 0) {
+                    perror("send out0");
+                }
+                len = snprintf(tcp_buf, sizeof(tcp_buf), "out1: %d\n", output1);
+                if (send(tcp_sockfd, tcp_buf, (size_t)len, 0) < 0) {
+                    perror("send out1");
+                }
+            }
         }
         
         clear_terminal();
@@ -593,7 +660,7 @@ int main(void) {
             frame_count = 0;
             start_time = current_time;
         }
-        draw_menu_bar(fps, term_cols, term_rows);
+        draw_menu_bar(fps, term_cols, term_rows, output0, output1);
         
         useconds_t desired_delay = 1000000 / target_fps;
         sleep_microseconds(desired_delay);
@@ -612,6 +679,8 @@ int main(void) {
     free(fy_top_arr);
     free(fy_bot_arr);
     close(fd);
+    if (tcp_sockfd != -1)
+        close(tcp_sockfd);
     
     return EXIT_SUCCESS;
 }

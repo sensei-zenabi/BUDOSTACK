@@ -8,11 +8,13 @@
 40 ROUTE clear
 45 ROUTE 1 all 2 all
 55 PRINT ""
-60 PRINT "STARTING SERVER..."
+60 PRINT "INSTANTIATING APPS..."
 65 RUN server
 70 WAIT 100
-75 RUN input_audio
+75 RUN input_video
 80 WAIT 100
-85 RUN gui_trend
-90 WAIT 100 
-95 START
+85 RUN input_audio
+90 WAIT 100
+95 RUN gui_trend
+100 WAIT 100 
+105 START

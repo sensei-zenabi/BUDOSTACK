@@ -11,7 +11,7 @@ int main() {
     printf("  help     : Display this help message.\n");
     printf("  discover : Interactive discovery tool for network and hw peripherals.\n");
 	printf("  display  : Display the contents of a file.\n");
-    printf("  list     : List contents of a directory (default is current directory).\n");
+    printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");
     printf("  copy     : Copy a file from source to destination.\n");
     printf("  move     : Move (rename) a file from source to destination.\n");
     printf("  remove   : Remove a file.\n");

@@ -58,7 +58,7 @@
 #define MIN_MOVEMENT_PIXELS 25         // Minimum number of motion pixels required
 
 // Low pass filter constant for stabilizing the marker position (0 < alpha <= 1)
-#define CROSSHAIR_LPF_ALPHA 0.66f
+#define CROSSHAIR_LPF_ALPHA 0.5f
 
 // Marker size for the filled square (default is 3x3 pixels)
 #define MARKER_SIZE 6

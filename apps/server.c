@@ -26,7 +26,8 @@
  - The monitor mode uses an FPS value that can be specified as a command argument.
  - While in monitor mode, the operator can press 'R' to toggle recording of the outputs into a CSV file.
  - When recording starts, a snapshot of the active clients is taken and their outputs are written
-   to the CSV with each client occupying CHANNELS_PER_APP columns.
+   to the CSV with each client occupying CHANNELS_PER_APP columns. The very first column is a timestamp
+   (relative to the start of monitoring) with microsecond accuracy.
  - The CSV file is saved in the "logs" directory with a filename of the form "monitor_<timestamp>.csv".
  - All modifications adhere to plain C with -std=c11 and only use standard cross-platform libraries.
  - We do not remove any existing functionality.
@@ -54,6 +55,7 @@
 #include <time.h>       // For timestamping
 #include <sys/stat.h>   // For mkdir
 #include <errno.h>
+#include <sys/time.h>   // For gettimeofday
 
 #define SERVER_PORT 12345
 #define MAX_CLIENTS 20
@@ -617,6 +619,7 @@ static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) 
  *    When recording is started, a new CSV file "logs/monitor_<timestamp>.csv" is created
  *    and a snapshot of the currently active clients is taken.
  *    Their outputs are written to the CSV with each client occupying CHANNELS_PER_APP columns.
+ *    The very first column is a timestamp (relative to the start of monitor mode) with microsecond accuracy.
  *    Pressing 'R' stops recording; starting recording again creates a new file.
  *  - All statuses and instructions are displayed.
  */
@@ -632,6 +635,10 @@ static void monitor_mode(int fps) {
         perror("tcsetattr");
         return;
     }
+
+    // Capture the start time for relative timestamping.
+    struct timeval start_time;
+    gettimeofday(&start_time, NULL);
 
     // Variables for recording.
     bool recording = false;
@@ -701,6 +708,8 @@ static void monitor_mode(int fps) {
                                     recorded_client_indices[recorded_client_count++] = i;
                                 }
                             }
+                            // Write header: first column "timestamp", then each client's channels.
+                            fprintf(log_file, "timestamp,");
                             for (int j = 0; j < recorded_client_count; j++) {
                                 int idx = recorded_client_indices[j];
                                 for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
@@ -726,6 +735,18 @@ static void monitor_mode(int fps) {
 
         // If recording, write current outputs to log file.
         if (recording && log_file) {
+            // Get current time and compute relative time from start_time.
+            struct timeval now, delta;
+            gettimeofday(&now, NULL);
+            delta.tv_sec = now.tv_sec - start_time.tv_sec;
+            delta.tv_usec = now.tv_usec - start_time.tv_usec;
+            if (delta.tv_usec < 0) {
+                delta.tv_sec -= 1;
+                delta.tv_usec += 1000000;
+            }
+            // Write relative timestamp as the first column.
+            fprintf(log_file, "\"%ld.%06ld\",", delta.tv_sec, delta.tv_usec);
+            // Write one line: for each recorded client, output its 5 last_out values.
             for (int j = 0; j < recorded_client_count; j++) {
                 int idx = recorded_client_indices[j];
                 for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {

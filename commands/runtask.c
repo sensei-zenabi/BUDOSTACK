@@ -1,11 +1,13 @@
 /*
-* runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, CMD, CLEAR, ROUTE, and START commands.
+* runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, CMD, CLEAR, ROUTE, START, and SHELL commands.
 *
 * This version uses tmux with a dedicated socket to run external apps in parallel:
 * - Each .task file generates a fixed tmux session named "server" and a dedicated socket (e.g. /tmp/tmux_server.sock).
 * - RUN commands add apps (from the "apps/" directory) as new windows in that session.
 *   The first RUN command creates the session (using "unset TMUX;" to avoid nested warnings)
 *   and appends "; exec bash" to keep the window open.
+* - SHELL commands add shell scripts (from the "shell/" directory) as new windows in the session.
+*   They work similarly to RUN but target shell scripts.
 * - A separate START command attaches to the tmux session.
 * - The use of a dedicated socket allows multiple parallel tasks to coexist.
 * - If tmux is not installed, a warning is issued.
@@ -18,7 +20,7 @@
 *
 * Design Note:
 *   The session name is intentionally fixed to "server" per user request.
-*   In addition, the RUN command now uses a target like "server:" (with a colon)
+*   In addition, the RUN and SHELL commands now use a target like "server:" (with a colon)
 *   so that tmux automatically assigns a free window index instead of trying to use 0.
 */
 
@@ -36,7 +38,7 @@
 // Global flag to signal termination (set by SIGINT handler)
 volatile sig_atomic_t stop = 0;
 
-// Global flag to indicate if any RUN command has been issued.
+// Global flag to indicate if any RUN or SHELL command has been issued.
 int tmux_started = 0;
 
 // The session name for tmux (fixed to "server" as per modification).
@@ -58,7 +60,7 @@ void print_help(void) {
     printf("============\n\n");
     printf("Runtask is a simplified script engine that processes a task script\n");
     printf("composed of numbered lines, each containing a single command. The supported\n");
-    printf("commands are PRINT, WAIT, GOTO, RUN, CMD, CLEAR, ROUTE, and START.\n\n");
+    printf("commands are PRINT, WAIT, GOTO, RUN, CMD, CLEAR, ROUTE, START, and SHELL.\n\n");
     printf("Usage:\n");
     printf("  ./runtask taskfile [-d]\n\n");
     printf("Supported Commands:\n");
@@ -66,11 +68,12 @@ void print_help(void) {
     printf("  WAIT milliseconds\n");
     printf("  GOTO line_number\n");
     printf("  RUN executable    (adds an app from the 'apps/' directory as a new tmux window)\n");
+    printf("  SHELL script      (runs a shell script from the 'shell/' directory in a new tmux window)\n");
     printf("  CMD executable    (runs an executable from the 'commands/' directory)\n");
     printf("  CLEAR             (clears the screen)\n");
     printf("  ROUTE clear       (clears the file route.rt)\n");
     printf("  ROUTE ...         (appends a route command to route.rt)\n");
-    printf("  START             (attaches to the tmux session with all RUN apps running)\n\n");
+    printf("  START             (attaches to the tmux session with all RUN/SHELL apps running)\n\n");
     printf("Compilation:\n");
     printf("  gcc -std=c11 -o runtask runtask.c\n\n");
 }
@@ -145,7 +148,7 @@ int main(int argc, char *argv[]) {
 
     // Check if tmux is installed.
     if (system("command -v tmux > /dev/null 2>&1") != 0) {
-        fprintf(stderr, "Warning: tmux is not installed. Please install tmux to enable parallel RUN command support.\n");
+        fprintf(stderr, "Warning: tmux is not installed. Please install tmux to enable parallel RUN/SHELL command support.\n");
     }
 
     // Set a fixed tmux session name "server".
@@ -283,11 +286,49 @@ int main(int argc, char *argv[]) {
                              socket_path, session_name, executable, path);
                 }
                 if (debug)
-                    fprintf(stderr, "Executing: %s\n", command);
+                    fprintf(stderr, "Executing RUN: %s\n", command);
                 system(command);
             } else {
                 if (debug)
                     fprintf(stderr, "Error: Invalid RUN command format at line %d: %s\n",
+                            scriptLines[pc].number, scriptLines[pc].text);
+            }
+        }
+        // ---------------------------
+        // New SHELL command block
+        // ---------------------------
+        else if (strncmp(scriptLines[pc].text, "SHELL", 5) == 0) {
+            char script[256];
+            if (sscanf(scriptLines[pc].text, "SHELL %s", script) == 1) {
+                char path[512];
+                // Build the path to the shell script in the "shell/" directory.
+                snprintf(path, sizeof(path), "shell/%s", script);
+                char command[1024];
+
+                // Check if the tmux session exists by querying tmux with our dedicated socket.
+                char check_cmd[256];
+                snprintf(check_cmd, sizeof(check_cmd),
+                         "unset TMUX; tmux -S %s has-session -t %s 2>/dev/null", socket_path, session_name);
+                int session_exists = (system(check_cmd) == 0);
+
+                if (!session_exists) {
+                    // Create a new detached tmux session with the fixed session name for the SHELL command.
+                    snprintf(command, sizeof(command),
+                             "unset TMUX; tmux -S %s new-session -d -s %s -n %s \"%s; exec bash\"",
+                             socket_path, session_name, script, path);
+                    tmux_started = 1;
+                } else {
+                    // Create a new window in the existing session.
+                    snprintf(command, sizeof(command),
+                             "unset TMUX; tmux -S %s new-window -t %s: -n %s \"%s; exec bash\"",
+                             socket_path, session_name, script, path);
+                }
+                if (debug)
+                    fprintf(stderr, "Executing SHELL: %s\n", command);
+                system(command);
+            } else {
+                if (debug)
+                    fprintf(stderr, "Error: Invalid SHELL command format at line %d: %s\n",
                             scriptLines[pc].number, scriptLines[pc].text);
             }
         }
@@ -359,7 +400,7 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "Attaching to tmux session '%s'...\n", session_name);
                 system(attach_cmd);
             } else {
-                fprintf(stderr, "No tmux session created. Please run a RUN command first.\n");
+                fprintf(stderr, "No tmux session created. Please run a RUN or SHELL command first.\n");
             }
         }
         else {

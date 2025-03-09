@@ -5,11 +5,12 @@
     that exactly fit the terminal height. Each news item shows its publication timestamp and title.
     
     Design principles used:
-      - Single-source definition: The RSS URL and timer values are defined as macros.
-      - Minimal dependencies: Uses standard libraries and POSIX functions (popen, sleep, system).
+      - Single-source definition: All configurable values (RSS URL, timer values, and margins) are defined as macros.
+      - Minimal dependencies: Uses only standard libraries and POSIX functions.
       - Non-blocking timers: Uses sleep() calls to avoid busy-waiting.
       - Paging: Automatically scrolls through pages every PAGE_INTERVAL seconds, with a bottom bar showing the last update time and current page.
       - Periodic update: Every RSS_REFRESH_INTERVAL seconds the feed is refreshed.
+      - Layout safety: Ensures that there is always sufficient margin at the top and bottom so that news items are not clipped vertically.
     
     Notes:
       - The _POSIX_C_SOURCE macro is defined to expose popen/pclose.
@@ -29,6 +30,10 @@
 #define RSS_URL "https://feeds.yle.fi/uutiset/v1/recent.rss?publisherIds=YLE_UUTISET"
 #define PAGE_INTERVAL 25          // Seconds to display each page
 #define RSS_REFRESH_INTERVAL 1800 // Seconds between RSS feed updates (30 minutes)
+
+// New margin definitions to ensure top and bottom padding.
+#define TOP_MARGIN 1              // Number of blank lines at the top
+#define BOTTOM_MARGIN 1           // Number of blank lines at the bottom
 
 // Standard includes
 #include <stdio.h>
@@ -176,13 +181,20 @@ void format_current_time(char *buffer, size_t buf_size) {
 }
 
 // Function to display one page of news.
-// It clears the screen, prints news items (each using 2 lines plus a blank line) and pads to reach (term_lines - 1).
-// Then prints a bottom bar with the last update time and page info.
+// The layout now includes TOP_MARGIN blank lines at the top and BOTTOM_MARGIN blank lines before the bottom bar.
+// Total printed lines equal the terminal height.
 void display_page(news_item *news, int news_count, int page, int items_per_page, int term_lines, const char *last_update_str, int total_pages) {
     system("clear");
-    int start = page * items_per_page;
     int printed_lines = 0;
 
+    // Print top margin
+    for (int i = 0; i < TOP_MARGIN; i++) {
+        printf("\n");
+        printed_lines++;
+    }
+
+    int start = page * items_per_page;
+    int news_printed_lines = 0;
     // Print each news item in this page.
     for (int i = 0; i < items_per_page; i++) {
         int index = start + i;
@@ -194,12 +206,20 @@ void display_page(news_item *news, int news_count, int page, int items_per_page,
         printf("[%s]\n", news[index].timestamp);
         printf("News: %s\n", news[index].title);
         printf("\n");
+        news_printed_lines += 3;
         printed_lines += 3;
     }
-    // Pad with blank lines if needed so that the bottom bar is always at the last line.
-    int padding = (term_lines - 1) - printed_lines;
+    // Calculate remaining padding to keep the news block within the reserved area.
+    int reserved_area = term_lines - TOP_MARGIN - BOTTOM_MARGIN - 1; // -1 for bottom bar.
+    int padding = reserved_area - news_printed_lines;
     for (int i = 0; i < padding; i++) {
         printf("\n");
+        printed_lines++;
+    }
+    // Print bottom margin blank lines.
+    for (int i = 0; i < BOTTOM_MARGIN; i++) {
+        printf("\n");
+        printed_lines++;
     }
     // Print bottom bar.
     printf("Last update: %s | Page: %d/%d", last_update_str, page + 1, total_pages);
@@ -209,8 +229,8 @@ void display_page(news_item *news, int news_count, int page, int items_per_page,
 int main(void) {
     // Determine terminal height.
     int term_lines = get_terminal_lines();
-    // Reserve last line for bottom bar; news items will use groups of 3 lines each.
-    int items_per_page = (term_lines - 1) / 3;
+    // Adjust items_per_page to account for TOP_MARGIN and BOTTOM_MARGIN.
+    int items_per_page = (term_lines - TOP_MARGIN - BOTTOM_MARGIN - 1) / 3;
     if (items_per_page < 1) {
         items_per_page = 1;
     }

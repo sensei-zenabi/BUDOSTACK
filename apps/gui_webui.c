@@ -10,8 +10,15 @@
  *      /prev       -> moves to the previous window
  *      /send_enter -> sends keys to tmux and then an Enter key so that the command is executed.
  *                     - If a pane is provided (after URL-decoding), that pane is used.
- *                     - Otherwise, the active pane is determined dynamically.
+ *                     - Otherwise, the message is handled by the backend.
  * - Command History: Commands are logged (newest on top) for up to 1000 commands.
+ *
+ * Modification:
+ * - setlocale is called to support UTF-8 characters (like ö, å, ä).
+ * - stdout is set to unbuffered so output appears immediately.
+ * - When the target pane is "server" (or no pane is provided), the message is printed
+ *   to stdout with a timestamp (formatted as [day-month-year hour:minutes]) on the first line,
+ *   then the message on the following line, and finally an empty line.
  *
  * Build:
  *   gcc -std=c11 -o webtmux server.c
@@ -40,6 +47,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <locale.h>
 
 #define PORT 8080
 #define BUF_SIZE 4096
@@ -121,11 +129,12 @@ void send_main_page(int socket_fd) {
     }
     int len = snprintf(html, buf_size,
         "HTTP/1.1 200 OK\r\n"
-        "Content-Type: text/html\r\n"
+        "Content-Type: text/html; charset=UTF-8\r\n"  // Ensure browser uses UTF-8
         "Connection: close\r\n\r\n"
         "<!DOCTYPE html>"
         "<html>"
         "<head>"
+            "<meta charset=\"UTF-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
             "<title>tmux Controller</title>"
             "<link href=\"https://fonts.googleapis.com/css?family=Roboto:400,700&display=swap\" rel=\"stylesheet\">"
@@ -197,7 +206,10 @@ void send_main_page(int socket_fd) {
  * Parses the HTTP request and performs the appropriate tmux command:
  *  - /next: switches to the next window.
  *  - /prev: switches to the previous window.
- *  - /send_enter: sends the command (and an Enter key) to the specified pane (or active pane).
+ *  - /send_enter: sends the command (and an Enter key) either to a specified pane
+ *                 or (if no pane is provided) to the backend.
+ *                 When handled by the backend, the message is printed to stdout
+ *                 with a timestamp and empty lines.
  */
 void process_request(int socket_fd) {
     char buffer[BUF_SIZE] = {0};
@@ -269,41 +281,47 @@ void process_request(int socket_fd) {
             if (strlen(pane_param) > 0)
                 decoded_pane = url_decode(pane_param);
             
-            // Determine target pane: use provided pane if available, otherwise query the active pane.
+            // If no pane was explicitly provided, force the target to be "server"
             char target_pane[32] = {0};
             if (decoded_pane && strlen(decoded_pane) > 0) {
                 strncpy(target_pane, decoded_pane, sizeof(target_pane)-1);
             } else {
-                FILE *fp = popen("tmux -S /tmp/tmux_server.sock display-message -p '#{client_active_pane}'", "r");
-                if (fp) {
-                    if (fgets(target_pane, sizeof(target_pane), fp) != NULL) {
-                        size_t len = strlen(target_pane);
-                        if (len > 0 && target_pane[len-1] == '\n')
-                            target_pane[len-1] = '\0';
-                    }
-                    pclose(fp);
-                }
-                if (strlen(target_pane) == 0)
-                    strncpy(target_pane, "server", sizeof(target_pane)-1);
+                strncpy(target_pane, "server", sizeof(target_pane)-1);
             }
             
-            // Send the command as literal text to the determined pane.
-            snprintf(system_cmd, sizeof(system_cmd),
-                     "tmux -S /tmp/tmux_server.sock send-keys -t %s -l '%s'",
-                     target_pane, decoded_cmd);
-            ret = system(system_cmd);
-            if (ret == -1)
-                perror("system call failed for /send_enter");
-            add_history(system_cmd);
-            
-            // Send an extra Enter key to execute the command.
-            snprintf(system_cmd, sizeof(system_cmd),
-                     "tmux -S /tmp/tmux_server.sock send-keys -t %s Enter",
-                     target_pane);
-            ret = system(system_cmd);
-            if (ret == -1)
-                perror("system call failed when sending Enter key");
-            add_history(system_cmd);
+            /*
+             * If the target pane is "server", print the message to stdout with:
+             * - A timestamp on the first line in the format [day-month-year hour:minutes],
+             * - Followed immediately by the message on the next line,
+             * - And then an empty line.
+             */
+            if (strcmp(target_pane, "server") == 0) {
+                time_t now = time(NULL);
+                struct tm *tm_info = localtime(&now);
+                char timebuf[32];
+                strftime(timebuf, sizeof(timebuf), "[%d-%m-%Y %H:%M]", tm_info);
+                printf("%s\n%s\n\n", timebuf, decoded_cmd);
+                fflush(stdout);
+                add_history(decoded_cmd);
+            } else {
+                // Send the command as literal text to the determined pane.
+                snprintf(system_cmd, sizeof(system_cmd),
+                         "tmux -S /tmp/tmux_server.sock send-keys -t %s -l '%s'",
+                         target_pane, decoded_cmd);
+                ret = system(system_cmd);
+                if (ret == -1)
+                    perror("system call failed for /send_enter");
+                add_history(system_cmd);
+                
+                // Send an extra Enter key to execute the command.
+                snprintf(system_cmd, sizeof(system_cmd),
+                         "tmux -S /tmp/tmux_server.sock send-keys -t %s Enter",
+                         target_pane);
+                ret = system(system_cmd);
+                if (ret == -1)
+                    perror("system call failed when sending Enter key");
+                add_history(system_cmd);
+            }
             
             free(decoded_cmd);
             if (decoded_pane)
@@ -319,6 +337,13 @@ int main(void) {
     struct sockaddr_in address;
     int opt = 1;
     int addrlen = sizeof(address);
+
+    // Set locale to support UTF-8 characters (like ö, å, ä)
+    if (!setlocale(LC_ALL, "")) {
+        fprintf(stderr, "Warning: Unable to set locale.\n");
+    }
+    // Set stdout to be unbuffered so output appears immediately.
+    setvbuf(stdout, NULL, _IONBF, 0);
     
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
         perror("socket failed");

@@ -21,6 +21,8 @@ while true; do
     clear
     
     # Print a header with the current date and time.
+	echo "------------------- WEATHER REPORT: Muurame -------------------"
+	echo ""
 	curl wttr.in/Muurame?M2AdFnQ
 
     # Wait for one hour (3600 seconds) before the next update.

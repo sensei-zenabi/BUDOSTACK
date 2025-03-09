@@ -108,7 +108,7 @@ char *url_decode(const char *src) {
 /*
  * send_main_page:
  * Generates and sends the main HTML page with control forms and command history.
- * Note: The /send form now includes a second text box for specifying the pane.
+ * The page now uses a dark theme with modern styling and a cool, clean font for mobile devices.
  */
 void send_main_page(int socket_fd) {
     size_t buf_size = 262144;
@@ -123,23 +123,54 @@ void send_main_page(int socket_fd) {
         "Connection: close\r\n\r\n"
         "<!DOCTYPE html>"
         "<html>"
-        "<head><title>tmux Controller</title></head>"
+        "<head>"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "<title>tmux Controller</title>"
+            // Link to Google Fonts for modern and clean font (Roboto)
+            "<link href=\"https://fonts.googleapis.com/css?family=Roboto:400,700&display=swap\" rel=\"stylesheet\">"
+            "<style>"
+                "body { background-color: #1e1e1e; color: #d4d4d4; font-family: 'Roboto', sans-serif; margin: 0; padding: 20px; }"
+                "h1, h2 { text-align: center; }"
+                "form { margin-bottom: 20px; }"
+                "input[type=text] {"
+                    "width: 100%%;"
+                    "padding: 15px;"
+                    "margin: 10px 0;"
+                    "box-sizing: border-box;"
+                    "border: 2px solid #444;"
+                    "border-radius: 4px;"
+                    "background-color: #2e2e2e;"
+                    "color: #d4d4d4;"
+                    "font-size: 16px;"
+                "}"
+                "button {"
+                    "width: 100%%;"
+                    "padding: 15px;"
+                    "font-size: 16px;"
+                    "border: none;"
+                    "border-radius: 4px;"
+                    "background-color: #007acc;"
+                    "color: white;"
+                "}"
+                "button:active { opacity: 0.8; }"
+                "div.command { padding: 5px 0; border-bottom: 1px solid #444; }"
+            "</style>"
+        "</head>"
         "<body>"
-        "<h1>tmux Controller</h1>"
-        "<form action=\"/next\" method=\"get\">"
-        "<button type=\"submit\">NEXT WINDOW</button>"
-        "</form>"
-        "<br/>"
-        "<form action=\"/prev\" method=\"get\">"
-        "<button type=\"submit\">PREVIOUS WINDOW</button>"
-        "</form>"
-        "<br/>"
-        "<form action=\"/send\" method=\"get\">"
-        "<input type=\"text\" name=\"cmd\" placeholder=\"Type command or keys\"><br/>"
-        "<input type=\"text\" name=\"pane\" placeholder=\"Specify pane (optional)\"><br/>"
-        "<button type=\"submit\">SEND</button>"
-        "</form>"
-        "<br/><hr/><h2>Command History</h2>"
+            "<h1>tmux Controller</h1>"
+            "<form action=\"/next\" method=\"get\">"
+                "<button type=\"submit\">NEXT WINDOW</button>"
+            "</form>"
+            "<form action=\"/prev\" method=\"get\">"
+                "<button type=\"submit\">PREVIOUS WINDOW</button>"
+            "</form>"
+            "<form action=\"/send\" method=\"get\">"
+                "<input type=\"text\" name=\"cmd\" placeholder=\"Type command or keys\">"
+                "<input type=\"text\" name=\"pane\" placeholder=\"Specify pane (optional)\">"
+                "<button type=\"submit\">SEND</button>"
+            "</form>"
+            "<hr/>"
+            "<h2>Command History</h2>"
     );
     
     // Append command history (newest first)
@@ -148,7 +179,7 @@ void send_main_page(int socket_fd) {
         struct tm *tm_info = localtime(&history[i].timestamp);
         strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", tm_info);
         int n = snprintf(html + len, buf_size - len,
-                         "<div>[%s] %s</div>\n", timebuf, history[i].command);
+                         "<div class=\"command\">[%s] %s</div>\n", timebuf, history[i].command);
         if (n < 0 || (size_t)n >= buf_size - len)
             break;
         len += n;

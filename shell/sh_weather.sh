@@ -21,7 +21,7 @@ while true; do
     clear
     
     # Print a header with the current date and time.
-	curl wttr.in/Muurame?M1AdFnQ
+	curl wttr.in/Muurame?M2AdFnQ
 
     # Wait for one hour (3600 seconds) before the next update.
     sleep 3600

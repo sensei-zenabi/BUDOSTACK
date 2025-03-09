@@ -2,8 +2,7 @@
 * runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, CMD, CLEAR, ROUTE, and START commands.
 *
 * This version uses tmux with a dedicated socket to run external apps in parallel:
-* - Each .task file generates a unique tmux session (based on the file name and a timestamp)
-*   and a dedicated socket (e.g. /tmp/tmux_<session_name>.sock).
+* - Each .task file generates a fixed tmux session named "server" and a dedicated socket (e.g. /tmp/tmux_server.sock).
 * - RUN commands add apps (from the "apps/" directory) as new windows in that session.
 *   The first RUN command creates the session (using "unset TMUX;" to avoid nested warnings)
 *   and appends "; exec bash" to keep the window open.
@@ -16,6 +15,11 @@
 *
 * Usage:
 *   ./runtask taskfile [-d]
+*
+* Design Note:
+*   The session name is intentionally fixed to "server" per user request.
+*   In addition, the RUN command now uses a target like "server:" (with a colon)
+*   so that tmux automatically assigns a free window index instead of trying to use 0.
 */
 
 #include <stdio.h>
@@ -35,7 +39,7 @@ volatile sig_atomic_t stop = 0;
 // Global flag to indicate if any RUN command has been issued.
 int tmux_started = 0;
 
-// The session name for tmux (generated from the task file name and timestamp)
+// The session name for tmux (fixed to "server" as per modification).
 char session_name[128] = {0};
 
 // The dedicated socket path for this session.
@@ -144,24 +148,8 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Warning: tmux is not installed. Please install tmux to enable parallel RUN command support.\n");
     }
 
-    // Generate a unique tmux session name based on the task file name.
-    // Extract the base name (strip directory and extension).
-    char *taskfile_basename = strrchr(argv[1], '/');
-    if (taskfile_basename)
-        taskfile_basename++;
-    else
-        taskfile_basename = argv[1];
-
-    char base_name[64] = {0};
-    strncpy(base_name, taskfile_basename, sizeof(base_name) - 1);
-    // Remove extension if present.
-    char *dot = strrchr(base_name, '.');
-    if (dot)
-        *dot = '\0';
-
-    // Append a timestamp to ensure uniqueness.
-    time_t t = time(NULL);
-    snprintf(session_name, sizeof(session_name), "%s_%ld", base_name, (long)t);
+    // Set a fixed tmux session name "server".
+    snprintf(session_name, sizeof(session_name), "server");
     // Define a dedicated socket path for this session.
     snprintf(socket_path, sizeof(socket_path), "/tmp/tmux_%s.sock", session_name);
     if (debug)
@@ -282,15 +270,16 @@ int main(int argc, char *argv[]) {
                 int session_exists = (system(check_cmd) == 0);
 
                 if (!session_exists) {
-                    // Create a new detached tmux session with the unique session name.
+                    // Create a new detached tmux session with the fixed session name.
                     snprintf(command, sizeof(command),
                              "unset TMUX; tmux -S %s new-session -d -s %s -n %s \"%s; exec bash\"",
                              socket_path, session_name, executable, path);
                     tmux_started = 1;
                 } else {
                     // Create a new window in the existing session.
+                    // Note the colon after session_name, which lets tmux assign the next free index.
                     snprintf(command, sizeof(command),
-                             "unset TMUX; tmux -S %s new-window -t %s -n %s \"%s; exec bash\"",
+                             "unset TMUX; tmux -S %s new-window -t %s: -n %s \"%s; exec bash\"",
                              socket_path, session_name, executable, path);
                 }
                 if (debug)

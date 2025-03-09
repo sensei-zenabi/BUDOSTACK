@@ -186,9 +186,9 @@ void display_page(news_item *news, int news_count, int page, int items_per_page,
     // Print each news item in this page.
     for (int i = 0; i < items_per_page; i++) {
         int index = start + i;
-        // Wrap-around if index exceeds available news items.
+        // Stop printing if there are no more news items.
         if (index >= news_count) {
-            index %= news_count;
+            break;
         }
         // Each news item uses 3 lines: [timestamp], "News: <title>", and a blank line.
         printf("[%s]\n", news[index].timestamp);

@@ -5,15 +5,12 @@
  * - Single file: All functionality is implemented in one file.
  * - Plain C: Written in C11 using only standard libraries and POSIX APIs.
  * - Minimal HTTP server: Listens on port 8080 and serves a dynamic HTML page.
- * - tmux control: Four endpoints:
+ * - tmux control: Three endpoints:
  *      /next       -> moves to the next window
  *      /prev       -> moves to the previous window
- *      /send       -> sends keys to tmux using send-keys with the literal flag (-l)
- *                     (command is sent without an Enter key)
- *      /send_enter -> sends keys to tmux and follows with an Enter key so that the command is executed.
- *         - For both /send and /send_enter:
- *              - If the pane is provided (after URL-decoding), that pane is used.
- *              - Otherwise, the active pane is determined dynamically.
+ *      /send_enter -> sends keys to tmux and then an Enter key so that the command is executed.
+ *                     - If a pane is provided (after URL-decoding), that pane is used.
+ *                     - Otherwise, the active pane is determined dynamically.
  * - Command History: Commands are logged (newest on top) for up to 1000 commands.
  *
  * Build:
@@ -110,11 +107,10 @@ char *url_decode(const char *src) {
 
 /*
  * send_main_page:
- * Generates and sends the main HTML page with control forms and command history.
- * The page now uses a dark theme with modern styling and a cool, clean font for mobile devices.
- * Two forms are provided for sending commands:
- *   - "SEND" button: sends the command without executing (raw mode).
- *   - "SEND with ENTER" button: sends the command and then sends an Enter key to execute it.
+ * Generates and sends the main HTML page with:
+ *  - NEXT and PREVIOUS window buttons.
+ *  - A form for sending commands (with ENTER) including a command and pane text boxes.
+ *  - The command history (newest first).
  */
 void send_main_page(int socket_fd) {
     size_t buf_size = 262144;
@@ -169,12 +165,7 @@ void send_main_page(int socket_fd) {
             "<form action=\"/prev\" method=\"get\">"
                 "<button type=\"submit\">PREVIOUS WINDOW</button>"
             "</form>"
-            "<form action=\"/send\" method=\"get\">"
-                "<input type=\"text\" name=\"cmd\" placeholder=\"Type command or keys\">"
-                "<input type=\"text\" name=\"pane\" placeholder=\"Specify pane (optional)\">"
-                "<button type=\"submit\">SEND</button>"
-            "</form>"
-            "<!-- New form for sending command with Enter key -->"
+            "<!-- Only the SEND with ENTER form remains -->"
             "<form action=\"/send_enter\" method=\"get\">"
                 "<input type=\"text\" name=\"cmd\" placeholder=\"Type command or keys\">"
                 "<input type=\"text\" name=\"pane\" placeholder=\"Specify pane (optional)\">"
@@ -203,12 +194,10 @@ void send_main_page(int socket_fd) {
 
 /*
  * process_request:
- * Parses the HTTP request and performs the appropriate tmux command.
- * For /send and /send_enter, it retrieves the command and optionally a pane parameter.
- * If a pane is provided (after URL-decoding), that pane is used.
- * Otherwise, the active pane is queried using "#{client_active_pane}".
- *
- * New endpoint /send_enter: sends the command then sends an Enter key to execute.
+ * Parses the HTTP request and performs the appropriate tmux command:
+ *  - /next: switches to the next window.
+ *  - /prev: switches to the previous window.
+ *  - /send_enter: sends the command (and an Enter key) to the specified pane (or active pane).
  */
 void process_request(int socket_fd) {
     char buffer[BUF_SIZE] = {0};
@@ -219,7 +208,7 @@ void process_request(int socket_fd) {
     }
     buffer[valread] = '\0';
     
-    int action = 0; // 0: main page, 1: next, 2: prev, 3: send, 4: send with ENTER
+    int action = 0; // 0: main page, 1: next, 2: prev, 3: send with ENTER
     char cmd_param[256] = {0};
     char pane_param[32] = {0};
     
@@ -227,14 +216,26 @@ void process_request(int socket_fd) {
         action = 1;
     } else if (strstr(buffer, "GET /prev") != NULL) {
         action = 2;
-    } else if (strstr(buffer, "GET /send?") != NULL) {
-        action = 3;
     } else if (strstr(buffer, "GET /send_enter?") != NULL) {
-        action = 4;
+        action = 3;
     }
     
-    // For both /send and /send_enter, extract parameters if action is 3 or 4.
-    if (action == 3 || action == 4) {
+    char system_cmd[512] = {0};
+    int ret;
+    
+    if (action == 1) {
+        const char *cmd = "tmux -S /tmp/tmux_server.sock next-window -t server";
+        ret = system(cmd);
+        if (ret == -1)
+            perror("system call failed for /next");
+        add_history(cmd);
+    } else if (action == 2) {
+        const char *cmd = "tmux -S /tmp/tmux_server.sock previous-window -t server";
+        ret = system(cmd);
+        if (ret == -1)
+            perror("system call failed for /prev");
+        add_history(cmd);
+    } else if (action == 3) {
         // Extract cmd parameter (stop at space or '&')
         char *p = strstr(buffer, "cmd=");
         if (p) {
@@ -261,38 +262,18 @@ void process_request(int socket_fd) {
                 pane_param[pane_len] = '\0';
             }
         }
-    }
-    
-    char system_cmd[512] = {0};
-    int ret;
-    
-    if (action == 1) {
-        const char *cmd = "tmux -S /tmp/tmux_server.sock next-window -t server";
-        ret = system(cmd);
-        if (ret == -1) {
-            perror("system call failed for /next");
-        }
-        add_history(cmd);
-    } else if (action == 2) {
-        const char *cmd = "tmux -S /tmp/tmux_server.sock previous-window -t server";
-        ret = system(cmd);
-        if (ret == -1) {
-            perror("system call failed for /prev");
-        }
-        add_history(cmd);
-    } else if (action == 3 || action == 4) {
+        
         char *decoded_cmd = url_decode(cmd_param);
         if (decoded_cmd) {
             char *decoded_pane = NULL;
-            if (strlen(pane_param) > 0) {
+            if (strlen(pane_param) > 0)
                 decoded_pane = url_decode(pane_param);
-            }
-            // Determine target pane: use provided pane if exists, otherwise query the active pane.
+            
+            // Determine target pane: use provided pane if available, otherwise query the active pane.
             char target_pane[32] = {0};
             if (decoded_pane && strlen(decoded_pane) > 0) {
                 strncpy(target_pane, decoded_pane, sizeof(target_pane)-1);
             } else {
-                // Retrieve the active pane of the attached client using "#{client_active_pane}"
                 FILE *fp = popen("tmux -S /tmp/tmux_server.sock display-message -p '#{client_active_pane}'", "r");
                 if (fp) {
                     if (fgets(target_pane, sizeof(target_pane), fp) != NULL) {
@@ -302,33 +283,27 @@ void process_request(int socket_fd) {
                     }
                     pclose(fp);
                 }
-                if (strlen(target_pane) == 0) {
-                    // Fallback to session "server" if active pane not found.
+                if (strlen(target_pane) == 0)
                     strncpy(target_pane, "server", sizeof(target_pane)-1);
-                }
             }
             
-            // Build the command to send the keys (raw text) to the determined pane.
+            // Send the command as literal text to the determined pane.
             snprintf(system_cmd, sizeof(system_cmd),
                      "tmux -S /tmp/tmux_server.sock send-keys -t %s -l '%s'",
                      target_pane, decoded_cmd);
             ret = system(system_cmd);
-            if (ret == -1) {
-                perror("system call failed for /send or /send_enter");
-            }
+            if (ret == -1)
+                perror("system call failed for /send_enter");
             add_history(system_cmd);
             
-            // For /send_enter, send an extra Enter key to execute the command.
-            if (action == 4) {
-                snprintf(system_cmd, sizeof(system_cmd),
-                         "tmux -S /tmp/tmux_server.sock send-keys -t %s Enter",
-                         target_pane);
-                ret = system(system_cmd);
-                if (ret == -1) {
-                    perror("system call failed when sending Enter key");
-                }
-                add_history(system_cmd);
-            }
+            // Send an extra Enter key to execute the command.
+            snprintf(system_cmd, sizeof(system_cmd),
+                     "tmux -S /tmp/tmux_server.sock send-keys -t %s Enter",
+                     target_pane);
+            ret = system(system_cmd);
+            if (ret == -1)
+                perror("system call failed when sending Enter key");
+            add_history(system_cmd);
             
             free(decoded_cmd);
             if (decoded_pane)

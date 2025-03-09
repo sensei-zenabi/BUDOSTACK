@@ -7,6 +7,6 @@
 70 WAIT 100
 80 RUN input_usb
 90 WAIT 100
-100 RUN gui_trend
+100 RUN api_currency
 110 WAIT 100 
 120 START

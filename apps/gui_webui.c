@@ -5,12 +5,15 @@
  * - Single file: All functionality is implemented in one file.
  * - Plain C: Written in C11 using only standard libraries and POSIX APIs.
  * - Minimal HTTP server: Listens on port 8080 and serves a dynamic HTML page.
- * - tmux control: Three endpoints:
- *      /next  -> moves to the next window
- *      /prev  -> moves to the previous window
- *      /send?cmd=...&pane=...  -> sends keys to tmux using send-keys with the literal flag (-l)
- *         - If the pane is defined, the command is sent to that pane.
- *         - Otherwise, the active pane is determined dynamically.
+ * - tmux control: Four endpoints:
+ *      /next       -> moves to the next window
+ *      /prev       -> moves to the previous window
+ *      /send       -> sends keys to tmux using send-keys with the literal flag (-l)
+ *                     (command is sent without an Enter key)
+ *      /send_enter -> sends keys to tmux and follows with an Enter key so that the command is executed.
+ *         - For both /send and /send_enter:
+ *              - If the pane is provided (after URL-decoding), that pane is used.
+ *              - Otherwise, the active pane is determined dynamically.
  * - Command History: Commands are logged (newest on top) for up to 1000 commands.
  *
  * Build:
@@ -109,6 +112,9 @@ char *url_decode(const char *src) {
  * send_main_page:
  * Generates and sends the main HTML page with control forms and command history.
  * The page now uses a dark theme with modern styling and a cool, clean font for mobile devices.
+ * Two forms are provided for sending commands:
+ *   - "SEND" button: sends the command without executing (raw mode).
+ *   - "SEND with ENTER" button: sends the command and then sends an Enter key to execute it.
  */
 void send_main_page(int socket_fd) {
     size_t buf_size = 262144;
@@ -126,7 +132,6 @@ void send_main_page(int socket_fd) {
         "<head>"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
             "<title>tmux Controller</title>"
-            // Link to Google Fonts for modern and clean font (Roboto)
             "<link href=\"https://fonts.googleapis.com/css?family=Roboto:400,700&display=swap\" rel=\"stylesheet\">"
             "<style>"
                 "body { background-color: #1e1e1e; color: #d4d4d4; font-family: 'Roboto', sans-serif; margin: 0; padding: 20px; }"
@@ -169,6 +174,12 @@ void send_main_page(int socket_fd) {
                 "<input type=\"text\" name=\"pane\" placeholder=\"Specify pane (optional)\">"
                 "<button type=\"submit\">SEND</button>"
             "</form>"
+            "<!-- New form for sending command with Enter key -->"
+            "<form action=\"/send_enter\" method=\"get\">"
+                "<input type=\"text\" name=\"cmd\" placeholder=\"Type command or keys\">"
+                "<input type=\"text\" name=\"pane\" placeholder=\"Specify pane (optional)\">"
+                "<button type=\"submit\">SEND with ENTER</button>"
+            "</form>"
             "<hr/>"
             "<h2>Command History</h2>"
     );
@@ -193,9 +204,11 @@ void send_main_page(int socket_fd) {
 /*
  * process_request:
  * Parses the HTTP request and performs the appropriate tmux command.
- * For /send, it retrieves the command and optionally a pane parameter.
+ * For /send and /send_enter, it retrieves the command and optionally a pane parameter.
  * If a pane is provided (after URL-decoding), that pane is used.
  * Otherwise, the active pane is queried using "#{client_active_pane}".
+ *
+ * New endpoint /send_enter: sends the command then sends an Enter key to execute.
  */
 void process_request(int socket_fd) {
     char buffer[BUF_SIZE] = {0};
@@ -206,7 +219,7 @@ void process_request(int socket_fd) {
     }
     buffer[valread] = '\0';
     
-    int action = 0; // 0: main page, 1: next, 2: prev, 3: send
+    int action = 0; // 0: main page, 1: next, 2: prev, 3: send, 4: send with ENTER
     char cmd_param[256] = {0};
     char pane_param[32] = {0};
     
@@ -216,30 +229,36 @@ void process_request(int socket_fd) {
         action = 2;
     } else if (strstr(buffer, "GET /send?") != NULL) {
         action = 3;
-        // Extract cmd parameter
-        char *p = strstr(buffer, "GET /send?cmd=");
+    } else if (strstr(buffer, "GET /send_enter?") != NULL) {
+        action = 4;
+    }
+    
+    // For both /send and /send_enter, extract parameters if action is 3 or 4.
+    if (action == 3 || action == 4) {
+        // Extract cmd parameter (stop at space or '&')
+        char *p = strstr(buffer, "cmd=");
         if (p) {
-            p += strlen("GET /send?cmd=");
-            char *end = strchr(p, ' ');
-            if (end) {
-                size_t cmd_len = end - p;
-                if (cmd_len < sizeof(cmd_param)) {
-                    strncpy(cmd_param, p, cmd_len);
-                    cmd_param[cmd_len] = '\0';
-                }
+            p += strlen("cmd=");
+            char *end = p;
+            while (*end && *end != ' ' && *end != '&')
+                end++;
+            size_t cmd_len = end - p;
+            if (cmd_len < sizeof(cmd_param)) {
+                strncpy(cmd_param, p, cmd_len);
+                cmd_param[cmd_len] = '\0';
             }
         }
-        // Check for an optional pane parameter in the query string.
-        char *q = strstr(buffer, "&pane=");
+        // Extract optional pane parameter (stop at space or '&')
+        char *q = strstr(buffer, "pane=");
         if (q) {
-            q += strlen("&pane=");
-            char *end = strchr(q, ' ');
-            if (end) {
-                size_t pane_len = end - q;
-                if (pane_len < sizeof(pane_param)) {
-                    strncpy(pane_param, q, pane_len);
-                    pane_param[pane_len] = '\0';
-                }
+            q += strlen("pane=");
+            char *end = q;
+            while (*end && *end != ' ' && *end != '&')
+                end++;
+            size_t pane_len = end - q;
+            if (pane_len < sizeof(pane_param)) {
+                strncpy(pane_param, q, pane_len);
+                pane_param[pane_len] = '\0';
             }
         }
     }
@@ -261,43 +280,56 @@ void process_request(int socket_fd) {
             perror("system call failed for /prev");
         }
         add_history(cmd);
-    } else if (action == 3) {
+    } else if (action == 3 || action == 4) {
         char *decoded_cmd = url_decode(cmd_param);
         if (decoded_cmd) {
             char *decoded_pane = NULL;
             if (strlen(pane_param) > 0) {
                 decoded_pane = url_decode(pane_param);
             }
-            // Use the provided pane if it exists and is nonempty.
+            // Determine target pane: use provided pane if exists, otherwise query the active pane.
+            char target_pane[32] = {0};
             if (decoded_pane && strlen(decoded_pane) > 0) {
-                snprintf(system_cmd, sizeof(system_cmd),
-                         "tmux -S /tmp/tmux_server.sock send-keys -t %s -l '%s'", decoded_pane, decoded_cmd);
+                strncpy(target_pane, decoded_pane, sizeof(target_pane)-1);
             } else {
                 // Retrieve the active pane of the attached client using "#{client_active_pane}"
-                char active_pane[32] = {0};
                 FILE *fp = popen("tmux -S /tmp/tmux_server.sock display-message -p '#{client_active_pane}'", "r");
                 if (fp) {
-                    if (fgets(active_pane, sizeof(active_pane), fp) != NULL) {
-                        size_t len = strlen(active_pane);
-                        if (len > 0 && active_pane[len-1] == '\n')
-                            active_pane[len-1] = '\0';
+                    if (fgets(target_pane, sizeof(target_pane), fp) != NULL) {
+                        size_t len = strlen(target_pane);
+                        if (len > 0 && target_pane[len-1] == '\n')
+                            target_pane[len-1] = '\0';
                     }
                     pclose(fp);
                 }
-                if (strlen(active_pane) > 0) {
-                    snprintf(system_cmd, sizeof(system_cmd),
-                             "tmux -S /tmp/tmux_server.sock send-keys -t %s -l '%s'", active_pane, decoded_cmd);
-                } else {
-                    // Fallback: send to session "server" if active pane not found.
-                    snprintf(system_cmd, sizeof(system_cmd),
-                             "tmux -S /tmp/tmux_server.sock send-keys -t server -l '%s'", decoded_cmd);
+                if (strlen(target_pane) == 0) {
+                    // Fallback to session "server" if active pane not found.
+                    strncpy(target_pane, "server", sizeof(target_pane)-1);
                 }
             }
+            
+            // Build the command to send the keys (raw text) to the determined pane.
+            snprintf(system_cmd, sizeof(system_cmd),
+                     "tmux -S /tmp/tmux_server.sock send-keys -t %s -l '%s'",
+                     target_pane, decoded_cmd);
             ret = system(system_cmd);
             if (ret == -1) {
-                perror("system call failed for /send");
+                perror("system call failed for /send or /send_enter");
             }
             add_history(system_cmd);
+            
+            // For /send_enter, send an extra Enter key to execute the command.
+            if (action == 4) {
+                snprintf(system_cmd, sizeof(system_cmd),
+                         "tmux -S /tmp/tmux_server.sock send-keys -t %s Enter",
+                         target_pane);
+                ret = system(system_cmd);
+                if (ret == -1) {
+                    perror("system call failed when sending Enter key");
+                }
+                add_history(system_cmd);
+            }
+            
             free(decoded_cmd);
             if (decoded_pane)
                 free(decoded_pane);

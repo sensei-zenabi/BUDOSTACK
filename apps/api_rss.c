@@ -32,8 +32,8 @@
 #define RSS_REFRESH_INTERVAL 1800 // Seconds between RSS feed updates (30 minutes)
 
 // New margin definitions to ensure top and bottom padding.
-#define TOP_MARGIN 0              // Number of blank lines at the top
-#define BOTTOM_MARGIN 0           // Number of blank lines at the bottom
+#define TOP_MARGIN 1              // Number of blank lines at the top
+#define BOTTOM_MARGIN 1           // Number of blank lines at the bottom
 #define NEWS_PER_PAGE 6		  // Number of news displayed per page
 
 #define BUFFER_SIZE 1024

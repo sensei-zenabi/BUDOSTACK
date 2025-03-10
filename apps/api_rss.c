@@ -35,7 +35,7 @@
 #define TOP_MARGIN 1              // Number of blank lines at the top
 #define BOTTOM_MARGIN 1           // Number of blank lines at the bottom
 
-#define BUFFER_SIZE 256
+#define BUFFER_SIZE 1024
 
 // Standard includes
 #include <stdio.h>

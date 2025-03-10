@@ -188,7 +188,7 @@ void format_current_time(char *buffer, size_t buf_size) {
 // Function to display one page of news.
 // The layout now includes TOP_MARGIN blank lines at the top and BOTTOM_MARGIN blank lines before the bottom bar.
 // Total printed lines equal the terminal height.
-void display_page(news_item *news, int news_count, int page, int items_per_page, int term_lines, const char *last_update_str, int total_pages) {
+void display_page(news_item *news, int news_count, int page, int items_per_page, const char *last_update_str, int total_pages) {
     system("clear");
     int printed_lines = 0;
 
@@ -217,12 +217,13 @@ void display_page(news_item *news, int news_count, int page, int items_per_page,
         printed_lines += 3;
     }
     // Calculate remaining padding to keep the news block within the reserved area.
-    int reserved_area = term_lines - TOP_MARGIN - BOTTOM_MARGIN - 1; // -1 for bottom bar.
-    int padding = reserved_area - news_printed_lines;
-    for (int i = 0; i < padding; i++) {
-        printf("\n");
-        printed_lines++;
-    }
+    // int reserved_area = term_lines - TOP_MARGIN - BOTTOM_MARGIN - 1; // -1 for bottom bar.
+    // int padding = reserved_area - news_printed_lines;
+    // for (int i = 0; i < padding; i++) {
+    //     printf("\n");
+    //     printed_lines++;
+    // }
+    
     // Print bottom margin blank lines.
     for (int i = 0; i < BOTTOM_MARGIN; i++) {
         printf("\n");
@@ -271,7 +272,7 @@ int main(void) {
 
     // Main loop: display pages and update RSS every RSS_REFRESH_INTERVAL seconds.
     while (1) {
-        display_page(news, news_count, page, items_per_page, term_lines, last_update_str, total_pages);
+        display_page(news, news_count, page, items_per_page, last_update_str, total_pages);
         sleep(PAGE_INTERVAL);  // Blocking sleep; does not consume CPU.
         elapsed_since_update += PAGE_INTERVAL;
         page = (page + 1) % total_pages;

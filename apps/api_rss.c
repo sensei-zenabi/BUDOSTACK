@@ -35,12 +35,16 @@
 #define TOP_MARGIN 1              // Number of blank lines at the top
 #define BOTTOM_MARGIN 1           // Number of blank lines at the bottom
 
+#define BUFFER_SIZE 256
+
 // Standard includes
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>  // For sleep()
+
+extern void prettyprint(const char *message, unsigned int delay_ms);
 
 // Structure to hold a news item.
 typedef struct {
@@ -203,9 +207,11 @@ void display_page(news_item *news, int news_count, int page, int items_per_page,
             break;
         }
         // Each news item uses 3 lines: [timestamp], "News: <title>", and a blank line.
-        printf("[%s]\n", news[index].timestamp);
-        printf("News: %s\n", news[index].title);
-        printf("\n");
+        char buffer[BUFFER_SIZE];
+        snprintf(buffer, BUFFER_SIZE, "[%s]\n", news[index].timestamp);
+        prettyprint(buffer, 10);
+        snprintf(buffer, BUFFER_SIZE,"News: %s\n", news[index].title);
+		prettyprint(buffer, 10);
         news_printed_lines += 3;
         printed_lines += 3;
     }

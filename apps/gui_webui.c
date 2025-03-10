@@ -49,9 +49,13 @@
 #include <netinet/in.h>
 #include <locale.h>
 
+extern void prettyprint(const char *message, unsigned int delay_ms);
+
 #define PORT 8080
 #define BUF_SIZE 4096
 #define HISTORY_MAX 1000
+
+#define BUFFER_SIZE 1024
 
 // Structure to store a command record with its timestamp.
 struct CommandRecord {
@@ -300,7 +304,9 @@ void process_request(int socket_fd) {
                 struct tm *tm_info = localtime(&now);
                 char timebuf[32];
                 strftime(timebuf, sizeof(timebuf), "[%d-%m-%Y %H:%M]", tm_info);
-                printf("%s\n%s\n\n", timebuf, decoded_cmd);
+				char buffer[BUFFER_SIZE];
+		        snprintf(buffer, BUFFER_SIZE, "%s\n%s\n\n", timebuf, decoded_cmd);
+		        prettyprint(buffer, 15);
                 fflush(stdout);
                 add_history(decoded_cmd);
             } else {

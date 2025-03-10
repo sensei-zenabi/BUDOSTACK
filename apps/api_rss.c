@@ -32,8 +32,9 @@
 #define RSS_REFRESH_INTERVAL 1800 // Seconds between RSS feed updates (30 minutes)
 
 // New margin definitions to ensure top and bottom padding.
-#define TOP_MARGIN 1              // Number of blank lines at the top
-#define BOTTOM_MARGIN 1           // Number of blank lines at the bottom
+#define TOP_MARGIN 0              // Number of blank lines at the top
+#define BOTTOM_MARGIN 0           // Number of blank lines at the bottom
+#define NEWS_PER_PAGE 6		  // Number of news displayed per page
 
 #define BUFFER_SIZE 1024
 
@@ -210,7 +211,7 @@ void display_page(news_item *news, int news_count, int page, int items_per_page,
         char buffer[BUFFER_SIZE];
         snprintf(buffer, BUFFER_SIZE, "[%s]\n", news[index].timestamp);
         prettyprint(buffer, 10);
-        snprintf(buffer, BUFFER_SIZE,"News: %s\n", news[index].title);
+        snprintf(buffer, BUFFER_SIZE,"%s\n", news[index].title);
 		prettyprint(buffer, 10);
         news_printed_lines += 3;
         printed_lines += 3;
@@ -240,6 +241,9 @@ int main(void) {
     if (items_per_page < 1) {
         items_per_page = 1;
     }
+
+    // Override with define
+    items_per_page = NEWS_PER_PAGE;
 
     // Fetch and parse the RSS feed initially.
     char *rss_data = fetch_rss();

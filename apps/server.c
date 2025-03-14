@@ -3,25 +3,28 @@
 
  A "switchboard" server that:
  - Listens on TCP port 12345 by default for local client connections.
- - Uses a UDP socket bound to BROADCAST_PORT (12346) for node-to-node communication.
- - Accepts multiple local clients (up to MAX_CLIENTS).
- - Each client has 5 outputs (out0..out4) and 5 inputs (in0..in4).
- - Maintains a routing table so that outX of clientA can be connected to inY of clientB.
- - Provides a simple text-based console UI to:
-    * list           - list local clients and connected nodes
-    * routes         - list local routing table
+ - Uses a UDP socket bound to BROADCAST_PORT (12346) for all node-to-node communication.
+ - Accepts multiple local clients (up to MAX_CLIENTS), each with 5 outputs (out0..out4) and 5 inputs (in0..in4).
+ - Maintains a routing table so that outX of one client can be connected to inY of another.
+ - Provides a simple text-based console UI with the following commands:
+    * help       - show available commands
+    * list       - list local clients and connected remote nodes (with their reported clients)
+    * routes     - list local routing table
     * route <outCID> <outCH|all> <inCID> <inCH|all>
-                       - connect an output of one client to an input of another.
-                         For remote endpoints, use the format "IP:clientID".
+                 - establish a route (for remote endpoints, use the format "IP:clientID")
     * print <clientID>
-                       - display last channel data for a client (for remote, use IP:clientID)
-    * monitor [FPS]  - display real-time outputs for local and remote clients
-    * broadcast      - send a UDP broadcast discovery request
-    * connect <IP>   - send a UDP node connection request to remote node at IP
-    * exit           - shut down the current tmux session
+                 - display channel data for a client (for remote, use "IP:clientID")
+    * monitor [FPS]
+                 - start monitor mode showing real-time outputs from both local and remote clients
+    * broadcast  - send a UDP discovery message (remote nodes reply)
+    * connect <IP>
+                 - send a UDP node connection request to a remote node
+    * transmit <ms>
+                 - set the transmit rate (in milliseconds) at which this node sends update messages
+    * exit       - shut down the current tmux session (all windows)
 
  - At startup, the server reads "route.rt" (if present) for preconfigured routes.
- - All inter-node communication (for connect, client updates, and routing) uses UDP.
+ - All inter-node communication (connection, client updates, routing) is done over UDP.
 
  Build:
    gcc -std=c11 -o server server.c
@@ -49,7 +52,7 @@
 #include <sys/time.h>
 
 #define SERVER_PORT 12345
-#define BROADCAST_PORT 12346   // UDP port for node communication/discovery
+#define BROADCAST_PORT 12346   // UDP port for node-to-node messages and discovery
 #define MAX_CLIENTS 20
 #define CHANNELS_PER_APP 5    // 5 outputs, 5 inputs
 #define MAX_MSG_LENGTH 512
@@ -60,6 +63,10 @@
 
 #define DEFAULT_MONITOR_FPS 2
 
+// Global transmit rate in milliseconds (default 1000 ms)
+static unsigned int transmit_rate_ms = 1000;
+
+// Structures for local clients.
 typedef struct {
     int sockfd;
     int client_id;
@@ -68,7 +75,7 @@ typedef struct {
 } ClientInfo;
 
 typedef struct {
-    int in_client_id;  // local endpoint client id; -1 means no route
+    int in_client_id;  // local destination client id; -1 means no route
     int in_channel;    // 0..4
 } Route;
 
@@ -82,13 +89,12 @@ static ClientInfo clients[MAX_CLIENTS];
 static int next_client_id = 1;
 static Route routing[MAX_CLIENTS + 1][CHANNELS_PER_APP];
 
-// For remote nodes, we use UDP addresses.
+// Structures for remote nodes.
 typedef struct {
-    struct sockaddr_in addr; // remote node UDP address
+    struct sockaddr_in addr; // UDP address of remote node
     char ip[INET_ADDRSTRLEN];
     bool connected;
     int client_count;
-    // Remote clients reported from that node.
     struct {
         int client_id;
         char name[64];
@@ -100,8 +106,11 @@ typedef struct {
 static RemoteNode remote_nodes[MAX_REMOTE_NODES];
 static int remote_node_count = 0;
 
-// Global UDP socket (bound to BROADCAST_PORT) for node messages.
+// Global UDP socket for node communication.
 static int udp_fd;
+
+// Global variable to track last transmit time.
+static struct timeval last_transmit;
 
 // Forward declarations.
 static void handle_new_connection(int server_fd);
@@ -118,24 +127,26 @@ static void process_routing_file(void);
 static void route_command_from_file(int outCID, int outCH, int inCID, int inCH);
 static void monitor_mode(int fps);
 
-// UDP-based node communication functions.
+// UDP node communication functions.
 static void process_udp_message(void);
 static void connect_to_node(const char *ip);
 static bool is_remote_id(const char *id_str);
 static void forward_route_to_remote(const char *outCID_str, int outCH, const char *inCID_str, int inCH);
+static void send_update_messages(void);
 
 int main(int argc, char *argv[]) {
     unsigned short port = SERVER_PORT;
     if (argc > 1) {
         unsigned short temp = (unsigned short)atoi(argv[1]);
-        if (temp > 0) port = temp;
+        if (temp > 0)
+            port = temp;
     }
 
     memset(clients, 0, sizeof(clients));
     memset(routing, -1, sizeof(routing));
     memset(client_data, 0, sizeof(client_data));
 
-    // Create TCP socket for local clients.
+    // Create TCP socket for local client connections.
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) { perror("socket"); return 1; }
     int opt = 1;
@@ -152,7 +163,7 @@ int main(int argc, char *argv[]) {
     printf("Switchboard Server listening on TCP port %hu.\n", port);
     printf("Type 'help' for commands.\n");
 
-    // Create UDP socket for node communication (and broadcast discovery).
+    // Create UDP socket for node-to-node messages.
     udp_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp_fd < 0) { perror("UDP socket"); exit(1); }
     int broadcastEnable = 1;
@@ -170,13 +181,15 @@ int main(int argc, char *argv[]) {
 
     process_routing_file();
 
-    // Main loop using select().
+    // Initialize last_transmit time.
+    gettimeofday(&last_transmit, NULL);
+
+    // Main loop using select with a timeout based on transmit_rate_ms.
     while (1) {
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(server_fd, &readfds);
         int maxfd = server_fd;
-        // Add local client sockets.
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i].active) {
                 FD_SET(clients[i].sockfd, &readfds);
@@ -184,16 +197,22 @@ int main(int argc, char *argv[]) {
                     maxfd = clients[i].sockfd;
             }
         }
-        // Add STDIN.
         FD_SET(STDIN_FILENO, &readfds);
         if (STDIN_FILENO > maxfd)
             maxfd = STDIN_FILENO;
-        // Add UDP socket.
         FD_SET(udp_fd, &readfds);
         if (udp_fd > maxfd)
             maxfd = udp_fd;
 
-        int ret = select(maxfd + 1, &readfds, NULL, NULL, NULL);
+        struct timeval now, timeout;
+        gettimeofday(&now, NULL);
+        unsigned int elapsed_ms = (now.tv_sec - last_transmit.tv_sec) * 1000 +
+                                  (now.tv_usec - last_transmit.tv_usec) / 1000;
+        unsigned int wait_ms = (elapsed_ms >= transmit_rate_ms) ? 0 : (transmit_rate_ms - elapsed_ms);
+        timeout.tv_sec = wait_ms / 1000;
+        timeout.tv_usec = (wait_ms % 1000) * 1000;
+
+        int ret = select(maxfd + 1, &readfds, NULL, NULL, &timeout);
         if (ret < 0) { perror("select"); break; }
         if (FD_ISSET(server_fd, &readfds))
             handle_new_connection(server_fd);
@@ -205,17 +224,49 @@ int main(int argc, char *argv[]) {
             handle_console_input();
         if (FD_ISSET(udp_fd, &readfds))
             process_udp_message();
+
+        // Time to send update messages?
+        gettimeofday(&now, NULL);
+        elapsed_ms = (now.tv_sec - last_transmit.tv_sec) * 1000 +
+                     (now.tv_usec - last_transmit.tv_usec) / 1000;
+        if (elapsed_ms >= transmit_rate_ms) {
+            send_update_messages();
+            last_transmit = now;
+        }
     }
     close(server_fd);
     return 0;
 }
 
-// Accept new TCP connection from a local client.
+// Sends an UPDATE message for each local client to all connected nodes.
+static void send_update_messages(void) {
+    char msg[1024];
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (!clients[i].active)
+            continue;
+        char channel_data[512] = "";
+        for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
+            strcat(channel_data, client_data[i].last_out[ch]);
+            if (ch < CHANNELS_PER_APP - 1)
+                strcat(channel_data, ";");
+        }
+        snprintf(msg, sizeof(msg), "UPDATE %d %s\n", clients[i].client_id, channel_data);
+        for (int j = 0; j < remote_node_count; j++) {
+            sendto(udp_fd, msg, strlen(msg), 0,
+                   (struct sockaddr *)&remote_nodes[j].addr, sizeof(remote_nodes[j].addr));
+        }
+    }
+}
+
+// Accept a new TCP connection from a local client.
 static void handle_new_connection(int server_fd) {
     struct sockaddr_in cli_addr;
     socklen_t cli_len = sizeof(cli_addr);
     int client_sock = accept(server_fd, (struct sockaddr *)&cli_addr, &cli_len);
-    if (client_sock < 0) { perror("accept"); return; }
+    if (client_sock < 0) {
+        perror("accept");
+        return;
+    }
     int idx = -1;
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (!clients[i].active) { idx = i; break; }
@@ -263,7 +314,7 @@ static void handle_client_input(int i) {
             const char *msg = "";
             if (colon) {
                 msg = colon+1;
-                while (*msg==' ' || *msg=='\t') msg++;
+                while (*msg == ' ' || *msg=='\t') msg++;
             }
             strncpy(client_data[i].last_out[out_ch], msg, MAX_MSG_LENGTH-1);
             client_data[i].last_out[out_ch][MAX_MSG_LENGTH-1] = '\0';
@@ -280,21 +331,23 @@ static void handle_client_input(int i) {
                 }
             }
         }
-        start = nl+1;
+        start = nl + 1;
     }
 }
 
-// Process console input.
+// Process console input from the operator.
 static void handle_console_input(void) {
     char cmdline[256];
-    if (!fgets(cmdline, sizeof(cmdline), stdin)) return;
+    if (!fgets(cmdline, sizeof(cmdline), stdin))
+        return;
     trim_newline(cmdline);
-    if (strcmp(cmdline, "")==0) return;
-    if (strcmp(cmdline, "help")==0) { show_help(); return; }
-    if (strcmp(cmdline, "list")==0) { list_clients(); return; }
-    if (strcmp(cmdline, "routes")==0) { list_routes(); return; }
-    if (strcmp(cmdline, "exit")==0) { shutdown_tmux(); return; }
-    if (strncmp(cmdline, "monitor", 7)==0) {
+    if (strcmp(cmdline, "") == 0)
+        return;
+    if (strcmp(cmdline, "help") == 0) { show_help(); return; }
+    if (strcmp(cmdline, "list") == 0) { list_clients(); return; }
+    if (strcmp(cmdline, "routes") == 0) { list_routes(); return; }
+    if (strcmp(cmdline, "exit") == 0) { shutdown_tmux(); return; }
+    if (strncmp(cmdline, "monitor", 7) == 0) {
         strtok(cmdline, " ");
         int fps = DEFAULT_MONITOR_FPS;
         char *arg = strtok(NULL, " ");
@@ -302,42 +355,57 @@ static void handle_console_input(void) {
         monitor_mode(fps);
         return;
     }
-    if (strcmp(cmdline, "broadcast")==0) {
+    if (strncmp(cmdline, "broadcast", 9) == 0) {
         struct sockaddr_in dest_addr;
         memset(&dest_addr, 0, sizeof(dest_addr));
         dest_addr.sin_family = AF_INET;
         dest_addr.sin_port = htons(BROADCAST_PORT);
         dest_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
         char request[] = "DISCOVER_REQUEST\n";
-        if (sendto(udp_fd, request, strlen(request), 0, (struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0)
+        if (sendto(udp_fd, request, strlen(request), 0,
+                   (struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0)
             perror("sendto DISCOVER_REQUEST");
         else { printf("Broadcast sent. Waiting for responses...\n"); fflush(stdout); }
         return;
     }
-    if (strncmp(cmdline, "connect", 7)==0) {
+    if (strncmp(cmdline, "connect", 7) == 0) {
         strtok(cmdline, " ");
         char *ip = strtok(NULL, " ");
         if (!ip) { printf("Usage: connect <IP>\n"); return; }
         connect_to_node(ip);
         return;
     }
-    if (strncmp(cmdline, "print", 5)==0) {
+    if (strncmp(cmdline, "transmit", 8) == 0) {
+        strtok(cmdline, " ");
+        char *rate_str = strtok(NULL, " ");
+        if (!rate_str) { printf("Usage: transmit <rate_in_ms>\n"); return; }
+        unsigned int rate = (unsigned int)atoi(rate_str);
+        if (rate == 0) {
+            printf("Transmit rate must be > 0\n");
+            return;
+        }
+        transmit_rate_ms = rate;
+        printf("Transmit rate set to %u ms.\n", transmit_rate_ms);
+        return;
+    }
+    if (strncmp(cmdline, "print", 5) == 0) {
         strtok(cmdline, " ");
         char *pClientID = strtok(NULL, " ");
         if (!pClientID) { printf("Usage: print <clientID> (for remote, use IP:clientID)\n"); return; }
         if (strchr(pClientID, ':')) {
             char node_ip[INET_ADDRSTRLEN];
             int remote_id;
-            if (sscanf(pClientID, "%15[^:]:%d", node_ip, &remote_id)==2) {
+            if (sscanf(pClientID, "%15[^:]:%d", node_ip, &remote_id) == 2) {
                 bool found = false;
-                for (int i=0; i<remote_node_count; i++) {
-                    if (strcmp(remote_nodes[i].ip, node_ip)==0) {
-                        for (int j=0; j<remote_nodes[i].client_count; j++) {
-                            if (remote_nodes[i].clients[j].client_id==remote_id) {
-                                printf("Data for remote client %s:%d (%s):\n", node_ip, remote_id, remote_nodes[i].clients[j].name);
+                for (int i = 0; i < remote_node_count; i++) {
+                    if (strcmp(remote_nodes[i].ip, node_ip) == 0) {
+                        for (int j = 0; j < remote_nodes[i].client_count; j++) {
+                            if (remote_nodes[i].clients[j].client_id == remote_id) {
+                                printf("Data for remote client %s:%d (%s):\n",
+                                       node_ip, remote_id, remote_nodes[i].clients[j].name);
                                 printf("%-8s | %-50s | %-50s\n", "Channel", "Output", "Input");
                                 printf("-------------------------------------------------------------\n");
-                                for (int ch=0; ch<CHANNELS_PER_APP; ch++) {
+                                for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
                                     printf("%-8d | %-50.50s | %-50.50s\n", ch,
                                            remote_nodes[i].clients[j].last_out[ch],
                                            remote_nodes[i].clients[j].last_in[ch]);
@@ -348,7 +416,8 @@ static void handle_console_input(void) {
                         }
                     }
                 }
-                if (!found) printf("Remote client %s not found.\n", pClientID);
+                if (!found)
+                    printf("Remote client %s not found.\n", pClientID);
             }
         } else {
             int clientID = atoi(pClientID);
@@ -357,7 +426,7 @@ static void handle_console_input(void) {
             printf("Data for local client %d (%s):\n", clientID, clients[idx].name);
             printf("%-8s | %-50s | %-50s\n", "Channel", "Output", "Input");
             printf("-------------------------------------------------------------\n");
-            for (int ch=0; ch<CHANNELS_PER_APP; ch++) {
+            for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
                 printf("%-8d | %-50.50s | %-50.50s\n", ch,
                        client_data[idx].last_out[ch],
                        client_data[idx].last_in[ch]);
@@ -365,7 +434,7 @@ static void handle_console_input(void) {
         }
         return;
     }
-    if (strncmp(cmdline, "route", 5)==0) {
+    if (strncmp(cmdline, "route", 5) == 0) {
         strtok(cmdline, " ");
         char *pOutCID = strtok(NULL, " ");
         char *pOutStr = strtok(NULL, " ");
@@ -378,36 +447,36 @@ static void handle_console_input(void) {
             forward_route_to_remote(pOutCID, atoi(pOutStr), pInCID, atoi(pInStr));
             return;
         }
-        bool outAll = (strcmp(pOutStr, "all")==0);
+        bool outAll = (strcmp(pOutStr, "all") == 0);
         int fixedOut = -1;
         if (!outAll) {
             if (isdigit((unsigned char)pOutStr[0]))
                 fixedOut = atoi(pOutStr);
-            else if (strncmp(pOutStr, "out", 3)==0 && isdigit((unsigned char)pOutStr[3]))
-                fixedOut = pOutStr[3]-'0';
+            else if (strncmp(pOutStr, "out", 3) == 0 && isdigit((unsigned char)pOutStr[3]))
+                fixedOut = pOutStr[3] - '0';
         }
-        bool inAll = (strcmp(pInStr, "all")==0);
+        bool inAll = (strcmp(pInStr, "all") == 0);
         int fixedIn = -1;
         if (!inAll) {
             if (isdigit((unsigned char)pInStr[0]))
                 fixedIn = atoi(pInStr);
-            else if (strncmp(pInStr, "in", 2)==0 && isdigit((unsigned char)pInStr[2]))
-                fixedIn = pInStr[2]-'0';
+            else if (strncmp(pInStr, "in", 2) == 0 && isdigit((unsigned char)pInStr[2]))
+                fixedIn = pInStr[2] - '0';
         }
-        if (!outAll && (fixedOut<0 || fixedOut>=CHANNELS_PER_APP)) {
-            printf("Invalid output channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP-1); return;
+        if (!outAll && (fixedOut < 0 || fixedOut >= CHANNELS_PER_APP)) {
+            printf("Invalid output channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1); return;
         }
-        if (!inAll && (fixedIn<0 || fixedIn>=CHANNELS_PER_APP)) {
-            printf("Invalid input channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP-1); return;
+        if (!inAll && (fixedIn < 0 || fixedIn >= CHANNELS_PER_APP)) {
+            printf("Invalid input channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1); return;
         }
         if (outAll && inAll) {
-            for (int i=0; i<CHANNELS_PER_APP; i++)
+            for (int i = 0; i < CHANNELS_PER_APP; i++)
                 route_command(pOutCID, i, pInCID, i);
         } else if (outAll && !inAll) {
-            for (int i=0; i<CHANNELS_PER_APP; i++)
+            for (int i = 0; i < CHANNELS_PER_APP; i++)
                 route_command(pOutCID, i, pInCID, fixedIn);
         } else if (!outAll && inAll) {
-            for (int i=0; i<CHANNELS_PER_APP; i++)
+            for (int i = 0; i < CHANNELS_PER_APP; i++)
                 route_command(pOutCID, fixedOut, pInCID, i);
         } else {
             route_command(pOutCID, fixedOut, pInCID, fixedIn);
@@ -423,15 +492,16 @@ static void show_help(void) {
     printf(" list                        - list local clients and connected nodes\n");
     printf(" routes                      - list local routing table\n");
     printf(" route <outCID> <outCH|all> <inCID> <inCH|all>\n");
-    printf(" print <clientID>            - show last data for the given client (for remote, use IP:clientID)\n");
-    printf(" monitor [FPS]               - display real time output (local and remote)\n");
-    printf(" broadcast                   - send a UDP broadcast discovery request\n");
+    printf(" print <clientID>            - show channel data (for remote, use IP:clientID)\n");
+    printf(" monitor [FPS]               - display real time outputs (local and remote)\n");
+    printf(" broadcast                   - send a UDP discovery request\n");
     printf(" connect <IP>                - send a UDP node connection request to a remote node\n");
+    printf(" transmit <ms>               - set transmit rate (in ms) for sending update messages\n");
     printf(" exit                        - shutdown the current tmux session (all windows)\n");
     printf("\n");
 }
 
-// Local routing command: update local routing table.
+// Update local routing table.
 static void route_command(const char *outCID_str, int outCH, const char *inCID_str, int inCH) {
     int outCID = atoi(outCID_str);
     int idxO = find_client_index(outCID);
@@ -444,17 +514,17 @@ static void route_command(const char *outCID_str, int outCH, const char *inCID_s
     printf("Routed local client%d out%d -> local client%d in%d\n", outCID, outCH, inCID, inCH);
 }
 
-// List local clients and connected remote nodes.
+// List local clients and remote node clients.
 static void list_clients(void) {
     printf("Local Clients:\n");
-    for (int i=0; i<MAX_CLIENTS; i++) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].active)
             printf(" clientID=%d sockfd=%d name=%s\n", clients[i].client_id, clients[i].sockfd, clients[i].name);
     }
     printf("\nConnected Nodes:\n");
-    for (int i=0; i<remote_node_count; i++) {
+    for (int i = 0; i < remote_node_count; i++) {
         printf(" Node %s:\n", remote_nodes[i].ip);
-        for (int j=0; j<remote_nodes[i].client_count; j++) {
+        for (int j = 0; j < remote_nodes[i].client_count; j++) {
             printf("   clientID=%d (Identifier: %s:%d) name=%s\n",
                    remote_nodes[i].clients[j].client_id,
                    remote_nodes[i].ip, remote_nodes[i].clients[j].client_id,
@@ -466,10 +536,10 @@ static void list_clients(void) {
 // List local routing table.
 static void list_routes(void) {
     printf("Local Routes:\n");
-    for (int cid=1; cid<next_client_id; cid++) {
+    for (int cid = 1; cid < next_client_id; cid++) {
         int idx = find_client_index(cid);
         if (idx < 0) continue;
-        for (int ch=0; ch<CHANNELS_PER_APP; ch++) {
+        for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
             int inCID = routing[cid][ch].in_client_id;
             if (inCID >= 0) {
                 int inCH = routing[cid][ch].in_channel;
@@ -479,16 +549,16 @@ static void list_routes(void) {
     }
 }
 
-// Find local client by client id.
+// Return index of local client with given client id.
 static int find_client_index(int cid) {
-    for (int i=0; i<MAX_CLIENTS; i++) {
+    for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].active && clients[i].client_id == cid)
             return i;
     }
     return -1;
 }
 
-// Trim newline characters.
+// Remove newline/carriage returns.
 static void trim_newline(char *s) {
     char *p = strchr(s, '\n');
     if (p) *p = '\0';
@@ -496,7 +566,7 @@ static void trim_newline(char *s) {
     if (p) *p = '\0';
 }
 
-// Shutdown tmux session.
+// Shutdown the tmux session.
 static void shutdown_tmux(void) {
     FILE *fp = popen("tmux display-message -p '#S'", "r");
     if (!fp) { perror("popen"); return; }
@@ -517,7 +587,7 @@ static void shutdown_tmux(void) {
     exit(0);
 }
 
-// Process routing file "route.rt" (unchanged from previous logic).
+// Process routing file "route.rt" for preconfigured routes.
 static void process_routing_file(void) {
     FILE *fp = fopen("route.rt", "r");
     if (!fp) { printf("Routing file 'route.rt' not found.\n"); return; }
@@ -526,10 +596,11 @@ static void process_routing_file(void) {
     int cmd_count = 0;
     while (fgets(line, sizeof(line), fp)) {
         trim_newline(line);
-        if (strlen(line)==0 || strncmp(line, "route", 5)!=0) continue;
+        if (strlen(line) == 0 || strncmp(line, "route", 5) != 0)
+            continue;
         cmd_count++;
         char *token = strtok(line, " ");
-        if (!token || strcmp(token, "route")!=0) {
+        if (!token || strcmp(token, "route") != 0) {
             printf("Invalid command in routing file.\n");
             all_success = false;
             continue;
@@ -545,45 +616,45 @@ static void process_routing_file(void) {
         }
         int outCID = atoi(pOutCID);
         int inCID = atoi(pInCID);
-        bool outAll = (strcmp(pOutStr, "all")==0);
+        bool outAll = (strcmp(pOutStr, "all") == 0);
         int fixedOut = -1;
         if (!outAll) {
             if (isdigit((unsigned char)pOutStr[0]))
                 fixedOut = atoi(pOutStr);
-            else if (strncmp(pOutStr, "out", 3)==0 && isdigit((unsigned char)pOutStr[3]))
-                fixedOut = pOutStr[3]-'0';
+            else if (strncmp(pOutStr, "out", 3) == 0 && isdigit((unsigned char)pOutStr[3]))
+                fixedOut = pOutStr[3] - '0';
             else { printf("Invalid output channel in routing file.\n"); all_success = false; continue; }
         }
-        bool inAll = (strcmp(pInStr, "all")==0);
+        bool inAll = (strcmp(pInStr, "all") == 0);
         int fixedIn = -1;
         if (!inAll) {
             if (isdigit((unsigned char)pInStr[0]))
                 fixedIn = atoi(pInStr);
-            else if (strncmp(pInStr, "in", 2)==0 && isdigit((unsigned char)pInStr[2]))
-                fixedIn = pInStr[2]-'0';
+            else if (strncmp(pInStr, "in", 2) == 0 && isdigit((unsigned char)pInStr[2]))
+                fixedIn = pInStr[2] - '0';
             else { printf("Invalid input channel in routing file.\n"); all_success = false; continue; }
         }
-        if (!outAll && (fixedOut<0 || fixedOut>=CHANNELS_PER_APP)) {
+        if (!outAll && (fixedOut < 0 || fixedOut >= CHANNELS_PER_APP)) {
             printf("Invalid output channel value in routing file.\n"); all_success = false; continue;
         }
-        if (!inAll && (fixedIn<0 || fixedIn>=CHANNELS_PER_APP)) {
+        if (!inAll && (fixedIn < 0 || fixedIn >= CHANNELS_PER_APP)) {
             printf("Invalid input channel value in routing file.\n"); all_success = false; continue;
         }
         if (outAll && inAll) {
-            for (int i=0; i<CHANNELS_PER_APP; i++)
+            for (int i = 0; i < CHANNELS_PER_APP; i++)
                 route_command_from_file(outCID, i, inCID, i);
         } else if (outAll && !inAll) {
-            for (int i=0; i<CHANNELS_PER_APP; i++)
+            for (int i = 0; i < CHANNELS_PER_APP; i++)
                 route_command_from_file(outCID, i, inCID, fixedIn);
         } else if (!outAll && inAll) {
-            for (int i=0; i<CHANNELS_PER_APP; i++)
+            for (int i = 0; i < CHANNELS_PER_APP; i++)
                 route_command_from_file(outCID, fixedOut, inCID, i);
         } else {
             route_command_from_file(outCID, fixedOut, inCID, fixedIn);
         }
     }
     fclose(fp);
-    if (!all_success || cmd_count==0)
+    if (!all_success || cmd_count == 0)
         printf("Error processing routing file or no valid commands found.\n");
     else {
         fp = fopen("route.rt", "r");
@@ -596,7 +667,7 @@ static void process_routing_file(void) {
     }
 }
 
-// Helper: similar to route_command but for routing file.
+// Similar to route_command, but used when processing the routing file.
 static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) {
     routing[outCID][outCH].in_client_id = inCID;
     routing[outCID][outCH].in_channel = inCH;
@@ -605,14 +676,14 @@ static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) 
 
 /*
  * monitor_mode()
- * Modified to display both local and remote client data.
+ * Displays both local and remote client data.
  */
 static void monitor_mode(int fps) {
     struct termios orig_termios, new_termios;
-    if (tcgetattr(STDIN_FILENO, &orig_termios)==-1) { perror("tcgetattr"); return; }
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) { perror("tcgetattr"); return; }
     new_termios = orig_termios;
     new_termios.c_lflag &= ~(ICANON | ECHO);
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &new_termios)==-1) { perror("tcsetattr"); return; }
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &new_termios) == -1) { perror("tcsetattr"); return; }
     struct timeval start_time;
     gettimeofday(&start_time, NULL);
     bool recording = false;
@@ -628,7 +699,7 @@ static void monitor_mode(int fps) {
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
         int maxfd = STDIN_FILENO;
-        for (int i=0; i<MAX_CLIENTS; i++) {
+        for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i].active) {
                 FD_SET(clients[i].sockfd, &readfds);
                 if (clients[i].sockfd > maxfd)
@@ -639,10 +710,11 @@ static void monitor_mode(int fps) {
         if (udp_fd > maxfd)
             maxfd = udp_fd;
         struct timeval tv;
-        tv.tv_sec = 0; tv.tv_usec = 1000000 / fps;
-        int ret = select(maxfd+1, &readfds, NULL, NULL, &tv);
+        tv.tv_sec = 0;
+        tv.tv_usec = 1000000 / fps;
+        int ret = select(maxfd + 1, &readfds, NULL, NULL, &tv);
         if (ret < 0) { perror("select in monitor_mode"); break; }
-        for (int i=0; i<MAX_CLIENTS; i++) {
+        for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i].active && FD_ISSET(clients[i].sockfd, &readfds))
                 handle_client_input(i);
         }
@@ -650,12 +722,12 @@ static void monitor_mode(int fps) {
             process_udp_message();
         if (FD_ISSET(STDIN_FILENO, &readfds)) {
             char ch;
-            if (read(STDIN_FILENO, &ch, 1)>0) {
-                if (ch=='Q' || ch=='q')
+            if (read(STDIN_FILENO, &ch, 1) > 0) {
+                if (ch == 'Q' || ch == 'q')
                     quit = true;
-                else if (ch=='R' || ch=='r') {
+                else if (ch == 'R' || ch == 'r') {
                     if (!recording) {
-                        if (mkdir("logs", 0755)==-1 && errno != EEXIST) perror("mkdir");
+                        if (mkdir("logs", 0755) == -1 && errno != EEXIST) perror("mkdir");
                         time_t now = time(NULL);
                         struct tm *tm_info = localtime(&now);
                         char timestamp[64];
@@ -665,19 +737,19 @@ static void monitor_mode(int fps) {
                         if (!log_file) perror("fopen for log file");
                         else {
                             recorded_client_count = 0;
-                            for (int i=0; i<MAX_CLIENTS; i++) {
+                            for (int i = 0; i < MAX_CLIENTS; i++) {
                                 if (clients[i].active)
                                     recorded_client_indices[recorded_client_count++] = i;
                             }
                             fprintf(log_file, "timestamp,");
-                            for (int j=0; j<recorded_client_count; j++) {
+                            for (int j = 0; j < recorded_client_count; j++) {
                                 int idx = recorded_client_indices[j];
                                 fprintf(log_file, "client%d", clients[idx].client_id);
                                 if (j != recorded_client_count - 1)
                                     fprintf(log_file, ",");
                             }
-                            for (int i=0; i<remote_node_count; i++) {
-                                for (int j=0; j<remote_nodes[i].client_count; j++)
+                            for (int i = 0; i < remote_node_count; i++) {
+                                for (int j = 0; j < remote_nodes[i].client_count; j++)
                                     fprintf(log_file, ",%s:%d", remote_nodes[i].ip, remote_nodes[i].clients[j].client_id);
                             }
                             fprintf(log_file, "\n");
@@ -698,15 +770,15 @@ static void monitor_mode(int fps) {
             delta.tv_usec = now.tv_usec - start_time.tv_usec;
             if (delta.tv_usec < 0) { delta.tv_sec--; delta.tv_usec += 1000000; }
             fprintf(log_file, "\"%ld.%06ld\",", delta.tv_sec, delta.tv_usec);
-            for (int j=0; j<recorded_client_count; j++) {
+            for (int j = 0; j < recorded_client_count; j++) {
                 int idx = recorded_client_indices[j];
                 char data[MAX_MSG_LENGTH];
-                strncpy(data, client_data[idx].last_out[0], MAX_MSG_LENGTH-1);
-                data[MAX_MSG_LENGTH-1] = '\0';
+                strncpy(data, client_data[idx].last_out[0], MAX_MSG_LENGTH - 1);
+                data[MAX_MSG_LENGTH - 1] = '\0';
                 fprintf(log_file, "\"%s\",", data);
             }
-            for (int i=0; i<remote_node_count; i++) {
-                for (int j=0; j<remote_nodes[i].client_count; j++)
+            for (int i = 0; i < remote_node_count; i++) {
+                for (int j = 0; j < remote_nodes[i].client_count; j++)
                     fprintf(log_file, "\"%s\"", remote_nodes[i].clients[j].last_out[0]);
             }
             fprintf(log_file, "\n");
@@ -721,20 +793,20 @@ static void monitor_mode(int fps) {
             printf("Recording: OFF\n");
         printf("-------------------------------------------------------------\n");
         printf("Local Clients:\n");
-        for (int i=0; i<MAX_CLIENTS; i++) {
+        for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i].active) {
                 printf("client%d | ", clients[i].client_id);
-                for (int ch=0; ch<CHANNELS_PER_APP; ch++)
+                for (int ch = 0; ch < CHANNELS_PER_APP; ch++)
                     printf("[%d]: %-10.10s ", ch, client_data[i].last_out[ch]);
                 printf("\n");
             }
         }
         printf("\nRemote Clients:\n");
-        for (int i=0; i<remote_node_count; i++) {
+        for (int i = 0; i < remote_node_count; i++) {
             printf("Node %s:\n", remote_nodes[i].ip);
-            for (int j=0; j<remote_nodes[i].client_count; j++) {
+            for (int j = 0; j < remote_nodes[i].client_count; j++) {
                 printf(" %s:%d | ", remote_nodes[i].ip, remote_nodes[i].clients[j].client_id);
-                for (int ch=0; ch<CHANNELS_PER_APP; ch++)
+                for (int ch = 0; ch < CHANNELS_PER_APP; ch++)
                     printf("[%d]: %-10.10s ", ch, remote_nodes[i].clients[j].last_out[ch]);
                 printf("\n");
             }
@@ -742,13 +814,12 @@ static void monitor_mode(int fps) {
         fflush(stdout);
     }
     if (log_file) { fclose(log_file); log_file = NULL; }
-    if (tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios)==-1)
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios) == -1)
         perror("tcsetattr");
     printf("Exiting monitor mode.\n");
 }
 
 // ----- UDP Message Processing -----
-// All node-to-node and broadcast messages are received on udp_fd.
 static void process_udp_message(void) {
     char buf[512];
     memset(buf, 0, sizeof(buf));
@@ -757,23 +828,21 @@ static void process_udp_message(void) {
     ssize_t n = recvfrom(udp_fd, buf, sizeof(buf)-1, 0, (struct sockaddr *)&sender_addr, &addrlen);
     if (n < 0) { perror("recvfrom"); return; }
     buf[n] = '\0';
-    // Determine sender IP string.
     char sender_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &sender_addr.sin_addr, sender_ip, sizeof(sender_ip));
-    // Handle broadcast discovery.
-    if (strcmp(buf, "DISCOVER_REQUEST") == 0) {
+    // Discovery request.
+    if (strcmp(buf, "DISCOVER_REQUEST\n") == 0) {
         char response[] = "DISCOVER_RESPONSE\n";
         sendto(udp_fd, response, strlen(response), 0, (struct sockaddr *)&sender_addr, addrlen);
         return;
     }
-    // Handle node-to-node connection.
+    // Node connection messages.
     if (strncmp(buf, "NODE_CONNECT_REQUEST", 20) == 0) {
         char response[] = "NODE_CONNECT_ACK\n";
         sendto(udp_fd, response, strlen(response), 0, (struct sockaddr *)&sender_addr, addrlen);
-        // Add sender as remote node if not already added.
         bool exists = false;
-        for (int i=0; i<remote_node_count; i++) {
-            if (strcmp(remote_nodes[i].ip, sender_ip)==0) { exists = true; break; }
+        for (int i = 0; i < remote_node_count; i++) {
+            if (strcmp(remote_nodes[i].ip, sender_ip) == 0) { exists = true; break; }
         }
         if (!exists && remote_node_count < MAX_REMOTE_NODES) {
             RemoteNode *rn = &remote_nodes[remote_node_count];
@@ -786,10 +855,10 @@ static void process_udp_message(void) {
         }
         return;
     }
-    if (strncmp(buf, "NODE_CONNECT_ACK", 16)==0) {
+    if (strncmp(buf, "NODE_CONNECT_ACK", 16) == 0) {
         bool exists = false;
-        for (int i=0; i<remote_node_count; i++) {
-            if (strcmp(remote_nodes[i].ip, sender_ip)==0) { exists = true; break; }
+        for (int i = 0; i < remote_node_count; i++) {
+            if (strcmp(remote_nodes[i].ip, sender_ip) == 0) { exists = true; break; }
         }
         if (!exists && remote_node_count < MAX_REMOTE_NODES) {
             RemoteNode *rn = &remote_nodes[remote_node_count];
@@ -802,15 +871,15 @@ static void process_udp_message(void) {
         }
         return;
     }
-    // Handle client list updates from remote node.
-    if (strncmp(buf, "CLIENT", 6)==0) {
+    // Handle client list updates.
+    if (strncmp(buf, "CLIENT", 6) == 0) {
         int cid;
         char cname[64];
-        if (sscanf(buf, "CLIENT %d %63s", &cid, cname)==2) {
-            for (int i=0; i<remote_node_count; i++) {
-                if (strcmp(remote_nodes[i].ip, sender_ip)==0) {
+        if (sscanf(buf, "CLIENT %d %63s", &cid, cname) == 2) {
+            for (int i = 0; i < remote_node_count; i++) {
+                if (strcmp(remote_nodes[i].ip, sender_ip) == 0) {
                     bool found = false;
-                    for (int j=0; j<remote_nodes[i].client_count; j++) {
+                    for (int j = 0; j < remote_nodes[i].client_count; j++) {
                         if (remote_nodes[i].clients[j].client_id == cid) {
                             strncpy(remote_nodes[i].clients[j].name, cname, sizeof(cname));
                             found = true;
@@ -827,18 +896,60 @@ static void process_udp_message(void) {
         }
         return;
     }
-    // Handle remote routing command.
-    if (strncmp(buf, "ROUTE", 5)==0) {
-        printf("Received remote routing command: %s\n", buf);
-        // (In a full implementation, you might update a shared global routing table.)
+    // Handle UPDATE messages.
+    if (strncmp(buf, "UPDATE", 6) == 0) {
+        int cid;
+        char *p = buf + 6;
+        while (isspace((unsigned char)*p)) p++;
+        cid = atoi(p);
+        char *space = strchr(p, ' ');
+        if (!space) return;
+        space++;
+        char channel_data[256];
+        strncpy(channel_data, space, sizeof(channel_data)-1);
+        channel_data[sizeof(channel_data)-1] = '\0';
+        char *token;
+        int ch = 0;
+        char channels[CHANNELS_PER_APP][MAX_MSG_LENGTH];
+        token = strtok(channel_data, ";");
+        while (token && ch < CHANNELS_PER_APP) {
+            strncpy(channels[ch], token, MAX_MSG_LENGTH-1);
+            channels[ch][MAX_MSG_LENGTH-1] = '\0';
+            ch++;
+            token = strtok(NULL, ";");
+        }
+        for (int i = 0; i < remote_node_count; i++) {
+            if (strcmp(remote_nodes[i].ip, sender_ip) == 0) {
+                bool found = false;
+                for (int j = 0; j < remote_nodes[i].client_count; j++) {
+                    if (remote_nodes[i].clients[j].client_id == cid) {
+                        for (int k = 0; k < CHANNELS_PER_APP; k++)
+                            strncpy(remote_nodes[i].clients[j].last_out[k], channels[k], MAX_MSG_LENGTH-1);
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found && remote_nodes[i].client_count < MAX_REMOTE_CLIENTS) {
+                    remote_nodes[i].clients[remote_nodes[i].client_count].client_id = cid;
+                    strncpy(remote_nodes[i].clients[remote_nodes[i].client_count].name, "RemoteClient", sizeof(remote_nodes[i].clients[remote_nodes[i].client_count].name)-1);
+                    for (int k = 0; k < CHANNELS_PER_APP; k++)
+                        strncpy(remote_nodes[i].clients[remote_nodes[i].client_count].last_out[k], channels[k], MAX_MSG_LENGTH-1);
+                    remote_nodes[i].client_count++;
+                }
+                break;
+            }
+        }
         return;
     }
-    // Other message types can be added here.
+    // Handle remote routing commands.
+    if (strncmp(buf, "ROUTE", 5) == 0) {
+        printf("Received remote routing command: %s\n", buf);
+        // (Additional remote routing handling can be added here.)
+        return;
+    }
 }
 
 // ----- UDP-based Node Communication -----
-
-// Send a NODE_CONNECT_REQUEST to a remote node via UDP.
 static void connect_to_node(const char *ip) {
     struct sockaddr_in remote_addr;
     memset(&remote_addr, 0, sizeof(remote_addr));
@@ -855,12 +966,10 @@ static void connect_to_node(const char *ip) {
         printf("Sent NODE_CONNECT_REQUEST to %s\n", ip);
 }
 
-// Helper: check if id_str contains a colon.
 static bool is_remote_id(const char *id_str) {
     return (strchr(id_str, ':') != NULL);
 }
 
-// Forward a routing command to a remote node via UDP.
 static void forward_route_to_remote(const char *outCID_str, int outCH, const char *inCID_str, int inCH) {
     char remote_ip[INET_ADDRSTRLEN] = "";
     if (is_remote_id(outCID_str))
@@ -871,11 +980,12 @@ static void forward_route_to_remote(const char *outCID_str, int outCH, const cha
         printf("Routing command: no remote endpoint detected.\n");
         return;
     }
-    for (int i=0; i<remote_node_count; i++) {
-        if (strcmp(remote_nodes[i].ip, remote_ip)==0) {
+    for (int i = 0; i < remote_node_count; i++) {
+        if (strcmp(remote_nodes[i].ip, remote_ip) == 0) {
             char msg[256];
             snprintf(msg, sizeof(msg), "ROUTE %s %d %s %d\n", outCID_str, outCH, inCID_str, inCH);
-            sendto(udp_fd, msg, strlen(msg), 0, (struct sockaddr *)&remote_nodes[i].addr, sizeof(remote_nodes[i].addr));
+            sendto(udp_fd, msg, strlen(msg), 0,
+                   (struct sockaddr *)&remote_nodes[i].addr, sizeof(remote_nodes[i].addr));
             printf("Forwarded route command to node %s: %s", remote_ip, msg);
             return;
         }

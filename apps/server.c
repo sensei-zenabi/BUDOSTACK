@@ -836,7 +836,7 @@ static void monitor_mode(int fps) {
         for (int i = 0; i < remote_node_count; i++) {
             printf("Node %s:\n", remote_nodes[i].ip);
             for (int j = 0; j < remote_nodes[i].client_count; j++) {
-                printf(" %s:%d | ", remote_nodes[i].ip, remote_nodes[i].clients[j].client_id);
+                // printf(" %s:%d | ", remote_nodes[i].ip, remote_nodes[i].clients[j].client_id);
                 for (int ch = 0; ch < CHANNELS_PER_APP; ch++)
                     printf("[%d]: %-*.*s ", ch, col_width, col_width, remote_nodes[i].clients[j].last_out[ch]);
                 printf("\n");

@@ -50,7 +50,8 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <sys/time.h>
-#include <sys/ioctl.h>  // Added for terminal width determination in monitor mode
+#include <sys/ioctl.h>  // For terminal width determination
+#include <netdb.h>      // For getaddrinfo() in is_local_ip()
 
 #define SERVER_PORT 12345
 #define BROADCAST_PORT 12346   // UDP port for node-to-node messages and discovery
@@ -134,6 +135,30 @@ static void connect_to_node(const char *ip);
 static bool is_remote_id(const char *id_str);
 static void forward_route_to_remote(const char *outCID_str, int outCH, const char *inCID_str, int inCH);
 static void send_update_messages(void);
+
+// Helper function to determine if an IP address is local.
+static bool is_local_ip(const char *ip_str) {
+    char hostname[256];
+    if(gethostname(hostname, sizeof(hostname)) != 0)
+        return false;
+    struct addrinfo hints, *res, *p;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    if(getaddrinfo(hostname, NULL, &hints, &res) != 0)
+        return false;
+    bool found = false;
+    for(p = res; p != NULL; p = p->ai_next) {
+        char local_ip[INET_ADDRSTRLEN];
+        struct sockaddr_in *addr = (struct sockaddr_in *) p->ai_addr;
+        inet_ntop(AF_INET, &(addr->sin_addr), local_ip, sizeof(local_ip));
+        if(strcmp(local_ip, ip_str) == 0) {
+            found = true;
+            break;
+        }
+    }
+    freeaddrinfo(res);
+    return found;
+}
 
 int main(int argc, char *argv[]) {
     unsigned short port = SERVER_PORT;
@@ -851,8 +876,11 @@ static void process_udp_message(void) {
         sendto(udp_fd, response, strlen(response), 0, (struct sockaddr *)&sender_addr, addrlen);
         return;
     }
-    // FIX: Handle discovery responses.
+    // Handle discovery responses.
     if (strcmp(buf, "DISCOVER_RESPONSE\n") == 0) {
+        // Check if the response is from the local machine.
+        if (is_local_ip(sender_ip))
+            return;
         bool exists = false;
         for (int i = 0; i < remote_node_count; i++) {
             if (strcmp(remote_nodes[i].ip, sender_ip) == 0) {

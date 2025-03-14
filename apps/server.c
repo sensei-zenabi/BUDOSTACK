@@ -139,6 +139,21 @@ static bool is_remote_id(const char *id_str);
 static void forward_route_to_remote(const char *outCID_str, int outCH, const char *inCID_str, int inCH);
 static void send_update_messages(void);
 
+// New: Helper function to send a broadcast automatically at startup.
+static void send_broadcast(void) {
+    struct sockaddr_in dest_addr;
+    memset(&dest_addr, 0, sizeof(dest_addr));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(BROADCAST_PORT);
+    dest_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
+    char request[] = "DISCOVER_REQUEST\n";
+    if (sendto(udp_fd, request, strlen(request), 0,
+               (struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0)
+        perror("sendto DISCOVER_REQUEST");
+    else
+        printf("Auto broadcast sent. Waiting for responses...\n");
+}
+
 // Helper function to report command success.
 static void report_success(const char *command) {
     printf("Command '%s' executed successfully.\n", command);
@@ -217,6 +232,9 @@ int main(int argc, char *argv[]) {
     }
 
     process_routing_file();
+
+    // Automatically send a broadcast on startup.
+    send_broadcast();
 
     // Initialize last_transmit time.
     gettimeofday(&last_transmit, NULL);

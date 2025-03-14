@@ -50,6 +50,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <sys/time.h>
+#include <sys/ioctl.h>  // Added for terminal width determination in monitor mode
 
 #define SERVER_PORT 12345
 #define BROADCAST_PORT 12346   // UDP port for node-to-node messages and discovery
@@ -677,6 +678,7 @@ static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) 
 /*
  * monitor_mode()
  * Displays both local and remote client data.
+ * FIX: Terminal width is obtained once at mode start and used for fixed field widths.
  */
 static void monitor_mode(int fps) {
     struct termios orig_termios, new_termios;
@@ -684,6 +686,19 @@ static void monitor_mode(int fps) {
     new_termios = orig_termios;
     new_termios.c_lflag &= ~(ICANON | ECHO);
     if (tcsetattr(STDIN_FILENO, TCSANOW, &new_termios) == -1) { perror("tcsetattr"); return; }
+
+    // Get terminal width once at the start of monitor mode.
+    struct winsize ws;
+    int term_width = 80;  // default width
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+        term_width = ws.ws_col;
+    }
+    // Compute a fixed column width for channel data.
+    int col_width = (term_width - 20) / CHANNELS_PER_APP;
+    if (col_width < 10) {
+        col_width = 10;
+    }
+
     struct timeval start_time;
     gettimeofday(&start_time, NULL);
     bool recording = false;
@@ -797,7 +812,7 @@ static void monitor_mode(int fps) {
             if (clients[i].active) {
                 printf("client%d | ", clients[i].client_id);
                 for (int ch = 0; ch < CHANNELS_PER_APP; ch++)
-                    printf("[%d]: %-10.10s ", ch, client_data[i].last_out[ch]);
+                    printf("[%d]: %-*.*s ", ch, col_width, col_width, client_data[i].last_out[ch]);
                 printf("\n");
             }
         }
@@ -807,7 +822,7 @@ static void monitor_mode(int fps) {
             for (int j = 0; j < remote_nodes[i].client_count; j++) {
                 printf(" %s:%d | ", remote_nodes[i].ip, remote_nodes[i].clients[j].client_id);
                 for (int ch = 0; ch < CHANNELS_PER_APP; ch++)
-                    printf("[%d]: %-10.10s ", ch, remote_nodes[i].clients[j].last_out[ch]);
+                    printf("[%d]: %-*.*s ", ch, col_width, col_width, remote_nodes[i].clients[j].last_out[ch]);
                 printf("\n");
             }
         }
@@ -834,6 +849,26 @@ static void process_udp_message(void) {
     if (strcmp(buf, "DISCOVER_REQUEST\n") == 0) {
         char response[] = "DISCOVER_RESPONSE\n";
         sendto(udp_fd, response, strlen(response), 0, (struct sockaddr *)&sender_addr, addrlen);
+        return;
+    }
+    // FIX: Handle discovery responses.
+    if (strcmp(buf, "DISCOVER_RESPONSE\n") == 0) {
+        bool exists = false;
+        for (int i = 0; i < remote_node_count; i++) {
+            if (strcmp(remote_nodes[i].ip, sender_ip) == 0) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists && remote_node_count < MAX_REMOTE_NODES) {
+            RemoteNode *rn = &remote_nodes[remote_node_count];
+            rn->addr = sender_addr;
+            strncpy(rn->ip, sender_ip, sizeof(rn->ip)-1);
+            rn->client_count = 0;
+            rn->connected = true;
+            remote_node_count++;
+            printf("Discovered remote node %s via DISCOVER_RESPONSE.\n", sender_ip);
+        }
         return;
     }
     // Node connection messages.

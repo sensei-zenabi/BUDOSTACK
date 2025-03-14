@@ -7,23 +7,18 @@
  - Accepts multiple local clients (up to MAX_CLIENTS), each with 5 outputs (out0..out4) and 5 inputs (in0..in4).
  - Maintains a routing table so that outX of one client can be connected to inY of another.
  - Provides a simple text-based console UI with the following commands:
-    * help       - show available commands
-    * list       - list local clients and connected remote nodes (with their reported clients)
-    * routes     - list local routing table
+    * help                        - show available commands
+    * list                        - list local clients and connected nodes
+    * routes                      - list local routing table
     * route <outCID> <outCH|all> <inCID> <inCH|all>
-                 - establish a route (for remote endpoints, use the format "IP:clientID")
-    * print <clientID>
-                 - display channel data for a client (for remote, use "IP:clientID")
-    * monitor [FPS]
-                 - start monitor mode showing real-time outputs from both local and remote clients
-    * broadcast  - send a UDP discovery message (remote nodes reply)
-    * connect <IP>
-                 - send a UDP node connection request to a remote node
-    * disconnect <IP>
-                 - disconnect (remove) the remote node with the given IP address
-    * transmit <ms>
-                 - set the transmit rate (in milliseconds) at which this node sends update messages
-    * exit       - shut down the current tmux session (all windows)
+                                  - establish a route (for remote endpoints, use the format "IP:clientID")
+    * print <clientID>            - display channel data for a client (for remote, use "IP:clientID")
+    * monitor [FPS]               - start monitor mode showing real-time outputs
+    * broadcast                   - send a UDP discovery message (remote nodes reply)
+    * connect <IP>                - send a UDP node connection request to a remote node
+    * disconnect <IP>             - disconnect (remove) the remote node with the given IP
+    * transmit <ms>               - set the transmit rate (in ms) at which update messages are sent
+    * exit                        - shut down the current tmux session (all windows)
 
  - At startup, the server reads "route.rt" (if present) for preconfigured routes.
  - All inter-node communication (connection, client updates, routing) is done over UDP.
@@ -59,7 +54,7 @@ Design Principles:
 #include <sys/time.h>
 #include <sys/ioctl.h>  // For terminal width determination
 #include <netdb.h>      // For getaddrinfo() in older is_local_ip() version
-#include <ifaddrs.h>    // New: for enumerating all local interfaces
+#include <ifaddrs.h>    // For enumerating all local interfaces
 
 #define SERVER_PORT 12345
 #define BROADCAST_PORT 12346   // UDP port for node-to-node messages and discovery
@@ -152,10 +147,9 @@ static void report_success(const char *command) {
 /*
  * Enhanced is_local_ip() function.
  * Uses getifaddrs() to enumerate all local IPv4 addresses.
- * This approach ensures that every interface's IP is compared to ip_str.
  * Design Principle:
  * - Use only plain C and standard cross-platform libraries.
- * - Do not remove any existing functionality; extend filtering for robustness.
+ * - Extend filtering for robustness without removing existing functionality.
  */
 static bool is_local_ip(const char *ip_str) {
     struct ifaddrs *ifaddr, *ifa;
@@ -803,7 +797,7 @@ static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) 
 /*
  * monitor_mode()
  * Displays both local and remote client data.
- * FIX: 
+ * Design fixes:
  *  - Use the correct remote client ID when printing remote data.
  *  - Ensure remote channel strings are trimmed of extraneous newline/carriage returns.
  */
@@ -938,7 +932,6 @@ static void monitor_mode(int fps) {
         for (int i = 0; i < remote_node_count; i++) {
             printf("Node %s:\n", remote_nodes[i].ip);
             for (int j = 0; j < remote_nodes[i].client_count; j++) {
-                // FIX: Use the remote client's own client_id for printing.
                 printf("client%d | ", remote_nodes[i].clients[j].client_id);
                 for (int ch = 0; ch < CHANNELS_PER_APP; ch++)
                     printf("[%d]: %-*.*s ", ch, col_width, col_width, remote_nodes[i].clients[j].last_out[ch]);
@@ -968,6 +961,17 @@ static void process_udp_message(void) {
     if (strcmp(buf, "DISCOVER_REQUEST\n") == 0) {
         char response[] = "DISCOVER_RESPONSE\n";
         sendto(udp_fd, response, strlen(response), 0, (struct sockaddr *)&sender_addr, addrlen);
+        // Automatically initiate a connection back if sender is not local and not already connected.
+        bool already_connected = false;
+        for (int i = 0; i < remote_node_count; i++) {
+            if (strcmp(remote_nodes[i].ip, sender_ip) == 0) {
+                already_connected = true;
+                break;
+            }
+        }
+        if (!already_connected && !is_local_ip(sender_ip)) {
+            connect_to_node(sender_ip);
+        }
         return;
     }
     // Handle discovery responses.
@@ -1073,7 +1077,7 @@ static void process_udp_message(void) {
         while (token && ch < CHANNELS_PER_APP) {
             strncpy(channels[ch], token, MAX_MSG_LENGTH-1);
             channels[ch][MAX_MSG_LENGTH-1] = '\0';
-            trim_newline(channels[ch]);  // FIX: Trim newline characters from the token.
+            trim_newline(channels[ch]);  // Trim newline characters from the token.
             ch++;
             token = strtok(NULL, ";");
         }
@@ -1085,7 +1089,7 @@ static void process_udp_message(void) {
                         for (int k = 0; k < CHANNELS_PER_APP; k++) {
                             strncpy(remote_nodes[i].clients[j].last_out[k], channels[k], MAX_MSG_LENGTH-1);
                             remote_nodes[i].clients[j].last_out[k][MAX_MSG_LENGTH-1] = '\0';
-                            trim_newline(remote_nodes[i].clients[j].last_out[k]); // Ensure no extraneous newline.
+                            trim_newline(remote_nodes[i].clients[j].last_out[k]);
                         }
                         found = true;
                         break;

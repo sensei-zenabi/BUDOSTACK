@@ -31,6 +31,11 @@
 
  Run:
    ./server [port]
+
+Design Principles:
+- Plain C is used with only standard cross-platform libraries.
+- The code is kept in a single source file (no header files).
+- Comments are added to clarify design choices and modifications.
 */
 
 #define _POSIX_C_SOURCE 200809L
@@ -703,7 +708,9 @@ static void route_command_from_file(int outCID, int outCH, int inCID, int inCH) 
 /*
  * monitor_mode()
  * Displays both local and remote client data.
- * FIX: Terminal width is obtained once at mode start and used for fixed field widths.
+ * FIX: 
+ *  - Use the correct remote client ID when printing remote data.
+ *  - Ensure remote channel strings are trimmed of extraneous newline/carriage returns.
  */
 static void monitor_mode(int fps) {
     struct termios orig_termios, new_termios;
@@ -836,7 +843,8 @@ static void monitor_mode(int fps) {
         for (int i = 0; i < remote_node_count; i++) {
             printf("Node %s:\n", remote_nodes[i].ip);
             for (int j = 0; j < remote_nodes[i].client_count; j++) {
-                printf("client%d | ", clients[i].client_id);
+                // FIX: Use the remote client's own client_id for printing.
+                printf("client%d | ", remote_nodes[i].clients[j].client_id);
                 for (int ch = 0; ch < CHANNELS_PER_APP; ch++)
                     printf("[%d]: %-*.*s ", ch, col_width, col_width, remote_nodes[i].clients[j].last_out[ch]);
                 printf("\n");
@@ -969,6 +977,7 @@ static void process_udp_message(void) {
         while (token && ch < CHANNELS_PER_APP) {
             strncpy(channels[ch], token, MAX_MSG_LENGTH-1);
             channels[ch][MAX_MSG_LENGTH-1] = '\0';
+            trim_newline(channels[ch]);  // FIX: Trim newline characters from the token.
             ch++;
             token = strtok(NULL, ";");
         }
@@ -977,8 +986,11 @@ static void process_udp_message(void) {
                 bool found = false;
                 for (int j = 0; j < remote_nodes[i].client_count; j++) {
                     if (remote_nodes[i].clients[j].client_id == cid) {
-                        for (int k = 0; k < CHANNELS_PER_APP; k++)
+                        for (int k = 0; k < CHANNELS_PER_APP; k++) {
                             strncpy(remote_nodes[i].clients[j].last_out[k], channels[k], MAX_MSG_LENGTH-1);
+                            remote_nodes[i].clients[j].last_out[k][MAX_MSG_LENGTH-1] = '\0';
+                            trim_newline(remote_nodes[i].clients[j].last_out[k]); // Ensure no extraneous newline.
+                        }
                         found = true;
                         break;
                     }
@@ -986,8 +998,11 @@ static void process_udp_message(void) {
                 if (!found && remote_nodes[i].client_count < MAX_REMOTE_CLIENTS) {
                     remote_nodes[i].clients[remote_nodes[i].client_count].client_id = cid;
                     strncpy(remote_nodes[i].clients[remote_nodes[i].client_count].name, "RemoteClient", sizeof(remote_nodes[i].clients[remote_nodes[i].client_count].name)-1);
-                    for (int k = 0; k < CHANNELS_PER_APP; k++)
+                    for (int k = 0; k < CHANNELS_PER_APP; k++) {
                         strncpy(remote_nodes[i].clients[remote_nodes[i].client_count].last_out[k], channels[k], MAX_MSG_LENGTH-1);
+                        remote_nodes[i].clients[remote_nodes[i].client_count].last_out[k][MAX_MSG_LENGTH-1] = '\0';
+                        trim_newline(remote_nodes[i].clients[remote_nodes[i].client_count].last_out[k]);
+                    }
                     remote_nodes[i].client_count++;
                 }
                 break;

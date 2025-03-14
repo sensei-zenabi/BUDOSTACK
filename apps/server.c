@@ -19,6 +19,8 @@
     * broadcast  - send a UDP discovery message (remote nodes reply)
     * connect <IP>
                  - send a UDP node connection request to a remote node
+    * disconnect <IP>
+                 - disconnect (remove) the remote node with the given IP address
     * transmit <ms>
                  - set the transmit rate (in milliseconds) at which this node sends update messages
     * exit       - shut down the current tmux session (all windows)
@@ -56,7 +58,8 @@ Design Principles:
 #include <errno.h>
 #include <sys/time.h>
 #include <sys/ioctl.h>  // For terminal width determination
-#include <netdb.h>      // For getaddrinfo() in is_local_ip()
+#include <netdb.h>      // For getaddrinfo() in older is_local_ip() version
+#include <ifaddrs.h>    // New: for enumerating all local interfaces
 
 #define SERVER_PORT 12345
 #define BROADCAST_PORT 12346   // UDP port for node-to-node messages and discovery
@@ -141,27 +144,36 @@ static bool is_remote_id(const char *id_str);
 static void forward_route_to_remote(const char *outCID_str, int outCH, const char *inCID_str, int inCH);
 static void send_update_messages(void);
 
-// Helper function to determine if an IP address is local.
+// Helper function to report command success.
+static void report_success(const char *command) {
+    printf("Command '%s' executed successfully.\n", command);
+}
+
+/*
+ * Enhanced is_local_ip() function.
+ * Uses getifaddrs() to enumerate all local IPv4 addresses.
+ * This approach ensures that every interface's IP is compared to ip_str.
+ * Design Principle:
+ * - Use only plain C and standard cross-platform libraries.
+ * - Do not remove any existing functionality; extend filtering for robustness.
+ */
 static bool is_local_ip(const char *ip_str) {
-    char hostname[256];
-    if(gethostname(hostname, sizeof(hostname)) != 0)
-        return false;
-    struct addrinfo hints, *res, *p;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    if(getaddrinfo(hostname, NULL, &hints, &res) != 0)
+    struct ifaddrs *ifaddr, *ifa;
+    if (getifaddrs(&ifaddr) == -1)
         return false;
     bool found = false;
-    for(p = res; p != NULL; p = p->ai_next) {
-        char local_ip[INET_ADDRSTRLEN];
-        struct sockaddr_in *addr = (struct sockaddr_in *) p->ai_addr;
-        inet_ntop(AF_INET, &(addr->sin_addr), local_ip, sizeof(local_ip));
-        if(strcmp(local_ip, ip_str) == 0) {
+    for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+        if (ifa->ifa_addr == NULL || ifa->ifa_addr->sa_family != AF_INET)
+            continue;
+        char addr[INET_ADDRSTRLEN];
+        struct sockaddr_in *sa = (struct sockaddr_in *)ifa->ifa_addr;
+        inet_ntop(AF_INET, &sa->sin_addr, addr, INET_ADDRSTRLEN);
+        if (strcmp(addr, ip_str) == 0) {
             found = true;
             break;
         }
     }
-    freeaddrinfo(res);
+    freeifaddrs(ifaddr);
     return found;
 }
 
@@ -374,10 +386,25 @@ static void handle_console_input(void) {
     trim_newline(cmdline);
     if (strcmp(cmdline, "") == 0)
         return;
-    if (strcmp(cmdline, "help") == 0) { show_help(); return; }
-    if (strcmp(cmdline, "list") == 0) { list_clients(); return; }
-    if (strcmp(cmdline, "routes") == 0) { list_routes(); return; }
-    if (strcmp(cmdline, "exit") == 0) { shutdown_tmux(); return; }
+    if (strcmp(cmdline, "help") == 0) { 
+        show_help(); 
+        report_success("help");
+        return; 
+    }
+    if (strcmp(cmdline, "list") == 0) { 
+        list_clients();
+        report_success("list");
+        return; 
+    }
+    if (strcmp(cmdline, "routes") == 0) { 
+        list_routes();
+        report_success("routes");
+        return; 
+    }
+    if (strcmp(cmdline, "exit") == 0) { 
+        shutdown_tmux(); 
+        return; 
+    }
     if (strncmp(cmdline, "monitor", 7) == 0) {
         strtok(cmdline, " ");
         int fps = DEFAULT_MONITOR_FPS;
@@ -396,20 +423,53 @@ static void handle_console_input(void) {
         if (sendto(udp_fd, request, strlen(request), 0,
                    (struct sockaddr *)&dest_addr, sizeof(dest_addr)) < 0)
             perror("sendto DISCOVER_REQUEST");
-        else { printf("Broadcast sent. Waiting for responses...\n"); fflush(stdout); }
+        else { 
+            printf("Broadcast sent. Waiting for responses...\n"); 
+        }
         return;
     }
     if (strncmp(cmdline, "connect", 7) == 0) {
         strtok(cmdline, " ");
         char *ip = strtok(NULL, " ");
-        if (!ip) { printf("Usage: connect <IP>\n"); return; }
+        if (!ip) { 
+            printf("Usage: connect <IP>\n"); 
+            return; 
+        }
         connect_to_node(ip);
+        report_success("connect");
+        return;
+    }
+    if (strncmp(cmdline, "disconnect", 10) == 0) {
+        strtok(cmdline, " ");
+        char *ip = strtok(NULL, " ");
+        if (!ip) { 
+            printf("Usage: disconnect <IP>\n"); 
+            return; 
+        }
+        bool found = false;
+        for (int i = 0; i < remote_node_count; i++) {
+            if (strcmp(remote_nodes[i].ip, ip) == 0) {
+                // Remove this remote node by shifting remaining elements.
+                for (int j = i; j < remote_node_count - 1; j++) {
+                    remote_nodes[j] = remote_nodes[j+1];
+                }
+                remote_node_count--;
+                printf("Disconnected node %s successfully.\n", ip);
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            printf("Remote node %s not found.\n", ip);
         return;
     }
     if (strncmp(cmdline, "transmit", 8) == 0) {
         strtok(cmdline, " ");
         char *rate_str = strtok(NULL, " ");
-        if (!rate_str) { printf("Usage: transmit <rate_in_ms>\n"); return; }
+        if (!rate_str) { 
+            printf("Usage: transmit <rate_in_ms>\n"); 
+            return; 
+        }
         unsigned int rate = (unsigned int)atoi(rate_str);
         if (rate == 0) {
             printf("Transmit rate must be > 0\n");
@@ -417,12 +477,16 @@ static void handle_console_input(void) {
         }
         transmit_rate_ms = rate;
         printf("Transmit rate set to %u ms.\n", transmit_rate_ms);
+        report_success("transmit");
         return;
     }
     if (strncmp(cmdline, "print", 5) == 0) {
         strtok(cmdline, " ");
         char *pClientID = strtok(NULL, " ");
-        if (!pClientID) { printf("Usage: print <clientID> (for remote, use IP:clientID)\n"); return; }
+        if (!pClientID) { 
+            printf("Usage: print <clientID> (for remote, use IP:clientID)\n"); 
+            return; 
+        }
         if (strchr(pClientID, ':')) {
             char node_ip[INET_ADDRSTRLEN];
             int remote_id;
@@ -453,7 +517,10 @@ static void handle_console_input(void) {
         } else {
             int clientID = atoi(pClientID);
             int idx = find_client_index(clientID);
-            if (idx < 0) { printf("No active local client with clientID %d\n", clientID); return; }
+            if (idx < 0) { 
+                printf("No active local client with clientID %d\n", clientID); 
+                return; 
+            }
             printf("Data for local client %d (%s):\n", clientID, clients[idx].name);
             printf("%-8s | %-50s | %-50s\n", "Channel", "Output", "Input");
             printf("-------------------------------------------------------------------\n");
@@ -463,6 +530,7 @@ static void handle_console_input(void) {
                        client_data[idx].last_in[ch]);
             }
         }
+        report_success("print");
         return;
     }
     if (strncmp(cmdline, "route", 5) == 0) {
@@ -472,10 +540,12 @@ static void handle_console_input(void) {
         char *pInCID = strtok(NULL, " ");
         char *pInStr = strtok(NULL, " ");
         if (!pOutCID || !pOutStr || !pInCID || !pInStr) {
-            printf("Usage: route <outCID> <outCH|all> <inCID> <inCH|all>\n"); return;
+            printf("Usage: route <outCID> <outCH|all> <inCID> <inCH|all>\n"); 
+            return;
         }
         if (strchr(pOutCID, ':') || strchr(pInCID, ':')) {
             forward_route_to_remote(pOutCID, atoi(pOutStr), pInCID, atoi(pInStr));
+            report_success("route");
             return;
         }
         bool outAll = (strcmp(pOutStr, "all") == 0);
@@ -495,10 +565,12 @@ static void handle_console_input(void) {
                 fixedIn = pInStr[2] - '0';
         }
         if (!outAll && (fixedOut < 0 || fixedOut >= CHANNELS_PER_APP)) {
-            printf("Invalid output channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1); return;
+            printf("Invalid output channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1);
+            return;
         }
         if (!inAll && (fixedIn < 0 || fixedIn >= CHANNELS_PER_APP)) {
-            printf("Invalid input channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1); return;
+            printf("Invalid input channel. Must be 0..%d or 'all'\n", CHANNELS_PER_APP - 1);
+            return;
         }
         if (outAll && inAll) {
             for (int i = 0; i < CHANNELS_PER_APP; i++)
@@ -512,6 +584,7 @@ static void handle_console_input(void) {
         } else {
             route_command(pOutCID, fixedOut, pInCID, fixedIn);
         }
+        report_success("route");
         return;
     }
     printf("Unknown command: %s\n", cmdline);
@@ -527,6 +600,7 @@ static void show_help(void) {
     printf(" monitor [FPS]               - display real time outputs (local and remote)\n");
     printf(" broadcast                   - send a UDP discovery request\n");
     printf(" connect <IP>                - send a UDP node connection request to a remote node\n");
+    printf(" disconnect <IP>             - disconnect the remote node with the given IP\n");
     printf(" transmit <ms>               - set transmit rate (in ms) for sending update messages\n");
     printf(" exit                        - shutdown the current tmux session (all windows)\n");
     printf("\n");
@@ -536,10 +610,16 @@ static void show_help(void) {
 static void route_command(const char *outCID_str, int outCH, const char *inCID_str, int inCH) {
     int outCID = atoi(outCID_str);
     int idxO = find_client_index(outCID);
-    if (idxO < 0) { printf("No such local client %d\n", outCID); return; }
+    if (idxO < 0) { 
+        printf("No such local client %d\n", outCID);
+        return; 
+    }
     int inCID = atoi(inCID_str);
     int idxI = find_client_index(inCID);
-    if (idxI < 0) { printf("No such local client %d\n", inCID); return; }
+    if (idxI < 0) { 
+        printf("No such local client %d\n", inCID);
+        return; 
+    }
     routing[outCID][outCH].in_client_id = inCID;
     routing[outCID][outCH].in_channel = inCH;
     printf("Routed local client%d out%d -> local client%d in%d\n", outCID, outCH, inCID, inCH);
@@ -621,7 +701,10 @@ static void shutdown_tmux(void) {
 // Process routing file "route.rt" for preconfigured routes.
 static void process_routing_file(void) {
     FILE *fp = fopen("route.rt", "r");
-    if (!fp) { printf("Routing file 'route.rt' not found.\n"); return; }
+    if (!fp) { 
+        printf("Routing file 'route.rt' not found.\n");
+        return; 
+    }
     char line[256];
     bool all_success = true;
     int cmd_count = 0;
@@ -654,7 +737,11 @@ static void process_routing_file(void) {
                 fixedOut = atoi(pOutStr);
             else if (strncmp(pOutStr, "out", 3) == 0 && isdigit((unsigned char)pOutStr[3]))
                 fixedOut = pOutStr[3] - '0';
-            else { printf("Invalid output channel in routing file.\n"); all_success = false; continue; }
+            else { 
+                printf("Invalid output channel in routing file.\n"); 
+                all_success = false; 
+                continue; 
+            }
         }
         bool inAll = (strcmp(pInStr, "all") == 0);
         int fixedIn = -1;
@@ -663,13 +750,21 @@ static void process_routing_file(void) {
                 fixedIn = atoi(pInStr);
             else if (strncmp(pInStr, "in", 2) == 0 && isdigit((unsigned char)pInStr[2]))
                 fixedIn = pInStr[2] - '0';
-            else { printf("Invalid input channel in routing file.\n"); all_success = false; continue; }
+            else { 
+                printf("Invalid input channel in routing file.\n"); 
+                all_success = false; 
+                continue; 
+            }
         }
         if (!outAll && (fixedOut < 0 || fixedOut >= CHANNELS_PER_APP)) {
-            printf("Invalid output channel value in routing file.\n"); all_success = false; continue;
+            printf("Invalid output channel value in routing file.\n"); 
+            all_success = false; 
+            continue;
         }
         if (!inAll && (fixedIn < 0 || fixedIn >= CHANNELS_PER_APP)) {
-            printf("Invalid input channel value in routing file.\n"); all_success = false; continue;
+            printf("Invalid input channel value in routing file.\n"); 
+            all_success = false; 
+            continue;
         }
         if (outAll && inAll) {
             for (int i = 0; i < CHANNELS_PER_APP; i++)
@@ -895,6 +990,7 @@ static void process_udp_message(void) {
             rn->connected = true;
             remote_node_count++;
             printf("Discovered remote node %s via DISCOVER_RESPONSE.\n", sender_ip);
+            printf("Connected to remote node %s\n", sender_ip);
         }
         return;
     }

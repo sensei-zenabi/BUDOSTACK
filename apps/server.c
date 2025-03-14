@@ -63,10 +63,10 @@
 #define MAX_REMOTE_NODES 10
 #define MAX_REMOTE_CLIENTS 20
 
-#define DEFAULT_MONITOR_FPS 2
+#define DEFAULT_MONITOR_FPS 1
 
-// Global transmit rate in milliseconds (default 1000 ms)
-static unsigned int transmit_rate_ms = 1000;
+// Global transmit rate in milliseconds (default 250 ms)
+static unsigned int transmit_rate_ms = 250;
 
 // Structures for local clients.
 typedef struct {
@@ -451,7 +451,7 @@ static void handle_console_input(void) {
             if (idx < 0) { printf("No active local client with clientID %d\n", clientID); return; }
             printf("Data for local client %d (%s):\n", clientID, clients[idx].name);
             printf("%-8s | %-50s | %-50s\n", "Channel", "Output", "Input");
-            printf("-------------------------------------------------------------\n");
+            printf("-------------------------------------------------------------------\n");
             for (int ch = 0; ch < CHANNELS_PER_APP; ch++) {
                 printf("%-8d | %-50.50s | %-50.50s\n", ch,
                        client_data[idx].last_out[ch],
@@ -712,17 +712,8 @@ static void monitor_mode(int fps) {
     new_termios.c_lflag &= ~(ICANON | ECHO);
     if (tcsetattr(STDIN_FILENO, TCSANOW, &new_termios) == -1) { perror("tcsetattr"); return; }
 
-    // Get terminal width once at the start of monitor mode.
-    struct winsize ws;
-    int term_width = 80;  // default width
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
-        term_width = ws.ws_col;
-    }
     // Compute a fixed column width for channel data.
-    int col_width = (term_width - 20) / CHANNELS_PER_APP;
-    if (col_width < 10) {
-        col_width = 10;
-    }
+    int col_width = 8;
 
     struct timeval start_time;
     gettimeofday(&start_time, NULL);
@@ -831,7 +822,7 @@ static void monitor_mode(int fps) {
             printf("Recording: ON (file: %s)\n", log_filename);
         else
             printf("Recording: OFF\n");
-        printf("-------------------------------------------------------------\n");
+        printf("---------------------------------------------------------------------\n");
         printf("Local Clients:\n");
         for (int i = 0; i < MAX_CLIENTS; i++) {
             if (clients[i].active) {

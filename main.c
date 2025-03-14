@@ -50,7 +50,7 @@ int paging_enabled = 1;
 const char *realtime_commands[] = {
     "help", 
     "runtask",
-    "discover", 
+    "assist", 
     NULL
 };
 

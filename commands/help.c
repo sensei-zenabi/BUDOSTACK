@@ -9,7 +9,7 @@ int main() {
     printf("Available Commands:\n");
     printf("\n");
     printf("  help     : Display this help message.\n");
-    printf("  discover : Interactive discovery tool for network and hw peripherals.\n");
+    printf("  assist   : Interactive assistant that provides various utilities.\n");
 	printf("  display  : Display the contents of a file.\n");
     printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");
     printf("  copy     : Copy a file from source to destination.\n");

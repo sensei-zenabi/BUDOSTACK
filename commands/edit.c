@@ -36,15 +36,17 @@ enum EditorKey {
     ARROW_DOWN
 };
 
-/* Data structure for a line */
+/* Data structure for a line in the editor.
+   Added 'modified' field: 0 = unchanged, 1 = modified. */
 typedef struct {
     int size;       // length in bytes
     char *chars;    // UTF-8 encoded text
+    int modified;   // flag indicating if this row has been changed
 } EditorLine;
 
 /* Global editor state */
 struct EditorConfig {
-    int cx, cy;       // cursor (logical columns/rows)
+    int cx, cy;       // cursor position (logical columns/rows)
     int screenrows;   // total terminal rows
     int screencols;   // total terminal columns
     int rowoff;       // vertical scroll offset (first row displayed)
@@ -241,6 +243,8 @@ void pop_undo_state(void) {
             die("malloc restore row char");
         memcpy(E.row[i].chars, state->row[i].chars, E.row[i].size);
         E.row[i].chars[E.row[i].size] = '\0';
+        /* Also restore modified flag as unchanged */
+        E.row[i].modified = 0;
     }
     E.cx = state->cx;
     E.cy = state->cy;
@@ -321,9 +325,10 @@ int getWindowSize(int *rows, int *cols) {
 
 /* --- Drawing Routines --- */
 
-// Draw rows with row numbers in the margin.
+/* editorDrawRows: Draw text rows with row numbers and a change indicator.
+   The indicator is drawn as a red block (using red background) in the last column if the row is modified. */
 void editorDrawRows(int rn_width) {
-    int text_width = E.screencols - rn_width;
+    int text_width = E.screencols - rn_width - 1; // reserve 1 column for indicator
     char numbuf[16];
     for (int y = 0; y < E.textrows; y++) {
         int file_row = E.rowoff + y;
@@ -331,7 +336,21 @@ void editorDrawRows(int rn_width) {
             int rn = file_row + 1;
             int num_len = snprintf(numbuf, sizeof(numbuf), "%*d ", rn_width - 1, rn);
             write(STDOUT_FILENO, numbuf, num_len);
+            // Render row text
             editorRenderRow(&E.row[file_row], text_width);
+            // Calculate printed width
+            int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;
+            if (printed_width < 0) printed_width = 0;
+            if (printed_width > text_width) printed_width = text_width;
+            // Pad remaining spaces
+            for (int i = printed_width; i < text_width; i++) {
+                write(STDOUT_FILENO, " ", 1);
+            }
+            // Draw change indicator in last column:
+            if (E.row[file_row].modified)
+                write(STDOUT_FILENO, "\x1b[41m \x1b[0m", 10);  // red background block
+            else
+                write(STDOUT_FILENO, " ", 1);
         } else {
             for (int i = 0; i < rn_width; i++)
                 write(STDOUT_FILENO, " ", 1);
@@ -343,7 +362,7 @@ void editorDrawRows(int rn_width) {
     }
 }
 
-// Draw status bar.
+/* editorDrawStatusBar: Draw status bar with file info */
 void editorDrawStatusBar() {
     char status[STATUS_MSG_SIZE];
     char rstatus[32];
@@ -364,14 +383,14 @@ void editorDrawStatusBar() {
     write(STDOUT_FILENO, rstatus, rlen);
 }
 
-// Draw command bar.
+/* editorDrawCommandBar: Draw command prompt */
 void editorDrawCommandBar() {
     char buf[CMD_BUF_SIZE + 10];
     snprintf(buf, sizeof(buf), ":%s", E.command_buffer);
     write(STDOUT_FILENO, buf, strlen(buf));
 }
 
-// Refresh screen: clear screen, draw text area, status bar, command bar, and position cursor.
+/* editorRefreshScreen: Clear screen, draw text area, status bar, command bar, and position cursor */
 void editorRefreshScreen() {
     int rn_width = getRowNumWidth();
     if (E.in_command_mode)
@@ -571,8 +590,8 @@ void editorProcessKeypress() {
     int rn_width = getRowNumWidth();
     if (E.cx < E.coloff)
         E.coloff = E.cx;
-    if (E.cx >= E.coloff + (E.screencols - rn_width))
-        E.coloff = E.cx - (E.screencols - rn_width) + 1;
+    if (E.cx >= E.coloff + (E.screencols - rn_width - 1))
+        E.coloff = E.cx - (E.screencols - rn_width - 1) + 1;
     if (E.cy < E.rowoff)
         E.rowoff = E.cy;
     if (E.cy >= E.rowoff + E.textrows)
@@ -635,6 +654,9 @@ void editorSave() {
             close(fd);
             free(buf);
             E.dirty = 0;
+            // Reset modified flags on all rows after save.
+            for (int i = 0; i < E.numrows; i++)
+                E.row[i].modified = 0;
             return;
         }
         close(fd);
@@ -654,6 +676,7 @@ void editorAppendLine(char *s, size_t len) {
     memcpy(E.row[E.numrows].chars, s, len);
     E.row[E.numrows].chars[len] = '\0';
     E.row[E.numrows].size = (int)len;
+    E.row[E.numrows].modified = 0;  // new rows are unmodified.
     E.numrows++;
 }
 
@@ -671,7 +694,8 @@ void editorInsertChar(int c) {
     memmove(&line->chars[index + 1], &line->chars[index], line->size - index + 1);
     line->chars[index] = c;
     line->size++;
-    E.cx++; 
+    E.cx++;
+    line->modified = 1;
     E.dirty = 1;
 }
 
@@ -695,6 +719,7 @@ void editorInsertUTF8(const char *s, int len) {
     if (width < 0)
         width = 1;
     E.cx += width;
+    line->modified = 1;
     E.dirty = 1;
 }
 
@@ -707,6 +732,7 @@ void editorInsertNewline() {
         E.row[E.cy].chars = malloc(1);
         E.row[E.cy].chars[0] = '\0';
         E.row[E.cy].size = 0;
+        E.row[E.cy].modified = 0;
         E.cy++;
     } else {
         EditorLine *line = &E.row[E.cy];
@@ -729,6 +755,7 @@ void editorInsertNewline() {
         E.numrows++;
         E.row[E.cy + 1].chars = new_chars;
         E.row[E.cy + 1].size = new_len;
+        E.row[E.cy + 1].modified = 1;
         E.cy++;
         E.cx = 0;
     }
@@ -750,6 +777,7 @@ void editorDelChar() {
         memcpy(&prev_line->chars[prev_size], line->chars, line->size);
         prev_line->chars[prev_size + line->size] = '\0';
         prev_line->size = prev_size + line->size;
+        prev_line->modified = 1;
         free(line->chars);
         for (int j = E.cy; j < E.numrows - 1; j++) {
             E.row[j] = E.row[j + 1];
@@ -764,6 +792,7 @@ void editorDelChar() {
                 line->size - index + 1);
         line->size -= (index - prev_index);
         E.cx -= 1;
+        line->modified = 1;
     }
     E.dirty = 1;
 }

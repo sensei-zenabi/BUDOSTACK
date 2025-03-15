@@ -17,6 +17,7 @@
       - Provided minimal feedback on partial insertion/paste/replace if a line would exceed MAX_LINE_LENGTH.
       - Provided more robust handling of malloc/realloc failures by reverting or showing an error message.
       - **Fixed file loading: Removed initial empty line from the text buffer when a file is successfully loaded, ensuring that the first displayed row number is 1.**
+      - **Fixed screen refresh: Reserved the last terminal row for the status bar to ensure that the text area and cursor remain aligned with the terminal display.**
 */
 
 #include <ctype.h>
@@ -915,9 +916,16 @@ void editorScroll() {
     }
 }
 
+/*
+  Modified editorRefreshScreen():
+  - Reserves the last row for the status bar.
+  - Renders text only on E.screenrows - 1 rows.
+  - Adjusts the cursor position to ensure it remains within the text area.
+*/
 void editorRefreshScreen() {
     editorScroll();
 
+    // Hide cursor and reposition to top-left.
     write(STDOUT_FILENO, "\x1b[?25l\x1b[H", 9);
 
     Position selStart, selEnd;
@@ -928,25 +936,34 @@ void editorRefreshScreen() {
         selEnd.x   = selEnd.y   = -1;
     }
 
-    for (int y = 0; y < E.screenrows; y++) {
+    int text_rows = E.screenrows - 1;  // reserve the last row for the status bar
+
+    // Render text lines in the text area.
+    for (int y = 0; y < text_rows; y++) {
         renderLine(y, &selStart, &selEnd);
         write(STDOUT_FILENO, "\x1b[K\r\n", 5);
     }
 
-    // Draw status bar
+    // Draw status bar on the last row.
     char statusBar[256];
     snprintf(statusBar, sizeof(statusBar),
              "\x1b[7m[File: %s] [Lines: %zu] [Cursor: %d,%d]\x1b[0m",
              E.filename ? E.filename : "Untitled",
              E.buffer.count, E.cx, E.cy);
+    char statusPos[32];
+    snprintf(statusPos, sizeof(statusPos), "\x1b[%d;1H", E.screenrows);
+    write(STDOUT_FILENO, statusPos, strlen(statusPos));
     write(STDOUT_FILENO, statusBar, strlen(statusBar));
 
-    int cx_screen = (E.cx - E.coloff) + 6; 
+    // Calculate cursor position within the text area (rows 1 to text_rows).
+    int cx_screen = (E.cx - E.coloff) + 6;
     int cy_screen = (E.cy - E.rowoff) + 1;
+    if (cy_screen > text_rows) cy_screen = text_rows;
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cy_screen, cx_screen);
     write(STDOUT_FILENO, buf, strlen(buf));
 
+    // Show cursor again.
     write(STDOUT_FILENO, "\x1b[?25h", 6);
     tcdrain(STDOUT_FILENO);
 }

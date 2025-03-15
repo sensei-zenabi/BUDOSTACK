@@ -3,20 +3,19 @@
 **Status:** Early Access (in development)
 
 ### Description:
-Open source linux toolkit that aims to provide a framework for creating autonomous IoT devices. Key capabilities:
-- Automation using TASK scripting
-- Aggregated Audio & Video Input
-- Access to HW Peripherals with Discover mode
-- File System and Memory management
-- Generic API access to public data
-- Data processing algorithms
-- AALTO Mesh Management
+A lightweight operating system built atop POSIX-compliant Linux, 
+specifically designed for those who value the elegant simplicity 
+and clarity found in operating systems of the 1980s. Optimized for 
+maximum focus and efficiency on basic primitives of computing, 
+such as file manipulation, text editing, command-line interactions, 
+and efficient resource management.
 
 ## Dependencies
 Following 3rd Party applications are required to run AALTO:
 - tmux
 - curl
 
+The end goal is to remove all 3rd Party dependencies.
 *...if a dependency is not listed, report it using issue!*
 
 ## How to Build?

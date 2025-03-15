@@ -32,28 +32,28 @@ enum EditorKey {
     // Additional keys (Home, End, etc.) could be added here if needed
 };
 
-// Data structure for a line of text in the editor
+// Data structure for a line of text in the editor.
 typedef struct {
     int size;       // length in bytes of the line
-    char *chars;    // dynamically allocated character data (UTF-8 encoded)
+    char *chars;    // UTF-8 encoded character data (dynamically allocated)
 } EditorLine;
 
-// Global editor state structure
+// Global editor state structure.
 struct EditorConfig {
-    int cx, cy;       // cursor position (logical columns/rows, not raw byte index)
+    int cx, cy;       // cursor position in logical (display) columns and rows
     int screenrows;   // total terminal rows
     int screencols;   // total terminal columns
     int rowoff;       // vertical scroll: first row displayed
-    int coloff;       // horizontal scroll: logical column offset
+    int coloff;       // horizontal scroll: logical column offset (for text area only)
     int numrows;      // number of rows in the file
     EditorLine *row;  // array of lines
-    char *filename;   // name of the open file
+    char *filename;   // open file name
     int dirty;        // unsaved changes flag
     struct termios orig_termios; // original terminal settings
 
     // Fields for command mode:
-    int in_command_mode;                  // 1 if in command mode
-    char command_buffer[CMD_BUF_SIZE];    // command prompt input buffer
+    int in_command_mode;                  // flag: 1 if command mode is active
+    char command_buffer[CMD_BUF_SIZE];    // buffer for command input
     int command_length;                   // current length of command buffer
     char status_message[STATUS_MSG_SIZE]; // temporary status message
     int textrows;                         // rows available for text (screenrows minus bar(s))
@@ -66,6 +66,7 @@ void enableRawMode();
 int  editorReadKey();
 int  getWindowSize(int *rows, int *cols);
 void editorRefreshScreen();
+void editorDrawRows(int rn_width);
 void editorDrawStatusBar();
 void editorDrawCommandBar();
 void editorProcessKeypress();
@@ -77,10 +78,25 @@ void editorInsertChar(int c);
 void editorInsertUTF8(const char *s, int len);
 void editorInsertNewline();
 void editorDelChar();
+int getRowNumWidth(void);
+int editorDisplayWidth(const char *s);
+int editorRowCxToByteIndex(EditorLine *row, int cx);
+void editorRenderRow(EditorLine *row, int avail);
 
-/* --- UTF-8 Helper Functions --- */
+/* --- Helper Functions --- */
 
-// Returns the display width of a UTF-8 encoded string.
+// Returns the number of digits in an integer (at least 1).
+int getRowNumWidth(void) {
+    int n = E.numrows;
+    int digits = 1;
+    while (n >= 10) {
+        n /= 10;
+        digits++;
+    }
+    return digits + 1; // add one for a separating space
+}
+
+// Compute display width of a UTF-8 string.
 int editorDisplayWidth(const char *s) {
     int width = 0;
     size_t bytes;
@@ -99,7 +115,7 @@ int editorDisplayWidth(const char *s) {
     return width;
 }
 
-// Converts a logical column (display width) to the corresponding byte index in a row.
+// Map logical column (display columns) to byte index in row.
 int editorRowCxToByteIndex(EditorLine *row, int cx) {
     int cur_width = 0;
     int index = 0;
@@ -121,23 +137,22 @@ int editorRowCxToByteIndex(EditorLine *row, int cx) {
     return index;
 }
 
-// Renders a row starting from logical column E.coloff and writes up to E.screencols columns.
-void editorRenderRow(EditorLine *row) {
+// Render a row starting at logical column coloff and write up to avail columns.
+void editorRenderRow(EditorLine *row, int avail) {
     int logical_width = 0;
     int byte_index = editorRowCxToByteIndex(row, E.coloff);
     char buffer[1024];
     int buf_index = 0;
     size_t bytes;
     wchar_t wc;
-    while (byte_index < row->size && logical_width < E.screencols) {
+    while (byte_index < row->size && logical_width < avail) {
         bytes = mbrtowc(&wc, row->chars + byte_index, MB_CUR_MAX, NULL);
-        if (bytes == (size_t)-1 || bytes == (size_t)-2) {
+        if (bytes == (size_t)-1 || bytes == (size_t)-2)
             bytes = 1;
-        }
         int w = wcwidth(wc);
         if (w < 0) w = 0;
-        if (logical_width + w > E.screencols) break;
-        // Copy the UTF-8 bytes into the buffer.
+        if (logical_width + w > avail)
+            break;
         for (int j = 0; j < (int)bytes; j++) {
             if (buf_index < (int)sizeof(buffer) - 1)
                 buffer[buf_index++] = row->chars[byte_index + j];
@@ -149,9 +164,9 @@ void editorRenderRow(EditorLine *row) {
     write(STDOUT_FILENO, buffer, buf_index);
 }
 
-/* --- Terminal Setup and Teardown --- */
+/* --- Terminal Setup Functions --- */
 
-// die: Print error and exit.
+// die: Print error message and exit.
 void die(const char *s) {
     write(STDOUT_FILENO, "\x1b[2J", 4);
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -159,7 +174,7 @@ void die(const char *s) {
     exit(1);
 }
 
-// disableRawMode: Restore original terminal attributes.
+// disableRawMode: Restore terminal's original attributes.
 void disableRawMode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios);
 }
@@ -177,13 +192,15 @@ void enableRawMode() {
     raw.c_oflag &= ~(OPOST);
     raw.c_cflag |= (CS8);
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-    raw.c_cc[VMIN]  = 0;
+    raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 1;
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
         die("tcsetattr");
 }
 
-// editorReadKey: Read next keypress.
+/* --- Input Functions --- */
+
+// editorReadKey: Read the next keypress (handles escape sequences).
 int editorReadKey() {
     char c;
     int nread;
@@ -195,9 +212,8 @@ int editorReadKey() {
     if (c == '\x1b') {
         char seq[3];
         if (read(STDIN_FILENO, &seq[0], 1) != 1 ||
-            read(STDIN_FILENO, &seq[1], 1) != 1) {
+            read(STDIN_FILENO, &seq[1], 1) != 1)
             return '\x1b';
-        }
         if (seq[0] == '[') {
             if (seq[1] >= '0' && seq[1] <= '9') {
                 char seq2;
@@ -220,25 +236,32 @@ int editorReadKey() {
 // getWindowSize: Get terminal window size.
 int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 ||
-        ws.ws_col == 0) {
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
         return -1;
-    }
     *cols = ws.ws_col;
     *rows = ws.ws_row;
     return 0;
 }
 
-/* --- Drawing Routines --- */
+/* --- Drawing Functions --- */
 
-// Draw text rows.
-void editorDrawRows() {
+// editorDrawRows: Draw text rows with row numbers in the left margin.
+void editorDrawRows(int rn_width) {
+    int text_width = E.screencols - rn_width;
     for (int y = 0; y < E.textrows; y++) {
         int file_row = E.rowoff + y;
-        if (file_row >= E.numrows) {
-            write(STDOUT_FILENO, "~", 1);
+        char numbuf[16];
+        if (file_row < E.numrows) {
+            // Prepare the row number (right aligned).
+            int rn = file_row + 1;
+            int num_len = snprintf(numbuf, sizeof(numbuf), "%*d ", rn_width - 1, rn);
+            write(STDOUT_FILENO, numbuf, num_len);
+            editorRenderRow(&E.row[file_row], text_width);
         } else {
-            editorRenderRow(&E.row[file_row]);
+            // Print margin with "~" for empty lines.
+            for (int i = 0; i < rn_width; i++)
+                write(STDOUT_FILENO, " ", 1);
+            write(STDOUT_FILENO, "~", 1);
         }
         write(STDOUT_FILENO, "\x1b[K", 3);
         if (y < E.textrows - 1)
@@ -246,7 +269,7 @@ void editorDrawRows() {
     }
 }
 
-// Draw status bar.
+// editorDrawStatusBar: Draw the status bar with file info.
 void editorDrawStatusBar() {
     char status[STATUS_MSG_SIZE];
     char rstatus[32];
@@ -265,15 +288,17 @@ void editorDrawStatusBar() {
     write(STDOUT_FILENO, rstatus, rlen);
 }
 
-// Draw command bar.
+// editorDrawCommandBar: Draw the command prompt.
 void editorDrawCommandBar() {
     char buf[CMD_BUF_SIZE + 10];
     snprintf(buf, sizeof(buf), ":%s", E.command_buffer);
     write(STDOUT_FILENO, buf, strlen(buf));
 }
 
-// Refresh screen: clear, draw text area, status, and command bars.
+// editorRefreshScreen: Clear screen, draw text area (with row numbers),
+// status bar, command bar (if in command mode), and position the cursor.
 void editorRefreshScreen() {
+    int rn_width = getRowNumWidth();
     if (E.in_command_mode)
         E.textrows = E.screenrows - 2;
     else
@@ -282,7 +307,7 @@ void editorRefreshScreen() {
     write(STDOUT_FILENO, "\x1b[?25l", 6);
     write(STDOUT_FILENO, "\x1b[H", 3);
 
-    editorDrawRows();
+    editorDrawRows(rn_width);
 
     write(STDOUT_FILENO, "\r\n", 2);
     write(STDOUT_FILENO, "\x1b[7m", 4);
@@ -298,19 +323,7 @@ void editorRefreshScreen() {
 
     if (!E.in_command_mode) {
         int cursor_y = (E.cy - E.rowoff) + 1;
-        int cursor_x = 0;
-        if (E.numrows > 0) {
-            // Map logical column E.cx to byte offset for correct cursor positioning.
-            cursor_x = editorDisplayWidth(E.row[E.cy].chars);
-            // To place the cursor correctly relative to coloff,
-            // we need to recompute display width up to (E.cx - E.coloff)
-            int disp = editorDisplayWidth(E.row[E.cy].chars);
-            // Here we simply position at the right if we have horizontal scrolling.
-            // (A full solution would recompute the substring width.)
-            cursor_x = (E.cx - E.coloff) + 1;
-        } else {
-            cursor_x = 1;
-        }
+        int cursor_x = rn_width + (E.cx - E.coloff) + 1;
         if (cursor_y < 1) cursor_y = 1;
         if (cursor_x < 1) cursor_x = 1;
         char buf[32];
@@ -402,7 +415,8 @@ void editorProcessKeypress() {
         }
         return;
     }
-    // Normal mode:
+
+    // Normal mode key processing:
     switch (c) {
         case CTRL_KEY('q'):
             write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -468,33 +482,34 @@ void editorProcessKeypress() {
                         utf8_len = 1;
                     char utf8_buf[5];
                     utf8_buf[0] = c;
-                    for (int i = 1; i < utf8_len; i++) {
+                    for (int i = 1; i < utf8_len; i++)
                         utf8_buf[i] = editorReadKey();
-                    }
                     utf8_buf[utf8_len] = '\0';
                     editorInsertUTF8(utf8_buf, utf8_len);
                 }
             }
             break;
     }
-    // Horizontal scrolling adjustments using logical columns.
+    // Adjust horizontal scrolling (text area width = screencols - row number margin)
+    int rn_width = getRowNumWidth();
     if (E.cx < E.coloff)
         E.coloff = E.cx;
-    if (E.cx >= E.coloff + E.screencols)
-        E.coloff = E.cx - E.screencols + 1;
-    // Vertical scrolling:
+    if (E.cx >= E.coloff + (E.screencols - rn_width))
+        E.coloff = E.cx - (E.screencols - rn_width) + 1;
+    // Adjust vertical scrolling.
     if (E.cy < E.rowoff)
         E.rowoff = E.cy;
     if (E.cy >= E.rowoff + E.textrows)
         E.rowoff = E.cy - E.textrows + 1;
 }
 
-/* --- File and Buffer Operations --- */
+/* --- File/Buffer Operations --- */
 
 void editorOpen(const char *filename) {
     free(E.filename);
     E.filename = strdup(filename);
-    if (E.filename == NULL) die("strdup");
+    if (E.filename == NULL)
+        die("strdup");
     FILE *fp = fopen(filename, "r");
     if (!fp) {
         if (errno == ENOENT) {
@@ -518,17 +533,19 @@ void editorOpen(const char *filename) {
     free(line);
     fclose(fp);
     E.dirty = 0;
-    if (E.numrows == 0) editorAppendLine("", 0);
+    if (E.numrows == 0)
+        editorAppendLine("", 0);
 }
 
 void editorSave() {
-    if (E.filename == NULL) return;
+    if (E.filename == NULL)
+        return;
     int total_len = 0;
-    for (int j = 0; j < E.numrows; j++) {
+    for (int j = 0; j < E.numrows; j++)
         total_len += E.row[j].size + 1;
-    }
     char *buf = malloc(total_len);
-    if (buf == NULL) die("malloc");
+    if (buf == NULL)
+        die("malloc");
     char *p = buf;
     for (int j = 0; j < E.numrows; j++) {
         memcpy(p, E.row[j].chars, E.row[j].size);
@@ -552,10 +569,12 @@ void editorSave() {
 
 void editorAppendLine(char *s, size_t len) {
     EditorLine *new_row = realloc(E.row, sizeof(EditorLine) * (E.numrows + 1));
-    if (new_row == NULL) die("realloc");
+    if (new_row == NULL)
+        die("realloc");
     E.row = new_row;
     E.row[E.numrows].chars = malloc(len + 1);
-    if (E.row[E.numrows].chars == NULL) die("malloc");
+    if (E.row[E.numrows].chars == NULL)
+        die("malloc");
     memcpy(E.row[E.numrows].chars, s, len);
     E.row[E.numrows].chars[len] = '\0';
     E.row[E.numrows].size = (int)len;
@@ -563,42 +582,42 @@ void editorAppendLine(char *s, size_t len) {
 }
 
 void editorInsertChar(int c) {
-    if (E.cy == E.numrows) editorAppendLine("", 0);
+    if (E.cy == E.numrows)
+        editorAppendLine("", 0);
     EditorLine *line = &E.row[E.cy];
-    if (E.cx > editorDisplayWidth(line->chars)) {
-        // If cursor is beyond current display width, adjust.
+    if (E.cx > editorDisplayWidth(line->chars))
         E.cx = editorDisplayWidth(line->chars);
-    }
-    // Map logical column E.cx to byte index.
     int index = editorRowCxToByteIndex(line, E.cx);
     char *new_chars = realloc(line->chars, line->size + 2);
-    if (new_chars == NULL) die("realloc");
+    if (new_chars == NULL)
+        die("realloc");
     line->chars = new_chars;
     memmove(&line->chars[index + 1], &line->chars[index], line->size - index + 1);
     line->chars[index] = c;
     line->size++;
-    E.cx++;  // ASCII always width 1.
+    E.cx++;  // ASCII char width is 1.
     E.dirty = 1;
 }
 
 void editorInsertUTF8(const char *s, int len) {
-    if (E.cy == E.numrows) editorAppendLine("", 0);
+    if (E.cy == E.numrows)
+        editorAppendLine("", 0);
     EditorLine *line = &E.row[E.cy];
-    if (E.cx > editorDisplayWidth(line->chars)) {
+    if (E.cx > editorDisplayWidth(line->chars))
         E.cx = editorDisplayWidth(line->chars);
-    }
     int index = editorRowCxToByteIndex(line, E.cx);
     char *new_chars = realloc(line->chars, line->size + len + 1);
-    if (new_chars == NULL) die("realloc");
+    if (new_chars == NULL)
+        die("realloc");
     line->chars = new_chars;
     memmove(&line->chars[index + len], &line->chars[index], line->size - index + 1);
     memcpy(&line->chars[index], s, len);
     line->size += len;
-    // Determine display width of inserted character:
     wchar_t wc;
     size_t bytes = mbrtowc(&wc, s, len, NULL);
     int width = (bytes == (size_t)-1 || bytes == (size_t)-2) ? 1 : wcwidth(wc);
-    if (width < 0) width = 1;
+    if (width < 0)
+        width = 1;
     E.cx += width;
     E.dirty = 1;
 }
@@ -617,14 +636,16 @@ void editorInsertNewline() {
         EditorLine *line = &E.row[E.cy];
         int index = editorRowCxToByteIndex(line, E.cx);
         char *new_chars = malloc(line->size - index + 1);
-        if (new_chars == NULL) die("malloc");
+        if (new_chars == NULL)
+            die("malloc");
         memcpy(new_chars, &line->chars[index], line->size - index);
         new_chars[line->size - index] = '\0';
         int new_len = line->size - index;
         line->size = index;
         line->chars[index] = '\0';
         EditorLine *new_row = realloc(E.row, sizeof(EditorLine) * (E.numrows + 1));
-        if (new_row == NULL) die("realloc");
+        if (new_row == NULL)
+            die("realloc");
         E.row = new_row;
         for (int j = E.numrows; j > E.cy; j--) {
             E.row[j] = E.row[j - 1];
@@ -639,14 +660,17 @@ void editorInsertNewline() {
 }
 
 void editorDelChar() {
-    if (E.cy == E.numrows) return;
-    if (E.cx == 0 && E.cy == 0) return;
+    if (E.cy == E.numrows)
+        return;
+    if (E.cx == 0 && E.cy == 0)
+        return;
     EditorLine *line = &E.row[E.cy];
     if (E.cx == 0) {
         EditorLine *prev_line = &E.row[E.cy - 1];
         int prev_size = prev_line->size;
         prev_line->chars = realloc(prev_line->chars, prev_size + line->size + 1);
-        if (prev_line->chars == NULL) die("realloc");
+        if (prev_line->chars == NULL)
+            die("realloc");
         memcpy(&prev_line->chars[prev_size], line->chars, line->size);
         prev_line->chars[prev_size + line->size] = '\0';
         prev_line->size = prev_size + line->size;
@@ -659,12 +683,11 @@ void editorDelChar() {
         E.cx = editorDisplayWidth(prev_line->chars);
     } else {
         int index = editorRowCxToByteIndex(line, E.cx);
-        // To delete, we need the byte length of the UTF-8 character before the cursor.
         int prev_index = editorRowCxToByteIndex(line, E.cx - 1);
         memmove(&line->chars[prev_index], &line->chars[index],
                 line->size - index + 1);
         line->size -= (index - prev_index);
-        E.cx -= 1; // Assume width 1 deletion; for more precision, recalc if needed.
+        E.cx -= 1;
     }
     E.dirty = 1;
 }
@@ -672,7 +695,7 @@ void editorDelChar() {
 /* --- Main --- */
 
 int main(int argc, char *argv[]) {
-    // Set locale to support UTF-8
+    // Set locale for proper UTF-8 handling.
     setlocale(LC_CTYPE, "");
 
     E.cx = 0;

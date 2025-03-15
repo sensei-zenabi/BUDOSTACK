@@ -1,4 +1,8 @@
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
+#include <wchar.h>
+#include <wctype.h>
+#include <locale.h>
 #include <ctype.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -9,63 +13,78 @@
 #include <string.h>
 #include <fcntl.h>
 #include <signal.h>
-#include <locale.h>
-#include <wchar.h>
 
-// Define editor version
+/* Editor version */
 #define EDITOR_VERSION "0.1-micro-like"
 
-// Key definitions for special keys (Ctrl key and Backspace)
+/* Key definitions */
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define BACKSPACE 127
 
-// Maximum lengths for command buffer and status messages
+/* Maximum lengths for command buffer and status messages */
 #define CMD_BUF_SIZE 128
 #define STATUS_MSG_SIZE 80
 
-// Enumeration for arrow keys (using values above 255 to avoid char conflicts)
+/* Undo history capacity */
+#define UNDO_HISTORY_MAX 100
+
+/* Enumeration for arrow keys */
 enum EditorKey {
     ARROW_LEFT = 1000,
     ARROW_RIGHT,
     ARROW_UP,
-    ARROW_DOWN,
-    // Additional keys (Home, End, etc.) could be added here if needed
+    ARROW_DOWN
 };
 
-// Data structure for a line of text in the editor.
+/* Data structure for a line */
 typedef struct {
-    int size;       // length in bytes of the line
-    char *chars;    // UTF-8 encoded character data (dynamically allocated)
+    int size;       // length in bytes
+    char *chars;    // UTF-8 encoded text
 } EditorLine;
 
-// Global editor state structure.
+/* Global editor state */
 struct EditorConfig {
-    int cx, cy;       // cursor position in logical (display) columns and rows
+    int cx, cy;       // cursor (logical columns/rows)
     int screenrows;   // total terminal rows
     int screencols;   // total terminal columns
-    int rowoff;       // vertical scroll: first row displayed
-    int coloff;       // horizontal scroll: logical column offset (for text area only)
+    int rowoff;       // vertical scroll offset (first row displayed)
+    int coloff;       // horizontal scroll offset (for text area only)
     int numrows;      // number of rows in the file
-    EditorLine *row;  // array of lines
+    EditorLine *row;  // array of rows
     char *filename;   // open file name
     int dirty;        // unsaved changes flag
     struct termios orig_termios; // original terminal settings
 
-    // Fields for command mode:
-    int in_command_mode;                  // flag: 1 if command mode is active
-    char command_buffer[CMD_BUF_SIZE];    // buffer for command input
-    int command_length;                   // current length of command buffer
-    char status_message[STATUS_MSG_SIZE]; // temporary status message
-    int textrows;                         // rows available for text (screenrows minus bar(s))
+    /* Command mode fields */
+    int in_command_mode;
+    char command_buffer[CMD_BUF_SIZE];
+    int command_length;
+    char status_message[STATUS_MSG_SIZE];
+    int textrows; // text area rows (screenrows minus status/command bars)
 } E;
 
-/* --- Function Prototypes --- */
+/* Undo state structure */
+typedef struct {
+    int cx, cy;
+    int numrows;
+    EditorLine *row; // deep copy of rows
+} UndoState;
+
+/* Global undo history (snapshot-based) */
+UndoState *undo_history[UNDO_HISTORY_MAX];
+int undo_history_len = 0;
+
+/* Function prototypes */
 void die(const char *s);
 void disableRawMode();
 void enableRawMode();
-int  editorReadKey();
-int  getWindowSize(int *rows, int *cols);
+int editorReadKey();
+int getWindowSize(int *rows, int *cols);
 void editorRefreshScreen();
+int getRowNumWidth(void);
+int editorDisplayWidth(const char *s);
+int editorRowCxToByteIndex(EditorLine *row, int cx);
+void editorRenderRow(EditorLine *row, int avail);
 void editorDrawRows(int rn_width);
 void editorDrawStatusBar();
 void editorDrawCommandBar();
@@ -78,14 +97,14 @@ void editorInsertChar(int c);
 void editorInsertUTF8(const char *s, int len);
 void editorInsertNewline();
 void editorDelChar();
-int getRowNumWidth(void);
-int editorDisplayWidth(const char *s);
-int editorRowCxToByteIndex(EditorLine *row, int cx);
-void editorRenderRow(EditorLine *row, int avail);
+/* Undo functions */
+void push_undo_state(void);
+void free_undo_state(UndoState *state);
+void pop_undo_state(void);
 
 /* --- Helper Functions --- */
 
-// Returns the number of digits in an integer (at least 1).
+/* getRowNumWidth: Compute margin width based on number of rows */
 int getRowNumWidth(void) {
     int n = E.numrows;
     int digits = 1;
@@ -93,10 +112,10 @@ int getRowNumWidth(void) {
         n /= 10;
         digits++;
     }
-    return digits + 1; // add one for a separating space
+    return digits + 1; // extra space as separator
 }
 
-// Compute display width of a UTF-8 string.
+/* editorDisplayWidth: Compute display width of a UTF-8 string */
 int editorDisplayWidth(const char *s) {
     int width = 0;
     size_t bytes;
@@ -115,7 +134,7 @@ int editorDisplayWidth(const char *s) {
     return width;
 }
 
-// Map logical column (display columns) to byte index in row.
+/* editorRowCxToByteIndex: Map logical column (display columns) to byte index */
 int editorRowCxToByteIndex(EditorLine *row, int cx) {
     int cur_width = 0;
     int index = 0;
@@ -137,7 +156,7 @@ int editorRowCxToByteIndex(EditorLine *row, int cx) {
     return index;
 }
 
-// Render a row starting at logical column coloff and write up to avail columns.
+/* editorRenderRow: Render a row starting at E.coloff and write up to avail columns */
 void editorRenderRow(EditorLine *row, int avail) {
     int logical_width = 0;
     int byte_index = editorRowCxToByteIndex(row, E.coloff);
@@ -164,9 +183,72 @@ void editorRenderRow(EditorLine *row, int avail) {
     write(STDOUT_FILENO, buffer, buf_index);
 }
 
+/* --- Undo Functions --- */
+
+/* push_undo_state: Save a deep copy of the current state */
+void push_undo_state(void) {
+    UndoState *state = malloc(sizeof(UndoState));
+    if (!state)
+        die("malloc undo state");
+    state->cx = E.cx;
+    state->cy = E.cy;
+    state->numrows = E.numrows;
+    state->row = malloc(sizeof(EditorLine) * E.numrows);
+    if (!state->row)
+        die("malloc undo rows");
+    for (int i = 0; i < E.numrows; i++) {
+        state->row[i].size = E.row[i].size;
+        state->row[i].chars = malloc(E.row[i].size + 1);
+        if (!state->row[i].chars)
+            die("malloc undo row char");
+        memcpy(state->row[i].chars, E.row[i].chars, E.row[i].size);
+        state->row[i].chars[E.row[i].size] = '\0';
+    }
+    if (undo_history_len == UNDO_HISTORY_MAX) {
+        free_undo_state(undo_history[0]);
+        for (int i = 1; i < UNDO_HISTORY_MAX; i++)
+            undo_history[i - 1] = undo_history[i];
+        undo_history_len--;
+    }
+    undo_history[undo_history_len++] = state;
+}
+
+/* free_undo_state: Free a saved undo state */
+void free_undo_state(UndoState *state) {
+    for (int i = 0; i < state->numrows; i++)
+        free(state->row[i].chars);
+    free(state->row);
+    free(state);
+}
+
+/* pop_undo_state: Restore the last saved state */
+void pop_undo_state(void) {
+    if (undo_history_len == 0)
+        return;
+    UndoState *state = undo_history[undo_history_len - 1];
+    undo_history_len--;
+    for (int i = 0; i < E.numrows; i++)
+        free(E.row[i].chars);
+    free(E.row);
+    E.numrows = state->numrows;
+    E.row = malloc(sizeof(EditorLine) * E.numrows);
+    if (!E.row)
+        die("malloc restore rows");
+    for (int i = 0; i < E.numrows; i++) {
+        E.row[i].size = state->row[i].size;
+        E.row[i].chars = malloc(E.row[i].size + 1);
+        if (!E.row[i].chars)
+            die("malloc restore row char");
+        memcpy(E.row[i].chars, state->row[i].chars, E.row[i].size);
+        E.row[i].chars[E.row[i].size] = '\0';
+    }
+    E.cx = state->cx;
+    E.cy = state->cy;
+    free_undo_state(state);
+}
+
 /* --- Terminal Setup Functions --- */
 
-// die: Print error message and exit.
 void die(const char *s) {
     write(STDOUT_FILENO, "\x1b[2J", 4);
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -174,19 +256,16 @@ void die(const char *s) {
     exit(1);
 }
 
-// disableRawMode: Restore terminal's original attributes.
 void disableRawMode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios);
 }
 
-// enableRawMode: Enable raw mode.
 void enableRawMode() {
     if (tcgetattr(STDIN_FILENO, &E.orig_termios) == -1)
         die("tcgetattr");
     atexit(disableRawMode);
     signal(SIGINT, SIG_IGN);
     signal(SIGTERM, SIG_IGN);
-
     struct termios raw = E.orig_termios;
     raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
     raw.c_oflag &= ~(OPOST);
@@ -200,7 +279,6 @@ void enableRawMode() {
 
 /* --- Input Functions --- */
 
-// editorReadKey: Read the next keypress (handles escape sequences).
 int editorReadKey() {
     char c;
     int nread;
@@ -208,7 +286,6 @@ int editorReadKey() {
         ;
     if (nread == -1 && errno != EAGAIN)
         die("read");
-
     if (c == '\x1b') {
         char seq[3];
         if (read(STDIN_FILENO, &seq[0], 1) != 1 ||
@@ -233,7 +310,6 @@ int editorReadKey() {
     return c;
 }
 
-// getWindowSize: Get terminal window size.
 int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
@@ -243,22 +319,20 @@ int getWindowSize(int *rows, int *cols) {
     return 0;
 }
 
-/* --- Drawing Functions --- */
+/* --- Drawing Routines --- */
 
-// editorDrawRows: Draw text rows with row numbers in the left margin.
+// Draw rows with row numbers in the margin.
 void editorDrawRows(int rn_width) {
     int text_width = E.screencols - rn_width;
+    char numbuf[16];
     for (int y = 0; y < E.textrows; y++) {
         int file_row = E.rowoff + y;
-        char numbuf[16];
         if (file_row < E.numrows) {
-            // Prepare the row number (right aligned).
             int rn = file_row + 1;
             int num_len = snprintf(numbuf, sizeof(numbuf), "%*d ", rn_width - 1, rn);
             write(STDOUT_FILENO, numbuf, num_len);
             editorRenderRow(&E.row[file_row], text_width);
         } else {
-            // Print margin with "~" for empty lines.
             for (int i = 0; i < rn_width; i++)
                 write(STDOUT_FILENO, " ", 1);
             write(STDOUT_FILENO, "~", 1);
@@ -269,7 +343,7 @@ void editorDrawRows(int rn_width) {
     }
 }
 
-// editorDrawStatusBar: Draw the status bar with file info.
+// Draw status bar.
 void editorDrawStatusBar() {
     char status[STATUS_MSG_SIZE];
     char rstatus[32];
@@ -278,54 +352,52 @@ void editorDrawStatusBar() {
                        E.dirty ? " (modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "Ln %d, Col %d",
                         E.cy + 1, E.cx + 1);
-    if (len > E.screencols) len = E.screencols;
+    if (len > E.screencols)
+        len = E.screencols;
     write(STDOUT_FILENO, status, len);
     while (len < E.screencols) {
-        if (E.screencols - len == rlen) break;
+        if (E.screencols - len == rlen)
+            break;
         write(STDOUT_FILENO, " ", 1);
         len++;
     }
     write(STDOUT_FILENO, rstatus, rlen);
 }
 
-// editorDrawCommandBar: Draw the command prompt.
+// Draw command bar.
 void editorDrawCommandBar() {
     char buf[CMD_BUF_SIZE + 10];
     snprintf(buf, sizeof(buf), ":%s", E.command_buffer);
     write(STDOUT_FILENO, buf, strlen(buf));
 }
 
-// editorRefreshScreen: Clear screen, draw text area (with row numbers),
-// status bar, command bar (if in command mode), and position the cursor.
+// Refresh screen: clear screen, draw text area, status bar, command bar, and position cursor.
 void editorRefreshScreen() {
     int rn_width = getRowNumWidth();
     if (E.in_command_mode)
         E.textrows = E.screenrows - 2;
     else
         E.textrows = E.screenrows - 1;
-
     write(STDOUT_FILENO, "\x1b[?25l", 6);
     write(STDOUT_FILENO, "\x1b[H", 3);
-
     editorDrawRows(rn_width);
-
     write(STDOUT_FILENO, "\r\n", 2);
     write(STDOUT_FILENO, "\x1b[7m", 4);
     editorDrawStatusBar();
     write(STDOUT_FILENO, "\x1b[m", 4);
-
     if (E.in_command_mode) {
         write(STDOUT_FILENO, "\r\n", 2);
         write(STDOUT_FILENO, "\x1b[7m", 4);
         editorDrawCommandBar();
         write(STDOUT_FILENO, "\x1b[m", 4);
     }
-
     if (!E.in_command_mode) {
         int cursor_y = (E.cy - E.rowoff) + 1;
         int cursor_x = rn_width + (E.cx - E.coloff) + 1;
-        if (cursor_y < 1) cursor_y = 1;
-        if (cursor_x < 1) cursor_x = 1;
+        if (cursor_y < 1)
+            cursor_y = 1;
+        if (cursor_x < 1)
+            cursor_x = 1;
         char buf[32];
         snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cursor_y, cursor_x);
         write(STDOUT_FILENO, buf, strlen(buf));
@@ -335,7 +407,6 @@ void editorRefreshScreen() {
         snprintf(buf, sizeof(buf), "\x1b[%d;%dH", E.screenrows, cmd_cursor);
         write(STDOUT_FILENO, buf, strlen(buf));
     }
-
     write(STDOUT_FILENO, "\x1b[?25h", 6);
 }
 
@@ -344,7 +415,8 @@ void editorRefreshScreen() {
 void processCommand() {
     E.status_message[0] = '\0';
     char *cmd = E.command_buffer;
-    while (*cmd == ' ') cmd++;
+    while (*cmd == ' ')
+        cmd++;
     if (strncmp(cmd, "quit", 4) == 0 || strncmp(cmd, "q", 1) == 0) {
         write(STDOUT_FILENO, "\x1b[2J", 4);
         write(STDOUT_FILENO, "\x1b[H", 3);
@@ -354,7 +426,8 @@ void processCommand() {
         snprintf(E.status_message, sizeof(E.status_message), "File saved.");
     } else if (strncmp(cmd, "open ", 5) == 0) {
         char *filename = cmd + 5;
-        while (*filename == ' ') filename++;
+        while (*filename == ' ')
+            filename++;
         editorOpen(filename);
         snprintf(E.status_message, sizeof(E.status_message), "Opened %s", filename);
     } else if (strncmp(cmd, "search ", 7) == 0) {
@@ -415,8 +488,7 @@ void editorProcessKeypress() {
         }
         return;
     }
-
-    // Normal mode key processing:
+    /* Normal mode key processing */
     switch (c) {
         case CTRL_KEY('q'):
             write(STDOUT_FILENO, "\x1b[2J", 4);
@@ -431,11 +503,16 @@ void editorProcessKeypress() {
             E.command_length = 0;
             E.command_buffer[0] = '\0';
             break;
+        case CTRL_KEY('z'):
+            pop_undo_state();
+            break;
         case '\r':
+            push_undo_state();
             editorInsertNewline();
             break;
         case CTRL_KEY('h'):
         case BACKSPACE:
+            push_undo_state();
             editorDelChar();
             break;
         case ARROW_UP:
@@ -467,6 +544,7 @@ void editorProcessKeypress() {
             break;
         default:
             if (!iscntrl(c)) {
+                push_undo_state();
                 if ((unsigned char)c < 0x80) {
                     editorInsertChar(c);
                 } else {
@@ -490,13 +568,11 @@ void editorProcessKeypress() {
             }
             break;
     }
-    // Adjust horizontal scrolling (text area width = screencols - row number margin)
     int rn_width = getRowNumWidth();
     if (E.cx < E.coloff)
         E.coloff = E.cx;
     if (E.cx >= E.coloff + (E.screencols - rn_width))
         E.coloff = E.cx - (E.screencols - rn_width) + 1;
-    // Adjust vertical scrolling.
     if (E.cy < E.rowoff)
         E.rowoff = E.cy;
     if (E.cy >= E.rowoff + E.textrows)
@@ -595,7 +671,7 @@ void editorInsertChar(int c) {
     memmove(&line->chars[index + 1], &line->chars[index], line->size - index + 1);
     line->chars[index] = c;
     line->size++;
-    E.cx++;  // ASCII char width is 1.
+    E.cx++; 
     E.dirty = 1;
 }
 
@@ -695,9 +771,7 @@ void editorDelChar() {
 /* --- Main --- */
 
 int main(int argc, char *argv[]) {
-    // Set locale for proper UTF-8 handling.
     setlocale(LC_CTYPE, "");
-
     E.cx = 0;
     E.cy = 0;
     E.rowoff = 0;
@@ -715,9 +789,9 @@ int main(int argc, char *argv[]) {
         die("getWindowSize");
     E.textrows = E.screenrows - 1;
 
-    if (argc >= 2) {
+    if (argc >= 2)
         editorOpen(argv[1]);
-    } else {
+    else {
         editorAppendLine("", 0);
         E.dirty = 0;
     }

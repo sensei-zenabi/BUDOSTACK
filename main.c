@@ -371,22 +371,12 @@ int main(int argc, char *argv[]) {
         // Do not print startup messages.
     } else {
         // Startup messages.
-        printf("Starting kernel");
-        delayPrint("...", 0.3);
-        printf("\nKernel started!");
-        printf("\n\nSTARTING SYSTEM:");
-        printf("\n\n Calibrating Zero‑Point Data Modules");
-        delayPrint("..........", 0.3);
-        printf("\n Synchronizing Temporal Data Vectors");
-        delayPrint("..", 0.3);
-        printf("\n Finalizing inter-module diagnostics");
-        delayPrint(".....", 0.3);
-        printf("\n Creating hyper-threading");
-        delayPrint("...", 0.3);
-        printf("\n Performing system integrity checks");
-        delayPrint("...........", 0.3);
-        printf("\n Cleaning");
-        delayPrint("....", 0.3);
+        system("clear");
+		printf("\n");
+        delayPrint("AALTO - All Around Linux Terminal Operator\n", 0.02);
+		delayPrint(" ", 1);
+        delayPrint("...for those who enjoy simple things...", 0.05);
+        delayPrint(" ", 1);
     }
 
     printf("\n\nSYSTEM READY");

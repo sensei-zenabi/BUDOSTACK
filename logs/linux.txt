@@ -1,0 +1,86 @@
+===============================
+       FILE MANAGEMENT
+===============================
+ls            - List directory contents
+cp            - Copy files and directories
+mv            - Move or rename files and directories
+rm            - Remove files or directories
+mkdir         - Create new directories
+rmdir         - Remove empty directories
+find          - Search for files in a directory hierarchy
+cat           - Concatenate and display file contents
+more/less     - View file contents page by page
+head          - Display the first lines of a file
+tail          - Display the last lines of a file
+touch         - Change file timestamps or create empty files
+
+===============================
+      PROCESS MANAGEMENT
+===============================
+ps            - Report a snapshot of current processes
+top           - Display Linux tasks (real-time view)
+htop          - Interactive process viewer (if installed)
+kill          - Send signals to processes
+pkill         - Kill processes by name
+killall       - Kill all processes with a given name
+nice          - Run a command with modified scheduling priority
+renice        - Alter priority of running processes
+
+===============================
+        NETWORKING
+===============================
+ping          - Send ICMP ECHO_REQUEST to network hosts
+traceroute    - Trace route to a network host
+ifconfig/ip   - Configure or display network interfaces
+netstat/ss    - Display network connections, routing tables, and interface statistics
+arp           - Display or modify the ARP cache
+curl          - Transfer data from or to a server
+wget          - Retrieve files from the web
+
+===============================
+    SYSTEM INFORMATION
+===============================
+uname         - Print system information
+dmesg         - Display kernel ring buffer messages
+free          - Display memory usage
+df            - Report disk space usage
+du            - Estimate file space usage
+lshw          - List hardware (detailed)
+lscpu         - Display CPU architecture information
+lsusb         - List USB devices
+lspci         - List PCI devices
+lsblk         - List block devices
+
+===============================
+     DISK & FILE SYSTEM
+===============================
+fdisk         - Partition table manipulator for Linux
+mkfs          - Build a Linux file system
+fsck          - File system consistency check and repair
+mount         - Mount a file system
+umount        - Unmount a file system
+
+===============================
+     TEXT PROCESSING
+===============================
+grep          - Print lines matching a pattern
+sed           - Stream editor for filtering and transforming text
+awk           - Pattern scanning and processing language
+cut           - Remove sections from each line of files
+sort          - Sort lines of text files
+uniq          - Report or omit repeated lines
+tr            - Translate or delete characters
+wc            - Count lines, words, and characters
+
+===============================
+      MISCELLANEOUS
+===============================
+date          - Display or set the system date and time
+cal           - Display a calendar
+echo          - Display a line of text
+man           - Format and display the on-line manual pages
+history       - Command history
+clear         - Clear the terminal screen
+shutdown      - Bring the system down
+reboot        - Reboot the system
+poweroff      - Power off the system

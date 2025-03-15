@@ -1,63 +1,50 @@
 /* ChatGPT: DO NOT MODIFY OR REMOVE THIS HEADER BUT IMPLEMENT IT FULLY!
 
-Filename: discover.c
+Filename: assist.c
 
 Description:
 
-	Implement a loop, where user is able to discuss with this chatbot.
-	Include a command parser that recognizes familiar commands and creates 
-	a randomized default message for unrecognized commands.
-	If the user types "exit", the chatbot program terminates.
+    Implement a loop, where user is able to discuss with this chatbot.
+    Include a command parser that recognizes familiar commands and creates 
+    a randomized default message for unrecognized commands.
+    If the user types "exit", the chatbot program terminates.
 
 Supported commands:
 
-	help
-		1. Displays a neatly formatted list of supported commands and their descriptions.
+    help
+        1. Displays a neatly formatted list of supported commands and their descriptions.
 
-	search network
-		1. Actively scans and displays all MAC, IP addresses, and device names 
-		   from devices in the same Wi-Fi network.
-		   (On Linux, uses arp-scan to query every host in the local subnet.)
+    search network
+        1. Actively scans and displays all MAC, IP addresses, and device names 
+           from devices in the same Wi-Fi network.
+           (On Linux, uses arp-scan to query every host in the local subnet.)
 
-	ping <IP-address>
-		1. Pings the specified IP address 5 times and reports the results.
+    ping <IP-address>
+        1. Pings the specified IP address 5 times and reports the results.
 
-	search "string"
-		1. Searches for the given string in files in the current folder and subfolders.
-		2. If the file is binary, only the filename is displayed.
+    search "string"
+        1. Searches for the given string in files in the current folder and subfolders.
+        2. If the file is binary, only the filename is displayed.
 
-	search hardware
-		1. Displays a comprehensive, developer-friendly overview of the system's hardware.
-		   This includes:
-		     - A hierarchical overview via "lshw -short".
-		     - Detailed hardware info (using lshw, lscpu, free, lspci, lsusb, sensors, etc.).
-		     - A logical tree view of the top-level device tree nodes.
-		     - A truncated dump of the device tree (first TRUNCATED_DT_LINES lines, default 256).
-		     - The full device tree dump.
-		   The output is both displayed (paged via less) and exported to logs/hwtree.txt.
+    search hardware
+        1. Displays a comprehensive, developer-friendly overview of the system's hardware.
+           This includes:
+             - A hierarchical overview via "lshw -short".
+             - Detailed hardware info (using lshw, lscpu, free, lspci, lsusb, sensors, etc.).
+             - A logical tree view of the top-level device tree nodes.
+             - A truncated dump of the device tree (first TRUNCATED_DT_LINES lines, default 1024).
+             - The full device tree dump.
+           The output is both displayed (paged via less) and exported to logs/hwtree.txt.
 
- Remarks:
+    linux
+        1. Displays a complete list of useful Linux commands stored in logs/linux.txt,
+           where the commands are sorted in functional categories.
 
-	1. Functions declared as "extern" come from shared libraries and do not need to be implemented.
-	2. All functionalities are implemented using standard POSIX calls and utilities.
-	3. Do not delete or modify this header.
-*/
+Remarks:
 
-/*
-Design Principles and Implementation Notes:
-- Uses a continuous command loop to interact with the user.
-- Commands are parsed using standard string functions (<string.h>).
-- Default responses are randomized using the current time.
-- "search network" uses "arp-scan -l" for active scanning.
-- "search hardware" organizes output into clear sections:
-    * Hierarchical overview via "lshw -short".
-    * Detailed hardware info from various utilities.
-    * Logical tree view of top-level device tree nodes.
-    * A truncated device tree dump (configurable by TRUNCATED_DT_LINES, default 256).
-    * The complete device tree dump.
-- The output is saved to a temporary file, then copied to logs/hwtree.txt, and finally paged using less.
-- Written in plain C under -std=c11 using only standard POSIX libraries.
-- The external function prettyprint() is assumed to be provided.
+    1. Functions declared as "extern" come from shared libraries and do not need to be implemented.
+    2. All functionalities are implemented using standard POSIX calls and utilities.
+    3. Do not delete or modify this header.
 */
 
 #include <stdlib.h>
@@ -66,7 +53,8 @@ Design Principles and Implementation Notes:
 #include <time.h>
 
 #define TEMP_HWFILE "/tmp/hwinfo.txt"
-#define LOG_FILE "logs/hwtree.txt"
+#define LOG_HW_FILE "logs/hwtree.txt"
+#define LOG_LINUX_FILE "logs/linux.txt"
 #define TRUNCATED_DT_LINES 1024  // Configurable: number of lines for truncated device tree dump
 
 // Declaration of prettyprint, assumed to be provided externally.
@@ -116,6 +104,8 @@ int main(void) {
             printf("        - Truncated device tree dump (first %d lines).\n", TRUNCATED_DT_LINES);
             printf("        - Full device tree dump.\n");
             printf("      The output is displayed (paged via less) and saved to logs/hwtree.txt.\n\n");
+            printf("  linux\n");
+            printf("      Displays a complete list of useful Linux commands stored in logs/linux.txt.\n\n");
         }
         else if (strcmp(input, "search network") == 0) {
             printf("Performing active network scan using arp-scan...\n");
@@ -210,20 +200,29 @@ int main(void) {
             system("find /proc/device-tree -maxdepth 2 | sort >> " TEMP_HWFILE);
 
             // Section: Truncated device tree dump.
-            char truncated_cmd[128];
-            snprintf(truncated_cmd, sizeof(truncated_cmd), "dtc -I fs -O dts /proc/device-tree | head -n %d >> %s", TRUNCATED_DT_LINES, TEMP_HWFILE);
-            system(truncated_cmd);
+            {
+                char truncated_cmd[128];
+                snprintf(truncated_cmd, sizeof(truncated_cmd), "dtc -I fs -O dts /proc/device-tree | head -n %d >> %s", TRUNCATED_DT_LINES, TEMP_HWFILE);
+                system(truncated_cmd);
+            }
 
             // Section: Full device tree dump.
             system("echo \"\n--- Full Device Tree Dump ---\" >> " TEMP_HWFILE);
             system("dtc -I fs -O dts /proc/device-tree >> " TEMP_HWFILE);
 
             // Export the complete output to logs/hwtree.txt.
-            system("cp " TEMP_HWFILE " " LOG_FILE);
+            system("cp " TEMP_HWFILE " " LOG_HW_FILE);
 
             // Page the organized output.
             system("less " TEMP_HWFILE);
             system("rm " TEMP_HWFILE);
+        }
+        else if (strcmp(input, "linux") == 0) {
+            printf("Displaying the complete Linux command list from logs/linux.txt...\n");
+            int ret = system("less " LOG_LINUX_FILE);
+            if (ret != 0) {
+                printf("Error: Unable to display " LOG_LINUX_FILE "\n");
+            }
         }
         else {
             const char *default_responses[] = {

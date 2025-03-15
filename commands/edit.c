@@ -10,14 +10,28 @@
       - Plain C is used with -std=c11 and only standard cross-platform libraries.
       - No header files are created.
       - Comments throughout the code explain design decisions and modifications.
-      
+
     Fixes:
       - Replaced direct exit(0) calls with a quit flag to ensure memory cleanup.
       - In cutSelection(), ensured no double-free or orphaned memory in merged line logic.
       - Provided minimal feedback on partial insertion/paste/replace if a line would exceed MAX_LINE_LENGTH.
       - Provided more robust handling of malloc/realloc failures by reverting or showing an error message.
-      - **Fixed file loading: Removed initial empty line from the text buffer when a file is successfully loaded, ensuring that the first displayed row number is 1.**
-      - **Fixed screen refresh: Reserved the last terminal row for the status bar to ensure that the text area and cursor remain aligned with the terminal display.**
+      - Fixed file loading: Removed initial empty line from the text buffer when a file is successfully loaded, ensuring that the first displayed row number is 1.
+      - Fixed screen refresh: Reserved the last terminal row for the status bar to ensure that the text area and cursor remain aligned with the terminal display.
+
+    Additional bug fixes:
+      - **FIX**: SHIFT+Arrow sequences with multiple digits after '[' (e.g. "[1;2A", "[10;2A") are now parsed correctly, so multi-digit row/col codes do not break SHIFT-based selection.
+      - **FIX**: Insert/delete code clamps `E.cx` if it ever exceeds line length to avoid out-of-bounds writes.
+      - **FIX**: Handle carriage return '\r' in file loading so Windows-style line endings don’t remain in text.
+      - **FIX**: Added a small wrapper for status/error messages to ensure partial writes (if any) are completed.
+      
+    Bug Fixes Added in This Revision:
+      - **FIX**: Added ENTER key functionality to create a newline by splitting the current line at the cursor.
+      - **FIX**: Added CTRL+A functionality to select all text in the editor.
+      
+    References:
+      - Original source code: :contentReference[oaicite:0]{index=0}
+      - Design inspiration: Kilo text editor (by Salvatore Sanfilippo)
 */
 
 #include <ctype.h>
@@ -30,10 +44,11 @@
 
 /*** Prototypes ***/
 int editorReadKey(void);
+static void robustWrite(int fd, const char *buf, size_t len);
 
 /*** Defines ***/
 #define CTRL_KEY(k) ((k) & 0x1f)
-#define TAB_STOP 4            /* Expand each \t to 4 spaces */
+#define TAB_STOP 4
 #define INITIAL_BUFFER_CAPACITY 100
 #define MAX_LINE_LENGTH 1024
 
@@ -100,26 +115,43 @@ typedef struct {
 
 EditorConfig E;
 
-/*** Terminal Handling ***/
+/*** Low-level I/O Helpers ***/
+/* 
+   FIX: A small wrapper that ensures the entire buffer is written. 
+   (Prevents any partial writes from losing data for status messages.)
+*/
+static void robustWrite(int fd, const char *buf, size_t len) {
+    size_t written = 0;
+    while (written < len) {
+        ssize_t nw = write(fd, buf + written, len - written);
+        if (nw < 1) {
+            /* If we fail, just break. We'll ignore the rest. */
+            break;
+        }
+        written += (size_t)nw;
+    }
+}
+
 void die(const char *s) {
     perror(s);
-    exit(EXIT_FAILURE);
+    exit(EXIT_FAILURE); // Fatal error => direct exit is acceptable
 }
 
 /* For showing short status messages (like errors) */
 static void editorStatusMessage(const char *msg) {
-    write(STDOUT_FILENO, "\x1b[2K\r", 5); /* Clear line & go to start */
-    write(STDOUT_FILENO, msg, strlen(msg));
-    /* Pause briefly so user sees it, or simply let it remain until next refresh. */
+    robustWrite(STDOUT_FILENO, "\x1b[2K\r", 5); /* Clear line & go to start */
+    robustWrite(STDOUT_FILENO, msg, strlen(msg));
+    /* Pause briefly or let it remain until next refresh. */
     tcdrain(STDOUT_FILENO);
 }
 
+/*** Terminal Handling ***/
 void disableRawMode() {
     /* Restore original terminal attributes */
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1)
         perror("tcsetattr");
     /* Show the cursor again */
-    write(STDOUT_FILENO, "\x1b[?25h", 6);
+    robustWrite(STDOUT_FILENO, "\x1b[?25h", 6);
 }
 
 void enableRawMode() {
@@ -145,64 +177,70 @@ void enableRawMode() {
         die("tcsetattr");
 
     /* Hide the cursor */
-    write(STDOUT_FILENO, "\x1b[?25l", 6);
+    robustWrite(STDOUT_FILENO, "\x1b[?25l", 6);
 }
 
-// Get terminal window size by tricking terminal into reporting cursor position.
 int getWindowSize(int *rows, int *cols) {
     char buf[32];
     unsigned int i = 0;
-    if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12)
-        return -1;
-    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4)
-        return -1;
+    if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return -1;
+    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return -1;
 
     while (i < sizeof(buf) - 1) {
-        if (read(STDIN_FILENO, &buf[i], 1) != 1)
-            break;
-        if (buf[i] == 'R')
-            break;
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if (buf[i] == 'R') break;
         i++;
     }
     buf[i] = '\0';
     /* Response should be ESC [ rows ; cols R */
-    if (buf[0] != '\x1b' || buf[1] != '[')
-        return -1;
+    if (buf[0] != '\x1b' || buf[1] != '[') return -1;
 
-    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2)
-        return -1;
+    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return -1;
     return 0;
 }
 
 /*** File I/O ***/
 
-// Loads file content into E.buffer (line by line).
+/*
+  editorOpen: loads file content into E.buffer line by line.
+  FIX: also strip '\r' for Windows CR-LF compatibility.
+*/
 void editorOpen(const char *filename) {
     E.filename = strdup(filename);
+    if (!E.filename) {
+        editorStatusMessage("[ERROR] Out of memory storing filename.");
+        return;
+    }
     FILE *fp = fopen(filename, "r");
     if (!fp) {
         const char *msg = "\x1b[2K\r[New file] Press any key to continue...";
-        write(STDOUT_FILENO, msg, strlen(msg));
+        robustWrite(STDOUT_FILENO, msg, strlen(msg));
         char dummy;
         read(STDIN_FILENO, &dummy, 1);
         return;
     }
-    
-    /* FIX: If the editor buffer contains the initial empty line from initialization,
-       free it so that the file's first line is displayed as line 1. */
+
+    /* If the editor buffer has 1 empty line from init, remove it */
     if (E.buffer.count == 1 && E.buffer.lines[0][0] == '\0') {
         free(E.buffer.lines[0]);
         E.buffer.count = 0;
     }
-    
+
     char line[MAX_LINE_LENGTH];
     while (fgets(line, sizeof(line), fp)) {
         size_t len = strlen(line);
-        /* Strip trailing newline, if any */
-        if (len && line[len - 1] == '\n')
+        /* Strip trailing newline */
+        if (len && line[len - 1] == '\n') {
             line[len - 1] = '\0';
+            len--;
+        }
+        /* FIX: Also strip trailing '\r' if present (Windows line ending) */
+        if (len && line[len - 1] == '\r') {
+            line[len - 1] = '\0';
+            len--;
+        }
 
-        // Expand buffer if needed
+        /* Expand buffer if needed */
         if (E.buffer.count == E.buffer.capacity) {
             E.buffer.capacity *= 2;
             char **new_lines = realloc(E.buffer.lines, E.buffer.capacity * sizeof(char*));
@@ -212,7 +250,12 @@ void editorOpen(const char *filename) {
             }
             E.buffer.lines = new_lines;
         }
-        E.buffer.lines[E.buffer.count++] = strdup(line);
+        char *stored = strdup(line);
+        if (!stored) {
+            editorStatusMessage("[ERROR] Out of memory while storing line.");
+            break;
+        }
+        E.buffer.lines[E.buffer.count++] = stored;
     }
     fclose(fp);
 }
@@ -220,7 +263,7 @@ void editorOpen(const char *filename) {
 void editorSave() {
     if (E.filename == NULL) {
         const char *msg = "\x1b[2K\r[ERROR] No filename provided!\n";
-        write(STDOUT_FILENO, msg, strlen(msg));
+        robustWrite(STDOUT_FILENO, msg, strlen(msg));
         return;
     }
     FILE *fp = fopen(E.filename, "w");
@@ -233,7 +276,7 @@ void editorSave() {
     fclose(fp);
     E.dirty = 0;
     const char *msg = "\x1b[2K\r[Saved]\n";
-    write(STDOUT_FILENO, msg, strlen(msg));
+    robustWrite(STDOUT_FILENO, msg, strlen(msg));
 }
 
 /*** Text Buffer Handling ***/
@@ -272,36 +315,35 @@ void appendEmptyLine(TextBuffer *buffer) {
 /*** Editor Insertion/Deletion ***/
 
 /*
-  Inserts a character into the line at the position E.cx,
-  then increments E.cx by 1. This uses E.cx as the real
-  “absolute” position in the line’s string.
+  Inserts a character at E.cx, then increments E.cx.
+  FIX: Clamp E.cx <= current line length to avoid out-of-bounds copying.
 */
 void insertChar(int c) {
-    /* If the cursor is on the last line (below which is no line), create one. */
+    /* If below last line, add a new empty line. */
     if ((size_t)E.cy == E.buffer.count)
         appendEmptyLine(&E.buffer);
 
-    if ((size_t)E.cy >= E.buffer.count) return; // safety check
+    if ((size_t)E.cy >= E.buffer.count) return;
 
     char *line = E.buffer.lines[E.cy];
     size_t len = strlen(line);
 
-    /* If adding another character would exceed MAX_LINE_LENGTH, show msg and return. */
+    /* FIX: clamp E.cx if out-of-bounds */
+    if (E.cx < 0) E.cx = 0;
+    if (E.cx > (int)len) E.cx = (int)len;
+
     if (len + 2 > MAX_LINE_LENGTH) {
         editorStatusMessage("[WARN] Line length limit reached. Insertion skipped.");
         return;
     }
-
     char *new_line = malloc(len + 2);
     if (!new_line) {
         editorStatusMessage("[ERROR] Out of memory during insert.");
         return;
     }
-
-    /* Copy up to E.cx, insert c, then copy the rest. */
-    memcpy(new_line, line, E.cx);
-    new_line[E.cx] = c;
-    memcpy(new_line + E.cx + 1, line + E.cx, len - E.cx + 1); // +1 for '\0'
+    memcpy(new_line, line, (size_t)E.cx);
+    new_line[E.cx] = (char)c;
+    memcpy(new_line + E.cx + 1, line + E.cx, len - E.cx + 1);
 
     free(E.buffer.lines[E.cy]);
     E.buffer.lines[E.cy] = new_line;
@@ -310,24 +352,28 @@ void insertChar(int c) {
 }
 
 /*
-  Deletes a character at E.cx-1 (a backspace),
-  or merges lines if we are at start of line but not the first line.
+  Deletes a character at E.cx-1 (backspace),
+  or merges lines if we're at the start of a line and not on the first line.
+  FIX: Clamp E.cx in case it exceeded line length.
 */
 void deleteChar() {
     if ((size_t)E.cy >= E.buffer.count) return;
+
     char *line = E.buffer.lines[E.cy];
     size_t len = strlen(line);
 
+    /* FIX: clamp E.cx if out-of-bounds */
+    if (E.cx > (int)len) E.cx = (int)len;
+    if (E.cx < 0) E.cx = 0;
+
     // If we are at the start of a line, and not on the first line, merge with previous line
     if (E.cx == 0 && E.cy > 0) {
-        int prevLen = strlen(E.buffer.lines[E.cy - 1]);
+        int prevLen = (int)strlen(E.buffer.lines[E.cy - 1]);
 
         if ((size_t)(prevLen + len + 1) > MAX_LINE_LENGTH) {
             editorStatusMessage("[WARN] Merge would exceed line length limit. Deletion skipped.");
             return;
         }
-
-        // Combine lines
         char *new_line = malloc(prevLen + len + 1);
         if (!new_line) {
             editorStatusMessage("[ERROR] Out of memory during line merge.");
@@ -350,14 +396,13 @@ void deleteChar() {
         E.cx = prevLen;
     }
     else if (E.cx > 0) {
-        // Normal backspace in the middle or end of line
+        // Normal backspace
         char *new_line = malloc(len);
         if (!new_line) {
             editorStatusMessage("[ERROR] Out of memory during deleteChar.");
             return;
         }
-
-        memcpy(new_line, line, E.cx - 1);
+        memcpy(new_line, line, (size_t)(E.cx - 1));
         memcpy(new_line + (E.cx - 1), line + E.cx, len - E.cx + 1);
 
         free(E.buffer.lines[E.cy]);
@@ -367,18 +412,68 @@ void deleteChar() {
     E.dirty = 1;
 }
 
+/*
+   Inserts a newline by splitting the current line at the cursor position.
+   Design: This function creates a new line containing the text after the cursor
+   and truncates the current line at the cursor.
+   BUG FIX: Resolves the issue where pressing ENTER did not create a new line.
+*/
+void insertNewline(void) {
+    if ((size_t)E.cy >= E.buffer.count) {
+        appendEmptyLine(&E.buffer);
+        E.cy++;
+        E.cx = 0;
+        E.dirty = 1;
+        return;
+    }
+    char *line = E.buffer.lines[E.cy];
+    size_t len = strlen(line);
+
+    /* Create a new line with the text after the current cursor position */
+    char *new_line = strdup(line + E.cx);
+    if (!new_line) {
+        editorStatusMessage("[ERROR] Out of memory during newline insertion.");
+        return;
+    }
+    /* Truncate the current line at the cursor */
+    line[E.cx] = '\0';
+
+    /* Ensure buffer capacity */
+    if (E.buffer.count == E.buffer.capacity) {
+        E.buffer.capacity *= 2;
+        char **new_lines = realloc(E.buffer.lines, E.buffer.capacity * sizeof(char*));
+        if (!new_lines) {
+            editorStatusMessage("[ERROR] Out of memory expanding buffer for newline.");
+            free(new_line);
+            return;
+        }
+        E.buffer.lines = new_lines;
+    }
+    /* Shift subsequent lines down to make room for the new line */
+    for (size_t i = E.buffer.count; i > (size_t)E.cy + 1; i--) {
+        E.buffer.lines[i] = E.buffer.lines[i - 1];
+    }
+    E.buffer.lines[E.cy + 1] = new_line;
+    E.buffer.count++;
+
+    /* Move cursor to beginning of the new line */
+    E.cy++;
+    E.cx = 0;
+    E.dirty = 1;
+}
+
 /*** Selection Helpers ***/
 void getSelectionBounds(Position *start, Position *end) {
     if (E.sel_anchor_y < E.cy ||
        (E.sel_anchor_y == E.cy && E.sel_anchor_x <= E.cx)) {
-        start->y = E.sel_anchor_y; 
+        start->y = E.sel_anchor_y;
         start->x = E.sel_anchor_x;
-        end->y = E.cy; 
+        end->y = E.cy;
         end->x = E.cx;
     } else {
-        start->y = E.cy; 
+        start->y = E.cy;
         start->x = E.cx;
-        end->y = E.sel_anchor_y; 
+        end->y = E.sel_anchor_y;
         end->x = E.sel_anchor_x;
     }
 }
@@ -404,7 +499,7 @@ void copySelection() {
         size_t len = strlen(line);
         int s = start.x, e = end.x;
         if (s < 0) s = 0;
-        if (e > (int)len) e = len;
+        if (e > (int)len) e = (int)len;
         size_t n = (size_t)(e - s);
         E.clipboard = malloc(n + 1);
         if (!E.clipboard) {
@@ -426,7 +521,7 @@ void copySelection() {
         copybuf[0] = '\0';
 
         /* First line: portion from start.x to end of line */
-        strncat(copybuf, 
+        strncat(copybuf,
                 E.buffer.lines[start.y] + start.x,
                 strlen(E.buffer.lines[start.y]) - start.x);
         strcat(copybuf, "\n");
@@ -450,7 +545,7 @@ void cutSelection() {
         // Cut entire line
         free(E.clipboard);
         E.clipboard = strdup(E.buffer.lines[E.cy]);
-        if (E.clipboard == NULL) {
+        if (!E.clipboard) {
             editorStatusMessage("[ERROR] Out of memory while cutting line.");
             return;
         }
@@ -466,11 +561,9 @@ void cutSelection() {
         Position start, end;
         getSelectionBounds(&start, &end);
 
-        // Copy it first, which also clears E.sel_active
         copySelection();
         if (!E.clipboard) return; // out of memory or something went wrong
 
-        // Now remove that text from the buffer
         if (start.y == end.y) {
             // Single-line removal
             char *line = E.buffer.lines[start.y];
@@ -481,13 +574,13 @@ void cutSelection() {
                 editorStatusMessage("[ERROR] Out of memory removing selection.");
                 return;
             }
-            memcpy(new_line, line, start.x);
+            memcpy(new_line, line, (size_t)start.x);
             strcpy(new_line + start.x, line + end.x);
             free(E.buffer.lines[start.y]);
             E.buffer.lines[start.y] = new_line;
         } else {
             // Multi-line removal
-            char *first_part = strndup(E.buffer.lines[start.y], start.x);
+            char *first_part = strndup(E.buffer.lines[start.y], (size_t)start.x);
             if (!first_part) {
                 editorStatusMessage("[ERROR] Out of memory for first_part in multi-line cut.");
                 return;
@@ -515,21 +608,17 @@ void cutSelection() {
             // Merge the first_part and last_part into a single line.
             size_t new_len = strlen(first_part) + strlen(last_part);
             if (new_len + 1 > MAX_LINE_LENGTH) {
-                /* If it exceeds the limit, truncate last_part and warn user. */
                 last_part[MAX_LINE_LENGTH - strlen(first_part) - 1] = '\0';
                 editorStatusMessage("[WARN] Merged line was truncated.");
             }
             char *merged = malloc(strlen(first_part) + strlen(last_part) + 1);
             if (!merged) {
-                /* FIX: If malloc fails, we revert E.buffer.lines[start.y] to first_part
-                   and free last_part to avoid memory leaks. */
                 editorStatusMessage("[ERROR] Out of memory merging lines.");
                 free(last_part);
                 return;
             }
             strcpy(merged, first_part);
             strcat(merged, last_part);
-            /* free first_part only once, as stated in code comment. */
             free(first_part);
             E.buffer.lines[start.y] = merged;
             free(last_part);
@@ -540,9 +629,6 @@ void cutSelection() {
     }
 }
 
-/*
-  Pastes the clipboard content at E.cx, E.cy.
-*/
 void pasteClipboard() {
     if (!E.clipboard) return;
     char *clip = strdup(E.clipboard);
@@ -560,10 +646,15 @@ void pasteClipboard() {
 
         if ((size_t)E.cy >= E.buffer.count) {
             free(clip);
-            return; // safety check
+            return;
         }
         char *line = E.buffer.lines[E.cy];
         size_t linelen = strlen(line);
+
+        /* clamp E.cx if needed */
+        if (E.cx < 0) E.cx = 0;
+        if (E.cx > (int)linelen) E.cx = (int)linelen;
+
         if (linelen + len + 1 > MAX_LINE_LENGTH) {
             editorStatusMessage("[WARN] Line length limit. Paste truncated/skipped.");
             free(clip);
@@ -576,13 +667,13 @@ void pasteClipboard() {
             return;
         }
 
-        memcpy(new_line, line, E.cx);
+        memcpy(new_line, line, (size_t)E.cx);
         strcpy(new_line + E.cx, clip);
         strcpy(new_line + E.cx + len, line + E.cx);
 
         free(E.buffer.lines[E.cy]);
         E.buffer.lines[E.cy] = new_line;
-        E.cx += len;
+        E.cx += (int)len;
     } else {
         // Multi-line paste
         if ((size_t)E.cy == E.buffer.count)
@@ -593,8 +684,8 @@ void pasteClipboard() {
         }
 
         char *current = E.buffer.lines[E.cy];
-        size_t leftLen = E.cx;
-        size_t rightLen = strlen(current) - E.cx;
+        size_t leftLen = (size_t)E.cx;
+        size_t rightLen = strlen(current) - leftLen;
 
         char *left_part = malloc(leftLen + 1);
         char *right_part = malloc(rightLen + 1);
@@ -607,16 +698,15 @@ void pasteClipboard() {
         }
         memcpy(left_part, current, leftLen);
         left_part[leftLen] = '\0';
-        strcpy(right_part, current + E.cx);
+        strcpy(right_part, current + leftLen);
 
-        /* First line chunk from the clipboard */
         char *saveptr;
         char *line_token = strtok_r(clip, "\n", &saveptr);
         if (!line_token) {
             free(left_part);
             free(right_part);
             free(clip);
-            return; // no tokens
+            return;
         }
         size_t firstLen = strlen(line_token);
 
@@ -643,7 +733,6 @@ void pasteClipboard() {
                 char **new_lines = realloc(E.buffer.lines, E.buffer.capacity * sizeof(char*));
                 if (!new_lines) {
                     editorStatusMessage("[ERROR] Out of memory expanding buffer for paste.");
-                    /* We won't fully revert, but partial paste has already happened. */
                     break;
                 }
                 E.buffer.lines = new_lines;
@@ -672,7 +761,7 @@ void pasteClipboard() {
             free(E.buffer.lines[E.cy]);
             E.buffer.lines[E.cy] = merged;
             // Position the cursor at the boundary
-            E.cx = lastLen;
+            E.cx = (int)lastLen;
         }
         free(left_part);
         free(right_part);
@@ -695,26 +784,20 @@ char *editorPrompt(const char *prompt) {
         snprintf(status, sizeof(status), "\x1b[7m%s%s\x1b[0m", prompt, buf);
 
         // Save cursor, move to top-left, print prompt, restore cursor
-        write(STDOUT_FILENO, "\x1b[s", 3); 
-        write(STDOUT_FILENO, "\x1b[H", 3); 
-        write(STDOUT_FILENO, status, strlen(status));
-        write(STDOUT_FILENO, "\x1b[u", 3);
+        robustWrite(STDOUT_FILENO, "\x1b[s", 3);
+        robustWrite(STDOUT_FILENO, "\x1b[H", 3);
+        robustWrite(STDOUT_FILENO, status, strlen(status));
+        robustWrite(STDOUT_FILENO, "\x1b[u", 3);
 
         int c = editorReadKey();
         if (c == '\r' || c == '\n') {
-            write(STDOUT_FILENO, "\x1b[2K\r", 5);
+            robustWrite(STDOUT_FILENO, "\x1b[2K\r", 5);
             break;
         } else if (c == 127 || c == CTRL_KEY('h')) {
             if (buflen != 0) {
                 buflen--;
                 buf[buflen] = '\0';
             }
-        /* Optional: press ESC to cancel? 
-           if (c == 27) { 
-               free(buf); 
-               return NULL; 
-           }
-        */
         } else if (isprint(c)) {
             if (buflen + 1 >= bufsize) {
                 bufsize *= 2;
@@ -726,7 +809,7 @@ char *editorPrompt(const char *prompt) {
                 }
                 buf = newbuf;
             }
-            buf[buflen++] = c;
+            buf[buflen++] = (char)c;
             buf[buflen] = '\0';
         }
     }
@@ -781,14 +864,14 @@ void editorFindReplace() {
 
     char msg[64];
     snprintf(msg, sizeof(msg), "\x1b[2K\r[Replaced %d occurrences]\n", total_replacements);
-    write(STDOUT_FILENO, msg, strlen(msg));
+    robustWrite(STDOUT_FILENO, msg, strlen(msg));
 }
 
 /*** Scrolling and Rendering ***/
 static char *expandTabs(const char *input) {
     int length = 0;
-    int cap = MAX_LINE_LENGTH * 2; // Enough to hold expansions (safe margin).
-    char *output = malloc(cap);
+    int cap = MAX_LINE_LENGTH * 2; // Enough to hold expansions
+    char *output = malloc((size_t)cap);
     if (!output) return NULL;
     output[0] = '\0';
 
@@ -799,9 +882,9 @@ static char *expandTabs(const char *input) {
                 output[length++] = ' ';
             }
         } else {
+            if (length + 1 >= cap - 1) break;
             output[length++] = *p;
         }
-        if (length >= cap - 1) break;
     }
     output[length] = '\0';
     return output;
@@ -809,19 +892,19 @@ static char *expandTabs(const char *input) {
 
 static void printSubstringWithOptionalInvert(const char *line, int start, int length, int invert) {
     if (length <= 0) return;
-    if (invert) write(STDOUT_FILENO, "\x1b[7m", 4);  
-    write(STDOUT_FILENO, line + start, length);
-    if (invert) write(STDOUT_FILENO, "\x1b[0m", 4);  
+    if (invert) robustWrite(STDOUT_FILENO, "\x1b[7m", 4);  
+    robustWrite(STDOUT_FILENO, line + start, (size_t)length);
+    if (invert) robustWrite(STDOUT_FILENO, "\x1b[0m", 4);  
 }
 
 void renderLine(int row, Position *selStart, Position *selEnd) {
     int filerow = E.rowoff + row;
     char lineNum[8];
     snprintf(lineNum, sizeof(lineNum), "%4d ", filerow + 1);
-    write(STDOUT_FILENO, lineNum, strlen(lineNum));
+    robustWrite(STDOUT_FILENO, lineNum, strlen(lineNum));
 
     if ((size_t)filerow >= E.buffer.count) {
-        write(STDOUT_FILENO, "~", 1);
+        robustWrite(STDOUT_FILENO, "~", 1);
         return;
     }
 
@@ -830,7 +913,7 @@ void renderLine(int row, Position *selStart, Position *selEnd) {
     if (!expanded) return;
     int expandedLen = (int)strlen(expanded);
 
-    int avail = E.screencols - 5; // line number columns used
+    int avail = E.screencols - 5; // line number columns
 
     int leftEdge = E.coloff;
     if (leftEdge < expandedLen) {
@@ -842,18 +925,20 @@ void renderLine(int row, Position *selStart, Position *selEnd) {
     if (expandedLen > avail) expandedLen = avail;
 
     const char *renderPtr = expanded + E.coloff;
+
+    // If no active selection or the selection is outside this row, just print
     if (!E.sel_active ||
         filerow < selStart->y || filerow > selEnd->y) {
-        write(STDOUT_FILENO, renderPtr, expandedLen);
+        robustWrite(STDOUT_FILENO, renderPtr, (size_t)expandedLen);
         free(expanded);
         return;
     }
 
     // There's an active selection that touches this line
     int rawLen = (int)strlen(rawLine);
-    int *tabIndex = malloc(sizeof(int) * (rawLen + 1));
+    int *tabIndex = malloc(sizeof(int) * (size_t)(rawLen + 1));
     if (!tabIndex) {
-        write(STDOUT_FILENO, renderPtr, expandedLen);
+        robustWrite(STDOUT_FILENO, renderPtr, (size_t)expandedLen);
         free(expanded);
         return;
     }
@@ -875,6 +960,7 @@ void renderLine(int row, Position *selStart, Position *selEnd) {
         int startRaw = (filerow == selStart->y) ? selStart->x : 0;
         if (startRaw < 0) startRaw = 0;
         if (startRaw > rawLen) startRaw = rawLen;
+
         int endRaw = (filerow == selEnd->y) ? selEnd->x : rawLen;
         if (endRaw < 0) endRaw = 0;
         if (endRaw > rawLen) endRaw = rawLen;
@@ -883,6 +969,7 @@ void renderLine(int row, Position *selStart, Position *selEnd) {
         int eCol = (endRaw > 0)   ? tabIndex[endRaw - 1]   : 0;
         if (startRaw == 0) sCol = 0;
         if (endRaw == 0) eCol = 0;
+
         expSelBegin = sCol - E.coloff;
         expSelEnd   = eCol - E.coloff;
         if (expSelBegin < 0) expSelBegin = 0;
@@ -891,12 +978,13 @@ void renderLine(int row, Position *selStart, Position *selEnd) {
         if (expSelEnd > avail) expSelEnd = avail;
     }
 
-    free(tabIndex);
-
     printSubstringWithOptionalInvert(renderPtr, 0, expSelBegin, 0);
-    printSubstringWithOptionalInvert(renderPtr, expSelBegin, expSelEnd - expSelBegin, 1);
-    printSubstringWithOptionalInvert(renderPtr, expSelEnd, expandedLen - expSelEnd, 0);
+    printSubstringWithOptionalInvert(renderPtr, expSelBegin,
+                                     expSelEnd - expSelBegin, 1);
+    printSubstringWithOptionalInvert(renderPtr, expSelEnd,
+                                     expandedLen - expSelEnd, 0);
 
+    free(tabIndex);
     free(expanded);
 }
 
@@ -916,17 +1004,12 @@ void editorScroll() {
     }
 }
 
-/*
-  Modified editorRefreshScreen():
-  - Reserves the last row for the status bar.
-  - Renders text only on E.screenrows - 1 rows.
-  - Adjusts the cursor position to ensure it remains within the text area.
-*/
 void editorRefreshScreen() {
     editorScroll();
 
     // Hide cursor and reposition to top-left.
-    write(STDOUT_FILENO, "\x1b[?25l\x1b[H", 9);
+    robustWrite(STDOUT_FILENO, "\x1b[?25l", 6);
+    robustWrite(STDOUT_FILENO, "\x1b[H", 3);
 
     Position selStart, selEnd;
     if (E.sel_active) {
@@ -937,11 +1020,9 @@ void editorRefreshScreen() {
     }
 
     int text_rows = E.screenrows - 1;  // reserve the last row for the status bar
-
-    // Render text lines in the text area.
     for (int y = 0; y < text_rows; y++) {
         renderLine(y, &selStart, &selEnd);
-        write(STDOUT_FILENO, "\x1b[K\r\n", 5);
+        robustWrite(STDOUT_FILENO, "\x1b[K\r\n", 5);
     }
 
     // Draw status bar on the last row.
@@ -952,65 +1033,92 @@ void editorRefreshScreen() {
              E.buffer.count, E.cx, E.cy);
     char statusPos[32];
     snprintf(statusPos, sizeof(statusPos), "\x1b[%d;1H", E.screenrows);
-    write(STDOUT_FILENO, statusPos, strlen(statusPos));
-    write(STDOUT_FILENO, statusBar, strlen(statusBar));
+    robustWrite(STDOUT_FILENO, statusPos, strlen(statusPos));
+    robustWrite(STDOUT_FILENO, statusBar, strlen(statusBar));
 
-    // Calculate cursor position within the text area (rows 1 to text_rows).
+    // Calculate cursor position within the text area
     int cx_screen = (E.cx - E.coloff) + 6;
     int cy_screen = (E.cy - E.rowoff) + 1;
     if (cy_screen > text_rows) cy_screen = text_rows;
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cy_screen, cx_screen);
-    write(STDOUT_FILENO, buf, strlen(buf));
+    robustWrite(STDOUT_FILENO, buf, strlen(buf));
 
     // Show cursor again.
-    write(STDOUT_FILENO, "\x1b[?25h", 6);
+    robustWrite(STDOUT_FILENO, "\x1b[?25h", 6);
     tcdrain(STDOUT_FILENO);
 }
 
 /*** Input Processing ***/
+
 int editorReadKey(void) {
     char c;
-    while (read(STDIN_FILENO, &c, 1) != 1)
-        ;
+    while (read(STDIN_FILENO, &c, 1) != 1) {
+        /* Keep reading until we get a byte. */
+    }
     if (c == '\x1b') {
-        char seq[6];
-        if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
-        if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+        // Escape sequence - read more
+        char seq[32];
+        memset(seq, 0, sizeof(seq));
 
-        if (seq[0] == '[') {
-            if (seq[1] >= '0' && seq[1] <= '9') {
-                if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
-                if (seq[2] == ';') {
-                    if (read(STDIN_FILENO, &seq[3], 1) != 1) return '\x1b';
-                    if (read(STDIN_FILENO, &seq[4], 1) != 1) return '\x1b';
-                    if (seq[4] == 'A') return SHIFT_ARROW_UP;
-                    if (seq[4] == 'B') return SHIFT_ARROW_DOWN;
-                    if (seq[4] == 'C') return SHIFT_ARROW_RIGHT;
-                    if (seq[4] == 'D') return SHIFT_ARROW_LEFT;
-                } else {
-                    if (seq[2] == 'A') return ARROW_UP;
-                    if (seq[2] == 'B') return ARROW_DOWN;
-                    if (seq[2] == 'C') return ARROW_RIGHT;
-                    if (seq[2] == 'D') return ARROW_LEFT;
-                }
+        // First attempt to read up to 30 more bytes or until we hit a letter
+        // that typically ends an escape sequence.
+        int i = 0;
+        if (read(STDIN_FILENO, &seq[i], 1) != 1) {
+            return '\x1b';
+        }
+        i++;
+        if (seq[0] != '[') {
+            // Not a recognized CSI sequence
+            return '\x1b';
+        }
+        // Read further bytes
+        while (i < (int)(sizeof(seq) - 1)) {
+            if (read(STDIN_FILENO, &seq[i], 1) != 1) {
+                break;
+            }
+            // Break if we find a letter in the typical range
+            if ((seq[i] >= '@' && seq[i] <= 'Z') || (seq[i] >= 'a' && seq[i] <= 'z')) {
+                i++;
+                break;
+            }
+            i++;
+        }
+        seq[i] = '\0';
+
+        // Examples of possible sequences:
+        //   "[A" (up), "[B" (down), "[C" (right), "[D" (left)
+        //   "[1;2A" (shift+up), "[1;2B", "[1;2C", "[1;2D"
+        //   "[10;2A" could appear, etc.
+        // We only check for arrow patterns:
+        //   final char A/B/C/D => up/down/right/left
+        char finalChar = seq[i-1]; 
+        // We'll parse the "before finalChar" to see if there's ";2"
+        // indicating SHIFT.
+        if (finalChar == 'A' || finalChar == 'B' ||
+            finalChar == 'C' || finalChar == 'D') {
+            // Check if there's ";2" somewhere
+            if (strstr(seq, ";2") != NULL) {
+                // SHIFT + arrow
+                if (finalChar == 'A') return SHIFT_ARROW_UP;
+                if (finalChar == 'B') return SHIFT_ARROW_DOWN;
+                if (finalChar == 'C') return SHIFT_ARROW_RIGHT;
+                if (finalChar == 'D') return SHIFT_ARROW_LEFT;
             } else {
-                if (seq[1] == 'A') return ARROW_UP;
-                if (seq[1] == 'B') return ARROW_DOWN;
-                if (seq[1] == 'C') return ARROW_RIGHT;
-                if (seq[1] == 'D') return ARROW_LEFT;
+                // Normal arrow
+                if (finalChar == 'A') return ARROW_UP;
+                if (finalChar == 'B') return ARROW_DOWN;
+                if (finalChar == 'C') return ARROW_RIGHT;
+                if (finalChar == 'D') return ARROW_LEFT;
             }
         }
+        // If none matched, just return ESC for now
         return '\x1b';
-    } 
-    else {
+    } else {
         return c;
     }
 }
 
-/*
-  Main dispatch for each key pressed: navigation, editing, selection, etc.
-*/
 void editorProcessKeypress() {
     int c = editorReadKey();
     switch (c) {
@@ -1027,6 +1135,17 @@ void editorProcessKeypress() {
         editorFindReplace();
         break;
 
+    case CTRL_KEY('a'):
+        // Select all text in the editor.
+        if (E.buffer.count > 0) {
+            E.sel_active = 1;
+            E.sel_anchor_x = 0;
+            E.sel_anchor_y = 0;
+            E.cy = (int)E.buffer.count - 1;
+            E.cx = (int)strlen(E.buffer.lines[E.cy]);
+        }
+        break;
+
     case CTRL_KEY('c'):
         copySelection();
         break;
@@ -1039,6 +1158,11 @@ void editorProcessKeypress() {
         pasteClipboard();
         break;
 
+    case '\r':  // Handle ENTER key (both '\r' and '\n')
+    case '\n':
+        insertNewline();
+        break;
+
     // Basic arrow keys (no selection)
     case ARROW_LEFT:
         E.sel_active = 0;
@@ -1046,13 +1170,14 @@ void editorProcessKeypress() {
             E.cx--;
         } else if (E.cy > 0) {
             E.cy--;
-            E.cx = strlen(E.buffer.lines[E.cy]);
+            E.cx = (int)strlen(E.buffer.lines[E.cy]);
         }
         break;
 
     case ARROW_RIGHT:
         E.sel_active = 0;
-        if (E.cy < (int)E.buffer.count && (size_t)E.cx < strlen(E.buffer.lines[E.cy])) {
+        if (E.cy < (int)E.buffer.count &&
+            (size_t)E.cx < strlen(E.buffer.lines[E.cy])) {
             E.cx++;
         } else if (E.cy < (int)E.buffer.count) {
             E.cy++;
@@ -1066,7 +1191,7 @@ void editorProcessKeypress() {
             E.cy--;
         }
         if ((size_t)E.cx > strlen(E.buffer.lines[E.cy])) {
-            E.cx = strlen(E.buffer.lines[E.cy]);
+            E.cx = (int)strlen(E.buffer.lines[E.cy]);
         }
         break;
 
@@ -1076,8 +1201,9 @@ void editorProcessKeypress() {
             E.cy++;
         }
         if (E.cy < (int)E.buffer.count) {
-            if ((size_t)E.cx > strlen(E.buffer.lines[E.cy])) {
-                E.cx = strlen(E.buffer.lines[E.cy]);
+            size_t len = strlen(E.buffer.lines[E.cy]);
+            if ((size_t)E.cx > len) {
+                E.cx = (int)len;
             }
         } else {
             E.cx = 0;
@@ -1095,7 +1221,7 @@ void editorProcessKeypress() {
             E.cx--;
         } else if (E.cy > 0) {
             E.cy--;
-            E.cx = strlen(E.buffer.lines[E.cy]);
+            E.cx = (int)strlen(E.buffer.lines[E.cy]);
         }
         break;
 
@@ -1105,7 +1231,8 @@ void editorProcessKeypress() {
             E.sel_anchor_y = E.cy;
             E.sel_active = 1;
         }
-        if (E.cy < (int)E.buffer.count && (size_t)E.cx < strlen(E.buffer.lines[E.cy])) {
+        if (E.cy < (int)E.buffer.count &&
+            (size_t)E.cx < strlen(E.buffer.lines[E.cy])) {
             E.cx++;
         } else if (E.cy < (int)E.buffer.count) {
             E.cy++;
@@ -1123,7 +1250,7 @@ void editorProcessKeypress() {
             E.cy--;
         }
         if ((size_t)E.cx > strlen(E.buffer.lines[E.cy])) {
-            E.cx = strlen(E.buffer.lines[E.cy]);
+            E.cx = (int)strlen(E.buffer.lines[E.cy]);
         }
         break;
 
@@ -1137,8 +1264,9 @@ void editorProcessKeypress() {
             E.cy++;
         }
         if (E.cy < (int)E.buffer.count) {
-            if ((size_t)E.cx > strlen(E.buffer.lines[E.cy])) {
-                E.cx = strlen(E.buffer.lines[E.cy]);
+            size_t len = strlen(E.buffer.lines[E.cy]);
+            if ((size_t)E.cx > len) {
+                E.cx = (int)len;
             }
         } else {
             E.cx = 0;

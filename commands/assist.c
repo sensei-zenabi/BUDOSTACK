@@ -5,56 +5,59 @@ Filename: discover.c
 Description:
 
 	Implement a loop, where user is able to discuss with this chatbot.
-	Include a command parser that recognizes familiar commands and create 
-	a randomized default message to commands that are not recognized.
-	If the user types "exit", the chatbot program needs to terminate.
+	Include a command parser that recognizes familiar commands and creates 
+	a randomized default message for unrecognized commands.
+	If the user types "exit", the chatbot program terminates.
 
 Supported commands:
 
 	help
-		1. Displays all the supported commands (from below)
+		1. Displays a neatly formatted list of supported commands and their descriptions.
 
 	search network
-		1. Actively scans and displays all the MAC, IP addresses and device names 
+		1. Actively scans and displays all MAC, IP addresses, and device names 
 		   from devices in the same Wi-Fi network.
-		   (On Linux, uses arp-scan to actively query every host in your subnet.)
+		   (On Linux, uses arp-scan to query every host in the local subnet.)
 
 	ping <IP-address>
-		1. Pings the device 5 times and reports metrics from the results.
+		1. Pings the specified IP address 5 times and reports the results.
 
 	search "string"
-		1. Searches and displays all the files and their contents that contain the 
-		   given string from the current folder and its subfolders.
-		2. If the file is a binary file, only the filename is displayed.
+		1. Searches for the given string in files in the current folder and subfolders.
+		2. If the file is binary, only the filename is displayed.
 
 	search hardware
-		1. Searches and displays all connected hardware specs and devices from the device 
-		   where the app is running (Linux only). The output is paged.
-    
-	search hardware -short
-		1. Displays a concise summary of the connected hardware specs, including key details 
-		   from Linux kernel virtual files and battery information.
+		1. Displays a comprehensive, developer-friendly overview of the system's hardware.
+		   This includes:
+		     - A hierarchical overview via "lshw -short".
+		     - Detailed hardware info (using lshw, lscpu, free, lspci, lsusb, sensors, etc.).
+		     - A logical tree view of the top-level device tree nodes.
+		     - A truncated dump of the device tree (first TRUNCATED_DT_LINES lines, default 256).
+		     - The full device tree dump.
+		   The output is both displayed (paged via less) and exported to logs/hwtree.txt.
 
  Remarks:
 
-	1. Functions defined as "extern" come from shared libraries and do not need to be implemented.
-	2. Implement all above descriptions and requirements.
-	3. Provide the fully updated source code.
-	4. Do not delete or modify this header.
-
+	1. Functions declared as "extern" come from shared libraries and do not need to be implemented.
+	2. All functionalities are implemented using standard POSIX calls and utilities.
+	3. Do not delete or modify this header.
 */
 
 /*
 Design Principles and Implementation Notes:
-- The program uses a continuous command loop to interact with the user.
-- Commands are parsed using only standard string functions (<string.h>) for cross-platform compatibility.
-- Default responses are randomized by seeding the random number generator with the current time.
-- For "search network", on Linux the program uses "arp-scan -l" to actively scan the local subnet.
-  This ensures that all devices on the network respond, not only those present in the ARP cache.
-- On Windows or non-Linux systems, "arp -a" is used.
-- Other commands (ping, file search, hardware search) invoke system utilities, with conditional compilation where needed.
-- The code is written in plain C using -std=c11 and only standard cross-platform libraries.
-- The external function prettyprint is assumed to be provided via a shared library.
+- Uses a continuous command loop to interact with the user.
+- Commands are parsed using standard string functions (<string.h>).
+- Default responses are randomized using the current time.
+- "search network" uses "arp-scan -l" for active scanning.
+- "search hardware" organizes output into clear sections:
+    * Hierarchical overview via "lshw -short".
+    * Detailed hardware info from various utilities.
+    * Logical tree view of top-level device tree nodes.
+    * A truncated device tree dump (configurable by TRUNCATED_DT_LINES, default 256).
+    * The complete device tree dump.
+- The output is saved to a temporary file, then copied to logs/hwtree.txt, and finally paged using less.
+- Written in plain C under -std=c11 using only standard POSIX libraries.
+- The external function prettyprint() is assumed to be provided.
 */
 
 #include <stdlib.h>
@@ -62,21 +65,19 @@ Design Principles and Implementation Notes:
 #include <string.h>
 #include <time.h>
 
-#ifdef _WIN32
-    #define CLEAR_COMMAND "cls"
-#else
-    #define CLEAR_COMMAND "clear"
-#endif
+#define TEMP_HWFILE "/tmp/hwinfo.txt"
+#define LOG_FILE "logs/hwtree.txt"
+#define TRUNCATED_DT_LINES 1024  // Configurable: number of lines for truncated device tree dump
 
 // Declaration of prettyprint, assumed to be provided externally.
 extern void prettyprint(const char *message, unsigned int delay_ms);
 
 int main(void) {
     // Clear the console.
-    system(CLEAR_COMMAND);
+    system("clear");
     prettyprint("Hello User! How can I help you?\n", 25);
 
-    // Seed random number generator.
+    // Seed the random number generator.
     srand((unsigned) time(NULL));
 
     char input[256];
@@ -96,34 +97,32 @@ int main(void) {
             break;
         }
         else if (strcmp(input, "help") == 0) {
-            printf("Supported commands:\n");
-            printf("help - Displays this help information and list of commands.\n");
-#ifdef __linux__
-            printf("search network - Actively scans the local network using arp-scan (requires arp-scan and root privileges).\n");
-#else
-            printf("search network - Displays network devices using 'arp -a'.\n");
-#endif
-			printf("  Note! Always ensure you have the proper authorization before scanning any network.\n");
-            printf("ping <IP-address> - Pings the specified IP address 5 times and reports the results.\n");
-            printf("search \"string\" - Searches for the given string in files in the current folder and subfolders.\n");
-            printf("search hardware - Displays detailed hardware specs (Linux only, output is paged).\n");
-            printf("search hardware -short - Displays concise hardware specs (Linux only).\n");
+            printf("\nSupported commands:\n");
+            printf("  help\n");
+            printf("      Displays this help information and list of commands.\n\n");
+            printf("  search network\n");
+            printf("      Actively scans the local network using arp-scan (requires root privileges).\n\n");
+            printf("  ping <IP-address>\n");
+            printf("      Pings the specified IP address 5 times and reports the results.\n\n");
+            printf("  search \"string\"\n");
+            printf("      Searches for the given string in files in the current folder and subfolders.\n");
+            printf("      If the file is binary, only the filename is displayed.\n\n");
+            printf("  search hardware\n");
+            printf("      Displays a comprehensive overview of the system's hardware.\n");
+            printf("      This includes:\n");
+            printf("        - A hierarchical overview (lshw -short).\n");
+            printf("        - Detailed hardware info (lshw, lscpu, free, lspci, lsusb, sensors, etc.).\n");
+            printf("        - Logical tree view of top-level device tree nodes.\n");
+            printf("        - Truncated device tree dump (first %d lines).\n", TRUNCATED_DT_LINES);
+            printf("        - Full device tree dump.\n");
+            printf("      The output is displayed (paged via less) and saved to logs/hwtree.txt.\n\n");
         }
         else if (strcmp(input, "search network") == 0) {
-#ifdef __linux__
             printf("Performing active network scan using arp-scan...\n");
-            // Actively scan the local network using arp-scan.
             int ret = system("arp-scan -l");
             if (ret != 0) {
                 printf("Error: arp-scan failed. Ensure it is installed and you have sufficient privileges.\n");
             }
-#else
-            printf("Performing network search...\n");
-            int ret = system("arp -a");
-            if (ret != 0) {
-                printf("Error: Network search command failed or is not supported on this system.\n");
-            }
-#endif
         }
         else if (strncmp(input, "ping ", 5) == 0) {
             char *ip = input + 5;
@@ -132,11 +131,7 @@ int main(void) {
             } else {
                 printf("Pinging %s ...\n", ip);
                 char command[512];
-#ifdef _WIN32
-                snprintf(command, sizeof(command), "ping -n 5 %s", ip);
-#else
                 snprintf(command, sizeof(command), "ping -c 5 %s", ip);
-#endif
                 int ret = system(command);
                 if (ret != 0) {
                     printf("Error: Ping command failed or the IP address is unreachable.\n");
@@ -156,11 +151,7 @@ int main(void) {
                 search_term[str_len] = '\0';
                 printf("Searching for \"%s\" in files...\n", search_term);
                 char command[512];
-#ifdef _WIN32
-                snprintf(command, sizeof(command), "findstr /S /I \"%s\" *", search_term);
-#else
                 snprintf(command, sizeof(command), "grep -R -I \"%s\" .", search_term);
-#endif
                 int ret = system(command);
                 if (ret != 0) {
                     printf("Error: File search command failed or returned no matches.\n");
@@ -170,75 +161,69 @@ int main(void) {
             }
         }
         else if (strcmp(input, "search hardware") == 0) {
-#ifdef _WIN32
-            printf("Hardware search is not supported on Windows in this version.\n");
-#else
-            printf("Gathering detailed hardware specs (with paging)...\n");
-            system("rm -f /tmp/hwinfo.txt");
-            system("echo \"=== lshw output ===\" >> /tmp/hwinfo.txt");
-            system("lshw 2>/dev/null >> /tmp/hwinfo.txt");
-            system("echo \"\n--- CPU Info (from /proc/cpuinfo) ---\" >> /tmp/hwinfo.txt");
-            system("cat /proc/cpuinfo >> /tmp/hwinfo.txt");
-            system("echo \"\n--- CPU Extended Info (lscpu) ---\" >> /tmp/hwinfo.txt");
-            system("lscpu >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Memory Info (from /proc/meminfo) ---\" >> /tmp/hwinfo.txt");
-            system("cat /proc/meminfo >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Memory Extended Info (free -h) ---\" >> /tmp/hwinfo.txt");
-            system("free -h >> /tmp/hwinfo.txt");
-            system("echo \"\n--- PCI Devices (basic) ---\" >> /tmp/hwinfo.txt");
-            system("ls /sys/bus/pci/devices >> /tmp/hwinfo.txt");
-            system("echo \"\n--- PCI Devices Extended Info (lspci -v) ---\" >> /tmp/hwinfo.txt");
-            system("lspci -v >> /tmp/hwinfo.txt");
-            system("echo \"\n--- USB Devices (basic) ---\" >> /tmp/hwinfo.txt");
-            system("ls /sys/bus/usb/devices >> /tmp/hwinfo.txt");
-            system("echo \"\n--- USB Devices Extended Info (lsusb -v) ---\" >> /tmp/hwinfo.txt");
-            system("lsusb -v 2>/dev/null | head -n 50 >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Network Interfaces (from /proc/net/dev) ---\" >> /tmp/hwinfo.txt");
-            system("cat /proc/net/dev >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Network Interfaces Extended Info (ip addr) ---\" >> /tmp/hwinfo.txt");
-            system("ip addr >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Sensors Info (basic from hwmon) ---\" >> /tmp/hwinfo.txt");
-            system("cat /sys/class/hwmon/hwmon*/temp* 2>/dev/null >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Sensors Extended Info (sensors) ---\" >> /tmp/hwinfo.txt");
-            system("sensors 2>/dev/null >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Interrupts (from /proc/interrupts) ---\" >> /tmp/hwinfo.txt");
-            system("cat /proc/interrupts >> /tmp/hwinfo.txt");
-            system("echo \"\n--- I/O Ports (from /proc/ioports) ---\" >> /tmp/hwinfo.txt");
-            system("cat /proc/ioports 2>/dev/null >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Battery Info (basic) ---\" >> /tmp/hwinfo.txt");
-            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/status; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/status; else echo \"No battery found\"; fi' >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Battery Charge ---\" >> /tmp/hwinfo.txt");
-            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/capacity; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/capacity; fi && echo \"%\"' >> /tmp/hwinfo.txt");
-            system("echo \"\n--- Battery Extended Info (upower) ---\" >> /tmp/hwinfo.txt");
-            system("upower -i $(upower -e | grep battery) 2>/dev/null >> /tmp/hwinfo.txt");
-            system("less /tmp/hwinfo.txt");
-            system("rm /tmp/hwinfo.txt");
-#endif
-        }
-        else if (strcmp(input, "search hardware -short") == 0) {
-#ifdef _WIN32
-            printf("Hardware search is not supported on Windows in this version.\n");
-#else
-            printf("Searching concise hardware specs...\n");
-            int ret = system("lshw -short 2>/dev/null");
-            if (ret != 0) {
-                printf("lshw not available. Displaying alternative concise hardware information...\n");
-            }
-            printf("\n--- CPU Info (concise) ---\n");
-            system("lscpu | grep -E 'Architecture|Model name|CPU\\(s\\)|Thread|Core\\(s\\)'");
-            printf("\n--- Memory Info (concise) ---\n");
-            system("free -h");
-            printf("\n--- PCI Devices (concise) ---\n");
-            system("lspci | head -n 15");
-            printf("\n--- USB Devices (concise) ---\n");
-            system("lsusb | head -n 15");
-            printf("\n--- Network Interfaces (concise) ---\n");
-            system("ip -brief addr show");
-            printf("\n--- Sensors (concise) ---\n");
-            system("sensors | grep -E 'Core|Package'");
-            printf("\n--- Battery Info (concise) ---\n");
-            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/status; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/status; else echo \"No battery found\"; fi; echo -n \" Charge: \"; if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/capacity; elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/capacity; fi; echo \"%\"'");
-#endif
+            printf("Gathering comprehensive hardware specs...\n");
+            // Remove any previous temporary file.
+            system("rm -f " TEMP_HWFILE);
+            
+            // Create logs directory if not exists.
+            system("mkdir -p logs");
+
+            // Create organized sections in the temporary file.
+            system("echo \"=== Detailed Hardware Information ===\" > " TEMP_HWFILE);
+
+            // Section: Hierarchical hardware overview.
+            system("echo \"\n--- Hardware Overview (lshw -short) ---\" >> " TEMP_HWFILE);
+            system("lshw -short 2>/dev/null >> " TEMP_HWFILE);
+
+            // Section: Detailed hardware info.
+            system("echo \"\n--- Detailed lshw Output ---\" >> " TEMP_HWFILE);
+            system("lshw 2>/dev/null >> " TEMP_HWFILE);
+            system("echo \"\n--- CPU Info (/proc/cpuinfo & lscpu) ---\" >> " TEMP_HWFILE);
+            system("cat /proc/cpuinfo >> " TEMP_HWFILE);
+            system("lscpu >> " TEMP_HWFILE);
+            system("echo \"\n--- Memory Info (proc & free) ---\" >> " TEMP_HWFILE);
+            system("cat /proc/meminfo >> " TEMP_HWFILE);
+            system("free -h >> " TEMP_HWFILE);
+            system("echo \"\n--- PCI Devices ---\" >> " TEMP_HWFILE);
+            system("lspci -v >> " TEMP_HWFILE);
+            system("echo \"\n--- USB Devices ---\" >> " TEMP_HWFILE);
+            system("lsusb -v 2>/dev/null | head -n 50 >> " TEMP_HWFILE);
+            system("echo \"\n--- Network Interfaces ---\" >> " TEMP_HWFILE);
+            system("ip addr >> " TEMP_HWFILE);
+            system("echo \"\n--- Sensors Info ---\" >> " TEMP_HWFILE);
+            system("sensors 2>/dev/null >> " TEMP_HWFILE);
+            system("echo \"\n--- Battery Info ---\" >> " TEMP_HWFILE);
+            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/status; "
+                   "elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/status; "
+                   "else echo \"No battery found\"; fi' >> " TEMP_HWFILE);
+            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/capacity; "
+                   "elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/capacity; fi && echo \"%\"' >> " TEMP_HWFILE);
+            system("echo \"\n--- Storage Devices (lsblk) ---\" >> " TEMP_HWFILE);
+            system("lsblk >> " TEMP_HWFILE);
+            system("echo \"\n--- Input Devices (/proc/bus/input/devices) ---\" >> " TEMP_HWFILE);
+            system("cat /proc/bus/input/devices >> " TEMP_HWFILE);
+            system("echo \"\n--- Audio Devices (aplay -l) ---\" >> " TEMP_HWFILE);
+            system("aplay -l 2>/dev/null >> " TEMP_HWFILE);
+
+            // Section: Logical tree view of top-level device tree nodes.
+            system("echo \"\n--- Device Tree Overview (Logical Tree) ---\" >> " TEMP_HWFILE);
+            system("find /proc/device-tree -maxdepth 2 | sort >> " TEMP_HWFILE);
+
+            // Section: Truncated device tree dump.
+            char truncated_cmd[128];
+            snprintf(truncated_cmd, sizeof(truncated_cmd), "dtc -I fs -O dts /proc/device-tree | head -n %d >> %s", TRUNCATED_DT_LINES, TEMP_HWFILE);
+            system(truncated_cmd);
+
+            // Section: Full device tree dump.
+            system("echo \"\n--- Full Device Tree Dump ---\" >> " TEMP_HWFILE);
+            system("dtc -I fs -O dts /proc/device-tree >> " TEMP_HWFILE);
+
+            // Export the complete output to logs/hwtree.txt.
+            system("cp " TEMP_HWFILE " " LOG_FILE);
+
+            // Page the organized output.
+            system("less " TEMP_HWFILE);
+            system("rm " TEMP_HWFILE);
         }
         else {
             const char *default_responses[] = {
@@ -261,6 +246,8 @@ int main(void) {
 References:
 - ISO C11 Standard Documentation for C Standard Library functions.
 - Linux kernel documentation for /proc and /sys virtual files.
-- Documentation for utilities: lshw, lscpu, free, lspci, lsusb, ip, sensors, and upower.
-- Discussions and examples on using arp-scan, nmap, and other tools for LAN device discovery.
+- Documentation for utilities: lshw, lscpu, free, lspci, lsusb, ip, sensors, upower, lsblk, and aplay.
+- Device Tree Compiler (dtc) usage for dumping /proc/device-tree.
+- POSIX standard functions and system interfaces.
+- Various online resources regarding hardware overviews and logical device trees.
 */

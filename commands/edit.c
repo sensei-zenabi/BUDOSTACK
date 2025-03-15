@@ -22,24 +22,31 @@
  * - Added "select all" functionality with CTRL+A, which selects the entire text buffer.
  * - When a selection is active, pressing Backspace (or CTRL+H) or Delete key deletes the selection.
  * - The Delete key is implemented as a separate case (DEL_KEY).
- * - Comments are provided to help interpret design choices.
+ * - New keys Home, End, Page Up, and Page Down have been added for quick navigation.
  */
 
 #define EDITOR_VERSION "0.1-micro-like"
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define BACKSPACE 127
-#define DEL_KEY 1004  // New key code for Delete
+#define DEL_KEY 1004  // Existing key code for Delete
 
-#define STATUS_MSG_SIZE 80
-#define UNDO_HISTORY_MAX 100
-
-/* Enumeration for arrow keys */
+/* Enumeration for editor keys.
+   New keys added:
+     HOME_KEY: Home key (beginning of line).
+     END_KEY: End key (end of line).
+     PGUP_KEY: Page Up key.
+     PGDN_KEY: Page Down key.
+*/
 enum EditorKey {
     ARROW_LEFT = 1000,
-    ARROW_RIGHT,
-    ARROW_UP,
-    ARROW_DOWN
+    ARROW_RIGHT,    // 1001
+    ARROW_UP,       // 1002
+    ARROW_DOWN,     // 1003
+    HOME_KEY = 1005, // explicitly set to 1005
+    END_KEY,        // 1006
+    PGUP_KEY,       // 1007
+    PGDN_KEY        // 1008
 };
 
 /* Data structure for a text line */
@@ -66,7 +73,7 @@ struct EditorConfig {
     int dirty;        // unsaved changes flag
     struct termios orig_termios; // original terminal settings
 
-    char status_message[STATUS_MSG_SIZE];
+    char status_message[80];
     int textrows; // text area rows (will be screenrows - 2)
 
     /* Selection fields:
@@ -86,7 +93,7 @@ typedef struct {
     EditorLine *row; 
 } UndoState;
 
-UndoState *undo_history[UNDO_HISTORY_MAX];
+UndoState *undo_history[100];
 int undo_history_len = 0;
 
 /* Function prototypes */
@@ -265,9 +272,9 @@ void push_undo_state(void) {
         memcpy(state->row[i].chars, E.row[i].chars, E.row[i].size);
         state->row[i].chars[E.row[i].size] = '\0';
     }
-    if (undo_history_len == UNDO_HISTORY_MAX) {
+    if (undo_history_len == 100) {
         free_undo_state(undo_history[0]);
-        for (int i = 1; i < UNDO_HISTORY_MAX; i++)
+        for (int i = 1; i < 100; i++)
             undo_history[i - 1] = undo_history[i];
         undo_history_len--;
     }
@@ -348,38 +355,30 @@ int editorReadKey(void) {
         if (read(STDIN_FILENO, &seq[1], 1) != 1)
             return '\x1b';
         if (seq[0] == '[') {
-            // Detect Delete key sequence: ESC [ 3 ~
-            if (seq[1] == '3') {
-                char seq2;
-                if (read(STDIN_FILENO, &seq2, 1) != 1)
-                    return '\x1b';
-                if (seq2 == '~')
-                    return DEL_KEY;
-            }
             if (seq[1] >= '0' && seq[1] <= '9') {
                 char seq3;
                 if (read(STDIN_FILENO, &seq3, 1) != 1)
                     return '\x1b';
-                if (seq3 == ';') {
-                    char seq4, seq5;
-                    if (read(STDIN_FILENO, &seq4, 1) != 1)
-                        return '\x1b';
-                    if (read(STDIN_FILENO, &seq5, 1) != 1)
-                        return '\x1b';
-                    switch(seq5) {
-                        case 'A': return ARROW_UP;
-                        case 'B': return ARROW_DOWN;
-                        case 'C': return ARROW_RIGHT;
-                        case 'D': return ARROW_LEFT;
+                if (seq3 == '~') {
+                    switch(seq[1]) {
+                        case '1': return HOME_KEY;   // ESC [ 1 ~ (Home)
+                        case '3': return DEL_KEY;    // ESC [ 3 ~ (Delete)
+                        case '4': return END_KEY;    // ESC [ 4 ~ (End)
+                        case '5': return PGUP_KEY;   // ESC [ 5 ~ (Page Up)
+                        case '6': return PGDN_KEY;   // ESC [ 6 ~ (Page Down)
                         default: return '\x1b';
                     }
                 }
             } else {
+                // Single-character escape sequences for Home/End
                 switch (seq[1]) {
                     case 'A': return ARROW_UP;
                     case 'B': return ARROW_DOWN;
                     case 'C': return ARROW_RIGHT;
                     case 'D': return ARROW_LEFT;
+                    case 'H': return HOME_KEY;  // ESC [ H (Home)
+                    case 'F': return END_KEY;   // ESC [ F (End)
+                    default: return '\x1b';
                 }
             }
         }
@@ -431,7 +430,7 @@ void editorDrawRows(int rn_width) {
 
 /* Draw status bar with file info */
 void editorDrawStatusBar(void) {
-    char status[STATUS_MSG_SIZE];
+    char status[80];
     char rstatus[32];
     int len = snprintf(status, sizeof(status), "%.20s%s",
                        E.filename ? E.filename : "[No Name]",
@@ -452,7 +451,7 @@ void editorDrawStatusBar(void) {
 
 /* Draw shortcut (menu) bar at the bottom */
 void editorDrawShortcutBar(void) {
-    /* Instead of using reverse video, use dim text for a less pronounced color */
+    /* Use dim text for a less pronounced color */
     write(STDOUT_FILENO, "\x1b[2m", 4);
     char menu[256];
     snprintf(menu, sizeof(menu),
@@ -480,7 +479,7 @@ void editorRefreshScreen(void) {
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.textrows + 1);
     write(STDOUT_FILENO, buf, strlen(buf));
-    /* Use dim text for the status bar instead of reverse video */
+    /* Use dim text for the status bar */
     write(STDOUT_FILENO, "\x1b[2m", 4);
     editorDrawStatusBar();
     write(STDOUT_FILENO, "\x1b[0m", 4);
@@ -502,6 +501,11 @@ void editorRefreshScreen(void) {
    - Clipboard operations: CTRL+X (cut), CTRL+C (copy), CTRL+V (paste).
    - When a selection is active, pressing Backspace (or CTRL+H) or Delete deletes the entire selection.
    - Arrow keys move the cursor.
+   - New keys:
+       Home: move to beginning of line.
+       End: move to end of line.
+       Page Up: move up one text page.
+       Page Down: move down one text page.
 */
 void editorProcessKeypress(void) {
     int c = editorReadKey();
@@ -568,6 +572,26 @@ void editorProcessKeypress(void) {
         case DEL_KEY:
             push_undo_state();
             editorDelCharAtCursor();
+            break;
+        case HOME_KEY:
+            /* Move cursor to beginning of line */
+            E.cx = 0;
+            break;
+        case END_KEY:
+            /* Move cursor to end of current line */
+            E.cx = editorDisplayWidth(E.row[E.cy].chars);
+            break;
+        case PGUP_KEY:
+            /* Move cursor up one text page */
+            E.cy -= E.textrows;
+            if (E.cy < 0)
+                E.cy = 0;
+            break;
+        case PGDN_KEY:
+            /* Move cursor down one text page */
+            E.cy += E.textrows;
+            if (E.cy >= E.numrows)
+                E.cy = E.numrows - 1;
             break;
         case '\r':
             push_undo_state();
@@ -686,13 +710,11 @@ void editorDeleteSelection(void) {
             E.row[i].chars = new_last;
             E.row[i].size = strlen(new_last);
         } else {
-            // For full lines in between, mark them for deletion by setting size=0.
             E.row[i].size = 0;
             free(E.row[i].chars);
             E.row[i].chars = strdup("");
         }
     }
-    /* Merge lines if selection spans multiple lines */
     if (start_line != end_line) {
         EditorLine *first_line = &E.row[start_line];
         EditorLine *last_line = &E.row[end_line];
@@ -700,7 +722,6 @@ void editorDeleteSelection(void) {
         first_line->chars = realloc(first_line->chars, new_size + 1);
         memcpy(first_line->chars + first_line->size, last_line->chars, last_line->size + 1);
         first_line->size = new_size;
-        /* Remove lines between start_line+1 and end_line */
         for (int i = end_line; i > start_line; i--) {
             free(E.row[i].chars);
             for (int j = i; j < E.numrows - 1; j++)

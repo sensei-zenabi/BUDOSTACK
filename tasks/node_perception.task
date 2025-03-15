@@ -15,7 +15,7 @@
 80 WAIT 100
 85 RUN input_audio
 90 WAIT 100
-95 RUN input_usb
+95 RUN input_joystick
 100 WAIT 100
 105 RUN gui_trend
 110 WAIT 100 

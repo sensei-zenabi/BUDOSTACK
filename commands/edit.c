@@ -18,19 +18,18 @@
  * Design principles and notes:
  * - Plain C using -std=c11 and only standard libraries.
  * - No separate header files.
- * - Instead of relying on unreliable Shift+arrow detection, we use a dedicated
- *   selection mode toggle via CTRL+T.
- * - While in selection mode, the current cursor (cx, cy) and the saved anchor
- *   (sel_anchor_x, sel_anchor_y) define the selected region.
- * - A bottom menu bar (shortcut bar) is drawn with one-word descriptions.
- * - Clipboard functionality is implemented with editorCopySelection, editorCutSelection,
- *   and editorPasteClipboard.
+ * - Selection mode is toggled with CTRL+T.
+ * - Added "select all" functionality with CTRL+A, which selects the entire text buffer.
+ * - When a selection is active, pressing Backspace (or CTRL+H) or Delete key deletes the selection.
+ * - The Delete key is implemented as a separate case (DEL_KEY).
+ * - Comments are provided to help interpret design choices.
  */
 
 #define EDITOR_VERSION "0.1-micro-like"
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define BACKSPACE 127
+#define DEL_KEY 1004  // New key code for Delete
 
 #define STATUS_MSG_SIZE 80
 #define UNDO_HISTORY_MAX 100
@@ -120,6 +119,10 @@ void editorCopySelection(void);
 void editorCutSelection(void);
 void editorPasteClipboard(void);
 void editorInsertString(const char *s);
+
+/* New functions for deletion when selection is active and for Delete key behavior */
+void editorDeleteSelection(void);
+void editorDelCharAtCursor(void);
 
 /* --- Helper Functions --- */
 
@@ -345,6 +348,14 @@ int editorReadKey(void) {
         if (read(STDIN_FILENO, &seq[1], 1) != 1)
             return '\x1b';
         if (seq[0] == '[') {
+            // Detect Delete key sequence: ESC [ 3 ~
+            if (seq[1] == '3') {
+                char seq2;
+                if (read(STDIN_FILENO, &seq2, 1) != 1)
+                    return '\x1b';
+                if (seq2 == '~')
+                    return DEL_KEY;
+            }
             if (seq[1] >= '0' && seq[1] <= '9') {
                 char seq3;
                 if (read(STDIN_FILENO, &seq3, 1) != 1)
@@ -445,7 +456,7 @@ void editorDrawShortcutBar(void) {
     write(STDOUT_FILENO, "\x1b[2m", 4);
     char menu[256];
     snprintf(menu, sizeof(menu),
-             "Ctrl+Q Quit | Ctrl+S Save | Ctrl+Z Undo | Ctrl+X Cut | Ctrl+C Copy | Ctrl+V Paste | Ctrl+T Select");
+             "Ctrl+Q Quit | Ctrl+S Save | Ctrl+Z Undo | Ctrl+X Cut | Ctrl+C Copy | Ctrl+V Paste | Ctrl+T Select | Ctrl+A Select All");
     int len = strlen(menu);
     if (len > E.screencols) len = E.screencols;
     write(STDOUT_FILENO, menu, len);
@@ -454,13 +465,6 @@ void editorDrawShortcutBar(void) {
     write(STDOUT_FILENO, "\x1b[0m", 4);
 }
 
-
-/* Refresh the screen.
-   Layout:
-     - Lines 1..textrows: text area
-     - Line textrows+1: status bar
-     - Last line: shortcut bar
-*/
 /* Refresh the screen.
    Layout:
      - Lines 1..textrows: text area
@@ -494,7 +498,9 @@ void editorRefreshScreen(void) {
 
 /* --- Key Processing ---
    - CTRL+T toggles selection mode.
+   - CTRL+A selects all text.
    - Clipboard operations: CTRL+X (cut), CTRL+C (copy), CTRL+V (paste).
+   - When a selection is active, pressing Backspace (or CTRL+H) or Delete deletes the entire selection.
    - Arrow keys move the cursor.
 */
 void editorProcessKeypress(void) {
@@ -510,6 +516,30 @@ void editorProcessKeypress(void) {
             E.sel_anchor_y = E.cy;
             snprintf(E.status_message, sizeof(E.status_message), "Selection started");
         }
+        return;
+    }
+    /* Select All with CTRL+A */
+    if (c == CTRL_KEY('a')) {
+        if (E.numrows > 0) {
+            E.selecting = 1;
+            E.sel_anchor_x = 0;
+            E.sel_anchor_y = 0;
+            E.cy = E.numrows - 1;
+            E.cx = editorDisplayWidth(E.row[E.cy].chars);
+            snprintf(E.status_message, sizeof(E.status_message), "Selected all text");
+        }
+        return;
+    }
+    /* If a selection is active and Backspace (or CTRL+H) is pressed, delete the selection */
+    if ((c == CTRL_KEY('h') || c == BACKSPACE) && E.selecting) {
+        push_undo_state();
+        editorDeleteSelection();
+        return;
+    }
+    /* If a selection is active and Delete key is pressed, delete the selection */
+    if (c == DEL_KEY && E.selecting) {
+        push_undo_state();
+        editorDeleteSelection();
         return;
     }
     switch (c) {
@@ -534,6 +564,10 @@ void editorProcessKeypress(void) {
         case CTRL_KEY('v'):
             push_undo_state();
             editorPasteClipboard();
+            break;
+        case DEL_KEY:
+            push_undo_state();
+            editorDelCharAtCursor();
             break;
         case '\r':
             push_undo_state();
@@ -605,6 +639,111 @@ void editorProcessKeypress(void) {
         E.rowoff = E.cy;
     if (E.cy >= E.rowoff + E.textrows)
         E.rowoff = E.cy - E.textrows + 1;
+}
+
+/* --- New Functions for Selection Deletion and Delete Key --- */
+
+/* Deletes the selected text without copying it to the clipboard.
+   Handles both single-line and multi-line selections.
+*/
+void editorDeleteSelection(void) {
+    if (!E.selecting)
+        return;
+    int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
+    int end_line = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
+    int anchor_x = (E.sel_anchor_y <= E.cy ? E.sel_anchor_x : E.cx);
+    int current_x = (E.sel_anchor_y <= E.cy ? E.cx : E.sel_anchor_x);
+    for (int i = start_line; i <= end_line; i++) {
+        int line_width = editorDisplayWidth(E.row[i].chars);
+        int sel_start, sel_end;
+        if (start_line == end_line) {
+            sel_start = (anchor_x < current_x ? anchor_x : current_x);
+            sel_end   = (anchor_x < current_x ? current_x : anchor_x);
+        } else if (i == start_line) {
+            sel_start = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : 0);
+            sel_end = line_width;
+        } else if (i == end_line) {
+            sel_start = 0;
+            sel_end = (E.sel_anchor_y < E.cy ? E.cx : E.sel_anchor_x);
+        } else {
+            sel_start = 0;
+            sel_end = line_width;
+        }
+        int start_byte = editorRowCxToByteIndex(&E.row[i], sel_start);
+        int end_byte = editorRowCxToByteIndex(&E.row[i], sel_end);
+        if (i == start_line && i == end_line) {
+            int new_size = E.row[i].size - (end_byte - start_byte);
+            memmove(E.row[i].chars + start_byte,
+                    E.row[i].chars + end_byte,
+                    E.row[i].size - end_byte + 1);
+            E.row[i].size = new_size;
+        } else if (i == start_line) {
+            E.row[i].chars[start_byte] = '\0';
+            E.row[i].size = start_byte;
+        } else if (i == end_line) {
+            char *new_last = strdup(E.row[i].chars + end_byte);
+            free(E.row[i].chars);
+            E.row[i].chars = new_last;
+            E.row[i].size = strlen(new_last);
+        } else {
+            // For full lines in between, mark them for deletion by setting size=0.
+            E.row[i].size = 0;
+            free(E.row[i].chars);
+            E.row[i].chars = strdup("");
+        }
+    }
+    /* Merge lines if selection spans multiple lines */
+    if (start_line != end_line) {
+        EditorLine *first_line = &E.row[start_line];
+        EditorLine *last_line = &E.row[end_line];
+        int new_size = first_line->size + last_line->size;
+        first_line->chars = realloc(first_line->chars, new_size + 1);
+        memcpy(first_line->chars + first_line->size, last_line->chars, last_line->size + 1);
+        first_line->size = new_size;
+        /* Remove lines between start_line+1 and end_line */
+        for (int i = end_line; i > start_line; i--) {
+            free(E.row[i].chars);
+            for (int j = i; j < E.numrows - 1; j++)
+                E.row[j] = E.row[j + 1];
+            E.numrows--;
+        }
+    }
+    E.cx = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : E.cx);
+    E.cy = start_line;
+    E.selecting = 0;
+    E.dirty = 1;
+    snprintf(E.status_message, sizeof(E.status_message), "Deleted selection");
+}
+
+/* Deletes the character at the cursor (Delete key behavior).
+   If the cursor is at the end of the line, it merges the next line.
+*/
+void editorDelCharAtCursor(void) {
+    if (E.cy == E.numrows)
+        return;
+    EditorLine *line = &E.row[E.cy];
+    int row_display_width = editorDisplayWidth(line->chars);
+    if (E.cx < row_display_width) {
+       int index = editorRowCxToByteIndex(line, E.cx);
+       int next_index = editorRowCxToByteIndex(line, E.cx + 1);
+       memmove(&line->chars[index], &line->chars[next_index], line->size - next_index + 1);
+       line->size -= (next_index - index);
+       line->modified = 1;
+       E.dirty = 1;
+    } else if (E.cx == row_display_width && E.cy < E.numrows - 1) {
+       EditorLine *next_line = &E.row[E.cy+1];
+       line->chars = realloc(line->chars, line->size + next_line->size + 1);
+       if (!line->chars) die("realloc");
+       memcpy(line->chars + line->size, next_line->chars, next_line->size);
+       line->size += next_line->size;
+       line->chars[line->size] = '\0';
+       line->modified = 1;
+       free(next_line->chars);
+       for (int j = E.cy+1; j < E.numrows - 1; j++)
+           E.row[j] = E.row[j+1];
+       E.numrows--;
+       E.dirty = 1;
+    }
 }
 
 /* --- Clipboard and Selection Functions --- */

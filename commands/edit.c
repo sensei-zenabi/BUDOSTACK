@@ -441,7 +441,8 @@ void editorDrawStatusBar(void) {
 
 /* Draw shortcut (menu) bar at the bottom */
 void editorDrawShortcutBar(void) {
-    write(STDOUT_FILENO, "\x1b[7m", 4);
+    /* Instead of using reverse video, use dim text for a less pronounced color */
+    write(STDOUT_FILENO, "\x1b[2m", 4);
     char menu[256];
     snprintf(menu, sizeof(menu),
              "Ctrl+Q Quit | Ctrl+S Save | Ctrl+Z Undo | Ctrl+X Cut | Ctrl+C Copy | Ctrl+V Paste | Ctrl+T Select");
@@ -453,6 +454,13 @@ void editorDrawShortcutBar(void) {
     write(STDOUT_FILENO, "\x1b[0m", 4);
 }
 
+
+/* Refresh the screen.
+   Layout:
+     - Lines 1..textrows: text area
+     - Line textrows+1: status bar
+     - Last line: shortcut bar
+*/
 /* Refresh the screen.
    Layout:
      - Lines 1..textrows: text area
@@ -468,9 +476,10 @@ void editorRefreshScreen(void) {
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.textrows + 1);
     write(STDOUT_FILENO, buf, strlen(buf));
-    write(STDOUT_FILENO, "\x1b[7m", 4);
+    /* Use dim text for the status bar instead of reverse video */
+    write(STDOUT_FILENO, "\x1b[2m", 4);
     editorDrawStatusBar();
-    write(STDOUT_FILENO, "\x1b[m", 4);
+    write(STDOUT_FILENO, "\x1b[0m", 4);
     snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.screenrows);
     write(STDOUT_FILENO, buf, strlen(buf));
     editorDrawShortcutBar();

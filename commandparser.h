@@ -1,3 +1,15 @@
+/*
+ * commandparser.h
+ *
+ * This header declares the functions and types used for parsing commands
+ * and executing executables. The implementation now supports searching for
+ * executables in multiple directories.
+ *
+ * Design Principle:
+ * - Modularity & Separation of Concerns: The header remains focused on the
+ *   command structure and related operations.
+ */
+
 #ifndef COMMANDPARSER_H
 #define COMMANDPARSER_H
 
@@ -6,14 +18,9 @@
 #define MAX_OPTIONS 10
 
 /*
- * Relative path to the commands directory.
- * This assumes that the commands directory is located
- * relative to the current working directory or executable location.
- * Adjust the path as necessary to match your project's structure.
+ * The command parser now supports multiple directories containing executables.
+ * The list of directories is defined in the commandparser.c file.
  */
-#ifndef COMMANDS_DIR
-#define COMMANDS_DIR "./commands"
-#endif
 
 typedef struct {
     char command[INPUT_SIZE];

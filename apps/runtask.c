@@ -1,9 +1,9 @@
 /*
 * runtask.c - A simplified script engine with PRINT, WAIT, GOTO, RUN, CMD, CLEAR, ROUTE, START, and SHELL commands.
 *
-* This version uses tmux with a dedicated socket to run external apps in parallel:
+* This version uses tmux with a dedicated socket to run external clients in parallel:
 * - Each .task file generates a fixed tmux session named "server" and a dedicated socket (e.g. /tmp/tmux_server.sock).
-* - RUN commands add apps (from the "apps/" directory) as new windows in that session.
+* - RUN commands adds client (from the "node/" directory) as new windows in that session.
 *   The first RUN command creates the session (using "unset TMUX;" to avoid nested warnings)
 *   and appends "; exec bash" to keep the window open.
 * - SHELL commands add shell scripts (from the "shell/" directory) as new windows in the session.
@@ -67,13 +67,13 @@ void print_help(void) {
     printf("  PRINT \"message\"\n");
     printf("  WAIT milliseconds\n");
     printf("  GOTO line_number\n");
-    printf("  RUN executable    (adds an app from the 'apps/' directory as a new tmux window)\n");
+    printf("  RUN client    	(adds an app from the 'node/' directory as a new tmux window)\n");
     printf("  SHELL script      (runs a shell script from the 'shell/' directory in a new tmux window)\n");
     printf("  CMD executable    (runs an executable from the 'commands/' directory)\n");
     printf("  CLEAR             (clears the screen)\n");
     printf("  ROUTE clear       (clears the file route.rt)\n");
     printf("  ROUTE ...         (appends a route command to route.rt)\n");
-    printf("  START             (attaches to the tmux session with all RUN/SHELL apps running)\n\n");
+    printf("  START             (attaches to the tmux session with all RUN/SHELL clients running)\n\n");
     printf("Compilation:\n");
     printf("  gcc -std=c11 -o runtask runtask.c\n\n");
 }
@@ -263,7 +263,7 @@ int main(int argc, char *argv[]) {
             char executable[256];
             if (sscanf(scriptLines[pc].text, "RUN %s", executable) == 1) {
                 char path[512];
-                snprintf(path, sizeof(path), "apps/%s", executable);
+                snprintf(path, sizeof(path), "node/%s", executable);
                 char command[1024];
 
                 // Check if the session exists by querying tmux with our dedicated socket.

@@ -67,19 +67,40 @@ void parse_input(const char *input, CommandStruct *cmd) {
 
 void execute_command(const CommandStruct *cmd) {
     char command_path[PATH_MAX];
-    /* Build absolute path to the command using the fixed COMMANDS_DIR */
-    snprintf(command_path, sizeof(command_path), "%s/%s", COMMANDS_DIR, cmd->command);
-    /* Check if the command exists and is executable */
-    if (access(command_path, X_OK) != 0) {
+    int found = 0;
+
+    /* Define an array of directories to search for executables.
+       Add or remove folders as needed.
+       This reinforces the modular design by separating command lookup
+       from execution logic. */
+    static const char *commands_dirs[] = {
+        "./commands",   // Primary commands directory.
+        "./apps",       // Additional folder for executables.
+        "./tools"       // Another folder, for example.
+    };
+    int num_dirs = sizeof(commands_dirs) / sizeof(commands_dirs[0]);
+
+    /* Loop through each directory to find the executable */
+    for (int i = 0; i < num_dirs; i++) {
+        snprintf(command_path, sizeof(command_path), "%s/%s", commands_dirs[i], cmd->command);
+        if (access(command_path, X_OK) == 0) {
+            found = 1;
+            break;
+        }
+    }
+
+    if (!found) {
         fprintf(stderr, "Command not found or not executable: %s\n", cmd->command);
         return;
     }
+
     /* Convert the relative path to an absolute path */
     char abs_path[PATH_MAX];
     if (realpath(command_path, abs_path) == NULL) {
         perror("realpath failed");
         return;
     }
+
     /* Prepare the arguments array for execv.
        Use the absolute path as argv[0]. */
     int total_args = 1 + cmd->param_count + cmd->opt_count;
@@ -93,6 +114,7 @@ void execute_command(const CommandStruct *cmd) {
         args[index++] = cmd->options[i];
     }
     args[index] = NULL;
+
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork failed");

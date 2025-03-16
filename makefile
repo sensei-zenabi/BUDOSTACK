@@ -15,7 +15,7 @@ LIB_OBJS = $(LIB_SRCS:.c=.o)
 # Find all .c files recursively (all sources)
 ALL_SOURCES = $(shell find . -type f -name '*.c')
 # Exclude command, app, and lib sources from the main executable sources.
-NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./lib/%, $(ALL_SOURCES))
+NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./lib/% ./node/% ./utilities/%, $(ALL_SOURCES))
 NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)
 TARGET = aalto
 
@@ -27,8 +27,16 @@ COMMANDS_EXES = $(COMMANDS_SRCS:.c=)
 APPS_SRCS = $(shell find ./apps -type f -name '*.c')
 APPS_EXES = $(APPS_SRCS:.c=)
 
+# Find all .c files in the node folder
+NODE_SRCS = $(shell find ./node -type f -name '*.c')
+NODE_EXES = $(NODE_SRCS:.c=)
+
+# Find all .c files in the utilities folder
+UTILITIES_SRCS = $(shell find ./utilities -type f -name '*.c')
+UTILITIES_EXES = $(UTILITIES_SRCS:.c=)
+
 # Define all targets (main, commands, and apps)
-ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES)
+ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(NODE_EXES) $(UTILITIES_EXES)
 
 .PHONY: all clean
 
@@ -39,8 +47,8 @@ $(TARGET): $(NON_COMMAND_OBJECTS) $(LIB_OBJS)
 	@echo "Linking $(TARGET)..."
 	$(CC) $(NON_COMMAND_OBJECTS) $(LIB_OBJS) $(LDFLAGS) -o $(TARGET)
 
-# For each command or app executable, link its corresponding object file with the lib objects.
-$(COMMANDS_EXES) $(APPS_EXES): %: %.o $(LIB_OBJS)
+# For each executable, link its corresponding object file with the lib objects.
+$(COMMANDS_EXES) $(APPS_EXES) $(NODE_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS)
 	@echo "Linking $@..."
 	$(CC) $< $(LIB_OBJS) $(LDFLAGS) -o $@
 
@@ -51,6 +59,6 @@ $(COMMANDS_EXES) $(APPS_EXES): %: %.o $(LIB_OBJS)
 
 # Clean: remove all executables and all .o files recursively.
 clean:
-	rm -f $(TARGET) $(COMMANDS_EXES) $(APPS_EXES)
+	rm -f $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(NODE_EXES) $(UTILITIES_EXES)
 	@echo "Removing all .o files..."
 	$(shell find . -type f -name '*.o' -delete)

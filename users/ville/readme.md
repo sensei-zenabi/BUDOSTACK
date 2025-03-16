@@ -1,4 +1,4 @@
-/* NOTEBOOK - AALTO Development Diary */
+# NOTEBOOK - AALTO Development Diary #
 
 This is my development diary for AALTO. Hope you'll enjoy it!
 

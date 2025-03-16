@@ -2,6 +2,8 @@
 **Programmed by:** Ville Suoranta (and mr.AI)<br>
 **Status:** Early Access (in development)
 
+Check out development diary from /users/ville/readme.md
+
 ### Description:
 A lightweight operating system built atop POSIX-compliant Linux, 
 specifically designed for those who value the elegant simplicity 

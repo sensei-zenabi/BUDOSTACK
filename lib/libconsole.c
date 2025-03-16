@@ -37,3 +37,12 @@ void prettyprint(const char *message, unsigned int delay_ms) {
     // Print a newline after the message.
     putchar('\n');
 }
+
+void aaltologo() {
+	// AALTO LOGO
+	printf(" █████   █████  ██      ████████  ██████ \n");
+	printf("██   ██ ██   ██ ██         ██    ██    ██\n"); 
+	printf("███████ ███████ ██         ██    ██    ██\n"); 
+	printf("██   ██ ██   ██ ██         ██    ██    ██\n"); 
+	printf("██   ██ ██   ██ ███████    ██     ██████ \n");                          
+}

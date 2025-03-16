@@ -40,6 +40,8 @@
 #include "commandparser.h"
 #include "input.h"      // Include the input handling header
 
+extern void aaltologo();
+
 /* Global variable to control paging.
  * 1: paging enabled (default)
  * 0: paging disabled (used for realtime commands)
@@ -373,6 +375,7 @@ int main(int argc, char *argv[]) {
     } else {
         // Startup messages.
         system("clear");
+		aaltologo();
 		printf("\n");
         delayPrint("AALTO - All Around Linux Terminal Operator\n", 0.02);
 		delayPrint(" ", 1);

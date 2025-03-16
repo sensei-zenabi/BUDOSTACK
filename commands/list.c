@@ -40,6 +40,7 @@ static const char *excluded_extensions[] = {
     ".h",
     ".o",
     ".gitignore",
+    ".md",
     NULL
 };
 

@@ -15,7 +15,7 @@
 
 #define TEMP_HWFILE "/tmp/hwinfo.txt"
 #define LOG_HW_FILE "logs/hwtree.txt"
-#define LOG_LINUX_FILE "logs/linux.txt"
+#define LOG_LINUX_FILE "utilities/dict_linux.txt"
 #define TRUNCATED_DT_LINES 1024  // Configurable: number of lines for truncated device tree dump
 
 // Maximum number of devices we expect (adjust as needed).

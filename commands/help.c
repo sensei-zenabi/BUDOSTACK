@@ -6,7 +6,7 @@ int main() {
 	printf("Programmed by: Ville Suoranta (and mr. AI)\n");
 	printf("License: GPLv2\n");
 	printf("\n");
-    printf("Available Commands:\n");
+    printf("Available Apps & Commands:\n");
     printf("\n");
     printf("  help     : Display this help message.\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
@@ -24,11 +24,11 @@ int main() {
 	printf("  stats    : Displays basic hardware stats.\n");
     printf("  exit     : Exit AALTO.\n");
     printf("\n");
-	printf("Running Applications:\n");
+	printf("Running Node Applications:\n");
 	printf("\n");
-	printf("  All applications are stored in the apps/ folder and they can be ran only via TASK scripting.\n");
+	printf("  All node apps are stored in the node/ folder and they can be ran only via TASK scripting.\n");
 	printf("\n");
-	printf("  Different types of applications:\n");
+	printf("  Different types of node applications:\n");
 	printf("\n");
 	printf("  server   : A switchboard server that uses route.rt to route client application inputs and outputs.\n");
 	printf("  <app>    : A client application that can have up to 5 inputs and 5 outputs.\n");

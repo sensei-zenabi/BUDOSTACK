@@ -15,15 +15,18 @@
  * - **Modified:** If the application is started with a single argument (not "-f"),
  *   it automatically simulates starting in "-f" mode and then executes the command
  *   "runtask <argument>".
+ * - **Modified:** Added support to execute commands from any working directory by setting
+ *   the base directory for command lookup to the directory of the executable.
  *
  * Design Principles:
  * - **Modularity & Separation of Concerns:** Command parsing, execution, and paging are
- *   separated.
+ *   separated. The command lookup is decoupled from the current working directory.
  * - **Real-Time Feedback:** Realtime commands are executed directly, allowing their output
  *   (and subroutine execution) to be seen as it happens.
  * - **Minimal Dependencies:** Uses only standard C libraries and POSIX APIs.
  */
 
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
@@ -353,6 +356,24 @@ void execute_command_with_paging(CommandStruct *cmd) {
 int main(int argc, char *argv[]) {
     char *input;
     CommandStruct cmd;
+
+    /* Determine the base directory of the executable.
+       This design decision ensures that commands are looked up relative to the executable's location,
+       making the command execution independent of the current working directory.
+    */
+    char exe_path[PATH_MAX] = {0};
+    if (argc > 0) {
+        if (realpath(argv[0], exe_path) != NULL) {
+            /* Extract the directory part from the full path */
+            char *last_slash = strrchr(exe_path, '/');
+            if (last_slash != NULL) {
+                *last_slash = '\0'; // Terminate the string at the last '/'
+            }
+            /* Set the base directory for command lookup */
+            set_base_path(exe_path);
+        }
+    }
+
     // Clear the screen
     system("clear");
 
@@ -375,10 +396,10 @@ int main(int argc, char *argv[]) {
     } else {
         // Startup messages.
         system("clear");
-		aaltologo();
-		printf("\n");
+        aaltologo();
+        printf("\n");
         delayPrint("AALTO - All Around Linux Terminal Operator\n", 0.02);
-		delayPrint(" ", 1);
+        delayPrint(" ", 1);
         delayPrint("...for those who enjoy simple things...", 0.05);
         delayPrint(" ", 1);
     }
@@ -391,7 +412,7 @@ int main(int argc, char *argv[]) {
             printf(" %s\n", realtime_commands[i]);
         }
     }
-	printf("\nType 'help' for command list.");
+    printf("\nType 'help' for command list.");
     printf("\nType 'exit' to quit.\n\n");
 
     // Modified: If an auto_command was built, execute it once before entering the main loop.

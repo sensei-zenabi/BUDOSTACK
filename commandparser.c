@@ -28,6 +28,25 @@ static char *my_strdup(const char *s) {
 #define strdup(s) my_strdup(s)
 #endif
 
+/*
+ * Global base_path for command lookup.
+ * This variable is set to the directory where the executable is located.
+ * Using this base path decouples command lookup from the current working directory,
+ * ensuring that commands can always be found.
+ */
+static char base_path[PATH_MAX] = "";
+
+/*
+ * Sets the base directory for command lookup.
+ * The base directory is typically the directory where the executable is located.
+ */
+void set_base_path(const char *path) {
+    if (path) {
+        strncpy(base_path, path, PATH_MAX - 1);
+        base_path[PATH_MAX - 1] = '\0';
+    }
+}
+
 void parse_input(const char *input, CommandStruct *cmd) {
     char buffer[INPUT_SIZE];
     /* Copy input into a local buffer safely */
@@ -69,20 +88,24 @@ void execute_command(const CommandStruct *cmd) {
     char command_path[PATH_MAX];
     int found = 0;
 
-    /* Define an array of directories to search for executables.
-       Add or remove folders as needed.
-       This reinforces the modular design by separating command lookup
-       from execution logic. */
-    static const char *commands_dirs[] = {
-        "./commands",   // Primary commands directory.
-        "./apps",       // Additional folder for executables.
-        "./tools"       // Another folder, for example.
+    /* Define an array of relative directories to search for executables.
+       These directories are considered relative to the base_path.
+       If base_path is not set, we fallback to using the current directory.
+    */
+    static const char *relative_commands_dirs[] = {
+        "commands",   // Primary commands directory.
+        "apps",       // Additional folder for executables.
+        "utilities"       // Another folder, for example.
     };
-    int num_dirs = sizeof(commands_dirs) / sizeof(commands_dirs[0]);
+    int num_dirs = sizeof(relative_commands_dirs) / sizeof(relative_commands_dirs[0]);
 
     /* Loop through each directory to find the executable */
     for (int i = 0; i < num_dirs; i++) {
-        snprintf(command_path, sizeof(command_path), "%s/%s", commands_dirs[i], cmd->command);
+        if (base_path[0] != '\0') {
+            snprintf(command_path, sizeof(command_path), "%s/%s/%s", base_path, relative_commands_dirs[i], cmd->command);
+        } else {
+            snprintf(command_path, sizeof(command_path), "./%s/%s", relative_commands_dirs[i], cmd->command);
+        }
         if (access(command_path, X_OK) == 0) {
             found = 1;
             break;

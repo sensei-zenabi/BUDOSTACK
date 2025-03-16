@@ -12,18 +12,20 @@
  *   is displayed to the user.
  * - When a realtime command is executed, a debug message is printed and the command's
  *   output is displayed immediately.
- * - **Modified:** If the application is started with a single argument (not "-f"),
+ * - If the application is started with a single argument (not "-f"),
  *   it automatically simulates starting in "-f" mode and then executes the command
  *   "runtask <argument>".
- * - **Modified:** Added support to execute commands from any working directory by setting
+ * - Added support to execute commands from any working directory by setting
  *   the base directory for command lookup to the directory of the executable.
+ * - **Wildcard expansion** is now handled by the shell (in parse_input), ensuring that
+ *   commands receive pre-expanded arguments.
  *
  * Design Principles:
- * - **Modularity & Separation of Concerns:** Command parsing, execution, and paging are
+ * - Modularity & Separation of Concerns: Command parsing, execution, and paging are
  *   separated. The command lookup is decoupled from the current working directory.
- * - **Real-Time Feedback:** Realtime commands are executed directly, allowing their output
+ * - Real-Time Feedback: Realtime commands are executed directly, allowing their output
  *   (and subroutine execution) to be seen as it happens.
- * - **Minimal Dependencies:** Uses only standard C libraries and POSIX APIs.
+ * - Minimal Dependencies: Uses only standard C libraries and POSIX APIs.
  */
 
 #define _XOPEN_SOURCE 700
@@ -73,7 +75,7 @@ int is_realtime_command(const char *command) {
 void delay(double seconds) {
     clock_t start_time = clock();
     while ((double)(clock() - start_time) / CLOCKS_PER_SEC < seconds) {
-        // Busy waiting.
+        /* Busy waiting */
     }
 }
 
@@ -251,7 +253,7 @@ void pager(const char **lines, size_t line_count) {
  */
 void execute_command_with_paging(CommandStruct *cmd) {
     if (is_realtime_command(cmd->command)) {
-        // Realtime mode: Print debug message and execute command directly.
+        /* Realtime mode: Print debug message and execute command directly. */
         printf("Paging disabled for: %s\n", cmd->command);
         fflush(stdout);
         execute_command(cmd);
@@ -276,14 +278,14 @@ void execute_command_with_paging(CommandStruct *cmd) {
         return;
     }
     close(pipefd[1]);
-    // Execute the command.
+    /* Execute the command. */
     execute_command(cmd);
     fflush(stdout);
     if (dup2(saved_stdout, STDOUT_FILENO) == -1) {
         perror("dup2 restore");
     }
     close(saved_stdout);
-    // Read the captured output.
+    /* Read the captured output. */
     char buffer[4096];
     size_t total_size = 0;
     size_t buffer_size = 4096;
@@ -315,7 +317,7 @@ void execute_command_with_paging(CommandStruct *cmd) {
         return;
     }
     output[total_size] = '\0';
-    // Split the captured output into lines.
+    /* Split the captured output into lines. */
     size_t line_count = 0;
     for (size_t i = 0; i < total_size; i++) {
         if (output[i] == '\n')
@@ -341,7 +343,7 @@ void execute_command_with_paging(CommandStruct *cmd) {
     int page_height = ws.ws_row - 1;
     if (page_height < 1)
         page_height = 10;
-    // If the output fits in one page, print directly.
+    /* If the output fits in one page, print directly. */
     if ((int)current_line <= page_height) {
         for (size_t i = 0; i < current_line; i++) {
             printf("%s\n", lines[i]);
@@ -374,11 +376,12 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Clear the screen
+    /* Clear the screen */
     system("clear");
 
-    // Modified: Determine if we need to auto-run a command.
-    // If a single argument is provided and it is not "-f", build the auto-run command.
+    /* Modified: Determine if we need to auto-run a command.
+       If a single argument is provided and it is not "-f", build the auto-run command.
+    */
     char *auto_command = NULL;
     if (argc == 2 && strcmp(argv[1], "-f") != 0) {
         size_t len = strlen("runtask ") + strlen(argv[1]) + strlen(".task") + 1;
@@ -390,11 +393,11 @@ int main(int argc, char *argv[]) {
         snprintf(auto_command, len, "runtask %s.task", argv[1]);
     }
 
-    // Modified: Skip startup messages if in forced mode (-f) or auto_command mode.
+    /* Modified: Skip startup messages if in forced mode (-f) or auto_command mode. */
     if ((argc > 1 && strcmp(argv[1], "-f") == 0) || auto_command != NULL) {
-        // Do not print startup messages.
+        /* Do not print startup messages. */
     } else {
-        // Startup messages.
+        /* Startup messages. */
         system("clear");
         aaltologo();
         printf("\n");
@@ -406,7 +409,7 @@ int main(int argc, char *argv[]) {
 
     printf("\n\nSYSTEM READY");
     if (0) {
-        // Print the list of realtime commands.
+        /* Print the list of realtime commands. */
         printf("\n\nRealtime Mode Commands (output will be displayed immediately):\n");
         for (int i = 0; realtime_commands[i] != NULL; i++) {
             printf(" %s\n", realtime_commands[i]);
@@ -415,7 +418,7 @@ int main(int argc, char *argv[]) {
     printf("\nType 'help' for command list.");
     printf("\nType 'exit' to quit.\n\n");
 
-    // Modified: If an auto_command was built, execute it once before entering the main loop.
+    /* Modified: If an auto_command was built, execute it once before entering the main loop. */
     if (auto_command != NULL) {
         parse_input(auto_command, &cmd);
         execute_command_with_paging(&cmd);
@@ -423,7 +426,7 @@ int main(int argc, char *argv[]) {
         free(auto_command);
     }
 
-    // Main loop.
+    /* Main loop. */
     while (1) {
         display_prompt();
         input = read_input();

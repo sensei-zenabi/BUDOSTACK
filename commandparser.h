@@ -2,8 +2,8 @@
  * commandparser.h
  *
  * This header declares the functions and types used for parsing commands
- * and executing executables. The implementation now supports searching for
- * executables in multiple directories relative to the executable’s base path.
+ * and executing executables. Wildcard expansion for parameters is now performed
+ * in the parse_input function, ensuring that commands receive pre-expanded arguments.
  *
  * Design Principle:
  * - Modularity & Separation of Concerns: The header remains focused on the

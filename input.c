@@ -9,8 +9,9 @@
 #include "input.h"
 
 #define INPUT_SIZE 1024
+#define MAX_HISTORY 100  /* Maximum number of commands to store in history */
 
-/* List of available commands */
+/* List of available commands for autocomplete */
 static const char *commands[] = {
     "discover", "help", "list", "display", "copy",
     "move", "remove", "update", "makedir", "rmdir",
@@ -25,16 +26,41 @@ static int autocomplete_filename(const char *token, char *completion, size_t com
 static void list_command_matches(const char *token);
 static void list_filename_matches(const char *dir, const char *prefix);
 
+/*
+ * read_input()
+ *
+ * Modified to include a fixed-size history buffer for command history.
+ * Features:
+ * - Raw mode input handling (non-canonical, no echo)
+ * - Up/Down arrow keys to navigate through previously entered commands
+ * - TAB key for autocomplete (command or filename based on position)
+ *
+ * Design principles:
+ * - Separation of Concerns: History management, input reading, and display updates are handled here.
+ * - Memory Management: Uses a fixed-size history buffer and shifts entries when full.
+ * - Usability: Provides immediate feedback by replacing the current input with history commands.
+ */
 char* read_input(void) {
     static char buffer[INPUT_SIZE];
     size_t pos = 0;
     struct termios oldt, newt;
 
+    /* Static history storage */
+    static char *history[MAX_HISTORY] = {0};
+    static int history_count = 0;
+    static int history_index = 0;
+
     /* Get current terminal settings and disable canonical mode and echo */
-    tcgetattr(STDIN_FILENO, &oldt);
+    if (tcgetattr(STDIN_FILENO, &oldt) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
     newt = oldt;
     newt.c_lflag &= ~(ICANON | ECHO);
-    tcsetattr(STDIN_FILENO, TCSANOW, &newt);
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &newt) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
 
     memset(buffer, 0, sizeof(buffer));
     fflush(stdout);
@@ -44,8 +70,52 @@ char* read_input(void) {
         if (c == '\n') {
             putchar('\n');
             break;
-        } else if (c == '\t') { // TAB pressed: trigger autocomplete
-            /* Find the beginning of the current token */
+        }
+        /* Handle escape sequences for arrow keys (command history navigation) */
+        else if (c == '\033') {
+            int next1 = getchar();
+            if (next1 == '[') {
+                int next2 = getchar();
+                if (next2 == 'A') { /* Up arrow */
+                    if (history_count > 0 && history_index > 0) {
+                        history_index--;
+                        /* Clear current line */
+                        for (size_t i = 0; i < pos; i++) {
+                            printf("\b \b");
+                        }
+                        strcpy(buffer, history[history_index]);
+                        pos = strlen(buffer);
+                        printf("%s", buffer);
+                        fflush(stdout);
+                    }
+                    continue;
+                } else if (next2 == 'B') { /* Down arrow */
+                    if (history_count > 0 && history_index < history_count - 1) {
+                        history_index++;
+                        for (size_t i = 0; i < pos; i++) {
+                            printf("\b \b");
+                        }
+                        strcpy(buffer, history[history_index]);
+                        pos = strlen(buffer);
+                        printf("%s", buffer);
+                        fflush(stdout);
+                    } else if (history_count > 0 && history_index == history_count - 1) {
+                        history_index = history_count;
+                        for (size_t i = 0; i < pos; i++) {
+                            printf("\b \b");
+                        }
+                        buffer[0] = '\0';
+                        pos = 0;
+                        fflush(stdout);
+                    }
+                    continue;
+                }
+                /* Ignore other escape sequences */
+            }
+        }
+        /* TAB pressed: trigger autocomplete */
+        else if (c == '\t') {
+            /* Find beginning of current token */
             size_t token_start = pos;
             while (token_start > 0 && buffer[token_start - 1] != ' ')
                 token_start--;
@@ -54,23 +124,19 @@ char* read_input(void) {
             strncpy(token, buffer + token_start, token_len);
             token[token_len] = '\0';
             if (token_len == 0)
-                continue; // nothing to complete
+                continue; /* Nothing to complete */
 
-            /* If this is the first token, complete a command;
-               otherwise, complete a filename */
+            /* If first token, autocomplete a command; otherwise, a filename */
             if (token_start == 0) {
                 char completion[INPUT_SIZE] = {0};
                 int count = autocomplete_command(token, completion, sizeof(completion));
                 if (count == 1) {
                     size_t comp_len = strlen(completion);
                     size_t num_backspaces = pos - token_start;
-                    // Erase current token from display
                     for (size_t i = 0; i < num_backspaces; i++) {
                         printf("\b");
                     }
-                    // Print full completion
                     printf("%s", completion);
-                    // If new token is shorter than old, clear leftovers
                     if (comp_len < num_backspaces) {
                         for (size_t i = 0; i < (num_backspaces - comp_len); i++) {
                             printf(" ");
@@ -111,7 +177,6 @@ char* read_input(void) {
                     pos = token_start + comp_len;
                 } else if (count > 1) {
                     printf("\n");
-                    /* Split token into directory and prefix */
                     char dir[INPUT_SIZE];
                     char prefix[INPUT_SIZE];
                     const char *last_slash = strrchr(token, '/');
@@ -129,13 +194,17 @@ char* read_input(void) {
                     fflush(stdout);
                 }
             }
-        } else if (c == 127 || c == 8) { // handle backspace
+        }
+        /* Handle backspace */
+        else if (c == 127 || c == 8) {
             if (pos > 0) {
                 pos--;
                 printf("\b \b");
                 fflush(stdout);
             }
-        } else {
+        }
+        /* Regular character input */
+        else {
             if (pos < INPUT_SIZE - 1) {
                 buffer[pos++] = (char)c;
                 putchar(c);
@@ -144,9 +213,33 @@ char* read_input(void) {
         }
     }
     buffer[pos] = '\0';
+
     /* Restore terminal settings */
-    tcsetattr(STDIN_FILENO, TCSANOW, &oldt);
-    return strdup(buffer); // caller is responsible for freeing
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &oldt) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Add nonempty command to history */
+    if (strlen(buffer) > 0) {
+        if (history_count == MAX_HISTORY) {
+            free(history[0]);
+            for (int i = 1; i < MAX_HISTORY; i++) {
+                history[i - 1] = history[i];
+            }
+            history_count--;
+        }
+        history[history_count] = strdup(buffer);
+        if (!history[history_count]) {
+            perror("strdup failed");
+            exit(EXIT_FAILURE);
+        }
+        history_count++;
+        history_index = history_count; // Reset history index for new input
+    }
+
+    /* Return a duplicate of the buffer (caller must free it) */
+    return strdup(buffer);
 }
 
 static int autocomplete_command(const char *token, char *completion, size_t completion_size) {

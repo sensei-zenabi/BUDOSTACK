@@ -2,7 +2,7 @@
 **Programmed by:** Ville Suoranta (and mr.AI)<br>
 **Status:** Early Access (in development)
 
-Check out development diary from /users/ville/readme.md
+Check out development diary from [HERE](https://github.com/sensei-zenabi/AALTO/blob/main/users/ville/readme.md)
 
 ### Description:
 A lightweight operating system built atop POSIX-compliant Linux, 

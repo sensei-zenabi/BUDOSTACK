@@ -60,6 +60,7 @@ const char *realtime_commands[] = {
     "runtask",
     "assist", 
     "edit",
+    "cmath",
     NULL
 };
 

@@ -2,6 +2,11 @@
 
 This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
 
+### Friday, 21st of March 2025 ###
+
+Created a very primitive login functionality, basically just to guide the user into his working directory. No password
+protection whatsoever.
+
 ### Sunday, 16th of March 2025 ###
 
 Today I refactored the whole project structure to resemble more like OS. Also, my intention is to start replacing my

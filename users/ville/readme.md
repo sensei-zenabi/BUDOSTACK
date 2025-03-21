@@ -6,7 +6,7 @@ This is my development diary for AALTO. Hope you'll enjoy it! Newest post is alw
 
 Created a very primitive login functionality, basically just to guide the user into his working directory. No password
 protection whatsoever. Implemented also a new command called "cmath", that is capable of basic math operations, and
-running macros by typing "cmath mymacro.m".
+running macros by typing "cmath mymacro.m". Added also up/down command history for input.c.
 
 ### Sunday, 16th of March 2025 ###
 

@@ -46,6 +46,7 @@
 #include "input.h"      // Include the input handling header
 
 extern void aaltologo();
+extern void login();
 
 /* Global variable to control paging.
  * 1: paging enabled (default)
@@ -406,6 +407,8 @@ int main(int argc, char *argv[]) {
         delayPrint("...for those who enjoy simple things...", 0.05);
         delayPrint(" ", 1);
     }
+
+	login();
 
     printf("\n\nSYSTEM READY");
     if (0) {

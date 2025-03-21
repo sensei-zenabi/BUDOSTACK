@@ -22,6 +22,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  help     : Display this help message.\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
+	printf("  cmath    : Opens a math editor.\n");
     printf("  display  : Display the contents of a file.\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");
     printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");

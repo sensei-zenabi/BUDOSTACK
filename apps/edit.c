@@ -19,10 +19,14 @@
  * - Plain C using -std=c11 and only standard libraries.
  * - No separate header files.
  * - Selection mode is toggled with CTRL+T.
- * - Added "select all" functionality with CTRL+A, which selects the entire text buffer.
- * - When a selection is active, pressing Backspace (or CTRL+H) or Delete key deletes the selection.
+ * - "Select all" functionality with CTRL+A selects the entire text buffer.
+ * - When a selection is active, pressing Backspace (or CTRL+H) or Delete deletes the selection.
  * - The Delete key is implemented as a separate case (DEL_KEY).
  * - New keys Home, End, Page Up, and Page Down have been added for quick navigation.
+ * - **Vertical movement update:** When moving vertically the editor now remembers a preferred horizontal position.
+ *   On the first vertical arrow (up or down) in a sequence, the current cursor column is stored.
+ *   On subsequent vertical moves the editor will try to set the cursor to that stored column if possible,
+ *   otherwise it “falls” to the end of the line.
  */
 
 #define EDITOR_VERSION "0.1-micro-like"
@@ -84,6 +88,9 @@ struct EditorConfig {
     int selecting;
     int sel_anchor_x;
     int sel_anchor_y;
+    
+    /* New field to remember the preferred horizontal (desired) column */
+    int preferred_cx;
 } E;
 
 /* Undo state structure */
@@ -506,9 +513,15 @@ void editorRefreshScreen(void) {
        End: move to end of line.
        Page Up: move up one text page.
        Page Down: move down one text page.
+   - **Vertical arrows (ARROW_UP and ARROW_DOWN) now remember the preferred horizontal position.
+     On the first vertical move in a sequence, the current column is stored (in preferred_cx).
+     Subsequent vertical moves use that value if possible.
 */
 void editorProcessKeypress(void) {
     int c = editorReadKey();
+    /* Use a static variable to detect if the previous key was vertical */
+    static int last_key_was_vertical = 0;
+
     /* Toggle selection mode with CTRL+T */
     if (c == CTRL_KEY('t')) {
         if (E.selecting) {
@@ -520,6 +533,7 @@ void editorProcessKeypress(void) {
             E.sel_anchor_y = E.cy;
             snprintf(E.status_message, sizeof(E.status_message), "Selection started");
         }
+        last_key_was_vertical = 0;
         return;
     }
     /* Select All with CTRL+A */
@@ -532,18 +546,21 @@ void editorProcessKeypress(void) {
             E.cx = editorDisplayWidth(E.row[E.cy].chars);
             snprintf(E.status_message, sizeof(E.status_message), "Selected all text");
         }
+        last_key_was_vertical = 0;
         return;
     }
     /* If a selection is active and Backspace (or CTRL+H) is pressed, delete the selection */
     if ((c == CTRL_KEY('h') || c == BACKSPACE) && E.selecting) {
         push_undo_state();
         editorDeleteSelection();
+        last_key_was_vertical = 0;
         return;
     }
     /* If a selection is active and Delete key is pressed, delete the selection */
     if (c == DEL_KEY && E.selecting) {
         push_undo_state();
         editorDeleteSelection();
+        last_key_was_vertical = 0;
         return;
     }
     switch (c) {
@@ -576,39 +593,65 @@ void editorProcessKeypress(void) {
         case HOME_KEY:
             /* Move cursor to beginning of line */
             E.cx = 0;
+            E.preferred_cx = E.cx; // update preferred column
+            last_key_was_vertical = 0;
             break;
         case END_KEY:
             /* Move cursor to end of current line */
             E.cx = editorDisplayWidth(E.row[E.cy].chars);
+            E.preferred_cx = E.cx;
+            last_key_was_vertical = 0;
             break;
         case PGUP_KEY:
             /* Move cursor up one text page */
             E.cy -= E.textrows;
             if (E.cy < 0)
                 E.cy = 0;
+            last_key_was_vertical = 0;
             break;
         case PGDN_KEY:
             /* Move cursor down one text page */
             E.cy += E.textrows;
             if (E.cy >= E.numrows)
                 E.cy = E.numrows - 1;
+            last_key_was_vertical = 0;
             break;
         case '\r':
             push_undo_state();
             editorInsertNewline();
+            last_key_was_vertical = 0;
             break;
         case CTRL_KEY('h'):
         case BACKSPACE:
             push_undo_state();
             editorDelChar();
+            last_key_was_vertical = 0;
             break;
         case ARROW_UP:
-            if (E.cy > 0)
+            if (!last_key_was_vertical)
+                E.preferred_cx = E.cx;
+            last_key_was_vertical = 1;
+            if (E.cy > 0) {
                 E.cy--;
+                int row_width = editorDisplayWidth(E.row[E.cy].chars);
+                if (E.preferred_cx > row_width)
+                    E.cx = row_width;
+                else
+                    E.cx = E.preferred_cx;
+            }
             break;
         case ARROW_DOWN:
-            if (E.cy < E.numrows - 1)
+            if (!last_key_was_vertical)
+                E.preferred_cx = E.cx;
+            last_key_was_vertical = 1;
+            if (E.cy < E.numrows - 1) {
                 E.cy++;
+                int row_width = editorDisplayWidth(E.row[E.cy].chars);
+                if (E.preferred_cx > row_width)
+                    E.cx = row_width;
+                else
+                    E.cx = E.preferred_cx;
+            }
             break;
         case ARROW_LEFT:
             if (E.cx > 0)
@@ -617,6 +660,8 @@ void editorProcessKeypress(void) {
                 E.cy--;
                 E.cx = editorDisplayWidth(E.row[E.cy].chars);
             }
+            E.preferred_cx = E.cx;
+            last_key_was_vertical = 0;
             break;
         case ARROW_RIGHT: {
             int roww = editorDisplayWidth(E.row[E.cy].chars);
@@ -626,6 +671,8 @@ void editorProcessKeypress(void) {
                 E.cy++;
                 E.cx = 0;
             }
+            E.preferred_cx = E.cx;
+            last_key_was_vertical = 0;
             break;
         }
         default:
@@ -652,6 +699,7 @@ void editorProcessKeypress(void) {
                     editorInsertUTF8(utf8_buf, utf8_len);
                 }
             }
+            last_key_was_vertical = 0;
             break;
     }
     int rn_width = getRowNumWidth();
@@ -987,7 +1035,9 @@ void editorInsertChar(int c) {
     memmove(&line->chars[index + 1], &line->chars[index], line->size - index + 1);
     line->chars[index] = c;
     line->size++;
-    E.cx++; line->modified = 1; E.dirty = 1;
+    E.cx++; 
+    E.preferred_cx = E.cx; // update preferred column on horizontal insertion
+    line->modified = 1; E.dirty = 1;
 }
 
 void editorInsertUTF8(const char *s, int len) {
@@ -1008,7 +1058,9 @@ void editorInsertUTF8(const char *s, int len) {
     size_t bytes = mbrtowc(&wc, s, len, NULL);
     int width = (bytes == (size_t)-1 || bytes == (size_t)-2) ? 1 : wcwidth(wc);
     if (width < 0) width = 1;
-    E.cx += width; line->modified = 1; E.dirty = 1;
+    E.cx += width; 
+    E.preferred_cx = E.cx; // update preferred column
+    line->modified = 1; E.dirty = 1;
 }
 
 void editorInsertNewline(void) {
@@ -1041,6 +1093,7 @@ void editorInsertNewline(void) {
         E.row[E.cy + 1].size = new_len;
         E.row[E.cy + 1].modified = 1;
         E.cy++; E.cx = 0;
+        E.preferred_cx = E.cx; // update preferred column
     }
     E.dirty = 1;
 }
@@ -1065,12 +1118,15 @@ void editorDelChar(void) {
             E.row[j] = E.row[j + 1];
         E.numrows--; E.cy--;
         E.cx = editorDisplayWidth(prev_line->chars);
+        E.preferred_cx = E.cx; // update preferred column
     } else {
         int index = editorRowCxToByteIndex(line, E.cx);
         int prev_index = editorRowCxToByteIndex(line, E.cx - 1);
         memmove(&line->chars[prev_index], &line->chars[index], line->size - index + 1);
         line->size -= (index - prev_index);
-        E.cx -= 1; line->modified = 1;
+        E.cx -= 1; 
+        E.preferred_cx = E.cx; // update preferred column
+        line->modified = 1;
     }
     E.dirty = 1;
 }
@@ -1085,6 +1141,7 @@ int main(int argc, char *argv[]) {
     E.filename = NULL; E.dirty = 0;
     E.status_message[0] = '\0';
     E.selecting = 0; E.sel_anchor_x = 0; E.sel_anchor_y = 0;
+    E.preferred_cx = 0;  /* initialize preferred horizontal position */
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1)
         die("getWindowSize");

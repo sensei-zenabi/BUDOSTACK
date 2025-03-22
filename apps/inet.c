@@ -3,10 +3,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>    // For timestamp display
 
 #define MAX_INPUT 100
 #define MAX_INTERFACES 32
 #define MAX_BAR_LEN 40  // Maximum characters for histogram bars
+
+// Table widths for proper alignment
+#define TABLE1_WIDTH 100  // Main statistics table width
+#define TABLE2_WIDTH 84   // Additional metrics table width
+
+// Helper function to print a separator line with a given width.
+void print_separator(int width) {
+    for (int i = 0; i < width; i++) {
+         putchar('-');
+    }
+    putchar('\n');
+}
 
 // Structure to store network interface statistics from /proc/net/dev
 typedef struct {
@@ -26,8 +39,6 @@ typedef struct {
  *
  * Reads /proc/net/dev to fill an array of NetDevStats structures.
  * Returns the number of interfaces read, or -1 on error.
- *
- * The file /proc/net/dev contains two header lines, then one line per interface.
  */
 int read_netdev_stats(NetDevStats stats[], int max) {
     FILE *fp = fopen("/proc/net/dev", "r");
@@ -47,10 +58,8 @@ int read_netdev_stats(NetDevStats stats[], int max) {
         if (count >= max)
             break;
         
-        // Expected format:
-        // iface:  rx_bytes rx_packets rx_errs rx_drop rx_fifo rx_frame rx_compressed rx_multicast
-        //         tx_bytes tx_packets tx_errs tx_drop tx_fifo tx_colls tx_carrier tx_compressed
-        // Read the needed fields and read suppressed ones into dummy variables.
+        // Expected format from /proc/net/dev:
+        // iface:  rx_bytes rx_packets rx_errs rx_drop ... tx_bytes tx_packets tx_errs tx_drop ...
         char iface[32];
         unsigned long r_bytes, r_packets, r_errs, r_drop;
         unsigned long dummy1, dummy2, dummy3, dummy4;
@@ -154,20 +163,37 @@ void run_diagnostics(void) {
 /*
  * monitor_mode
  *
- * Enters a continuous monitoring loop where the app periodically reads
- * network interface statistics, computes throughput (bytes per second),
- * and displays key meta data in a formatted table that fits into a single terminal screen.
+ * Enhanced monitoring mode:
+ *  - Accepts a user-specified refresh interval.
+ *  - Uses ANSI escape codes to clear the screen.
+ *  - Displays a timestamp for each update.
+ *  - Shows detailed additional metrics per interface.
+ *  - Each interface’s histogram bar is scaled based on its own maximum observed throughput.
+ *  - Horizontal separator lines are printed to match the table widths.
  *
- * Additionally, it prints a histogram view of RX and TX throughput below the table
- * and includes instructions regarding the displayed metrics.
- *
- * Engineers can observe live status; press Ctrl+C to exit monitoring mode.
+ * Design rationale:
+ * By tracking per-interface maximum throughput, the bar represents the current rate as a fraction of the maximum ever observed
+ * for that interface. Combined with even separator lines, the UI looks clean and professional.
  */
-void monitor_mode(void) {
-    const int interval = 1; // Refresh interval in seconds
+void monitor_mode(int interval) {
+    if (interval <= 0) {
+        interval = 1;  // Ensure a valid interval
+    }
+    
+    // Structure to track maximum throughput for each interface
+    typedef struct {
+        char name[32];
+        unsigned long max_rx;
+        unsigned long max_tx;
+    } MaxStats;
+    
+    MaxStats max_stats[MAX_INTERFACES] = {0};
+    int max_stats_count = 0;
+    
     NetDevStats prev[MAX_INTERFACES] = {0}, curr[MAX_INTERFACES] = {0};
     unsigned long rx_rates[MAX_INTERFACES] = {0};
     unsigned long tx_rates[MAX_INTERFACES] = {0};
+    
     int prev_count = read_netdev_stats(prev, MAX_INTERFACES);
     if (prev_count < 0) {
          printf("Error: Unable to read network statistics.\n");
@@ -181,62 +207,111 @@ void monitor_mode(void) {
               printf("Error: Unable to read network statistics.\n");
               break;
          }
-         // Clear the terminal screen.
-         system("clear");
-         printf("Network Monitoring Mode (refresh every %d second(s)). Press Ctrl+C to exit.\n", interval);
-         printf("--------------------------------------------------------------------------------\n");
-         // Table header: Interface, RX/s, TX/s, Total RX bytes, Total TX bytes, Packets, Errors and Drops.
-         printf("%-6s %8s %8s %10s %10s %8s %8s %6s %6s %6s %6s\n",
-                "IFACE", "RX/s", "TX/s", "RXTot", "TXTOT", "RXpkts", "TXpkts",
-                "RXerr", "TXerr", "RXdp", "TXdp");
-         printf("--------------------------------------------------------------------------------\n");
          
-         // Reset rates and determine rates for each interface.
+         // Compute per-second throughput rates and update per-interface maximums.
          for (int i = 0; i < curr_count; i++) {
-             int found = 0;
-             NetDevStats *prev_stat = NULL;
+             int found_prev = 0;
              for (int j = 0; j < prev_count; j++) {
                  if (strcmp(curr[i].name, prev[j].name) == 0) {
-                     found = 1;
-                     prev_stat = &prev[j];
+                     found_prev = 1;
                      break;
                  }
              }
-             if (!found) {
+             if (!found_prev) {
                 rx_rates[i] = 0;
                 tx_rates[i] = 0;
-                printf("%-6s %8s %8s %10lu %10lu %8lu %8lu %6lu %6lu %6lu %6lu\n",
-                    curr[i].name, "N/A", "N/A", curr[i].rx_bytes, curr[i].tx_bytes,
-                    curr[i].rx_packets, curr[i].tx_packets,
-                    curr[i].rx_errs, curr[i].tx_errs, curr[i].rx_drop, curr[i].tx_drop);
              } else {
-                rx_rates[i] = (curr[i].rx_bytes - prev_stat->rx_bytes) / interval;
-                tx_rates[i] = (curr[i].tx_bytes - prev_stat->tx_bytes) / interval;
-                printf("%-6s %8lu %8lu %10lu %10lu %8lu %8lu %6lu %6lu %6lu %6lu\n",
-                    curr[i].name, rx_rates[i], tx_rates[i],
-                    curr[i].rx_bytes, curr[i].tx_bytes,
-                    curr[i].rx_packets, curr[i].tx_packets,
-                    curr[i].rx_errs, curr[i].tx_errs,
-                    curr[i].rx_drop, curr[i].tx_drop);
+                // Use the previously computed value from 'prev' snapshot.
+                // Note: We already computed these values in an earlier loop.
+                for (int j = 0; j < prev_count; j++) {
+                    if (strcmp(curr[i].name, prev[j].name) == 0) {
+                        rx_rates[i] = (curr[i].rx_bytes - prev[j].rx_bytes) / interval;
+                        tx_rates[i] = (curr[i].tx_bytes - prev[j].tx_bytes) / interval;
+                        break;
+                    }
+                }
+             }
+             
+             // Update per-interface maximum stats.
+             int found_max = 0;
+             for (int k = 0; k < max_stats_count; k++) {
+                 if (strcmp(curr[i].name, max_stats[k].name) == 0) {
+                     found_max = 1;
+                     if (rx_rates[i] > max_stats[k].max_rx)
+                         max_stats[k].max_rx = rx_rates[i];
+                     if (tx_rates[i] > max_stats[k].max_tx)
+                         max_stats[k].max_tx = tx_rates[i];
+                     break;
+                 }
+             }
+             if (!found_max) {
+                 strncpy(max_stats[max_stats_count].name, curr[i].name,
+                         sizeof(max_stats[max_stats_count].name) - 1);
+                 max_stats[max_stats_count].name[sizeof(max_stats[max_stats_count].name) - 1] = '\0';
+                 max_stats[max_stats_count].max_rx = rx_rates[i];
+                 max_stats[max_stats_count].max_tx = tx_rates[i];
+                 max_stats_count++;
              }
          }
          
-         // Compute maximum rates for scaling histograms.
-         unsigned long max_rx = 0, max_tx = 0;
-         for (int i = 0; i < curr_count; i++) {
-             if (rx_rates[i] > max_rx)
-                 max_rx = rx_rates[i];
-             if (tx_rates[i] > max_tx)
-                 max_tx = tx_rates[i];
-         }
-         // Prevent division by zero.
-         if (max_rx == 0) max_rx = 1;
-         if (max_tx == 0) max_tx = 1;
+         // Clear the terminal using ANSI escape codes.
+         printf("\033[H\033[J");
          
-         // Print histogram for RX throughput.
+         // Display current timestamp.
+         time_t now = time(NULL);
+         printf("Updated: %s", ctime(&now)); // ctime() adds a newline
+         
+         printf("Network Monitoring Mode (refresh every %d second(s)). Press Ctrl+C to exit.\n", interval);
+         print_separator(TABLE1_WIDTH);
+         
+         // Main table header.
+         printf("%-6s %8s %8s %10s %10s %8s %8s %8s %8s %8s %8s\n",
+                "IFACE", "RX/s", "TX/s", "RXTot", "TXTOT", "RXpkts", "TXpkts",
+                "RXerr", "TXerr", "RXdp", "TXdp");
+         print_separator(TABLE1_WIDTH);
+         
+         // Print interface statistics.
+         for (int i = 0; i < curr_count; i++) {
+             int found_prev = 0;
+             for (int j = 0; j < prev_count; j++) {
+                 if (strcmp(curr[i].name, prev[j].name) == 0) {
+                     found_prev = 1;
+                     break;
+                 }
+             }
+             if (!found_prev) {
+                printf("%-6s %8s %8s %10lu %10lu %8lu %8lu %8lu %8lu %8lu %8lu\n",
+                       curr[i].name, "N/A", "N/A",
+                       curr[i].rx_bytes, curr[i].tx_bytes,
+                       curr[i].rx_packets, curr[i].tx_packets,
+                       curr[i].rx_errs, curr[i].tx_errs,
+                       curr[i].rx_drop, curr[i].tx_drop);
+             } else {
+                printf("%-6s %8lu %8lu %10lu %10lu %8lu %8lu %8lu %8lu %8lu %8lu\n",
+                       curr[i].name, rx_rates[i], tx_rates[i],
+                       curr[i].rx_bytes, curr[i].tx_bytes,
+                       curr[i].rx_packets, curr[i].tx_packets,
+                       curr[i].rx_errs, curr[i].tx_errs,
+                       curr[i].rx_drop, curr[i].tx_drop);
+             }
+         }
+         
+         // Print histogram for RX throughput per interface.
          printf("\nHistogram for RX Throughput (bytes/sec):\n");
          for (int i = 0; i < curr_count; i++) {
-             int bar_len = (int)((rx_rates[i] * MAX_BAR_LEN) / max_rx);
+             unsigned long iface_max_rx = 0;
+             for (int k = 0; k < max_stats_count; k++) {
+                 if (strcmp(curr[i].name, max_stats[k].name) == 0) {
+                     iface_max_rx = max_stats[k].max_rx;
+                     break;
+                 }
+             }
+             int bar_len = 0;
+             if (iface_max_rx > 0) {
+                 bar_len = (int)((rx_rates[i] * MAX_BAR_LEN) / iface_max_rx);
+                 if (bar_len > MAX_BAR_LEN)
+                     bar_len = MAX_BAR_LEN;
+             }
              printf("%-6s [", curr[i].name);
              for (int j = 0; j < bar_len; j++) {
                  putchar('#');
@@ -247,10 +322,22 @@ void monitor_mode(void) {
              printf("] %8lu B/s\n", rx_rates[i]);
          }
          
-         // Print histogram for TX throughput.
+         // Print histogram for TX throughput per interface.
          printf("\nHistogram for TX Throughput (bytes/sec):\n");
          for (int i = 0; i < curr_count; i++) {
-             int bar_len = (int)((tx_rates[i] * MAX_BAR_LEN) / max_tx);
+             unsigned long iface_max_tx = 0;
+             for (int k = 0; k < max_stats_count; k++) {
+                 if (strcmp(curr[i].name, max_stats[k].name) == 0) {
+                     iface_max_tx = max_stats[k].max_tx;
+                     break;
+                 }
+             }
+             int bar_len = 0;
+             if (iface_max_tx > 0) {
+                 bar_len = (int)((tx_rates[i] * MAX_BAR_LEN) / iface_max_tx);
+                 if (bar_len > MAX_BAR_LEN)
+                     bar_len = MAX_BAR_LEN;
+             }
              printf("%-6s [", curr[i].name);
              for (int j = 0; j < bar_len; j++) {
                  putchar('#');
@@ -261,21 +348,68 @@ void monitor_mode(void) {
              printf("] %8lu B/s\n", tx_rates[i]);
          }
          
-         // Display instructions for interpreting the metrics.
-         printf("\nInstructions:\n");
-         printf("  IFACE  : Interface name.\n");
-         printf("  RX/s   : Bytes received per second.\n");
-         printf("  TX/s   : Bytes transmitted per second.\n");
-         printf("  RXTot  : Total bytes received since boot or reset.\n");
-         printf("  TXTOT  : Total bytes transmitted since boot or reset.\n");
-         printf("  RXpkts : Total received packets.\n");
-         printf("  TXpkts : Total transmitted packets.\n");
-         printf("  RXerr  : Number of receive errors.\n");
-         printf("  TXerr  : Number of transmit errors.\n");
-         printf("  RXdp   : Number of dropped received packets.\n");
-         printf("  TXdp   : Number of dropped transmitted packets.\n");
-         printf("  Histogram bars represent relative throughput (compared to the maximum among all interfaces).\n");
-         printf("--------------------------------------------------------------------------------\n");
+         // --- Additional Metrics Section ---
+         printf("\nAdditional Metrics (per-second differences):\n");
+         printf("%-6s %12s %12s %12s %12s %12s %12s\n",
+                "IFACE", "RX_pkts/s", "TX_pkts/s", "RX_err%%", "TX_err%%", "RX_dp%%", "TX_dp%%");
+         print_separator(TABLE2_WIDTH);
+         
+         unsigned long total_delta_rx_pkts = 0, total_delta_tx_pkts = 0;
+         unsigned long total_delta_rx_err = 0, total_delta_tx_err = 0;
+         unsigned long total_delta_rx_dp = 0, total_delta_tx_dp = 0;
+         int metrics_count = 0;
+         
+         for (int i = 0; i < curr_count; i++) {
+             int found = 0;
+             for (int j = 0; j < prev_count; j++) {
+                 if (strcmp(curr[i].name, prev[j].name) == 0) {
+                     found = 1;
+                     break;
+                 }
+             }
+             if (found) {
+                 unsigned long delta_rx_pkts = curr[i].rx_packets - prev[i].rx_packets;
+                 unsigned long delta_tx_pkts = curr[i].tx_packets - prev[i].tx_packets;
+                 unsigned long delta_rx_err  = curr[i].rx_errs - prev[i].rx_errs;
+                 unsigned long delta_tx_err  = curr[i].tx_errs - prev[i].tx_errs;
+                 unsigned long delta_rx_dp   = curr[i].rx_drop - prev[i].rx_drop;
+                 unsigned long delta_tx_dp   = curr[i].tx_drop - prev[i].tx_drop;
+                 
+                 double rx_err_percent = (delta_rx_pkts > 0) ? (delta_rx_err * 100.0 / delta_rx_pkts) : 0.0;
+                 double tx_err_percent = (delta_tx_pkts > 0) ? (delta_tx_err * 100.0 / delta_tx_pkts) : 0.0;
+                 double rx_dp_percent  = (delta_rx_pkts > 0) ? (delta_rx_dp * 100.0 / delta_rx_pkts) : 0.0;
+                 double tx_dp_percent  = (delta_tx_pkts > 0) ? (delta_tx_dp * 100.0 / delta_tx_pkts) : 0.0;
+                 
+                 printf("%-6s %12lu %12lu %11.2f%% %11.2f%% %11.2f%% %11.2f%%\n",
+                        curr[i].name, delta_rx_pkts, delta_tx_pkts,
+                        rx_err_percent, tx_err_percent,
+                        rx_dp_percent, tx_dp_percent);
+                 
+                 total_delta_rx_pkts += delta_rx_pkts;
+                 total_delta_tx_pkts += delta_tx_pkts;
+                 total_delta_rx_err  += delta_rx_err;
+                 total_delta_tx_err  += delta_tx_err;
+                 total_delta_rx_dp   += delta_rx_dp;
+                 total_delta_tx_dp   += delta_tx_dp;
+                 metrics_count++;
+             } else {
+                 printf("%-6s %12s %12s %12s %12s %12s %12s\n",
+                        curr[i].name, "N/A", "N/A", "N/A", "N/A", "N/A", "N/A");
+             }
+         }
+         
+         if (metrics_count > 0) {
+             double agg_rx_err_percent = (total_delta_rx_pkts > 0) ? (total_delta_rx_err * 100.0 / total_delta_rx_pkts) : 0.0;
+             double agg_tx_err_percent = (total_delta_tx_pkts > 0) ? (total_delta_tx_err * 100.0 / total_delta_tx_pkts) : 0.0;
+             double agg_rx_dp_percent  = (total_delta_rx_pkts > 0) ? (total_delta_rx_dp * 100.0 / total_delta_rx_pkts) : 0.0;
+             double agg_tx_dp_percent  = (total_delta_tx_pkts > 0) ? (total_delta_tx_dp * 100.0 / total_delta_tx_pkts) : 0.0;
+             
+             printf("\nAggregate Summary (per-second differences across all interfaces):\n");
+             printf("Total RX_pkts/s: %lu, Total TX_pkts/s: %lu\n", total_delta_rx_pkts, total_delta_tx_pkts);
+             printf("Aggregate RX Errors: %.2f%%, TX Errors: %.2f%%\n", agg_rx_err_percent, agg_tx_err_percent);
+             printf("Aggregate RX Drops : %.2f%%, TX Drops : %.2f%%\n", agg_rx_dp_percent, agg_tx_dp_percent);
+         }
+         print_separator(TABLE1_WIDTH);
          
          // Update previous statistics for the next interval.
          prev_count = curr_count;
@@ -346,10 +480,21 @@ int main(void) {
                 // Run diagnostics.
                 run_diagnostics();
                 break;
-            case 5:
-                // Enter monitoring mode.
-                monitor_mode();
+            case 5: {
+                // Prompt the user for a refresh interval (in seconds) before entering monitoring mode.
+                char interval_str[MAX_INPUT];
+                int interval;
+                printf("Enter refresh interval in seconds (default 1): ");
+                if (fgets(interval_str, sizeof(interval_str), stdin) != NULL) {
+                    interval = atoi(interval_str);
+                    if (interval <= 0)
+                        interval = 1;
+                } else {
+                    interval = 1;
+                }
+                monitor_mode(interval);
                 break;
+            }
             case 6:
                 // Exit the application.
                 printf("Exiting...\n");

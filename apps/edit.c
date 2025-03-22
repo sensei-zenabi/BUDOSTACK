@@ -147,7 +147,7 @@ void editorSearch(void);
 int is_c_source(void) {
     if (!E.filename) return 0;
     const char *ext = strrchr(E.filename, '.');
-    return (ext && strcmp(ext, ".c") == 0);
+    return (ext && ( (strcmp(ext, ".c") == 0) || (strcmp(ext, ".h") == 0) ));
 }
 
 int getRowNumWidth(void) {

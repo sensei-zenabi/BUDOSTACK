@@ -839,7 +839,7 @@ void editorSearch(void) {
         printf("\033[2J\033[H");
         /* Header */
         printf("Search results for: \"%s\"\n", query);
-        printf("--------------------------------------------------\n");
+        printf("\r--------------------------------------------------\n");
 
         int end = menu_start + menu_height;
         if (end > match_count)
@@ -852,8 +852,8 @@ void editorSearch(void) {
             printf("\033[0m\n");   /* Reset formatting and newline */
         }
         /* Footer prompt */
-        printf("--------------------------------------------------\n");
-        printf("Use Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
+        printf("\r--------------------------------------------------\n");
+        printf("\rUse Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
         fflush(stdout);
 
         int c = editorReadKey();

@@ -64,6 +64,7 @@ const char *realtime_commands[] = {
     "cmath",
     "inet",
     "list",
+    "table",
     NULL
 };
 

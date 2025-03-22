@@ -7,24 +7,22 @@
  * - Integrated paging for output when needed.
  * - Captures external command output via a pipe and pages it if it exceeds one screen.
  *
- * Modifications:
- * - At startup, a list of commands that use realtime mode (without paging/buffering)
- *   is displayed to the user.
- * - When a realtime command is executed, a debug message is printed and the command's
- *   output is displayed immediately.
- * - If the application is started with a single argument (not "-f"),
- *   it automatically simulates starting in "-f" mode and then executes the command
- *   "runtask <argument>".
- * - Added support to execute commands from any working directory by setting
- *   the base directory for command lookup to the directory of the executable.
- * - **Wildcard expansion** is now handled by the shell (in parse_input), ensuring that
- *   commands receive pre-expanded arguments.
+ * Modifications in this version:
+ * - For non-realtime commands, a child process is forked to run the command with concurrent reading via select().
+ * - A timeout (5 seconds) is enforced; if reached, the child is killed.
+ * - Both stdout and stderr are captured.
+ * - The captured output is split into lines manually so that all content (including empty lines or ANSI escape sequences)
+ *   is preserved exactly as provided.
+ * - The login() function is now skipped if a task is auto-run (e.g. "./aalto node_perception"), so that it does not disturb
+ *   the task's output.
+ * - nanosleep is used instead of usleep to avoid implicit declaration warnings under -std=c11.
  *
  * Design Principles:
- * - Modularity & Separation of Concerns: Command parsing, execution, and paging are
- *   separated. The command lookup is decoupled from the current working directory.
- * - Real-Time Feedback: Realtime commands are executed directly, allowing their output
- *   (and subroutine execution) to be seen as it happens.
+ * - Modularity & Separation of Concerns: Command parsing, execution, and paging are separated.
+ * - Real-Time Feedback: Realtime commands are executed directly.
+ * - Safety: The parent reads concurrently so that the pipe never fills up, and the child is killed if it exceeds a timeout.
+ * - Robustness: The pager now preserves all output—including empty lines and any escape sequences—in order to faithfully
+ *   display the command’s output.
  * - Minimal Dependencies: Uses only standard C libraries and POSIX APIs.
  */
 
@@ -37,11 +35,14 @@
 #include <limits.h>
 #include <unistd.h>
 #include <termios.h>    // For terminal control (raw mode)
-#include <time.h>       // For time delay function
+#include <time.h>       // For time functions and nanosleep
 #include <sys/ioctl.h>  // For querying terminal window size
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <signal.h>     // For kill()
+#include <sys/select.h> // For select()
+
 #include "commandparser.h"
 #include "input.h"      // Include the input handling header
 
@@ -56,12 +57,13 @@ int paging_enabled = 1;
 
 // List of commands that use realtime mode (no paging or buffering).
 const char *realtime_commands[] = {
-    "help", 
+    "help",
     "runtask",
-    "assist", 
+    "assist",
     "edit",
     "cmath",
     "inet",
+    "list",
     NULL
 };
 
@@ -249,10 +251,13 @@ void pager(const char **lines, size_t line_count) {
 }
 
 /*
- * Modified execute_command_with_paging():
- * - If the command is in the realtime list (as determined by is_realtime_command()),
- *   print a debug message and execute command directly.
- * - Otherwise, capture its output and page it as needed.
+ * Updated execute_command_with_paging():
+ * - For realtime commands, execute directly.
+ * - For other commands, fork a child process to execute the command with redirected output.
+ * - The parent uses select() to read concurrently from the pipe while waiting for the child.
+ * - A timeout (5 seconds) is enforced; if reached, the child is killed.
+ * - Both stdout and stderr are captured.
+ * - The captured output is split into lines manually, preserving empty lines and all characters.
  */
 void execute_command_with_paging(CommandStruct *cmd) {
     if (is_realtime_command(cmd->command)) {
@@ -262,34 +267,46 @@ void execute_command_with_paging(CommandStruct *cmd) {
         execute_command(cmd);
         return;
     }
+    
     int pipefd[2];
     if (pipe(pipefd) == -1) {
         perror("pipe");
         return;
     }
-    int saved_stdout = dup(STDOUT_FILENO);
-    if (saved_stdout == -1) {
-        perror("dup");
+    
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
         close(pipefd[0]);
         close(pipefd[1]);
         return;
     }
-    if (dup2(pipefd[1], STDOUT_FILENO) == -1) {
-        perror("dup2");
+    
+    if (pid == 0) {
+        /* Child process: Redirect stdout and stderr to the pipe. */
+        if (dup2(pipefd[1], STDOUT_FILENO) == -1) {
+            perror("dup2");
+            exit(EXIT_FAILURE);
+        }
+        if (dup2(pipefd[1], STDERR_FILENO) == -1) {
+            perror("dup2");
+            exit(EXIT_FAILURE);
+        }
         close(pipefd[0]);
         close(pipefd[1]);
-        return;
+        execute_command(cmd);
+        exit(EXIT_SUCCESS);
     }
+    
+    /* Parent process: Close write end. */
     close(pipefd[1]);
-    /* Execute the command. */
-    execute_command(cmd);
-    fflush(stdout);
-    if (dup2(saved_stdout, STDOUT_FILENO) == -1) {
-        perror("dup2 restore");
-    }
-    close(saved_stdout);
-    /* Read the captured output. */
-    char buffer[4096];
+    
+    /* Set the pipe's read end to non-blocking mode. */
+    int flags = fcntl(pipefd[0], F_GETFL, 0);
+    fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
+    
+    time_t start_time = time(NULL);
+    int timeout_seconds = 5; // Timeout in seconds.
     size_t total_size = 0;
     size_t buffer_size = 4096;
     char *output = malloc(buffer_size);
@@ -298,47 +315,90 @@ void execute_command_with_paging(CommandStruct *cmd) {
         close(pipefd[0]);
         return;
     }
-    ssize_t bytes;
-    while ((bytes = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
-        if (total_size + bytes >= buffer_size) {
-            buffer_size *= 2;
-            char *temp = realloc(output, buffer_size);
-            if (!temp) {
-                perror("realloc");
-                free(output);
-                close(pipefd[0]);
-                return;
+    char buffer[4096];
+    
+    /* Concurrently read from the pipe while monitoring the child process */
+    while (1) {
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(pipefd[0], &readfds);
+        struct timeval tv = {1, 0}; // 1-second timeout for select()
+        int sel_ret = select(pipefd[0] + 1, &readfds, NULL, NULL, &tv);
+        if (sel_ret > 0 && FD_ISSET(pipefd[0], &readfds)) {
+            ssize_t bytes = read(pipefd[0], buffer, sizeof(buffer));
+            if (bytes > 0) {
+                if (total_size + bytes >= buffer_size) {
+                    buffer_size *= 2;
+                    char *temp = realloc(output, buffer_size);
+                    if (!temp) {
+                        perror("realloc");
+                        free(output);
+                        close(pipefd[0]);
+                        return;
+                    }
+                    output = temp;
+                }
+                memcpy(output + total_size, buffer, bytes);
+                total_size += bytes;
+            } else if (bytes == 0) {
+                // End-of-file reached.
+                break;
             }
-            output = temp;
         }
-        memcpy(output + total_size, buffer, bytes);
-        total_size += bytes;
+        /* Check if child has finished */
+        pid_t result = waitpid(pid, NULL, WNOHANG);
+        if (result == pid) {
+            // Child finished. Continue reading any remaining data.
+        }
+        if (time(NULL) - start_time > timeout_seconds) {
+            /* Timeout reached; kill child process if still running */
+            kill(pid, SIGKILL);
+            waitpid(pid, NULL, 0);
+            break;
+        }
     }
     close(pipefd[0]);
+    
     if (total_size == 0) {
         free(output);
         return;
     }
     output[total_size] = '\0';
-    /* Split the captured output into lines. */
+    
+    /*
+     * Manually split output into lines while preserving empty lines.
+     * We count the number of lines by scanning for '\n'. Each newline terminates a line.
+     */
     size_t line_count = 0;
     for (size_t i = 0; i < total_size; i++) {
         if (output[i] == '\n')
             line_count++;
     }
-    char **lines = malloc((line_count + 1) * sizeof(char *));
+    /* If the output does not end with a newline, count the last line as well */
+    if (total_size > 0 && output[total_size-1] != '\n')
+        line_count++;
+    
+    char **lines = malloc((line_count) * sizeof(char *));
     if (!lines) {
         perror("malloc");
         free(output);
         return;
     }
     size_t current_line = 0;
-    char *saveptr;
-    char *token = strtok_r(output, "\n", &saveptr);
-    while (token != NULL) {
-        lines[current_line++] = token;
-        token = strtok_r(NULL, "\n", &saveptr);
+    char *start = output;
+    for (size_t i = 0; i < total_size; i++) {
+        if (output[i] == '\n') {
+            output[i] = '\0';  // terminate this line
+            lines[current_line++] = start;
+            start = output + i + 1;
+        }
     }
+    /* If the last character is not a newline, capture the remaining text as the last line */
+    if (start < output + total_size) {
+        lines[current_line++] = start;
+    }
+    
+    /* Determine page height based on terminal size. */
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
         ws.ws_row = 24;
@@ -346,7 +406,8 @@ void execute_command_with_paging(CommandStruct *cmd) {
     int page_height = ws.ws_row - 1;
     if (page_height < 1)
         page_height = 10;
-    /* If the output fits in one page, print directly. */
+    
+    /* If the output fits in one page, print directly; otherwise, page the output. */
     if ((int)current_line <= page_height) {
         for (size_t i = 0; i < current_line; i++) {
             printf("%s\n", lines[i]);
@@ -398,7 +459,7 @@ int main(int argc, char *argv[]) {
 
     /* Modified: Skip startup messages if in forced mode (-f) or auto_command mode. */
     if ((argc > 1 && strcmp(argv[1], "-f") == 0) || auto_command != NULL) {
-        /* Do not print startup messages. */
+        /* Do not print startup messages and skip login() */
     } else {
         /* Startup messages. */
         system("clear");
@@ -408,9 +469,8 @@ int main(int argc, char *argv[]) {
         delayPrint(" ", 1);
         delayPrint("...for those who enjoy simple things...", 0.05);
         delayPrint(" ", 1);
+        login();
     }
-
-	login();
 
     printf("\n\nSYSTEM READY");
     if (0) {

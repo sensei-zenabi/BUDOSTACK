@@ -578,6 +578,11 @@ int main(int argc, char *argv[]) {
             printf("\n");
             break;
         }
+        /* FIX: Check for empty input (i.e. user pressed enter) to prevent segmentation fault */
+        if (input[0] == '\0') {
+            free(input);
+            continue;
+        }
         input[strcspn(input, "\n")] = '\0';
         if (strcmp(input, "exit") == 0) {
             free(input);

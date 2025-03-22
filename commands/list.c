@@ -289,6 +289,7 @@ void print_help() {
  * - Supports recursive search for patterns that contain wildcard characters
  *   or do not correspond to existing files or directories.
  * - Maintains existing functionality for literal file/directory listing.
+ * - Now defaults to listing the current directory if only the "-a" flag is provided.
  */
 int main(int argc, char *argv[]) {
     // If no arguments are provided, list the current directory.
@@ -339,6 +340,19 @@ int main(int argc, char *argv[]) {
             // If the file/directory does not exist, treat it as a search pattern.
             search_patterns[search_count++] = strdup(argv[i]);
         }
+    }
+
+    /* 
+     * If no file paths, directory paths, or search patterns are specified
+     * (which means only flags like "-a" were provided), default to listing
+     * the current directory.
+     */
+    if (file_count == 0 && dir_count == 0 && search_count == 0) {
+        list_directory(".");
+        free(file_paths);
+        free(dir_paths);
+        free(search_patterns);
+        return EXIT_SUCCESS;
     }
 
     // List literal files, if any.

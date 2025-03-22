@@ -5,13 +5,22 @@
  * It now supports internal wildcard expansion so that if a user types "list *"
  * (or any pattern containing wildcards), it behaves similarly to "ls *" in Linux.
  *
+ * Enhancements:
+ * - If a user types "list a", it will display all files starting with "a" from the current
+ *   directory and all subfolders.
+ * - Similarly, "list ab" displays all files starting with "ab" recursively.
+ * - If a user types "list *ab*" it displays all files having "ab" in their filename recursively.
+ * - The new recursive search functionality does not break existing functionality:
+ *   if a literal file or directory exists and the argument does not contain a wildcard,
+ *   it is listed normally.
+ * - Added attribute "list -help" that prints this help message detailing all capabilities.
+ *
  * Design principles:
- * - Use plain C (C11 standard) and only standard (POSIX) libraries.
- * - Use POSIX glob() for internal wildcard expansion if an argument contains
- *   wildcard characters ('*', '?', '[').
- * - For directories, list contents using scandir() with a custom filter and comparator.
- * - For files, print file details (permissions, size, last modified).
- * - Implement a configurable exclusion list for file extensions that are hidden unless "-a" is provided.
+ * - Use plain C (C11 standard) and only standard libraries.
+ * - Preserve existing functionality and extend behavior for search patterns.
+ * - Use recursion with opendir(), readdir(), and stat() for traversing subdirectories.
+ * - Use fnmatch() for matching filenames against wildcard patterns.
+ * - Maintain configurable exclusion list for file extensions, applied to non-directories unless "-a" is set.
  * - Include inline comments to explain design decisions.
  *
  * Compile with: gcc -std=c11 -o list list.c
@@ -27,15 +36,15 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
-#include <glob.h>
+#include <fnmatch.h>
 
-/* Global base path used in the comparator and filter function */
+// Global base path used in the comparator and filter function
 static const char *base_path;
 
-/* Global flag to indicate if all files should be shown (if "-a" is provided) */
+// Global flag to indicate if all files should be shown (if "-a" is provided)
 static int show_all = 0;
 
-/* Configurable list of file extensions to be hidden unless "-a" is specified */
+// Configurable list of file extensions to be hidden unless "-a" is specified
 static const char *excluded_extensions[] = {
     ".c",
     ".h",
@@ -196,86 +205,143 @@ void list_directory(const char *dir_path) {
 }
 
 /*
- * Check if a string contains any wildcard characters.
+ * Recursive function to search directories for files matching a pattern.
+ * Uses fnmatch() to compare filenames against the provided pattern.
+ * Applies exclusion rules for file extensions unless "-a" is set.
  */
-int contains_wildcard(const char *str) {
-    return (strchr(str, '*') || strchr(str, '?') || strchr(str, '['));
+void recursive_search(const char *dir_path, const char *pattern) {
+    DIR *dp = opendir(dir_path);
+    if (!dp) {
+        fprintf(stderr, "list: cannot access directory '%s': %s\n", dir_path, strerror(errno));
+        return;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(dp)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        char fullpath[1024];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", dir_path, entry->d_name);
+        struct stat st;
+        if (stat(fullpath, &st) == -1)
+            continue;
+        // Check if the entry matches the pattern (always using fnmatch)
+        if (fnmatch(pattern, entry->d_name, 0) == 0) {
+            // Apply exclusion for files if not showing all
+            if (!show_all && !S_ISDIR(st.st_mode)) {
+                int excluded = 0;
+                for (int i = 0; excluded_extensions[i] != NULL; i++) {
+                    size_t ext_len = strlen(excluded_extensions[i]);
+                    size_t name_len = strlen(entry->d_name);
+                    if (name_len >= ext_len && strcmp(entry->d_name + name_len - ext_len, excluded_extensions[i]) == 0) {
+                        excluded = 1;
+                        break;
+                    }
+                }
+                if (!excluded) {
+                    print_file_info(fullpath, fullpath);
+                }
+            } else {
+                print_file_info(fullpath, fullpath);
+            }
+        }
+        // Recursively search inside directories.
+        if (S_ISDIR(st.st_mode)) {
+            recursive_search(fullpath, pattern);
+        }
+    }
+    closedir(dp);
 }
 
 /*
- * Main function with internal wildcard expansion.
- *
- * For each command-line argument (other than options), if it contains a wildcard,
- * use glob() with GLOB_NOCHECK to expand it to matching paths.
- * Then, separate the expanded paths into files and directories and list them.
+ * Wrapper function to perform recursive search from the current directory.
+ * Prints a header and then calls recursive_search.
+ */
+void list_recursive_search(const char *pattern) {
+    printf("Recursive search for files matching pattern '%s':\n", pattern);
+    printf("%-30s %-11s %-10s %-20s\n", "Filename", "Permissions", "Size", "Last Modified");
+    printf("--------------------------------------------------------------------------------\n");
+    recursive_search(".", pattern);
+}
+
+/*
+ * Function to display help message for the list command.
+ */
+void print_help() {
+    printf("Usage: list [options] [file/directory or search pattern]\n");
+    printf("Options:\n");
+    printf("  -a      Show all files (override exclusion of certain file extensions)\n");
+    printf("  -help   Display this help message\n");
+    printf("\nCapabilities:\n");
+    printf("  - If no arguments are provided, the current directory is listed.\n");
+    printf("  - If a valid file or directory is provided (and does not contain wildcard characters),\n");
+    printf("    it is listed with details.\n");
+    printf("  - Wildcard patterns (e.g., \"*ab*\") are supported and will recursively search\n");
+    printf("    the current directory and all subfolders for matching files.\n");
+    printf("  - If a non-existent filename is provided (e.g., \"a\" or \"ab\"), it is treated as\n");
+    printf("    a search pattern. For example, \"list a\" will display all files starting with 'a'\n");
+    printf("    from the current directory and all subfolders.\n");
+    printf("\nExisting functionality is preserved for backward compatibility.\n");
+}
+
+/*
+ * Main function with extended capabilities:
+ * - Processes command-line arguments.
+ * - Supports recursive search for patterns that contain wildcard characters
+ *   or do not correspond to existing files or directories.
+ * - Maintains existing functionality for literal file/directory listing.
  */
 int main(int argc, char *argv[]) {
-    /* First pass: expand wildcards in the arguments */
-    int expanded_count = 0;
-    /* Allocate enough space for expanded arguments. Worst-case: each argument expands to several paths. */
-    char **expanded_args = malloc(sizeof(char*) * argc * 10);
-    if (!expanded_args) {
+    // If no arguments are provided, list the current directory.
+    if (argc == 1) {
+        list_directory(".");
+        return EXIT_SUCCESS;
+    }
+
+    // Arrays to store literal file paths, directory paths, and search patterns.
+    char **file_paths = malloc(sizeof(char*) * argc);
+    char **dir_paths = malloc(sizeof(char*) * argc);
+    char **search_patterns = malloc(sizeof(char*) * argc);
+    if (!file_paths || !dir_paths || !search_patterns) {
         fprintf(stderr, "list: memory allocation failed\n");
         return EXIT_FAILURE;
     }
+    int file_count = 0, dir_count = 0, search_count = 0;
 
+    // Process each argument.
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "-a") == 0) {
-            /* Option handled later; copy it as is */
-            expanded_args[expanded_count++] = strdup(argv[i]);
-        } else if (contains_wildcard(argv[i])) {
-            glob_t glob_result;
-            /* GLOB_NOCHECK: if no matches, return the pattern itself */
-            if (glob(argv[i], GLOB_NOCHECK, NULL, &glob_result) == 0) {
-                for (size_t j = 0; j < glob_result.gl_pathc; j++) {
-                    expanded_args[expanded_count++] = strdup(glob_result.gl_pathv[j]);
-                }
-            } else {
-                /* On glob() failure, use the original argument */
-                expanded_args[expanded_count++] = strdup(argv[i]);
-            }
-            globfree(&glob_result);
-        } else {
-            expanded_args[expanded_count++] = strdup(argv[i]);
+        if (strcmp(argv[i], "-help") == 0) {
+            print_help();
+            free(file_paths);
+            free(dir_paths);
+            free(search_patterns);
+            return EXIT_SUCCESS;
         }
-    }
-
-    /* If no non-option arguments provided, default to current directory */
-    if (expanded_count == 0) {
-        expanded_args[expanded_count++] = strdup(".");
-    }
-
-    /* Prepare separate lists for files and directories */
-    char **file_paths = malloc(sizeof(char*) * expanded_count);
-    char **dir_paths = malloc(sizeof(char*) * expanded_count);
-    if (!file_paths || !dir_paths) {
-        fprintf(stderr, "list: memory allocation failed\n");
-        return EXIT_FAILURE;
-    }
-    int file_count = 0, dir_count = 0;
-
-    /* Process each expanded argument */
-    for (int i = 0; i < expanded_count; i++) {
-        if (strcmp(expanded_args[i], "-a") == 0) {
+        if (strcmp(argv[i], "-a") == 0) {
             show_all = 1;
-            free(expanded_args[i]);
+            continue;
+        }
+        /* If the argument contains a wildcard, treat it as a search pattern regardless
+         * of whether a file/directory with that name exists.
+         */
+        if (strchr(argv[i], '*') || strchr(argv[i], '?') || strchr(argv[i], '[')) {
+            search_patterns[search_count++] = strdup(argv[i]);
             continue;
         }
         struct stat st;
-        if (stat(expanded_args[i], &st) == -1) {
-            fprintf(stderr, "list: cannot access '%s': %s\n", expanded_args[i], strerror(errno));
-            free(expanded_args[i]);
-            continue;
-        }
-        if (S_ISDIR(st.st_mode)) {
-            dir_paths[dir_count++] = expanded_args[i];
+        // Check if the argument exists as a file or directory.
+        if (stat(argv[i], &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                dir_paths[dir_count++] = strdup(argv[i]);
+            } else {
+                file_paths[file_count++] = strdup(argv[i]);
+            }
         } else {
-            file_paths[file_count++] = expanded_args[i];
+            // If the file/directory does not exist, treat it as a search pattern.
+            search_patterns[search_count++] = strdup(argv[i]);
         }
     }
-    free(expanded_args);
 
-    /* First, list files (non-directory entries) if any */
+    // List literal files, if any.
     if (file_count > 0) {
         printf("Files:\n");
         printf("%-30s %-11s %-10s %-20s\n", "Filename", "Permissions", "Size", "Last Modified");
@@ -287,9 +353,8 @@ int main(int argc, char *argv[]) {
     }
     free(file_paths);
 
-    /* Next, list directories if any */
+    // List literal directories, if any.
     for (int i = 0; i < dir_count; i++) {
-        /* If more than one directory or if files were also listed, print a directory header */
         if (dir_count > 1 || file_count > 0) {
             printf("\n%s:\n", dir_paths[i]);
         }
@@ -297,5 +362,20 @@ int main(int argc, char *argv[]) {
         free(dir_paths[i]);
     }
     free(dir_paths);
+
+    // Process search patterns for recursive search.
+    for (int i = 0; i < search_count; i++) {
+        char pattern[1024];
+        // If the search pattern does not contain wildcard characters, treat it as a prefix search.
+        if (!strchr(search_patterns[i], '*') && !strchr(search_patterns[i], '?') && !strchr(search_patterns[i], '[')) {
+            snprintf(pattern, sizeof(pattern), "%s*", search_patterns[i]);
+        } else {
+            snprintf(pattern, sizeof(pattern), "%s", search_patterns[i]);
+        }
+        list_recursive_search(pattern);
+        free(search_patterns[i]);
+    }
+    free(search_patterns);
+
     return EXIT_SUCCESS;
 }

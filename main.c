@@ -65,6 +65,7 @@ const char *realtime_commands[] = {
     "inet",
     "list",
     "table",
+    "csv_trend",
     NULL
 };
 

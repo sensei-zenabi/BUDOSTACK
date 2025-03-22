@@ -61,6 +61,7 @@ const char *realtime_commands[] = {
     "assist", 
     "edit",
     "cmath",
+    "inet",
     NULL
 };
 

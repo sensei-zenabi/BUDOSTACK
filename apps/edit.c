@@ -34,6 +34,9 @@
 #define BACKSPACE 127
 #define DEL_KEY 1004  // Key code for Delete
 
+/* Prototype for the syntax highlighter from libedit.c */
+char *highlight_c_line(const char *line);
+
 /* Enumeration for editor keys.
    New keys added:
      HOME_KEY: Home key (beginning of line).
@@ -139,6 +142,13 @@ void editorDelCharAtCursor(void);
 void editorSearch(void);
 
 /* --- Helper Functions --- */
+
+/* Returns nonzero if the current file is a C source file */
+int is_c_source(void) {
+    if (!E.filename) return 0;
+    const char *ext = strrchr(E.filename, '.');
+    return (ext && strcmp(ext, ".c") == 0);
+}
 
 int getRowNumWidth(void) {
     int n = E.numrows, digits = 1;
@@ -412,6 +422,52 @@ void editorDrawRows(int rn_width) {
             int rn = file_row + 1;
             int num_len = snprintf(numbuf, sizeof(numbuf), "%*d ", rn_width - 1, rn);
             write(STDOUT_FILENO, numbuf, num_len);
+            
+            /* If a selection is active, use the selection-aware renderer.
+               Otherwise, if the file is a C source file, use syntax highlighting.
+               In all other cases, use the plain renderer. */
+            if (E.selecting) {
+                editorRenderRowWithSelection(&E.row[file_row], file_row, text_width);
+            } else if (is_c_source()) {
+                char *highlighted = highlight_c_line(E.row[file_row].chars);
+                if (highlighted) {
+                    write(STDOUT_FILENO, highlighted, strlen(highlighted));
+                    free(highlighted);
+                }
+            } else {
+                editorRenderRow(&E.row[file_row], text_width);
+            }
+            
+            int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;
+            if (printed_width < 0) printed_width = 0;
+            if (printed_width > text_width) printed_width = text_width;
+            for (int i = printed_width; i < text_width; i++)
+                write(STDOUT_FILENO, " ", 1);
+            if (E.row[file_row].modified)
+                write(STDOUT_FILENO, "\x1b[41m \x1b[0m", 10);
+            else
+                write(STDOUT_FILENO, " ", 1);
+        } else {
+            for (int i = 0; i < rn_width; i++)
+                write(STDOUT_FILENO, " ", 1);
+            write(STDOUT_FILENO, "~", 1);
+        }
+        write(STDOUT_FILENO, "\x1b[K", 3);
+        if (y < E.textrows - 1)
+            write(STDOUT_FILENO, "\r\n", 2);
+    }
+}
+
+/*
+void editorDrawRows(int rn_width) {
+    int text_width = E.screencols - rn_width - 1;
+    char numbuf[16];
+    for (int y = 0; y < E.textrows; y++) {
+        int file_row = E.rowoff + y;
+        if (file_row < E.numrows) {
+            int rn = file_row + 1;
+            int num_len = snprintf(numbuf, sizeof(numbuf), "%*d ", rn_width - 1, rn);
+            write(STDOUT_FILENO, numbuf, num_len);
             editorRenderRowWithSelection(&E.row[file_row], file_row, text_width);
             int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;
             if (printed_width < 0) printed_width = 0;
@@ -432,6 +488,7 @@ void editorDrawRows(int rn_width) {
             write(STDOUT_FILENO, "\r\n", 2);
     }
 }
+*/
 
 void editorDrawStatusBar(void) {
     char status[80];

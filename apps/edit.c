@@ -23,17 +23,16 @@
  * - When a selection is active, pressing Backspace (or CTRL+H) or Delete deletes the selection.
  * - The Delete key is implemented as a separate case (DEL_KEY).
  * - New keys Home, End, Page Up, and Page Down have been added for quick navigation.
- * - **Vertical movement update:** When moving vertically the editor now remembers a preferred horizontal position.
- *   On the first vertical arrow (up or down) in a sequence, the current cursor column is stored.
- *   On subsequent vertical moves the editor will try to set the cursor to that stored column if possible,
- *   otherwise it “falls” to the end of the line.
+ * - Vertical movement now remembers a preferred horizontal position.
+ * - New Search Functionality: CTRL+F is bound to a search that lets the user input a query,
+ *   scans the text buffer for matches, and displays a simple full‐screen menu to choose a match.
  */
 
 #define EDITOR_VERSION "0.1-micro-like"
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define BACKSPACE 127
-#define DEL_KEY 1004  // Existing key code for Delete
+#define DEL_KEY 1004  // Key code for Delete
 
 /* Enumeration for editor keys.
    New keys added:
@@ -55,9 +54,9 @@ enum EditorKey {
 
 /* Data structure for a text line */
 typedef struct {
-    int size;       
-    char *chars;    
-    int modified;   
+    int size;
+    char *chars;
+    int modified;
 } EditorLine;
 
 /* Global clipboard for cut/copy/paste functionality */
@@ -66,19 +65,19 @@ size_t clipboard_len = 0;
 
 /* Global editor state */
 struct EditorConfig {
-    int cx, cy;       // cursor position
-    int screenrows;   // terminal rows
-    int screencols;   // terminal columns
-    int rowoff;       // vertical scroll offset
-    int coloff;       // horizontal scroll offset
-    int numrows;      // number of rows in the file
-    EditorLine *row;  // array of rows
-    char *filename;   
-    int dirty;        // unsaved changes flag
+    int cx, cy;           // cursor position
+    int screenrows;       // terminal rows
+    int screencols;       // terminal columns
+    int rowoff;           // vertical scroll offset
+    int coloff;           // horizontal scroll offset
+    int numrows;          // number of rows in the file
+    EditorLine *row;      // array of rows
+    char *filename;
+    int dirty;            // unsaved changes flag
     struct termios orig_termios; // original terminal settings
 
     char status_message[80];
-    int textrows; // text area rows (will be screenrows - 2)
+    int textrows;         // text area rows (will be screenrows - 2)
 
     /* Selection fields:
        CTRL+T toggles selection mode.
@@ -88,8 +87,8 @@ struct EditorConfig {
     int selecting;
     int sel_anchor_x;
     int sel_anchor_y;
-    
-    /* New field to remember the preferred horizontal (desired) column */
+
+    /* Preferred horizontal (desired) column */
     int preferred_cx;
 } E;
 
@@ -97,13 +96,13 @@ struct EditorConfig {
 typedef struct {
     int cx, cy;
     int numrows;
-    EditorLine *row; 
+    EditorLine *row;
 } UndoState;
 
 UndoState *undo_history[100];
 int undo_history_len = 0;
 
-/* Function prototypes */
+/* --- Function Prototypes --- */
 void die(const char *s);
 void disableRawMode(void);
 void enableRawMode(void);
@@ -134,9 +133,10 @@ void editorCutSelection(void);
 void editorPasteClipboard(void);
 void editorInsertString(const char *s);
 
-/* New functions for deletion when selection is active and for Delete key behavior */
+/* New function prototypes */
 void editorDeleteSelection(void);
 void editorDelCharAtCursor(void);
+void editorSearch(void);
 
 /* --- Helper Functions --- */
 
@@ -377,14 +377,13 @@ int editorReadKey(void) {
                     }
                 }
             } else {
-                // Single-character escape sequences for Home/End
                 switch (seq[1]) {
                     case 'A': return ARROW_UP;
                     case 'B': return ARROW_DOWN;
                     case 'C': return ARROW_RIGHT;
                     case 'D': return ARROW_LEFT;
-                    case 'H': return HOME_KEY;  // ESC [ H (Home)
-                    case 'F': return END_KEY;   // ESC [ F (End)
+                    case 'H': return HOME_KEY;
+                    case 'F': return END_KEY;
                     default: return '\x1b';
                 }
             }
@@ -404,7 +403,6 @@ int getWindowSize(int *rows, int *cols) {
 
 /* --- Drawing Routines --- */
 
-/* Draw text area rows with row numbers and change indicators */
 void editorDrawRows(int rn_width) {
     int text_width = E.screencols - rn_width - 1;
     char numbuf[16];
@@ -435,7 +433,6 @@ void editorDrawRows(int rn_width) {
     }
 }
 
-/* Draw status bar with file info */
 void editorDrawStatusBar(void) {
     char status[80];
     char rstatus[32];
@@ -456,13 +453,11 @@ void editorDrawStatusBar(void) {
     write(STDOUT_FILENO, rstatus, rlen);
 }
 
-/* Draw shortcut (menu) bar at the bottom */
 void editorDrawShortcutBar(void) {
-    /* Use dim text for a less pronounced color */
     write(STDOUT_FILENO, "\x1b[2m", 4);
     char menu[256];
     snprintf(menu, sizeof(menu),
-             "Ctrl+Q Quit | Ctrl+S Save | Ctrl+Z Undo | Ctrl+X Cut | Ctrl+C Copy | Ctrl+V Paste | Ctrl+T Select | Ctrl+A Select All");
+             "Ctrl+Q Quit | Ctrl+S Save | Ctrl+Z Undo | Ctrl+X Cut | Ctrl+C Copy | Ctrl+V Paste | Ctrl+T Select | Ctrl+A Select All | Ctrl+F Search");
     int len = strlen(menu);
     if (len > E.screencols) len = E.screencols;
     write(STDOUT_FILENO, menu, len);
@@ -471,12 +466,6 @@ void editorDrawShortcutBar(void) {
     write(STDOUT_FILENO, "\x1b[0m", 4);
 }
 
-/* Refresh the screen.
-   Layout:
-     - Lines 1..textrows: text area
-     - Line textrows+1: status bar
-     - Last line: shortcut bar
-*/
 void editorRefreshScreen(void) {
     int rn_width = getRowNumWidth();
     E.textrows = E.screenrows - 2;
@@ -486,7 +475,6 @@ void editorRefreshScreen(void) {
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.textrows + 1);
     write(STDOUT_FILENO, buf, strlen(buf));
-    /* Use dim text for the status bar */
     write(STDOUT_FILENO, "\x1b[2m", 4);
     editorDrawStatusBar();
     write(STDOUT_FILENO, "\x1b[0m", 4);
@@ -502,27 +490,12 @@ void editorRefreshScreen(void) {
     write(STDOUT_FILENO, "\x1b[?25h", 6);
 }
 
-/* --- Key Processing ---
-   - CTRL+T toggles selection mode.
-   - CTRL+A selects all text.
-   - Clipboard operations: CTRL+X (cut), CTRL+C (copy), CTRL+V (paste).
-   - When a selection is active, pressing Backspace (or CTRL+H) or Delete deletes the entire selection.
-   - Arrow keys move the cursor.
-   - New keys:
-       Home: move to beginning of line.
-       End: move to end of line.
-       Page Up: move up one text page.
-       Page Down: move down one text page.
-   - **Vertical arrows (ARROW_UP and ARROW_DOWN) now remember the preferred horizontal position.
-     On the first vertical move in a sequence, the current column is stored (in preferred_cx).
-     Subsequent vertical moves use that value if possible.
-*/
+/* --- Key Processing --- */
+
 void editorProcessKeypress(void) {
     int c = editorReadKey();
-    /* Use a static variable to detect if the previous key was vertical */
     static int last_key_was_vertical = 0;
 
-    /* Toggle selection mode with CTRL+T */
     if (c == CTRL_KEY('t')) {
         if (E.selecting) {
             E.selecting = 0;
@@ -536,7 +509,6 @@ void editorProcessKeypress(void) {
         last_key_was_vertical = 0;
         return;
     }
-    /* Select All with CTRL+A */
     if (c == CTRL_KEY('a')) {
         if (E.numrows > 0) {
             E.selecting = 1;
@@ -549,14 +521,12 @@ void editorProcessKeypress(void) {
         last_key_was_vertical = 0;
         return;
     }
-    /* If a selection is active and Backspace (or CTRL+H) is pressed, delete the selection */
     if ((c == CTRL_KEY('h') || c == BACKSPACE) && E.selecting) {
         push_undo_state();
         editorDeleteSelection();
         last_key_was_vertical = 0;
         return;
     }
-    /* If a selection is active and Delete key is pressed, delete the selection */
     if (c == DEL_KEY && E.selecting) {
         push_undo_state();
         editorDeleteSelection();
@@ -591,29 +561,30 @@ void editorProcessKeypress(void) {
             editorDelCharAtCursor();
             break;
         case HOME_KEY:
-            /* Move cursor to beginning of line */
             E.cx = 0;
-            E.preferred_cx = E.cx; // update preferred column
+            E.preferred_cx = E.cx;
             last_key_was_vertical = 0;
             break;
         case END_KEY:
-            /* Move cursor to end of current line */
             E.cx = editorDisplayWidth(E.row[E.cy].chars);
             E.preferred_cx = E.cx;
             last_key_was_vertical = 0;
             break;
         case PGUP_KEY:
-            /* Move cursor up one text page */
             E.cy -= E.textrows;
             if (E.cy < 0)
                 E.cy = 0;
             last_key_was_vertical = 0;
             break;
         case PGDN_KEY:
-            /* Move cursor down one text page */
             E.cy += E.textrows;
             if (E.cy >= E.numrows)
                 E.cy = E.numrows - 1;
+            last_key_was_vertical = 0;
+            break;
+        case CTRL_KEY('f'):
+            push_undo_state();
+            editorSearch();
             last_key_was_vertical = 0;
             break;
         case '\r':
@@ -715,9 +686,6 @@ void editorProcessKeypress(void) {
 
 /* --- New Functions for Selection Deletion and Delete Key --- */
 
-/* Deletes the selected text without copying it to the clipboard.
-   Handles both single-line and multi-line selections.
-*/
 void editorDeleteSelection(void) {
     if (!E.selecting)
         return;
@@ -784,9 +752,6 @@ void editorDeleteSelection(void) {
     snprintf(E.status_message, sizeof(E.status_message), "Deleted selection");
 }
 
-/* Deletes the character at the cursor (Delete key behavior).
-   If the cursor is at the end of the line, it merges the next line.
-*/
 void editorDelCharAtCursor(void) {
     if (E.cy == E.numrows)
         return;
@@ -815,11 +780,131 @@ void editorDelCharAtCursor(void) {
     }
 }
 
+/* --- New Function for Search --- */
+
+void editorSearch(void) {
+    char query[256];
+    /* Switch to the alternate screen buffer so the search UI doesn't overlay the editor */
+    printf("\033[?1049h");
+    fflush(stdout);
+
+    /* Temporarily disable raw mode to get query input */
+    disableRawMode();
+    printf("\rSearch: ");
+    fflush(stdout);
+    if (fgets(query, sizeof(query), stdin) == NULL) {
+        enableRawMode();
+        /* Restore main screen */
+        printf("\033[?1049l");
+        fflush(stdout);
+        return;
+    }
+    query[strcspn(query, "\n")] = '\0';
+    enableRawMode();
+
+    /* Get terminal size */
+    int rows, cols;
+    if (getWindowSize(&rows, &cols) == -1) {
+        rows = 24; cols = 80;
+    }
+
+    /* Build list of matching line indices */
+    int *matches = malloc(E.numrows * sizeof(int));
+    if (!matches) {
+        snprintf(E.status_message, sizeof(E.status_message), "Search: malloc failed");
+        printf("\033[?1049l"); // restore main screen
+        fflush(stdout);
+        return;
+    }
+    int match_count = 0;
+    for (int i = 0; i < E.numrows; i++) {
+        if (strstr(E.row[i].chars, query) != NULL)
+            matches[match_count++] = i;
+    }
+    if (match_count == 0) {
+        free(matches);
+        snprintf(E.status_message, sizeof(E.status_message), "No matches found");
+        printf("\033[?1049l"); // restore main screen
+        fflush(stdout);
+        return;
+    }
+
+    /* Improved full-screen menu UI */
+    int active = 0;
+    int menu_start = 0;
+    int menu_height = rows - 4;  /* Reserve some lines for header and footer */
+
+    while (1) {
+        /* Clear the alternate screen */
+        printf("\033[2J\033[H");
+        /* Header */
+        printf("Search results for: \"%s\"\n", query);
+        printf("--------------------------------------------------\n");
+
+        int end = menu_start + menu_height;
+        if (end > match_count)
+            end = match_count;
+        for (int i = menu_start; i < end; i++) {
+            if (i == active)
+                printf("\033[7m");  /* Inverse video for active selection */
+            /* Ensure each line starts at column 1 */
+            printf("\rLine %d: %s", matches[i] + 1, E.row[matches[i]].chars);
+            printf("\033[0m\n");   /* Reset formatting and newline */
+        }
+        /* Footer prompt */
+        printf("--------------------------------------------------\n");
+        printf("Use Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
+        fflush(stdout);
+
+        int c = editorReadKey();
+        if (c == 'q') {
+            active = -1;
+            break;
+        } else if (c == '\r') {
+            break;
+        } else if (c == ARROW_UP) {
+            if (active > 0) {
+                active--;
+                if (active < menu_start)
+                    menu_start = active;
+            }
+        } else if (c == ARROW_DOWN) {
+            if (active < match_count - 1) {
+                active++;
+                if (active >= menu_start + menu_height)
+                    menu_start = active - menu_height + 1;
+            }
+        }
+    }
+    int result = -1;
+    if (active != -1)
+        result = matches[active];
+    free(matches);
+
+    /* Restore the main screen buffer so the editor content is visible again */
+    printf("\033[?1049l");
+    fflush(stdout);
+
+    if (result != -1) {
+        E.cy = result;
+        char *pos = strstr(E.row[result].chars, query);
+        if (pos != NULL) {
+            int col = 0;
+            for (char *p = E.row[result].chars; p < pos; p++)
+                col++;
+            E.cx = col;
+        } else {
+            E.cx = 0;
+        }
+        snprintf(E.status_message, sizeof(E.status_message),
+                 "Jumped to match on line %d", result + 1);
+    } else {
+        snprintf(E.status_message, sizeof(E.status_message), "Search canceled");
+    }
+}
+
 /* --- Clipboard and Selection Functions --- */
 
-/* Copies the selected text into the global clipboard.
-   Handles both single-line and multi-line selections.
-*/
 void editorCopySelection(void) {
     if (!E.selecting)
         return;
@@ -869,9 +954,6 @@ void editorCopySelection(void) {
              "Copied selection (%zu bytes)", clipboard_len);
 }
 
-/* Cuts the selected text: copies it to clipboard and removes it from the buffer.
-   Handles both single-line and multi-line selections.
-*/
 void editorCutSelection(void) {
     if (!E.selecting)
         return;
@@ -921,7 +1003,6 @@ void editorCutSelection(void) {
     snprintf(E.status_message, sizeof(E.status_message), "Cut selection");
 }
 
-/* Pastes the clipboard content at the current cursor position */
 void editorPasteClipboard(void) {
     if (!clipboard)
         return;
@@ -931,9 +1012,6 @@ void editorPasteClipboard(void) {
              "Pasted clipboard (%zu bytes)", clipboard_len);
 }
 
-/* Inserts an entire string at the current cursor position.
-   Newline characters trigger insertion of new lines.
-*/
 void editorInsertString(const char *s) {
     while (*s) {
         if (*s == '\n')
@@ -1035,8 +1113,8 @@ void editorInsertChar(int c) {
     memmove(&line->chars[index + 1], &line->chars[index], line->size - index + 1);
     line->chars[index] = c;
     line->size++;
-    E.cx++; 
-    E.preferred_cx = E.cx; // update preferred column on horizontal insertion
+    E.cx++;
+    E.preferred_cx = E.cx;
     line->modified = 1; E.dirty = 1;
 }
 
@@ -1058,8 +1136,8 @@ void editorInsertUTF8(const char *s, int len) {
     size_t bytes = mbrtowc(&wc, s, len, NULL);
     int width = (bytes == (size_t)-1 || bytes == (size_t)-2) ? 1 : wcwidth(wc);
     if (width < 0) width = 1;
-    E.cx += width; 
-    E.preferred_cx = E.cx; // update preferred column
+    E.cx += width;
+    E.preferred_cx = E.cx;
     line->modified = 1; E.dirty = 1;
 }
 
@@ -1093,7 +1171,7 @@ void editorInsertNewline(void) {
         E.row[E.cy + 1].size = new_len;
         E.row[E.cy + 1].modified = 1;
         E.cy++; E.cx = 0;
-        E.preferred_cx = E.cx; // update preferred column
+        E.preferred_cx = E.cx;
     }
     E.dirty = 1;
 }
@@ -1118,14 +1196,14 @@ void editorDelChar(void) {
             E.row[j] = E.row[j + 1];
         E.numrows--; E.cy--;
         E.cx = editorDisplayWidth(prev_line->chars);
-        E.preferred_cx = E.cx; // update preferred column
+        E.preferred_cx = E.cx;
     } else {
         int index = editorRowCxToByteIndex(line, E.cx);
         int prev_index = editorRowCxToByteIndex(line, E.cx - 1);
         memmove(&line->chars[prev_index], &line->chars[index], line->size - index + 1);
         line->size -= (index - prev_index);
-        E.cx -= 1; 
-        E.preferred_cx = E.cx; // update preferred column
+        E.cx -= 1;
+        E.preferred_cx = E.cx;
         line->modified = 1;
     }
     E.dirty = 1;
@@ -1141,11 +1219,10 @@ int main(int argc, char *argv[]) {
     E.filename = NULL; E.dirty = 0;
     E.status_message[0] = '\0';
     E.selecting = 0; E.sel_anchor_x = 0; E.sel_anchor_y = 0;
-    E.preferred_cx = 0;  /* initialize preferred horizontal position */
+    E.preferred_cx = 0;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1)
         die("getWindowSize");
-    /* Reserve two lines: one for status bar and one for shortcut bar */
     E.textrows = E.screenrows - 2;
 
     if (argc >= 2)

@@ -23,14 +23,15 @@ int main(int argc, char *argv[]) {
     printf("  help     : Display this help message.\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
 	printf("  cmath    : Opens a math editor.\n");
+    printf("  copy     : Copy a file from source to destination.\n");
     printf("  display  : Display the contents of a file.\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");
+    printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");
-    printf("  copy     : Copy a file from source to destination.\n");
+	printf("  makedir  : Create a new directory.\n");
     printf("  move     : Move (rename) a file from source to destination.\n");
     printf("  remove   : Remove a file.\n");
     printf("  update   : Create an empty file or update its modification time.\n");
-    printf("  makedir  : Create a new directory.\n");
     printf("  rmdir    : Remove an empty directory.\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");

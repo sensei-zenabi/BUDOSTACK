@@ -5,9 +5,10 @@
  *
  * Design principles:
  * - The Table structure holds a dynamic 2D array of strings.
- * - The first row is for headers; the first column is an "Index" column.
+ * - The first row is reserved for headers; the first column is always an "Index" column.
  * - Provides functions to create/free the table, add rows/columns, set cell values,
  *   print the table (with highlighted cell), load/save CSV files, and retrieve a cell's content.
+ * - New functions: table_delete_column() and table_delete_row() to delete columns/rows.
  *
  * Uses only standard C (C11) and standard libraries.
  */
@@ -25,10 +26,10 @@
 typedef struct Table {
     int rows;
     int cols;
-    char ***cells;
+    char ***cells;  // cells[row][col] is a dynamically allocated string.
 } Table;
 
-// Helper: duplicate a string.
+// Helper function to duplicate a string.
 static char *str_duplicate(const char *s) {
     size_t len = strlen(s);
     char *dup = malloc(len + 1);
@@ -37,7 +38,7 @@ static char *str_duplicate(const char *s) {
     return dup;
 }
 
-// Helper: free a cell.
+// Helper function to free a cell.
 static void free_cell(char *s) {
     free(s);
 }
@@ -53,12 +54,14 @@ Table *table_create(void) {
         free(t);
         return NULL;
     }
+    // Allocate header row.
     t->cells[0] = malloc(sizeof(char *) * t->cols);
     if (!t->cells[0]) {
         free(t->cells);
         free(t);
         return NULL;
     }
+    // Set the index column header.
     t->cells[0][0] = str_duplicate("Index");
     return t;
 }
@@ -89,17 +92,17 @@ void table_print(const Table *t) {
     }
 }
 
-// Print the table with the cell at (highlight_row, highlight_col) highlighted.
+// Print the table with the cell at (highlight_row, highlight_col) highlighted (inverse video).
 void table_print_highlight(const Table *t, int highlight_row, int highlight_col) {
     if (!t) return;
     for (int i = 0; i < t->rows; i++) {
         printf("\r");
         for (int j = 0; j < t->cols; j++) {
             if (i == highlight_row && j == highlight_col)
-                printf("\033[7m");
+                printf("\033[7m");  // Start inverse video.
             printf("%-15s", t->cells[i][j] ? t->cells[i][j] : "");
             if (i == highlight_row && j == highlight_col)
-                printf("\033[0m");
+                printf("\033[0m");  // Reset attributes.
         }
         printf("\n");
     }
@@ -115,7 +118,7 @@ int table_get_cols(const Table *t) {
     return t ? t->cols : 0;
 }
 
-// Accessor: get content of cell at (row, col).
+// Accessor: get content of cell at (row, col). Returns an empty string if out-of-bounds.
 const char *table_get_cell(const Table *t, int row, int col) {
     if (!t || row < 0 || row >= t->rows || col < 0 || col >= t->cols)
         return "";
@@ -128,7 +131,7 @@ static int in_bounds(const Table *t, int row, int col) {
 }
 
 // Set the cell at (row, col) to the given value.
-// Editing column 0 (index) is disallowed.
+// Editing column 0 (the index column) is disallowed.
 int table_set_cell(Table *t, int row, int col, const char *value) {
     if (!t || !in_bounds(t, row, col)) return -1;
     if (col == 0) return -1;
@@ -137,7 +140,7 @@ int table_set_cell(Table *t, int row, int col, const char *value) {
     return 0;
 }
 
-// Add a new row at the end. The index column is set automatically.
+// Add a new row at the end of the table. The index column is set automatically.
 int table_add_row(Table *t) {
     if (!t) return -1;
     int new_row = t->rows;
@@ -156,8 +159,8 @@ int table_add_row(Table *t) {
     return 0;
 }
 
-// Add a new column at the end with the given header.
-// Existing rows receive empty cells (header row gets the header text).
+// Add a new column at the end of the table with the given header.
+// For the header row, sets the header text; for other rows, initializes with an empty string.
 int table_add_col(Table *t, const char *header) {
     if (!t) return -1;
     int new_col = t->cols;
@@ -174,7 +177,7 @@ int table_add_col(Table *t, const char *header) {
     return 0;
 }
 
-// Helper: print a CSV field (escaping if needed).
+// Helper: Print a CSV field (escaping if needed).
 static void fprint_csv_field(FILE *f, const char *field) {
     int need_quotes = 0;
     for (const char *p = field; *p; p++) {
@@ -196,7 +199,7 @@ static void fprint_csv_field(FILE *f, const char *field) {
     }
 }
 
-// Save the table to a CSV file.
+// Save the table to a CSV file. Returns 0 on success.
 int table_save_csv(const Table *t, const char *filename) {
     if (!t || !filename) return -1;
     FILE *f = fopen(filename, "w");
@@ -215,6 +218,8 @@ int table_save_csv(const Table *t, const char *filename) {
 }
 
 // Helper: Split a CSV line into fields.
+// Returns an array of strings and sets *count to the number of fields.
+// The caller must free the returned array and each field.
 static char **split_csv_line(const char *line, int *count) {
     char **fields = NULL;
     int capacity = 0, num = 0;
@@ -230,8 +235,8 @@ static char **split_csv_line(const char *line, int *count) {
         int buf_index = 0;
         if (*p == '\"') {
             p++;
-            while (*p && !(*p == '\"' && (*(p+1) != '\"'))) {
-                if (*p == '\"' && *(p+1) == '\"') {
+            while (*p && !(*p == '\"' && (*(p + 1) != '\"'))) {
+                if (*p == '\"' && *(p + 1) == '\"') {
                     buffer[buf_index++] = '\"';
                     p += 2;
                 } else {
@@ -256,7 +261,7 @@ static char **split_csv_line(const char *line, int *count) {
     return fields;
 }
 
-// Load a table from a CSV file.
+// Load a table from a CSV file. Returns a new Table pointer on success.
 Table *table_load_csv(const char *filename) {
     FILE *f = fopen(filename, "r");
     if (!f) return NULL;
@@ -266,8 +271,8 @@ Table *table_load_csv(const char *filename) {
     int rows = 0, cols = 0;
     while (fgets(line, sizeof(line), f)) {
         size_t len = strlen(line);
-        if (len && line[len-1] == '\n')
-            line[len-1] = '\0';
+        if (len && line[len - 1] == '\n')
+            line[len - 1] = '\0';
         
         int field_count = 0;
         char **fields = split_csv_line(line, &field_count);
@@ -295,4 +300,53 @@ Table *table_load_csv(const char *filename) {
     t->cols = cols;
     t->cells = cells;
     return t;
+}
+
+/*
+ * New Functions:
+ *
+ * table_delete_column() deletes the column at index 'col' (cannot delete index column, i.e. col 0).
+ * table_delete_row() deletes the row at index 'row' (cannot delete header row, i.e. row 0).
+ */
+
+// Delete the column at index 'col'. Returns 0 on success, -1 on failure.
+int table_delete_column(Table *t, int col) {
+    if (!t || col <= 0 || col >= t->cols)
+        return -1;
+    for (int i = 0; i < t->rows; i++) {
+        free(t->cells[i][col]);
+        // Shift cells left from 'col' onward.
+        for (int j = col; j < t->cols - 1; j++) {
+            t->cells[i][j] = t->cells[i][j + 1];
+        }
+        // Resize the row.
+        t->cells[i] = realloc(t->cells[i], sizeof(char *) * (t->cols - 1));
+    }
+    t->cols--;
+    return 0;
+}
+
+// Delete the row at index 'row'. Returns 0 on success, -1 on failure.
+int table_delete_row(Table *t, int row) {
+    if (!t || row <= 0 || row >= t->rows)
+        return -1;
+    // Free the entire row.
+    for (int j = 0; j < t->cols; j++) {
+        free(t->cells[row][j]);
+    }
+    free(t->cells[row]);
+    // Shift rows up.
+    for (int i = row; i < t->rows - 1; i++) {
+        t->cells[i] = t->cells[i + 1];
+        // Update index column for data rows.
+        if (i > 0) {
+            char index_str[32];
+            sprintf(index_str, "%d", i);
+            free(t->cells[i][0]);
+            t->cells[i][0] = str_duplicate(index_str);
+        }
+    }
+    t->rows--;
+    t->cells = realloc(t->cells, sizeof(char **) * t->rows);
+    return 0;
 }

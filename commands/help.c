@@ -24,7 +24,9 @@ int main(int argc, char *argv[]) {
     printf("  assist   : Interactive assistant that provides various utilities.\n");
 	printf("  cmath    : Opens a math editor.\n");
     printf("  copy     : Copy a file from source to destination.\n");
+	printf("  csv_print: Pretty prints a .csv file.\n");
     printf("  display  : Display the contents of a file.\n");
+	printf("  drives   : Lists all found drives.\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");
@@ -36,6 +38,7 @@ int main(int argc, char *argv[]) {
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");
+    printf("  table    : Interactive .csv table editor tool.\n");
     printf("  exit     : Exit AALTO.\n");
     printf("\n");
 

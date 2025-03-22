@@ -5,7 +5,7 @@
 Check out development diary from [HERE](https://github.com/sensei-zenabi/AALTO/blob/main/users/ville/readme.md)
 
 ### Description:
-A lightweight operating system built atop POSIX-compliant Linux, 
+A lightweight operating "layer" built atop POSIX-compliant Linux, 
 specifically designed for those who value the elegant simplicity 
 and clarity found in operating systems of the 1980s. Optimized for 
 maximum focus and efficiency on basic primitives of computing, 

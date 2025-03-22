@@ -3,7 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <time.h>    // For timestamp display
+#include <time.h>         // For timestamp display
+#include <termios.h>      // For terminal control
+#include <sys/select.h>   // For select()
+#include <signal.h>       // For signal handling
 
 #define MAX_INPUT 100
 #define MAX_INTERFACES 32
@@ -170,17 +173,38 @@ void run_diagnostics(void) {
  *  - Shows detailed additional metrics per interface.
  *  - Each interface’s histogram bar is scaled based on its own maximum observed throughput.
  *  - Horizontal separator lines are printed to match the table widths.
+ *  - Exits when the user presses the plain 'q' key.
  *
  * Design rationale:
- * By tracking per-interface maximum throughput, the bar represents the current rate as a fraction of the maximum ever observed
- * for that interface. Combined with even separator lines, the UI looks clean and professional.
+ * We configure the terminal in non-canonical mode and use select() to wait for user input or a timeout.
+ * Pressing the 'q' key will break out of the monitoring loop.
  */
 void monitor_mode(int interval) {
     if (interval <= 0) {
         interval = 1;  // Ensure a valid interval
     }
     
-    // Structure to track maximum throughput for each interface
+    // Save current terminal settings and switch to non-canonical mode.
+    struct termios old_tio, new_tio;
+    if (tcgetattr(STDIN_FILENO, &old_tio) == -1) {
+        perror("tcgetattr");
+        return;
+    }
+    new_tio = old_tio;
+    new_tio.c_lflag &= ~(ICANON | ECHO);
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &new_tio) == -1) {
+        perror("tcsetattr");
+        return;
+    }
+    
+    // Ignore SIGINT so that CTRL+C does not interrupt the monitoring mode.
+    struct sigaction old_sa, new_sa;
+    new_sa.sa_handler = SIG_IGN;
+    sigemptyset(&new_sa.sa_mask);
+    new_sa.sa_flags = 0;
+    sigaction(SIGINT, &new_sa, &old_sa);
+    
+    // Structure to track maximum throughput for each interface.
     typedef struct {
         char name[32];
         unsigned long max_rx;
@@ -197,11 +221,30 @@ void monitor_mode(int interval) {
     int prev_count = read_netdev_stats(prev, MAX_INTERFACES);
     if (prev_count < 0) {
          printf("Error: Unable to read network statistics.\n");
-         return;
+         goto cleanup;
     }
     
     while (1) {
-         sleep(interval);
+         // Use select() to wait for either input or the refresh timeout.
+         fd_set readfds;
+         FD_ZERO(&readfds);
+         FD_SET(STDIN_FILENO, &readfds);
+         struct timeval tv;
+         tv.tv_sec = interval;
+         tv.tv_usec = 0;
+         int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
+         if (ret < 0) {
+             perror("select");
+             break;
+         }
+         if (ret > 0) {
+             char ch;
+             if (read(STDIN_FILENO, &ch, 1) > 0 && ch == 'q') { // plain 'q'
+                 break;
+             }
+         }
+         
+         // Read current network statistics.
          int curr_count = read_netdev_stats(curr, MAX_INTERFACES);
          if (curr_count < 0) {
               printf("Error: Unable to read network statistics.\n");
@@ -214,22 +257,14 @@ void monitor_mode(int interval) {
              for (int j = 0; j < prev_count; j++) {
                  if (strcmp(curr[i].name, prev[j].name) == 0) {
                      found_prev = 1;
+                     rx_rates[i] = (curr[i].rx_bytes - prev[j].rx_bytes) / interval;
+                     tx_rates[i] = (curr[i].tx_bytes - prev[j].tx_bytes) / interval;
                      break;
                  }
              }
              if (!found_prev) {
                 rx_rates[i] = 0;
                 tx_rates[i] = 0;
-             } else {
-                // Use the previously computed value from 'prev' snapshot.
-                // Note: We already computed these values in an earlier loop.
-                for (int j = 0; j < prev_count; j++) {
-                    if (strcmp(curr[i].name, prev[j].name) == 0) {
-                        rx_rates[i] = (curr[i].rx_bytes - prev[j].rx_bytes) / interval;
-                        tx_rates[i] = (curr[i].tx_bytes - prev[j].tx_bytes) / interval;
-                        break;
-                    }
-                }
              }
              
              // Update per-interface maximum stats.
@@ -261,7 +296,7 @@ void monitor_mode(int interval) {
          time_t now = time(NULL);
          printf("Updated: %s", ctime(&now)); // ctime() adds a newline
          
-         printf("Network Monitoring Mode (refresh every %d second(s)). Press Ctrl+C to exit.\n", interval);
+         printf("Network Monitoring Mode (refresh every %d second(s)). Press 'q' to exit.\n", interval);
          print_separator(TABLE1_WIDTH);
          
          // Main table header.
@@ -296,8 +331,8 @@ void monitor_mode(int interval) {
              }
          }
          
-         // Print histogram for RX throughput per interface.
-         printf("\nHistogram for RX Throughput (bytes/sec):\n");
+         // Print bar view for RX throughput per interface.
+         printf("\nMeasured RX Throughput (bytes/sec):\n");
          for (int i = 0; i < curr_count; i++) {
              unsigned long iface_max_rx = 0;
              for (int k = 0; k < max_stats_count; k++) {
@@ -322,8 +357,8 @@ void monitor_mode(int interval) {
              printf("] %8lu B/s\n", rx_rates[i]);
          }
          
-         // Print histogram for TX throughput per interface.
-         printf("\nHistogram for TX Throughput (bytes/sec):\n");
+         // Print bar view for TX throughput per interface.
+         printf("\nMeasured TX Throughput (bytes/sec):\n");
          for (int i = 0; i < curr_count; i++) {
              unsigned long iface_max_tx = 0;
              for (int k = 0; k < max_stats_count; k++) {
@@ -417,8 +452,13 @@ void monitor_mode(int interval) {
               prev[i] = curr[i];
          }
     }
+    
+cleanup:
+    // Restore terminal settings and original SIGINT handler.
+    tcsetattr(STDIN_FILENO, TCSANOW, &old_tio);
+    sigaction(SIGINT, &old_sa, NULL);
 }
-
+ 
 int main(void) {
     char input[MAX_INPUT];
     int choice;

@@ -93,8 +93,7 @@ void move_cursor(int row, int col) {
 void print_instructions(void) {
     printf("\rCTRL+R: add row  |  CTRL+N: add column  |  CTRL+S: save  |  CTRL+Q: quit\n");
     printf("\rHOME: ←5 cols  |  END: →5 cols  |  PGUP: ↑10 rows  |  PGDN: ↓10 rows  |  DEL: clear cell\n");
-    printf("\rCTRL+,: delete column  |  CTRL+.: delete row\n");
-    printf("\rCTRL+c: copy  |  CTRL+x: cut  |  CTRL+v: paste\n");
+    printf("\rCTRL+,: delete column  |  CTRL+.: delete row | CTRL+c: copy  |  CTRL+x: cut  |  CTRL+v: paste\n");
     printf("\rArrow keys: move  (live editing: type to modify cell, backspace to delete)\n\n");
     fflush(stdout);
 }

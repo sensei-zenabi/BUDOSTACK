@@ -16,6 +16,8 @@
  * - The login() function is now skipped if a task is auto-run (e.g. "./aalto node_perception"), so that it does not disturb
  *   the task's output.
  * - nanosleep is used instead of usleep to avoid implicit declaration warnings under -std=c11.
+ * - New behavior: The realtime command list is auto-populated with executables found in the apps/ folder.
+ *   Commands that are in that list or invoked with the "-nopaging" flag are executed in realtime mode.
  *
  * Design Principles:
  * - Modularity & Separation of Concerns: Command parsing, execution, and paging are separated.
@@ -42,6 +44,8 @@
 #include <fcntl.h>
 #include <signal.h>     // For kill()
 #include <sys/select.h> // For select()
+#include <dirent.h>     // For directory handling
+#include <sys/stat.h>   // For stat()
 
 #include "commandparser.h"
 #include "input.h"      // Include the input handling header
@@ -55,30 +59,74 @@ extern void login();
  */
 int paging_enabled = 1;
 
-// List of commands that use realtime mode (no paging or buffering).
-const char *realtime_commands[] = {
-    "help",
-    "runtask",
-    "assist",
-    "edit",
-    "cmath",
-    "inet",
-    "list",
-    "table",
-    "csv_trend",
-    NULL
-};
+/* Global variable to store the base directory (extracted from the executable path)
+ * so that relative paths like apps/ can be resolved.
+ */
+char base_directory[PATH_MAX] = {0};
 
-/* Helper function to check if a command is to be executed in realtime mode. */
-int is_realtime_command(const char *command) {
-    for (int i = 0; realtime_commands[i] != NULL; i++) {
-        if (strcmp(command, realtime_commands[i]) == 0)
-            return 1;
+/* Global dynamic list to store realtime commands loaded from apps/ folder. */
+char **realtime_commands = NULL;
+int realtime_command_count = 0;
+
+/* load_realtime_commands()
+ *
+ * This function scans the "apps/" directory (relative to the base_directory) and
+ * adds the name of each executable file found to the realtime_commands list.
+ */
+void load_realtime_commands(void) {
+    char apps_path[PATH_MAX];
+    snprintf(apps_path, sizeof(apps_path), "%s/apps", base_directory);
+    DIR *dir = opendir(apps_path);
+    if (!dir) {
+        perror("opendir");
+        return;
     }
-    return 0;
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        /* Skip the special entries "." and ".." */
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        
+        /* Construct the full path to the file */
+        char full_path[PATH_MAX];
+        snprintf(full_path, sizeof(full_path), "%s/%s", apps_path, entry->d_name);
+        
+        /* Check if it's a regular file and executable */
+        struct stat sb;
+        if (stat(full_path, &sb) == 0 && S_ISREG(sb.st_mode) && access(full_path, X_OK) == 0) {
+            realtime_commands = realloc(realtime_commands, (realtime_command_count + 1) * sizeof(char *));
+            if (!realtime_commands) {
+                perror("realloc");
+                closedir(dir);
+                return;
+            }
+            realtime_commands[realtime_command_count] = strdup(entry->d_name);
+            if (!realtime_commands[realtime_command_count]) {
+                perror("strdup");
+                closedir(dir);
+                return;
+            }
+            realtime_command_count++;
+        }
+    }
+    closedir(dir);
 }
 
-// delay function using busy-wait based on clock()
+/* free_realtime_commands()
+ *
+ * This function frees the memory allocated for the realtime_commands list.
+ */
+void free_realtime_commands(void) {
+    for (int i = 0; i < realtime_command_count; i++) {
+        free(realtime_commands[i]);
+    }
+    free(realtime_commands);
+    realtime_commands = NULL;
+    realtime_command_count = 0;
+}
+
+/* delay function using busy-wait based on clock() */
 void delay(double seconds) {
     clock_t start_time = clock();
     while ((double)(clock() - start_time) / CLOCKS_PER_SEC < seconds) {
@@ -86,8 +134,9 @@ void delay(double seconds) {
     }
 }
 
-// delayPrint() prints the provided string one character at a time,
-// waiting for delayTime seconds between each character.
+/* delayPrint() prints the provided string one character at a time,
+ * waiting for delayTime seconds between each character.
+ */
 void delayPrint(const char *str, double delayTime) {
     for (int i = 0; str[i] != '\0'; i++) {
         putchar(str[i]);
@@ -104,7 +153,7 @@ void disable_paging(void) {
 /* Forward declaration for search mode. */
 int search_mode(const char **lines, size_t line_count, const char *query);
 
-// Displays the current working directory as the prompt.
+/* Displays the current working directory as the prompt. */
 void display_prompt(void) {
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) != NULL)
@@ -253,8 +302,21 @@ void pager(const char **lines, size_t line_count) {
 }
 
 /*
+ * is_realtime_command()
+ *
+ * This function checks if the command is among the list of executables loaded from the apps/ folder.
+ */
+int is_realtime_command(const char *command) {
+    for (int i = 0; i < realtime_command_count; i++) {
+        if (strcmp(command, realtime_commands[i]) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+/*
  * Updated execute_command_with_paging():
- * - For realtime commands, execute directly.
+ * - For realtime commands (commands found in apps/ folder) or commands with the "-nopaging" attribute, execute directly.
  * - For other commands, fork a child process to execute the command with redirected output.
  * - The parent uses select() to read concurrently from the pipe while waiting for the child.
  * - A timeout (5 seconds) is enforced; if reached, the child is killed.
@@ -262,8 +324,27 @@ void pager(const char **lines, size_t line_count) {
  * - The captured output is split into lines manually, preserving empty lines and all characters.
  */
 void execute_command_with_paging(CommandStruct *cmd) {
-    if (is_realtime_command(cmd->command)) {
-        // Realtime mode: Execute command directly without extra modifications.
+    int nopaging = 0;
+    /* Check if the command parameters contain "-nopaging" flag.
+     * If found, set nopaging and remove it from the parameters.
+     */
+    for (int i = 0; i < cmd->param_count; i++) {
+        if (strcmp(cmd->parameters[i], "-nopaging") == 0) {
+            nopaging = 1;
+            /* Remove the "-nopaging" flag by shifting the remaining parameters. */
+            for (int j = i; j < cmd->param_count - 1; j++) {
+                cmd->parameters[j] = cmd->parameters[j + 1];
+            }
+            cmd->param_count--;
+            break;
+        }
+    }
+    
+    /* Realtime mode is now entered if:
+     * - The "-nopaging" flag is provided, or
+     * - The command is in the realtime command list loaded from apps/ folder.
+     */
+    if (nopaging || is_realtime_command(cmd->command)) {
         execute_command(cmd);
         return;
     }
@@ -437,8 +518,13 @@ int main(int argc, char *argv[]) {
             }
             /* Set the base directory for command lookup */
             set_base_path(exe_path);
+            /* Store the base directory for use in resolving apps/ commands */
+            strncpy(base_directory, exe_path, sizeof(base_directory)-1);
         }
     }
+    
+    /* Load the realtime command list from the apps/ folder */
+    load_realtime_commands();
 
     /* Clear the screen */
     system("clear");
@@ -473,13 +559,6 @@ int main(int argc, char *argv[]) {
     }
 
     printf("\n\nSYSTEM READY");
-    if (0) {
-        /* Print the list of realtime commands. */
-        printf("\n\nRealtime Mode Commands (output will be displayed immediately):\n");
-        for (int i = 0; realtime_commands[i] != NULL; i++) {
-            printf(" %s\n", realtime_commands[i]);
-        }
-    }
     printf("\nType 'help' for command list.");
     printf("\nType 'exit' to quit.\n\n");
 
@@ -521,6 +600,10 @@ int main(int argc, char *argv[]) {
         free(input);
         free_command_struct(&cmd);
     }
+    
+    /* Free the realtime command list resources before exiting */
+    free_realtime_commands();
+    
     printf("Exiting terminal...\n");
     return 0;
 }

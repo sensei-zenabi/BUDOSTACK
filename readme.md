@@ -4,6 +4,15 @@
 
 Check out development diary from [HERE](https://github.com/sensei-zenabi/AALTO/blob/main/users/ville/readme.md)
 
+### Licence:
+AALTO is distributed under GPL-2.0 license, which is a is a free, 
+copyleft license that allows you to:
+- Run the software for any purpose
+- Study and modify the source code
+- Redistribute copies, both original and modified, provided you will 
+distribute them under the same GPL-2.0 terms and include the source 
+code.
+
 ### Description:
 A lightweight operating "layer" built atop POSIX-compliant Linux, 
 specifically designed for those who value the elegant simplicity 

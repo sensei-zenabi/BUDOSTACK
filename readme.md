@@ -13,7 +13,7 @@ copyleft license, that allows you to:
 distribute them under the same GPL-2.0 terms and include the source 
 code.
 
-### Description:
+## Description:
 A lightweight operating "layer" built atop POSIX-compliant Linux, 
 specifically designed for those who value the elegant simplicity 
 and clarity found in operating systems of the 1980s. Optimized for 

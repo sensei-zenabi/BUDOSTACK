@@ -13,16 +13,18 @@ such as file manipulation, text editing, command-line interactions,
 and efficient resource management.
 
 ## Dependencies
-Following 3rd Party applications are required to run AALTO:
-- tmux
-- curl
+To successfully run AALTO, **Debian** based Linux distributions are 
+recommended. They provide the "sudo apt install" as default, which
+is used e.g. in the setup.sh shell script to install applications 
+utilized by AALTO to execute it's apps and commands. During the 
+development of AALTO, it has been tested with following distros:
+- Ubuntu
+- Kubuntu
+- Raspberry Pi OS
 
-The end goal is to remove all 3rd Party dependencies.
-*...if a dependency is not listed, report it using issue!*
-
-## How to Build?
+## How to Install and Run?
 1. Checkout the repo
-2. Type "make"
+2. Run the ./setup.sh shell script
 3. Type "./aalto -f" for fast start
 4. Then type "help"
 

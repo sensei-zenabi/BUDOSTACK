@@ -2,6 +2,14 @@
 
 This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
 
+### Sunday, 23rd of March 2025 ###
+
+Today the project took a turn towards professionalism. Created a proper readme.md for the git repo, with
+licenses, dependencies and instructions how to install and run AALTO. Also, I managed to improve many commands
+and create few more, from which maybe the "run" app provides most of the value, as it extends the user with the
+capability to run any normal linux executable and/or command through AALTO. My intention is still to keep AALTO
+as curated environment, where all the "approved" apps are installed through setup.sh.
+
 ### Saturday, 22nd of March 2025 ###
 
 It was a beautiful day and I decided to spend the morning of it at libary to implement following improvements.

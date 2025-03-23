@@ -23,7 +23,7 @@ int main(int argc, char *argv[]) {
     printf("  help     : Display this help message.\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
 	printf("  cmath    : Opens a math editor.\n");
-    printf("  copy     : Copy a file from source to destination.\n");
+    printf("  copy     : Copy anything to anywherer, a file or complete folder.\n");
 	printf("  csv_print: Pretty prints a .csv file.\n");
     printf("  display  : Display the contents of a file.\n");
 	printf("  drives   : Lists all found drives.\n");

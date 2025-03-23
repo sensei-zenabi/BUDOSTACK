@@ -1,5 +1,5 @@
 # AALTO (All-Around Linux Terminal Operator)
-**Programmed by:** Ville Suoranta (and mr.AI)<br>
+**Programmed by:** Ville Suoranta with the help of OpenAI.
 **Status:** Early Access (in development)
 
 Check out development diary from [HERE](https://github.com/sensei-zenabi/AALTO/blob/main/users/ville/readme.md)

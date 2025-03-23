@@ -9,7 +9,7 @@ licenses, dependencies and instructions how to install and run AALTO. Also, I ma
 and create few more, from which maybe the "run" app provides most of the value, as it extends the user with the
 capability to run any normal linux executable and/or command through AALTO. My intention is still to keep AALTO
 as curated environment, where all the "approved" apps are installed through setup.sh.
-<br>
+<br><br>
 To make AALTO usable, I need to develop a node called "node_code", which basically opens the server and few tmux 
 windows with plain AALTO running in them parallel. This way I can start experimenting how the tools are suited for
 programming.

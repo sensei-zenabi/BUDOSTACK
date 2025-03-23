@@ -31,7 +31,7 @@ int main(int argc, char *argv[]) {
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");
 	printf("  makedir  : Create a new directory.\n");
-    printf("  move     : Move (rename) a file from source to destination.\n");
+    printf("  move     : Moves anything. Can be used for renaming as well.\n");
     printf("  remove   : Remove a file.\n");
     printf("  update   : Create an empty file or update its modification time.\n");
     printf("  rmdir    : Remove an empty directory.\n");

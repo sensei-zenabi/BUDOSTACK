@@ -38,5 +38,7 @@ development of AALTO, it has been tested with following distros:
 4. Then type "help"
 
 ## How to Run Tasks?
-- ./aalto node_tv
-- ./aalto node_perception
+Nodes are being built using the proprietary TASK language. Example
+nodes can be found from the "tasks" -folder. Below is an example how
+to start a node directly from the linux terminal:
+- ./aalto node_info

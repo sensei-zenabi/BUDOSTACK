@@ -33,7 +33,9 @@ int main(int argc, char *argv[]) {
     printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");
 	printf("  makedir  : Create a new directory.\n");
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
+	printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
+    printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  update   : Create an empty file or update its modification time.\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");

@@ -28,6 +28,8 @@ PACKAGE_MANAGER="apt-get install -y"
 
 # Array of packages to install. Extend this list as needed.
 PACKAGES=(
+	"gcc"
+	"build-essential"
     "curl"
     "git"
     "tmux"

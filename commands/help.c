@@ -28,6 +28,7 @@ int main(int argc, char *argv[]) {
     printf("  display  : Display the contents of a file.\n");
 	printf("  drives   : Lists all found drives.\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");
+	printf("  find     : Find anything.\n");
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");
 	printf("  makedir  : Create a new directory.\n");

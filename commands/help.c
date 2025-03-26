@@ -23,6 +23,7 @@ int main(int argc, char *argv[]) {
     printf("  help     : Display this help message.\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
 	printf("  cmath    : Opens a math editor.\n");
+	printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
 	printf("  csv_print: Pretty prints a .csv file.\n");
     printf("  display  : Display the contents of a file.\n");
@@ -38,7 +39,7 @@ int main(int argc, char *argv[]) {
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  update   : Create an empty file or update its modification time.\n");
 	printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
-	printf("             e.g. 'run git status'\n");
+	printf("             e.g. 'run git status' or './myexecutable'\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");

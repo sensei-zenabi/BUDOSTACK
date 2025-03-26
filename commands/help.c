@@ -38,6 +38,7 @@ int main(int argc, char *argv[]) {
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  update   : Create an empty file or update its modification time.\n");
 	printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
+	printf("             e.g. 'run git status'\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");

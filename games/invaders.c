@@ -1,9 +1,11 @@
+#define _POSIX_C_SOURCE 200809L  // Must be the very first line to expose POSIX APIs
+
 /*
  * Space Invaders Clone for Linux Terminal
  *
  * Design Notes:
- * - The game board is a 40x20 grid drawn using ANSI escape codes.
- * - The player's ship is represented by '^' at the bottom row.
+ * - The game board is a 40x20 grid drawn with borders using ANSI escape codes.
+ * - The player's ship is represented by 'A' at the bottom row.
  * - A single bullet (represented by '|') is allowed at a time.
  * - Invaders (represented by 'W') are arranged in a grid (3 rows x 8 columns)
  *   with a fixed horizontal spacing. They move as a group.
@@ -11,8 +13,9 @@
  *   If any invader would hit the board edge, the group drops one row and reverses direction.
  * - Input is handled in raw mode with non-blocking reads (using termios and select).
  * - The game updates at ~10fps (100ms per frame).
+ * - A global score increases by 10 for each invader shot.
  *
- * Compilation: gcc -std=c11 -Wall -O2 -o space_invaders space_invaders.c
+ * Compilation: gcc -std=c11 -Wall -O2 -o space_invaders games/invaders.c
  */
 
 #include <stdio.h>
@@ -28,6 +31,14 @@
 
 #define INV_ROWS 3
 #define INV_COLS 8
+
+/* Function to sleep for a given number of milliseconds */
+void sleep_ms(int milliseconds) {
+    struct timespec ts;
+    ts.tv_sec = milliseconds / 1000;
+    ts.tv_nsec = (milliseconds % 1000) * 1000000;
+    nanosleep(&ts, NULL);
+}
 
 /* Global terminal settings backup */
 static struct termios orig_termios;
@@ -83,12 +94,14 @@ int invader_dir; // 1 = moving right, -1 = moving left
 int frame_count = 0;
 int game_over = 0;
 int game_win = 0;
+int score = 0;  // Global score variable
 
 /* Initialize game state */
 void init_game() {
     int i, j;
     player_x = BOARD_WIDTH / 2;
     bullet.active = 0;
+    score = 0;
     // Initialize all invaders to alive
     for (i = 0; i < INV_ROWS; i++) {
         for (j = 0; j < INV_COLS; j++) {
@@ -144,6 +157,7 @@ void update_bullet() {
                     if (bullet.x == inv_x && bullet.y == inv_y) {
                         invaders[i][j] = 0; // invader hit
                         bullet.active = 0;
+                        score += 10;  // Increase score
                     }
                 }
             }
@@ -204,7 +218,7 @@ void update_game() {
     update_invaders();
 }
 
-/* Render the game board */
+/* Render the game board with borders and a SCORE field */
 void draw_game() {
     char board[BOARD_HEIGHT][BOARD_WIDTH + 1];
     // Initialize board with spaces
@@ -230,17 +244,35 @@ void draw_game() {
         if (bullet.x >= 0 && bullet.x < BOARD_WIDTH && bullet.y >= 0 && bullet.y < BOARD_HEIGHT)
             board[bullet.y][bullet.x] = '|';
     }
-    // Draw player (ship)
+    // Draw player (ship) with 'A'
     if (player_x >= 0 && player_x < BOARD_WIDTH)
-        board[BOARD_HEIGHT - 1][player_x] = '^';
+        board[BOARD_HEIGHT - 1][player_x] = 'A';
     
     // Clear screen and move cursor to top-left
     printf("\033[H\033[J");
-    // Print board
-    for (int i = 0; i < BOARD_HEIGHT; i++) {
-        printf("%s\n", board[i]);
+    // Print SCORE field
+    printf("SCORE: %d\n", score);
+    
+    // Draw top border
+    printf("+");
+    for (int j = 0; j < BOARD_WIDTH; j++) {
+        printf("-");
     }
-    // Print game status
+    printf("+\n");
+    
+    // Print board with vertical borders
+    for (int i = 0; i < BOARD_HEIGHT; i++) {
+        printf("|%s|\n", board[i]);
+    }
+    
+    // Draw bottom border
+    printf("+");
+    for (int j = 0; j < BOARD_WIDTH; j++) {
+        printf("-");
+    }
+    printf("+\n");
+    
+    // Print game status messages if game over or win
     if (game_over) {
         printf("\nGame Over! Invaders reached your ship.\n");
     }
@@ -260,7 +292,7 @@ int main(void) {
         update_game();
         draw_game();
         frame_count++;
-        usleep(100000); // ~100ms per frame => 10fps
+        sleep_ms(100); // Sleep 100ms => ~10fps
     }
     // Final draw to show end message
     draw_game();

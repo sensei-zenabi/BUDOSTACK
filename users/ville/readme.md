@@ -2,6 +2,12 @@
 
 This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
 
+### Wednesday, 26th of March 2025 ###
+
+I decided to add some FUN to the equation and provided a games/ folder with space invaders clone using ASCII
+graphics. In addition, I edited the makefile to exclude the user folder from compilation. With the addition
+of "compile" command, users are able to build their own C applications to user folders if desired.
+
 ### Sunday, 23rd of March 2025 ###
 
 Today the project took a turn towards professionalism. Created a proper readme.md for the git repo, with

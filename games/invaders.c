@@ -14,6 +14,9 @@
  * - Input is handled in raw mode with non-blocking reads (using termios and select).
  * - The game updates at ~10fps (100ms per frame).
  * - A global score increases by 10 for each invader shot.
+ * - The blinking cursor is hidden during the game.
+ * - Press "Q" to quit and "R" to restart the game.
+ * - Key instructions are displayed below the game area.
  *
  * Compilation: gcc -std=c11 -Wall -O2 -o space_invaders games/invaders.c
  */
@@ -43,12 +46,14 @@ void sleep_ms(int milliseconds) {
 /* Global terminal settings backup */
 static struct termios orig_termios;
 
-/* Restore original terminal settings on exit */
+/* Restore original terminal settings on exit and show the cursor */
 void reset_terminal_mode() {
     tcsetattr(0, TCSANOW, &orig_termios);
+    // Show the cursor when exiting
+    printf("\033[?25h");
 }
 
-/* Set terminal to raw mode for nonblocking input */
+/* Set terminal to raw mode for nonblocking input and hide the cursor */
 void set_conio_terminal_mode() {
     struct termios new_termios;
     tcgetattr(0, &orig_termios);
@@ -57,6 +62,8 @@ void set_conio_terminal_mode() {
     new_termios.c_cc[VMIN] = 0;
     new_termios.c_cc[VTIME] = 0;
     tcsetattr(0, TCSANOW, &new_termios);
+    // Hide the cursor during the game
+    printf("\033[?25l");
     atexit(reset_terminal_mode);
 }
 
@@ -102,6 +109,9 @@ void init_game() {
     player_x = BOARD_WIDTH / 2;
     bullet.active = 0;
     score = 0;
+    game_over = 0;
+    game_win = 0;
+    frame_count = 0;
     // Initialize all invaders to alive
     for (i = 0; i < INV_ROWS; i++) {
         for (j = 0; j < INV_COLS; j++) {
@@ -114,7 +124,7 @@ void init_game() {
     invader_dir = 1;
 }
 
-/* Process input: arrow keys and space */
+/* Process input: arrow keys, space, Q to quit, and R to restart */
 void process_input() {
     while (kbhit()) {
         int c = getch();
@@ -136,6 +146,12 @@ void process_input() {
                 bullet.x = player_x;
                 bullet.y = BOARD_HEIGHT - 2;
             }
+        } else if (c == 'q' || c == 'Q') {
+            // Quit the game
+            exit(0);
+        } else if (c == 'r' || c == 'R') {
+            // Restart the game
+            init_game();
         }
     }
 }
@@ -279,6 +295,9 @@ void draw_game() {
     if (game_win) {
         printf("\nYou Win! All invaders eliminated.\n");
     }
+    
+    // Print key instructions below the game area
+    printf("\nControls: Arrow keys to move, Space to fire, Q to quit, R to restart\n");
 }
 
 /* Main game loop */
@@ -286,15 +305,13 @@ int main(void) {
     set_conio_terminal_mode();
     init_game();
     while (1) {
-        if (game_over || game_win)
-            break;
         process_input();
         update_game();
         draw_game();
         frame_count++;
         sleep_ms(100); // Sleep 100ms => ~10fps
     }
-    // Final draw to show end message
+    // Final draw to show end message (never reached because of exit() on quit)
     draw_game();
     return 0;
 }

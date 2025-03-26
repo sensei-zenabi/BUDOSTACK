@@ -21,7 +21,7 @@
  * - Append Buffer Implementation: Instead of multiple write() calls,
  *   output is accumulated in a dynamic buffer (struct abuf) and then
  *   flushed with one write() call.
- * - Other design notes remain as in the original code.
+ * - TAB Support: The TAB key now inserts four spaces into the text.
  */
 
 /*** Append Buffer Implementation ***/
@@ -632,6 +632,12 @@ void editorProcessKeypress(void) {
         case '\r':
             push_undo_state();
             editorInsertNewline();
+            last_key_was_vertical = 0;
+            break;
+        case '\t':
+            /* TAB support: insert 4 spaces */
+            push_undo_state();
+            editorInsertString("    ");
             last_key_was_vertical = 0;
             break;
         case CTRL_KEY('h'):

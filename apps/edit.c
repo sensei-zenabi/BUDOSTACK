@@ -18,16 +18,34 @@
  * Design principles and notes:
  * - Plain C using -std=c11 and only standard libraries.
  * - No separate header files.
- * - Selection mode is toggled with CTRL+T.
- * - "Select all" functionality with CTRL+A selects the entire text buffer.
- * - When a selection is active, pressing Backspace (or CTRL+H) or Delete deletes the selection.
- * - The Delete key is implemented as a separate case (DEL_KEY).
- * - New keys Home, End, Page Up, and Page Down have been added for quick navigation.
- * - Vertical movement now remembers a preferred horizontal position.
- * - New Search Functionality: CTRL+F is bound to a search that lets the user input a query,
- *   scans the text buffer for matches, and displays a simple full‐screen menu to choose a match.
+ * - Append Buffer Implementation: Instead of multiple write() calls,
+ *   output is accumulated in a dynamic buffer (struct abuf) and then
+ *   flushed with one write() call.
+ * - Other design notes remain as in the original code.
  */
 
+/*** Append Buffer Implementation ***/
+struct abuf {
+    char *b;
+    int len;
+};
+
+#define ABUF_INIT {NULL, 0}
+
+void abAppend(struct abuf *ab, const char *s, int len) {
+    char *new_b = realloc(ab->b, ab->len + len);
+    if (new_b == NULL)
+        return;
+    memcpy(&new_b[ab->len], s, len);
+    ab->b = new_b;
+    ab->len += len;
+}
+
+void abFree(struct abuf *ab) {
+    free(ab->b);
+}
+
+/*** Editor Definitions ***/
 #define EDITOR_VERSION "0.1-micro-like"
 
 #define CTRL_KEY(k) ((k) & 0x1f)
@@ -115,11 +133,11 @@ void editorRefreshScreen(void);
 int getRowNumWidth(void);
 int editorDisplayWidth(const char *s);
 int editorRowCxToByteIndex(EditorLine *row, int cx);
-void editorRenderRow(EditorLine *row, int avail);
-void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail);
-void editorDrawRows(int rn_width);
-void editorDrawStatusBar(void);
-void editorDrawShortcutBar(void);
+void editorRenderRow(EditorLine *row, int avail, struct abuf *ab);
+void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab);
+void editorDrawRows(struct abuf *ab, int rn_width);
+void editorDrawStatusBar(struct abuf *ab);
+void editorDrawShortcutBar(struct abuf *ab);
 void editorProcessKeypress(void);
 void editorOpen(const char *filename);
 void editorSave(void);
@@ -147,7 +165,7 @@ void editorSearch(void);
 int is_c_source(void) {
     if (!E.filename) return 0;
     const char *ext = strrchr(E.filename, '.');
-    return (ext && ( (strcmp(ext, ".c") == 0) || (strcmp(ext, ".h") == 0) ));
+    return (ext && ((strcmp(ext, ".c") == 0) || (strcmp(ext, ".h") == 0)));
 }
 
 int getRowNumWidth(void) {
@@ -186,9 +204,11 @@ int editorRowCxToByteIndex(EditorLine *row, int cx) {
     return index;
 }
 
-void editorRenderRow(EditorLine *row, int avail) {
+/*** Modified Drawing Functions Using Append Buffer ***/
+void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
     int logical_width = 0, byte_index = editorRowCxToByteIndex(row, E.coloff);
-    char buffer[1024]; int buf_index = 0;
+    char buffer[1024];
+    int buf_index = 0;
     size_t bytes;
     wchar_t wc;
     while (byte_index < row->size && logical_width < avail) {
@@ -205,11 +225,10 @@ void editorRenderRow(EditorLine *row, int avail) {
         }
         logical_width += w; byte_index += bytes;
     }
-    buffer[buf_index] = '\0';
-    write(STDOUT_FILENO, buffer, buf_index);
+    abAppend(ab, buffer, buf_index);
 }
 
-void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail) {
+void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab) {
     int logical_width = 0, byte_index = editorRowCxToByteIndex(row, E.coloff);
     size_t bytes;
     wchar_t wc;
@@ -261,17 +280,173 @@ void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail) {
         int w = wcwidth(wc);
         if (w < 0) w = 0;
         if (selection_active_for_row && current_disp >= eff_sel_start && current_disp < eff_sel_end) {
-            if (!in_selection) { write(STDOUT_FILENO, "\x1b[7m", 4); in_selection = 1; }
+            if (!in_selection) { abAppend(ab, "\x1b[7m", 4); in_selection = 1; }
         } else {
-            if (in_selection) { write(STDOUT_FILENO, "\x1b[0m", 4); in_selection = 0; }
+            if (in_selection) { abAppend(ab, "\x1b[0m", 4); in_selection = 0; }
         }
         if (logical_width + w > avail)
             break;
-        write(STDOUT_FILENO, row->chars + byte_index, bytes);
+        abAppend(ab, row->chars + byte_index, bytes);
         logical_width += w; current_disp += w; byte_index += bytes;
     }
     if (in_selection)
-        write(STDOUT_FILENO, "\x1b[0m", 4);
+        abAppend(ab, "\x1b[0m", 4);
+}
+
+void editorDrawRows(struct abuf *ab, int rn_width) {
+    int text_width = E.screencols - rn_width - 1;
+    char numbuf[16];
+    for (int y = 0; y < E.textrows; y++) {
+        int file_row = E.rowoff + y;
+        if (file_row < E.numrows) {
+            int rn = file_row + 1;
+            int num_len = snprintf(numbuf, sizeof(numbuf), "%*d ", rn_width - 1, rn);
+            abAppend(ab, numbuf, num_len);
+            
+            if (E.selecting) {
+                editorRenderRowWithSelection(&E.row[file_row], file_row, text_width, ab);
+            } else if (is_c_source()) {
+                char *highlighted = highlight_c_line(E.row[file_row].chars);
+                if (highlighted) {
+                    abAppend(ab, highlighted, strlen(highlighted));
+                    free(highlighted);
+                }
+            } else {
+                editorRenderRow(&E.row[file_row], text_width, ab);
+            }
+            
+            int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;
+            if (printed_width < 0) printed_width = 0;
+            if (printed_width > text_width) printed_width = text_width;
+            for (int i = printed_width; i < text_width; i++)
+                abAppend(ab, " ", 1);
+            if (E.row[file_row].modified)
+                abAppend(ab, "\x1b[41m \x1b[0m", 10);
+            else
+                abAppend(ab, " ", 1);
+        } else {
+            for (int i = 0; i < rn_width; i++)
+                abAppend(ab, " ", 1);
+            abAppend(ab, "~", 1);
+        }
+        abAppend(ab, "\x1b[K", 3);
+        if (y < E.textrows - 1)
+            abAppend(ab, "\r\n", 2);
+    }
+}
+
+void editorDrawStatusBar(struct abuf *ab) {
+    char status[80];
+    char rstatus[32];
+    int len = snprintf(status, sizeof(status), "%.20s%s",
+                       E.filename ? E.filename : "[No Name]",
+                       E.dirty ? " (modified)" : "");
+    int rlen = snprintf(rstatus, sizeof(rstatus), "Ln %d, Col %d",
+                        E.cy + 1, E.cx + 1);
+    if (len > E.screencols)
+        len = E.screencols;
+    abAppend(ab, status, len);
+    while (len < E.screencols) {
+        if (E.screencols - len == rlen)
+            break;
+        abAppend(ab, " ", 1);
+        len++;
+    }
+    abAppend(ab, rstatus, rlen);
+}
+
+void editorDrawShortcutBar(struct abuf *ab) {
+    abAppend(ab, "\x1b[2m", 4);
+    char menu[256];
+    int menu_len = snprintf(menu, sizeof(menu),
+             "Ctrl+Q Quit | Ctrl+S Save | Ctrl+Z Undo | Ctrl+X Cut | Ctrl+C Copy | Ctrl+V Paste | Ctrl+T Select | Ctrl+A Select All | Ctrl+F Search");
+    if (menu_len > E.screencols) menu_len = E.screencols;
+    abAppend(ab, menu, menu_len);
+    for (int i = menu_len; i < E.screencols; i++)
+        abAppend(ab, " ", 1);
+    abAppend(ab, "\x1b[0m", 4);
+}
+
+/*** Modified Screen Refresh Routine ***/
+void editorRefreshScreen(void) {
+    struct abuf ab = ABUF_INIT;
+    int rn_width = getRowNumWidth();
+    E.textrows = E.screenrows - 2;
+    abAppend(&ab, "\x1b[?25l", 6);
+    abAppend(&ab, "\x1b[H", 3);
+    editorDrawRows(&ab, rn_width);
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.textrows + 1);
+    abAppend(&ab, buf, len);
+    abAppend(&ab, "\x1b[2m", 4);
+    editorDrawStatusBar(&ab);
+    abAppend(&ab, "\x1b[0m", 4);
+    len = snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.screenrows);
+    abAppend(&ab, buf, len);
+    editorDrawShortcutBar(&ab);
+    int cursor_y = (E.cy - E.rowoff) + 1;
+    int cursor_x = rn_width + (E.cx - E.coloff) + 1;
+    if (cursor_y < 1) cursor_y = 1;
+    if (cursor_x < 1) cursor_x = 1;
+    len = snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cursor_y, cursor_x);
+    abAppend(&ab, buf, len);
+    abAppend(&ab, "\x1b[?25h", 6);
+    write(STDOUT_FILENO, ab.b, ab.len);
+    abFree(&ab);
+}
+
+/* --- Input Function --- */
+
+int editorReadKey(void) {
+    char c; int nread;
+    while ((nread = read(STDIN_FILENO, &c, 1)) == 0)
+        ;
+    if (nread == -1 && errno != EAGAIN)
+        die("read");
+    if (c == '\x1b') {
+        char seq[6];
+        if (read(STDIN_FILENO, &seq[0], 1) != 1)
+            return '\x1b';
+        if (read(STDIN_FILENO, &seq[1], 1) != 1)
+            return '\x1b';
+        if (seq[0] == '[') {
+            if (seq[1] >= '0' && seq[1] <= '9') {
+                char seq3;
+                if (read(STDIN_FILENO, &seq3, 1) != 1)
+                    return '\x1b';
+                if (seq3 == '~') {
+                    switch(seq[1]) {
+                        case '1': return HOME_KEY;   // ESC [ 1 ~ (Home)
+                        case '3': return DEL_KEY;    // ESC [ 3 ~ (Delete)
+                        case '4': return END_KEY;    // ESC [ 4 ~ (End)
+                        case '5': return PGUP_KEY;   // ESC [ 5 ~ (Page Up)
+                        case '6': return PGDN_KEY;   // ESC [ 6 ~ (Page Down)
+                        default: return '\x1b';
+                    }
+                }
+            } else {
+                switch (seq[1]) {
+                    case 'A': return ARROW_UP;
+                    case 'B': return ARROW_DOWN;
+                    case 'C': return ARROW_RIGHT;
+                    case 'D': return ARROW_LEFT;
+                    case 'H': return HOME_KEY;
+                    case 'F': return END_KEY;
+                    default: return '\x1b';
+                }
+            }
+        }
+        return '\x1b';
+    }
+    return c;
+}
+
+int getWindowSize(int *rows, int *cols) {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
+        return -1;
+    *cols = ws.ws_col; *rows = ws.ws_row;
+    return 0;
 }
 
 /* --- Undo Functions --- */
@@ -357,197 +532,7 @@ void enableRawMode(void) {
         die("tcsetattr");
 }
 
-/* --- Input Function --- */
-
-int editorReadKey(void) {
-    char c; int nread;
-    while ((nread = read(STDIN_FILENO, &c, 1)) == 0)
-        ;
-    if (nread == -1 && errno != EAGAIN)
-        die("read");
-    if (c == '\x1b') {
-        char seq[6];
-        if (read(STDIN_FILENO, &seq[0], 1) != 1)
-            return '\x1b';
-        if (read(STDIN_FILENO, &seq[1], 1) != 1)
-            return '\x1b';
-        if (seq[0] == '[') {
-            if (seq[1] >= '0' && seq[1] <= '9') {
-                char seq3;
-                if (read(STDIN_FILENO, &seq3, 1) != 1)
-                    return '\x1b';
-                if (seq3 == '~') {
-                    switch(seq[1]) {
-                        case '1': return HOME_KEY;   // ESC [ 1 ~ (Home)
-                        case '3': return DEL_KEY;    // ESC [ 3 ~ (Delete)
-                        case '4': return END_KEY;    // ESC [ 4 ~ (End)
-                        case '5': return PGUP_KEY;   // ESC [ 5 ~ (Page Up)
-                        case '6': return PGDN_KEY;   // ESC [ 6 ~ (Page Down)
-                        default: return '\x1b';
-                    }
-                }
-            } else {
-                switch (seq[1]) {
-                    case 'A': return ARROW_UP;
-                    case 'B': return ARROW_DOWN;
-                    case 'C': return ARROW_RIGHT;
-                    case 'D': return ARROW_LEFT;
-                    case 'H': return HOME_KEY;
-                    case 'F': return END_KEY;
-                    default: return '\x1b';
-                }
-            }
-        }
-        return '\x1b';
-    }
-    return c;
-}
-
-int getWindowSize(int *rows, int *cols) {
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
-        return -1;
-    *cols = ws.ws_col; *rows = ws.ws_row;
-    return 0;
-}
-
-/* --- Drawing Routines --- */
-
-void editorDrawRows(int rn_width) {
-    int text_width = E.screencols - rn_width - 1;
-    char numbuf[16];
-    for (int y = 0; y < E.textrows; y++) {
-        int file_row = E.rowoff + y;
-        if (file_row < E.numrows) {
-            int rn = file_row + 1;
-            int num_len = snprintf(numbuf, sizeof(numbuf), "%*d ", rn_width - 1, rn);
-            write(STDOUT_FILENO, numbuf, num_len);
-            
-            /* If a selection is active, use the selection-aware renderer.
-               Otherwise, if the file is a C source file, use syntax highlighting.
-               In all other cases, use the plain renderer. */
-            if (E.selecting) {
-                editorRenderRowWithSelection(&E.row[file_row], file_row, text_width);
-            } else if (is_c_source()) {
-                char *highlighted = highlight_c_line(E.row[file_row].chars);
-                if (highlighted) {
-                    write(STDOUT_FILENO, highlighted, strlen(highlighted));
-                    free(highlighted);
-                }
-            } else {
-                editorRenderRow(&E.row[file_row], text_width);
-            }
-            
-            int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;
-            if (printed_width < 0) printed_width = 0;
-            if (printed_width > text_width) printed_width = text_width;
-            for (int i = printed_width; i < text_width; i++)
-                write(STDOUT_FILENO, " ", 1);
-            if (E.row[file_row].modified)
-                write(STDOUT_FILENO, "\x1b[41m \x1b[0m", 10);
-            else
-                write(STDOUT_FILENO, " ", 1);
-        } else {
-            for (int i = 0; i < rn_width; i++)
-                write(STDOUT_FILENO, " ", 1);
-            write(STDOUT_FILENO, "~", 1);
-        }
-        write(STDOUT_FILENO, "\x1b[K", 3);
-        if (y < E.textrows - 1)
-            write(STDOUT_FILENO, "\r\n", 2);
-    }
-}
-
-/*
-void editorDrawRows(int rn_width) {
-    int text_width = E.screencols - rn_width - 1;
-    char numbuf[16];
-    for (int y = 0; y < E.textrows; y++) {
-        int file_row = E.rowoff + y;
-        if (file_row < E.numrows) {
-            int rn = file_row + 1;
-            int num_len = snprintf(numbuf, sizeof(numbuf), "%*d ", rn_width - 1, rn);
-            write(STDOUT_FILENO, numbuf, num_len);
-            editorRenderRowWithSelection(&E.row[file_row], file_row, text_width);
-            int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;
-            if (printed_width < 0) printed_width = 0;
-            if (printed_width > text_width) printed_width = text_width;
-            for (int i = printed_width; i < text_width; i++)
-                write(STDOUT_FILENO, " ", 1);
-            if (E.row[file_row].modified)
-                write(STDOUT_FILENO, "\x1b[41m \x1b[0m", 10);
-            else
-                write(STDOUT_FILENO, " ", 1);
-        } else {
-            for (int i = 0; i < rn_width; i++)
-                write(STDOUT_FILENO, " ", 1);
-            write(STDOUT_FILENO, "~", 1);
-        }
-        write(STDOUT_FILENO, "\x1b[K", 3);
-        if (y < E.textrows - 1)
-            write(STDOUT_FILENO, "\r\n", 2);
-    }
-}
-*/
-
-void editorDrawStatusBar(void) {
-    char status[80];
-    char rstatus[32];
-    int len = snprintf(status, sizeof(status), "%.20s%s",
-                       E.filename ? E.filename : "[No Name]",
-                       E.dirty ? " (modified)" : "");
-    int rlen = snprintf(rstatus, sizeof(rstatus), "Ln %d, Col %d",
-                        E.cy + 1, E.cx + 1);
-    if (len > E.screencols)
-        len = E.screencols;
-    write(STDOUT_FILENO, status, len);
-    while (len < E.screencols) {
-        if (E.screencols - len == rlen)
-            break;
-        write(STDOUT_FILENO, " ", 1);
-        len++;
-    }
-    write(STDOUT_FILENO, rstatus, rlen);
-}
-
-void editorDrawShortcutBar(void) {
-    write(STDOUT_FILENO, "\x1b[2m", 4);
-    char menu[256];
-    snprintf(menu, sizeof(menu),
-             "Ctrl+Q Quit | Ctrl+S Save | Ctrl+Z Undo | Ctrl+X Cut | Ctrl+C Copy | Ctrl+V Paste | Ctrl+T Select | Ctrl+A Select All | Ctrl+F Search");
-    int len = strlen(menu);
-    if (len > E.screencols) len = E.screencols;
-    write(STDOUT_FILENO, menu, len);
-    for (int i = len; i < E.screencols; i++)
-        write(STDOUT_FILENO, " ", 1);
-    write(STDOUT_FILENO, "\x1b[0m", 4);
-}
-
-void editorRefreshScreen(void) {
-    int rn_width = getRowNumWidth();
-    E.textrows = E.screenrows - 2;
-    write(STDOUT_FILENO, "\x1b[?25l", 6);
-    write(STDOUT_FILENO, "\x1b[H", 3);
-    editorDrawRows(rn_width);
-    char buf[32];
-    snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.textrows + 1);
-    write(STDOUT_FILENO, buf, strlen(buf));
-    write(STDOUT_FILENO, "\x1b[2m", 4);
-    editorDrawStatusBar();
-    write(STDOUT_FILENO, "\x1b[0m", 4);
-    snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.screenrows);
-    write(STDOUT_FILENO, buf, strlen(buf));
-    editorDrawShortcutBar();
-    int cursor_y = (E.cy - E.rowoff) + 1;
-    int cursor_x = rn_width + (E.cx - E.coloff) + 1;
-    if (cursor_y < 1) cursor_y = 1;
-    if (cursor_x < 1) cursor_x = 1;
-    snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cursor_y, cursor_x);
-    write(STDOUT_FILENO, buf, strlen(buf));
-    write(STDOUT_FILENO, "\x1b[?25h", 6);
-}
-
-/* --- Key Processing --- */
+/* --- Input Processing --- */
 
 void editorProcessKeypress(void) {
     int c = editorReadKey();

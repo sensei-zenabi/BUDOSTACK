@@ -12,8 +12,8 @@ LDFLAGS = -lasound -lm -pthread
 LIB_SRCS = $(shell find ./lib -type f -name '*.c')
 LIB_OBJS = $(LIB_SRCS:.c=.o)
 
-# Find all .c files recursively (all sources)
-ALL_SOURCES = $(shell find . -type f -name '*.c')
+# Find all .c files recursively (all sources, except user folders)
+ALL_SOURCES = $(shell find . -type f -name '*.c' -not -path "./users/*")
 # Exclude command, app, and lib sources from the main executable sources.
 NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./lib/% ./node/% ./utilities/%, $(ALL_SOURCES))
 NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)

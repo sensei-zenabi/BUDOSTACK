@@ -22,6 +22,9 @@
  *   output is accumulated in a dynamic buffer (struct abuf) and then
  *   flushed with one write() call.
  * - TAB Support: The TAB key now inserts four spaces into the text.
+ * - Auto-indent Support: When a newline is inserted, the new line is
+ *   automatically pre-populated with the leading whitespace from a reference line.
+ *   (This is bypassed during paste operations to prevent extra indent buildup.)
  */
 
 /*** Append Buffer Implementation ***/
@@ -83,6 +86,9 @@ typedef struct {
 /* Global clipboard for cut/copy/paste functionality */
 char *clipboard = NULL;
 size_t clipboard_len = 0;
+
+/* Global flag to disable auto-indent (used during paste) */
+static int disable_autoindent = 0;
 
 /* Global editor state */
 struct EditorConfig {
@@ -596,7 +602,12 @@ void editorProcessKeypress(void) {
             break;
         case CTRL_KEY('v'):
             push_undo_state();
-            editorPasteClipboard();
+            /* Disable auto-indent during paste to avoid extra indentation */
+            disable_autoindent = 1;
+            editorInsertString(clipboard);
+            disable_autoindent = 0;
+            snprintf(E.status_message, sizeof(E.status_message),
+                     "Pasted clipboard (%zu bytes)", clipboard_len);
             break;
         case DEL_KEY:
             push_undo_state();
@@ -1055,7 +1066,12 @@ void editorPasteClipboard(void) {
     if (!clipboard)
         return;
     push_undo_state();
+    /* The disable_autoindent flag is set here so that during paste,
+       newlines in the pasted text do not trigger auto-indent.
+    */
+    disable_autoindent = 1;
     editorInsertString(clipboard);
+    disable_autoindent = 0;
     snprintf(E.status_message, sizeof(E.status_message),
              "Pasted clipboard (%zu bytes)", clipboard_len);
 }
@@ -1189,15 +1205,92 @@ void editorInsertUTF8(const char *s, int len) {
     line->modified = 1; E.dirty = 1;
 }
 
+/*
+ * Modified editorInsertNewline with Auto-indent.
+ * Auto-indent Implementation:
+ * - When a newline is inserted interactively, the new line is pre-populated with the leading whitespace from a reference line.
+ *   - If the cursor is at the beginning of a line (E.cx == 0) and it is not the first line,
+ *     the indentation is taken from the previous line.
+ *   - Otherwise (E.cx != 0), the indentation is taken from the current line.
+ *
+ * - When disable_autoindent is set (e.g., during paste), this function simply splits the line without adding extra indent.
+ */
 void editorInsertNewline(void) {
+    if (disable_autoindent) {
+         if (E.cx == 0) {
+              editorAppendLine("", 0);
+              for (int i = E.numrows - 1; i > E.cy; i--)
+                  E.row[i] = E.row[i - 1];
+              E.row[E.cy].chars = malloc(1);
+              if (!E.row[E.cy].chars) die("malloc");
+              E.row[E.cy].chars[0] = '\0';
+              E.row[E.cy].size = 0;
+              E.row[E.cy].modified = 1;
+              E.cy++;
+              E.cx = 0;
+              E.preferred_cx = 0;
+         } else {
+              EditorLine *line = &E.row[E.cy];
+              int index = editorRowCxToByteIndex(line, E.cx);
+              char *new_chars = malloc(line->size - index + 1);
+              if (!new_chars) die("malloc");
+              memcpy(new_chars, line->chars + index, line->size - index);
+              new_chars[line->size - index] = '\0';
+              int new_len = line->size - index;
+              line->size = index;
+              line->chars[index] = '\0';
+              EditorLine *new_row = realloc(E.row, sizeof(EditorLine) * (E.numrows + 1));
+              if (!new_row) die("realloc");
+              E.row = new_row;
+              for (int j = E.numrows; j > E.cy; j--)
+                  E.row[j] = E.row[j - 1];
+              E.numrows++;
+              E.row[E.cy + 1].chars = new_chars;
+              E.row[E.cy + 1].size = new_len;
+              E.row[E.cy + 1].modified = 1;
+              E.cy++;
+              E.cx = 0;
+              E.preferred_cx = 0;
+         }
+         E.dirty = 1;
+         return;
+    }
+
+    char *indent = NULL;
+    int indent_len = 0;
+    EditorLine *ref_line;
+    if (E.cx == 0) {
+        if (E.cy > 0)
+            ref_line = &E.row[E.cy - 1];
+        else
+            ref_line = &E.row[E.cy];
+    } else {
+        ref_line = &E.row[E.cy];
+    }
+    while (indent_len < ref_line->size && (ref_line->chars[indent_len] == ' ' || ref_line->chars[indent_len] == '\t'))
+        indent_len++;
+    indent = malloc(indent_len + 1);
+    if (!indent) die("malloc");
+    if (indent_len > 0)
+        memcpy(indent, ref_line->chars, indent_len);
+    indent[indent_len] = '\0';
+    
     if (E.cx == 0) {
         editorAppendLine("", 0);
         for (int i = E.numrows - 1; i > E.cy; i--)
             E.row[i] = E.row[i - 1];
-        E.row[E.cy].chars = malloc(1);
-        E.row[E.cy].chars[0] = '\0';
-        E.row[E.cy].size = 0; E.row[E.cy].modified = 0;
+        int new_line_size = indent_len;
+        char *new_line = malloc(new_line_size + 1);
+        if (!new_line) die("malloc");
+        if (indent_len > 0)
+            memcpy(new_line, indent, indent_len);
+        new_line[new_line_size] = '\0';
+        E.row[E.cy].chars = new_line;
+        E.row[E.cy].size = new_line_size;
+        E.row[E.cy].modified = 1;
         E.cy++;
+        E.cx = indent_len;
+        E.preferred_cx = E.cx;
     } else {
         EditorLine *line = &E.row[E.cy];
         int index = editorRowCxToByteIndex(line, E.cx);
@@ -1207,7 +1300,17 @@ void editorInsertNewline(void) {
         memcpy(new_chars, &line->chars[index], line->size - index);
         new_chars[line->size - index] = '\0';
         int new_len = line->size - index;
-        line->size = index; line->chars[index] = '\0';
+        line->size = index;
+        line->chars[index] = '\0';
+        int total_new_size = indent_len + new_len;
+        char *auto_new_chars = malloc(total_new_size + 1);
+        if (!auto_new_chars) die("malloc");
+        if (indent_len > 0)
+            memcpy(auto_new_chars, indent, indent_len);
+        memcpy(auto_new_chars + indent_len, new_chars, new_len);
+        auto_new_chars[total_new_size] = '\0';
+        free(new_chars);
+        
         EditorLine *new_row = realloc(E.row, sizeof(EditorLine) * (E.numrows + 1));
         if (new_row == NULL)
             die("realloc");
@@ -1215,12 +1318,14 @@ void editorInsertNewline(void) {
         for (int j = E.numrows; j > E.cy; j--)
             E.row[j] = E.row[j - 1];
         E.numrows++;
-        E.row[E.cy + 1].chars = new_chars;
-        E.row[E.cy + 1].size = new_len;
+        E.row[E.cy + 1].chars = auto_new_chars;
+        E.row[E.cy + 1].size = total_new_size;
         E.row[E.cy + 1].modified = 1;
-        E.cy++; E.cx = 0;
+        E.cy++;
+        E.cx = indent_len;
         E.preferred_cx = E.cx;
     }
+    free(indent);
     E.dirty = 1;
 }
 

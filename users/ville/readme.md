@@ -7,6 +7,9 @@ This is my development diary for AALTO. Hope you'll enjoy it! Newest post is alw
 Implemented following improvements to edit.c.:
 - auto-indent, that works when pasting multiple rows as well
 - changed the search (ctrl+f) to case-insensitive
+- improved toggle so, that if user presses ctrl+c copy, it disables the toggle as a visual cue of the copy
+<br><br>
+Modified the runtask RUN command to support any executable instead of only nodes.
 
 ### Wednesday, 26th of March 2025 ###
 

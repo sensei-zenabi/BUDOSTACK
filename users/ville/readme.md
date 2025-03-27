@@ -8,6 +8,8 @@ Modified the runtask RUN command to support any executable instead of only nodes
 task names by stripping the node_ prefix, and created a task called "code.task", that opens three aalto
 instances to tmux.
 <br><br>
+Created a command called "cls" to clear the terminal screen.
+<br><br>
 Implemented following improvements to edit.c.:
 - auto-indent, that works when pasting multiple rows as well
 - changed the search (ctrl+f) to case-insensitive

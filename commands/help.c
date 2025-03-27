@@ -22,6 +22,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  help     : Display this help message.\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
+	printf("  cls      : Clear terminal screen.\n");
 	printf("  cmath    : Opens a math editor.\n");
 	printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");

@@ -1133,9 +1133,8 @@ void editorOpen(const char *filename) {
     }
     char *line = NULL; size_t linecap = 0; ssize_t linelen;
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
-        if (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
-            line[linelen - 1] = '\0';
-            linelen--;
+        while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
+            line[--linelen] = '\0';
         }
         editorAppendLine(line, linelen);
     }

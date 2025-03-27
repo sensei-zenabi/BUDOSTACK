@@ -9,14 +9,14 @@
 45 ROUTE 2 all 4 all
 55 PRINT ""
 60 PRINT "INSTANTIATING APPS..."
-65 RUN server
+65 RUN node/server
 70 WAIT 100
-75 RUN input_video
+75 RUN node/input_video
 80 WAIT 100
-85 RUN input_audio
+85 RUN node/input_audio
 90 WAIT 100
-95 RUN input_joystick
+95 RUN node/input_joystick
 100 WAIT 100
-105 RUN gui_trend
+105 RUN node/gui_trend
 110 WAIT 100 
 115 START

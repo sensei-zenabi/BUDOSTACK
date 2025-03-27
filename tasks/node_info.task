@@ -3,14 +3,14 @@
 30 ROUTE clear
 40 PRINT ""
 50 PRINT "INSTANTIATING APPS..."
-60 RUN server
+60 RUN node/server
 70 WAIT 100
-80 RUN gui_webui
+80 RUN node/gui_webui
 90 WAIT 100
-95 RUN api_currency
+95 RUN node/api_currency
 100 WAIT 100 
-105 RUN api_rss
+105 RUN node/api_rss
 110 WAIT 100 
-115 SHELL sh_weather.sh
+115 RUN shell/sh_weather.sh
 120 WAIT 100
 125 START

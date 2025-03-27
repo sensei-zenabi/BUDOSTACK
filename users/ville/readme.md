@@ -4,7 +4,9 @@ This is my development diary for AALTO. Hope you'll enjoy it! Newest post is alw
 
 ### Thursday, 27th of March 2025 ###
 
-Working auto-indent to edit.c.
+Implemented following improvements to edit.c.:
+- auto-indent, that works when pasting multiple rows as well
+- changed the search (ctrl+f) to case-insensitive
 
 ### Wednesday, 26th of March 2025 ###
 

@@ -3,7 +3,7 @@
 *
 * This version uses tmux with a dedicated socket to run external clients in parallel:
 * - Each .task file generates a fixed tmux session named "server" and a dedicated socket (e.g. /tmp/tmux_server.sock).
-* - RUN commands adds client (from the "node/" directory) as new windows in that session.
+* - RUN commands adds a client (an executable from any subdirectory) as a new tmux window.
 *   The first RUN command creates the session (using "unset TMUX;" to avoid nested warnings)
 *   and appends "; exec bash" to keep the window open.
 * - SHELL commands add shell scripts (from the "shell/" directory) as new windows in the session.
@@ -15,13 +15,15 @@
 * Compilation:
 *   gcc -std=c11 -o runtask runtask.c
 *
-* Usage:
-*   ./runtask taskfile [-d]
-*
 * Design Note:
 *   The session name is intentionally fixed to "server" per user request.
 *   In addition, the RUN and SHELL commands now use a target like "server:" (with a colon)
 *   so that tmux automatically assigns a free window index instead of trying to use 0.
+*
+* Modification:
+*   The RUN command was modified to accept an executable from any subdirectory.
+*   Instead of hardcoding the "node/" directory, the provided path is used directly.
+*   The basename (after the last '/') is extracted for naming the tmux window.
 */
 
 #include <stdio.h>
@@ -67,7 +69,7 @@ void print_help(void) {
     printf("  PRINT \"message\"\n");
     printf("  WAIT milliseconds\n");
     printf("  GOTO line_number\n");
-    printf("  RUN client    	(adds an app from the 'node/' directory as a new tmux window)\n");
+    printf("  RUN executable   	(adds an executable from any subdirectory as a new tmux window)\n");
     printf("  SHELL script      (runs a shell script from the 'shell/' directory in a new tmux window)\n");
     printf("  CMD executable    (runs an executable from the 'commands/' directory)\n");
     printf("  CLEAR             (clears the screen)\n");
@@ -263,7 +265,14 @@ int main(int argc, char *argv[]) {
             char executable[256];
             if (sscanf(scriptLines[pc].text, "RUN %s", executable) == 1) {
                 char path[512];
-                snprintf(path, sizeof(path), "node/%s", executable);
+                // Use the provided executable path directly
+                snprintf(path, sizeof(path), "%s", executable);
+                // Extract basename for window name (everything after the last '/')
+                char *window_name = executable;
+                char *last_slash = strrchr(executable, '/');
+                if (last_slash != NULL) {
+                    window_name = last_slash + 1;
+                }
                 char command[1024];
 
                 // Check if the session exists by querying tmux with our dedicated socket.
@@ -276,14 +285,13 @@ int main(int argc, char *argv[]) {
                     // Create a new detached tmux session with the fixed session name.
                     snprintf(command, sizeof(command),
                              "unset TMUX; tmux -S %s new-session -d -s %s -n %s \"%s; exec bash\"",
-                             socket_path, session_name, executable, path);
+                             socket_path, session_name, window_name, path);
                     tmux_started = 1;
                 } else {
                     // Create a new window in the existing session.
-                    // Note the colon after session_name, which lets tmux assign the next free index.
                     snprintf(command, sizeof(command),
                              "unset TMUX; tmux -S %s new-window -t %s: -n %s \"%s; exec bash\"",
-                             socket_path, session_name, executable, path);
+                             socket_path, session_name, window_name, path);
                 }
                 if (debug)
                     fprintf(stderr, "Executing RUN: %s\n", command);

@@ -30,6 +30,7 @@ int main(int argc, char *argv[]) {
     printf("  display  : Display the contents of a file.\n");
 	printf("  drives   : Lists all found drives.\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");
+	printf("  exchange : Retrieves exchange rates of common currencies to euro.\n");
 	printf("  find     : Find anything.\n");
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");
@@ -39,6 +40,7 @@ int main(int argc, char *argv[]) {
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  update   : Create an empty file or update its modification time.\n");
+	printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");
 	printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
 	printf("             e.g. 'run git status' or './myexecutable'\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");

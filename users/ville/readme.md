@@ -9,7 +9,9 @@ Implemented following improvements to edit.c.:
 - changed the search (ctrl+f) to case-insensitive
 - improved toggle so, that if user presses ctrl+c copy, it disables the toggle as a visual cue of the copy
 <br><br>
-Modified the runtask RUN command to support any executable instead of only nodes.
+Modified the runtask RUN command to support any executable instead of only nodes. Simultaneously changed the
+task names by stripping the node_ prefix, and created a task called "code.task", that opens three aalto
+instances to tmux.
 
 ### Wednesday, 26th of March 2025 ###
 

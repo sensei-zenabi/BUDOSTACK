@@ -56,7 +56,7 @@ void abFree(struct abuf *ab) {
 #define DEL_KEY 1004  // Key code for Delete
 
 /* Prototype for the syntax highlighter from libedit.c */
-char *highlight_c_line(const char *line);
+char *highlight_line(const char *line);
 
 /* Prototype for our new case-insensitive strstr function */
 char *strcasestr_custom(const char *haystack, const char *needle);
@@ -335,7 +335,7 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
             if (E.selecting) {
                 editorRenderRowWithSelection(&E.row[file_row], file_row, text_width, ab);
             } else if (is_c_source()) {
-                char *highlighted = highlight_c_line(E.row[file_row].chars);
+                char *highlighted = highlight_line(E.row[file_row].chars);
                 if (highlighted) {
                     abAppend(ab, highlighted, strlen(highlighted));
                     free(highlighted);

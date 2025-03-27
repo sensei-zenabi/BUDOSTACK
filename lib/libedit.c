@@ -21,7 +21,7 @@
 #include <string.h>
 #include <ctype.h>
 
-char *highlight_c_line(const char *line) {
+char *highlight_line(const char *line) {
     size_t len = strlen(line);
     /* Allocate a generous buffer to hold extra escape codes. */
     size_t buf_size = len * 5 + 1;

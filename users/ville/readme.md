@@ -10,6 +10,8 @@ instances to tmux.
 <br><br>
 Created a command called "cls" to clear the terminal screen.
 <br><br>
+Improved the rss app with manual page changes and ability to quit the app by pressing "q".
+<br><br>
 Implemented following improvements to edit.c.:
 - auto-indent, that works when pasting multiple rows as well
 - changed the search (ctrl+f) to case-insensitive

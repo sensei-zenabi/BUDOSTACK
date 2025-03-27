@@ -11,6 +11,7 @@ commands/*
 apps/*
 !apps/*.c
 !apps/*.h
+!apps/*.ini
 lib/*
 !lib/*.c
 !lib/*.h

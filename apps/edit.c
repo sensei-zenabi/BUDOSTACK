@@ -622,6 +622,11 @@ void editorProcessKeypress(void) {
             break;
         case CTRL_KEY('c'):
             editorCopySelection();
+            if (E.selecting) {  // Disable selection mode after copying for visual feedback
+                E.selecting = 0;
+                snprintf(E.status_message, sizeof(E.status_message),
+                         "Copied selection (%zu bytes) and disabled selection", clipboard_len);
+            }
             break;
         case CTRL_KEY('v'):
             push_undo_state();

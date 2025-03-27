@@ -58,6 +58,9 @@ void abFree(struct abuf *ab) {
 /* Prototype for the syntax highlighter from libedit.c */
 char *highlight_c_line(const char *line);
 
+/* Prototype for our new case-insensitive strstr function */
+char *strcasestr_custom(const char *haystack, const char *needle);
+
 /* Enumeration for editor keys.
    New keys added:
      HOME_KEY: Home key (beginning of line).
@@ -166,6 +169,26 @@ void editorDelCharAtCursor(void);
 void editorSearch(void);
 
 /* --- Helper Functions --- */
+
+/* Custom implementation of a case-insensitive strstr.
+   This function returns a pointer to the first occurrence of needle in haystack,
+   ignoring the case of both strings.
+*/
+char *strcasestr_custom(const char *haystack, const char *needle) {
+    if (!*needle)
+        return (char *)haystack;
+    for (; *haystack; haystack++) {
+        const char *h = haystack;
+        const char *n = needle;
+        while (*h && *n && tolower((unsigned char)*h) == tolower((unsigned char)*n)) {
+            h++;
+            n++;
+        }
+        if (!*n)
+            return (char *)haystack;
+    }
+    return NULL;
+}
 
 /* Returns nonzero if the current file is a C source file */
 int is_c_source(void) {
@@ -877,7 +900,7 @@ void editorSearch(void) {
     }
     int match_count = 0;
     for (int i = 0; i < E.numrows; i++) {
-        if (strstr(E.row[i].chars, query) != NULL)
+        if (strcasestr_custom(E.row[i].chars, query) != NULL)
             matches[match_count++] = i;
     }
     if (match_count == 0) {
@@ -946,7 +969,7 @@ void editorSearch(void) {
 
     if (result != -1) {
         E.cy = result;
-        char *pos = strstr(E.row[result].chars, query);
+        char *pos = strcasestr_custom(E.row[result].chars, query);
         if (pos != NULL) {
             int col = 0;
             for (char *p = E.row[result].chars; p < pos; p++)

@@ -7,9 +7,9 @@
 70 WAIT 100
 80 RUN node/gui_webui
 90 WAIT 100
-95 RUN node/api_currency
+95 RUN apps/exchange
 100 WAIT 100 
-105 RUN node/api_rss
+105 RUN apps/rss
 110 WAIT 100 
 115 RUN shell/sh_weather.sh
 120 WAIT 100

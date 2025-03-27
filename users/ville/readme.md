@@ -2,6 +2,10 @@
 
 This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
 
+### Thursday, 27th of March 2025 ###
+
+Working auto-indent to edit.c.
+
 ### Wednesday, 26th of March 2025 ###
 
 I decided to add some FUN to the equation and provided a games/ folder with space invaders clone using ASCII

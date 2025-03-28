@@ -1,4 +1,9 @@
 /*
+ * Define _POSIX_C_SOURCE to 200809L to ensure POSIX functions like strdup are declared.
+ */
+#define _POSIX_C_SOURCE 200809L
+
+/*
  * cmath.c - Extended Math Interpreter with Basic Matrix/Array Functionality
  *
  * Design Principles and Modifications:
@@ -14,12 +19,13 @@
  * - Variable usage now makes a deep copy when returning a stored matrix so that printing
  *   temporary results does not free the variable’s memory.
  * - Supports assignment and script ('.m') files.
- * - Remains a single-file implementation in plain C (compiled with -std=c11, POSIX compliant).
+ * - REMAINS a single-file implementation in plain C (compiled with -std=c11, POSIX compliant).
  *
- * Comparison with GNU Octave:
- *   GNU Octave is a full-featured numerical computing environment.
- *   This interpreter now includes a basic level of array/matrix support and can run scripts
- *   with both scalar and matrix operations, though it still is far simpler than Octave.
+ * New Feature:
+ * - Implements a command history with up and down arrow key navigation in interactive mode.
+ *   This is achieved by switching the terminal into non-canonical mode using termios,
+ *   capturing individual keystrokes, and handling the escape sequences corresponding to
+ *   the arrow keys.
  *
  * To compile:
  *     gcc -std=c11 -o cmath cmath.c -lm
@@ -36,10 +42,119 @@
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
+#include <termios.h>
+#include <unistd.h>
 
 #define MAX_VARS 100
 #define MAX_MATRIX_ROWS 100
 #define MAX_MATRIX_COLS 100
+
+/* --- Command History and Line Editing --- */
+#define MAX_HISTORY 100
+
+/* Global history buffer for interactive command input */
+char *history[MAX_HISTORY];
+int history_count = 0;
+
+/* Structure to save original terminal settings */
+struct termios orig_termios;
+
+/* Disable raw mode and restore original terminal settings */
+void disable_raw_mode(void) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+}
+
+/* Enable raw mode (non-canonical, no echo) for character–by–character input */
+void enable_raw_mode(void) {
+    struct termios raw;
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    raw = orig_termios;
+    raw.c_lflag &= ~(ECHO | ICANON);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+}
+
+/*
+ * get_line:
+ *  Reads a line of input with a simple line editor.
+ *  Supports backspace and history navigation with up/down arrow keys.
+ *  Arrow up (ESC [ A) loads the previous command; arrow down (ESC [ B) loads the next.
+ *  The prompt "math> " is reprinted after each history recall.
+ */
+char *get_line(void) {
+    static char buffer[256];
+    int pos = 0;
+    int history_index = history_count; // start at the end of history
+    memset(buffer, 0, sizeof(buffer));
+    
+    enable_raw_mode();
+    write(STDOUT_FILENO, "math> ", 6);
+    
+    while (1) {
+        char c;
+        if (read(STDIN_FILENO, &c, 1) != 1)
+            break;
+        if (c == '\r' || c == '\n') {
+            write(STDOUT_FILENO, "\r\n", 2);
+            buffer[pos] = '\0';
+            break;
+        } else if (c == 127 || c == 8) { // Handle backspace
+            if (pos > 0) {
+                pos--;
+                buffer[pos] = '\0';
+                /* Erase the character from the terminal */
+                write(STDOUT_FILENO, "\b \b", 3);
+            }
+        } else if (c == 27) { // Start of an escape sequence (likely arrow keys)
+            char seq[2];
+            if (read(STDIN_FILENO, seq, 2) != 2)
+                continue;
+            if (seq[0] == '[') {
+                if (seq[1] == 'A') { // Up arrow: navigate to previous command
+                    if (history_index > 0) {
+                        history_index--;
+                        /* Clear current line: ESC[2K clears entire line, \r returns cursor */
+                        char clear_seq[] = "\33[2K\r";
+                        write(STDOUT_FILENO, clear_seq, strlen(clear_seq));
+                        write(STDOUT_FILENO, "math> ", 6);
+                        /* Load command from history */
+                        int len = strlen(history[history_index]);
+                        if (len > 255) len = 255;
+                        strcpy(buffer, history[history_index]);
+                        pos = len;
+                        write(STDOUT_FILENO, buffer, pos);
+                    }
+                } else if (seq[1] == 'B') { // Down arrow: navigate to next command
+                    if (history_index < history_count - 1) {
+                        history_index++;
+                        char clear_seq[] = "\33[2K\r";
+                        write(STDOUT_FILENO, clear_seq, strlen(clear_seq));
+                        write(STDOUT_FILENO, "math> ", 6);
+                        int len = strlen(history[history_index]);
+                        if (len > 255) len = 255;
+                        strcpy(buffer, history[history_index]);
+                        pos = len;
+                        write(STDOUT_FILENO, buffer, pos);
+                    } else {
+                        /* At the end of history, clear the line */
+                        history_index = history_count;
+                        char clear_seq[] = "\33[2K\r";
+                        write(STDOUT_FILENO, clear_seq, strlen(clear_seq));
+                        write(STDOUT_FILENO, "math> ", 6);
+                        pos = 0;
+                        buffer[0] = '\0';
+                    }
+                }
+            }
+        } else if (c >= 32 && c <= 126) { // Printable characters
+            if (pos < 255) {
+                buffer[pos++] = c;
+                write(STDOUT_FILENO, &c, 1);
+            }
+        }
+    }
+    disable_raw_mode();
+    return buffer;
+}
 
 /* --- Unified Value Type --- */
 typedef enum {
@@ -277,7 +392,6 @@ Value parse_term(void) {
             Value factor = parse_factor();
             value = elementwise_divide_values(value, factor);
         } else if (strncmp(p, "*", 1) == 0) {
-            // Standard multiplication
             p++;
             skip_whitespace();
             Value factor = parse_factor();
@@ -984,9 +1098,9 @@ Value elementwise_pow_values(Value a, Value b) {
 
 /* --- Main REPL Loop --- */
 int main(int argc, char *argv[]) {
-    char line[256];
     int interactive = 1;
-
+    char line[256]; // used for script input
+    
     /* If a script file is provided, use it as input */
     if (argc > 1) {
         if (freopen(argv[1], "r", stdin) == NULL) {
@@ -1000,25 +1114,58 @@ int main(int argc, char *argv[]) {
     printf("Type 'help' for instructions, 'exit' or 'quit' to leave.\n");
 
     while (1) {
-        if (interactive)
-            printf("math> ");
-        if (!fgets(line, sizeof(line), stdin))
+        char *input;
+        if (interactive) {
+            input = get_line();
+            if (!input)
+                break;
+        } else {
+            if (!fgets(line, sizeof(line), stdin))
+                break;
+            line[strcspn(line, "\n")] = '\0';
+            input = line;
+        }
+        
+        if (strlen(input) == 0)
+            continue;
+        if (strcmp(input, "exit") == 0 || strcmp(input, "quit") == 0)
             break;
-        line[strcspn(line, "\n")] = '\0';
-
-        if (strcmp(line, "exit") == 0 || strcmp(line, "quit") == 0)
-            break;
-        if (strcmp(line, "help") == 0) {
+        if (strcmp(input, "help") == 0) {
             print_help();
+            if (interactive) {
+                /* Save non-empty commands in history */
+                if (strlen(input) > 0) {
+                    if (history_count < MAX_HISTORY) {
+                        history[history_count++] = strdup(input);
+                    } else {
+                        free(history[0]);
+                        for (int i = 1; i < MAX_HISTORY; i++)
+                            history[i - 1] = history[i];
+                        history[MAX_HISTORY - 1] = strdup(input);
+                    }
+                }
+            }
             continue;
         }
-        if (strcmp(line, "list") == 0) {
+        if (strcmp(input, "list") == 0) {
             list_variables();
+            if (interactive) {
+                if (strlen(input) > 0) {
+                    if (history_count < MAX_HISTORY) {
+                        history[history_count++] = strdup(input);
+                    } else {
+                        free(history[0]);
+                        for (int i = 1; i < MAX_HISTORY; i++)
+                            history[i - 1] = history[i];
+                        history[MAX_HISTORY - 1] = strdup(input);
+                    }
+                }
+            }
             continue;
         }
 
         /* Process assignment or expression evaluation */
-        p = line;
+        p = input;
         skip_whitespace();
         char ident[32];
         const char *start = p;
@@ -1041,6 +1188,20 @@ int main(int argc, char *argv[]) {
                 set_variable(ident, result);
                 printf("%s = ", ident);
                 print_value(result);
+                if (result.type == VAL_MATRIX)
+                    free_value(&result);
+                if (interactive) {
+                    if (strlen(input) > 0) {
+                        if (history_count < MAX_HISTORY) {
+                            history[history_count++] = strdup(input);
+                        } else {
+                            free(history[0]);
+                            for (int i = 1; i < MAX_HISTORY; i++)
+                                history[i - 1] = history[i];
+                            history[MAX_HISTORY - 1] = strdup(input);
+                        }
+                    }
+                }
                 continue;
             } else {
                 /* Not an assignment; reset pointer to start */
@@ -1053,9 +1214,22 @@ int main(int argc, char *argv[]) {
             continue;
         }
         print_value(result);
-        /* Free temporary result if it is a matrix */
         if (result.type == VAL_MATRIX)
             free_value(&result);
+        
+        /* Save command in history (only in interactive mode) */
+        if (interactive) {
+            if (strlen(input) > 0) {
+                if (history_count < MAX_HISTORY) {
+                    history[history_count++] = strdup(input);
+                } else {
+                    free(history[0]);
+                    for (int i = 1; i < MAX_HISTORY; i++)
+                        history[i - 1] = history[i];
+                    history[MAX_HISTORY - 1] = strdup(input);
+                }
+            }
+        }
     }
     printf("Goodbye.\n");
     return 0;

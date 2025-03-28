@@ -56,7 +56,8 @@ void abFree(struct abuf *ab) {
 #define DEL_KEY 1004  // Key code for Delete
 
 /* Prototype for the syntax highlighter from libedit.c */
-char *highlight_line(const char *line);
+char *highlight_c_line(const char *line);
+char *highlight_other_line(const char *line);
 
 /* Prototype for our new case-insensitive strstr function */
 char *strcasestr_custom(const char *haystack, const char *needle);
@@ -197,6 +198,13 @@ int is_c_source(void) {
     return (ext && ((strcmp(ext, ".c") == 0) || (strcmp(ext, ".h") == 0)));
 }
 
+/* Returns nonzero if the current file is a C source file */
+int is_other_source(void) {
+    if (!E.filename) return 0;
+    const char *ext = strrchr(E.filename, '.');
+    return (ext && ((strcmp(ext, ".c") != 0) || (strcmp(ext, ".h") != 0)));
+}
+
 int getRowNumWidth(void) {
     int n = E.numrows, digits = 1;
     while (n >= 10) { n /= 10; digits++; }
@@ -335,7 +343,13 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
             if (E.selecting) {
                 editorRenderRowWithSelection(&E.row[file_row], file_row, text_width, ab);
             } else if (is_c_source()) {
-                char *highlighted = highlight_line(E.row[file_row].chars);
+                char *highlighted = highlight_c_line(E.row[file_row].chars);
+                if (highlighted) {
+                    abAppend(ab, highlighted, strlen(highlighted));
+                    free(highlighted);
+                }
+            } else if (is_other_source()) {
+                char *highlighted = highlight_other_line(E.row[file_row].chars);
                 if (highlighted) {
                     abAppend(ab, highlighted, strlen(highlighted));
                     free(highlighted);

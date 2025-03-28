@@ -21,7 +21,7 @@
 #include <string.h>
 #include <ctype.h>
 
-char *highlight_line(const char *line) {
+char *highlight_c_line(const char *line) {
     size_t len = strlen(line);
     /* Allocate a generous buffer to hold extra escape codes. */
     size_t buf_size = len * 5 + 1;
@@ -234,6 +234,86 @@ char *highlight_line(const char *line) {
 
         /* --- Default: copy the character unchanged --- */
         result[ri++] = c;
+    }
+    result[ri] = '\0';
+    return result;
+}
+
+/*
+ * highlight_other_line (general text and markup language highlighting)
+ *
+ * This version provides basic syntax highlighting for general text processing
+ * and markup languages. It highlights:
+ *   - Markdown headers: if the first non-space character is '#' the entire line is colored red.
+ *   - Markup tags: any content between '<' and '>' is colored blue.
+ *
+ * Design principles:
+ *  - Plain C using -std=c11 and only standard libraries.
+ *  - No separate header files.
+ *  - The function processes the input line character by character and applies ANSI
+ *    escape sequences for coloring. It handles two cases: whole-line markdown headers,
+ *    and inline markup tags.
+ *
+ * The caller is responsible for freeing the returned string.
+ */
+char *highlight_other_line(const char *line) {
+    size_t len = strlen(line);
+    size_t buf_size = len * 5 + 1;  // Allocate extra space for escape codes
+    char *result = malloc(buf_size);
+    if (!result)
+        return NULL;
+    size_t ri = 0;  // result index
+
+    size_t i = 0;
+    // Copy any leading whitespace
+    while (i < len && isspace((unsigned char)line[i])) {
+        result[ri++] = line[i++];
+    }
+    // Check for Markdown header (line starting with '#')
+    if (i < len && line[i] == '#') {
+        const char *header_color = "\x1b[31m";  // red for headers
+        size_t cl = strlen(header_color);
+        if (ri + cl < buf_size) {
+            memcpy(result + ri, header_color, cl);
+            ri += cl;
+        }
+        // Copy the rest of the line as header text
+        while (i < len) {
+            result[ri++] = line[i++];
+        }
+        const char *reset = "\x1b[0m";
+        size_t rl = strlen(reset);
+        if (ri + rl < buf_size) {
+            memcpy(result + ri, reset, rl);
+            ri += rl;
+        }
+    } else {
+        // Process the line for markup tags
+        int in_tag = 0;
+        for (; i < len; i++) {
+            char c = line[i];
+            if (c == '<') {
+                // Start of a markup tag: insert tag color (blue)
+                const char *tag_color = "\x1b[34m";
+                size_t cl = strlen(tag_color);
+                if (ri + cl < buf_size) {
+                    memcpy(result + ri, tag_color, cl);
+                    ri += cl;
+                }
+                in_tag = 1;
+            }
+            result[ri++] = c;
+            if (c == '>' && in_tag) {
+                // End of tag: reset color
+                const char *reset = "\x1b[0m";
+                size_t rl = strlen(reset);
+                if (ri + rl < buf_size) {
+                    memcpy(result + ri, reset, rl);
+                    ri += rl;
+                }
+                in_tag = 0;
+            }
+        }
     }
     result[ri] = '\0';
     return result;

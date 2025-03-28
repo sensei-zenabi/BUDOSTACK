@@ -615,7 +615,9 @@ void editorProcessKeypress(void) {
             editorCutSelection();
             break;
         case CTRL_KEY('c'):
+            push_undo_state();
             editorCopySelection();
+            E.selecting = 0; // Disable selection toggle after copying
             break;
         case CTRL_KEY('v'):
             push_undo_state();

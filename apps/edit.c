@@ -21,6 +21,7 @@
  * - Append Buffer Implementation: Instead of multiple write() calls,
  *   output is accumulated in a dynamic buffer (struct abuf) and then flushed with one write() call.
  * - TAB Support: The TAB key now inserts four spaces into the text.
+ * - Added a case-insensitive search helper to support CTRL+F searches that ignore case.
  */
 
 /*** Append Buffer Implementation ***/
@@ -121,6 +122,29 @@ typedef struct {
 
 UndoState *undo_history[100];
 int undo_history_len = 0;
+
+/*** New Helper Function for Case-Insensitive Search ***/
+/*
+ * strcasestr_custom:
+ *   A simple implementation of a case-insensitive substring search.
+ *   It returns a pointer to the first occurrence of needle in haystack ignoring case,
+ *   or NULL if not found.
+ */
+char *strcasestr_custom(const char *haystack, const char *needle) {
+    if (!*needle)
+        return (char *)haystack;
+    for (; *haystack; haystack++) {
+        const char *h = haystack;
+        const char *n = needle;
+        while (*h && *n && tolower((unsigned char)*h) == tolower((unsigned char)*n)) {
+            h++;
+            n++;
+        }
+        if (!*n)
+            return (char *)haystack;
+    }
+    return NULL;
+}
 
 /* --- Function Prototypes --- */
 void die(const char *s);
@@ -855,7 +879,7 @@ void editorSearch(void) {
         rows = 24; cols = 80;
     }
 
-    /* Build list of matching line indices */
+    /* Build list of matching line indices using case-insensitive search */
     int *matches = malloc(E.numrows * sizeof(int));
     if (!matches) {
         snprintf(E.status_message, sizeof(E.status_message), "Search: malloc failed");
@@ -865,7 +889,7 @@ void editorSearch(void) {
     }
     int match_count = 0;
     for (int i = 0; i < E.numrows; i++) {
-        if (strstr(E.row[i].chars, query) != NULL)
+        if (strcasestr_custom(E.row[i].chars, query) != NULL)
             matches[match_count++] = i;
     }
     if (match_count == 0) {
@@ -934,7 +958,7 @@ void editorSearch(void) {
 
     if (result != -1) {
         E.cy = result;
-        char *pos = strstr(E.row[result].chars, query);
+        char *pos = strcasestr_custom(E.row[result].chars, query);
         if (pos != NULL) {
             int col = 0;
             for (char *p = E.row[result].chars; p < pos; p++)

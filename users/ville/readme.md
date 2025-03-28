@@ -2,6 +2,12 @@
 
 This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
 
+### Friday, 28th of March 2025 ###
+
+Added basic markup support to edit.c. The issue with multiline comments with C/C++ in edit.c seems to be a
+tough cookie to solve. Could not do it today. The issue lies in the fact that the editor processes one 
+terminal screen per time, and that can lead into obsucre number of /* and */ etc. comment markers per screen.
+
 ### Thursday, 27th of March 2025 ###
 
 Modified the runtask RUN command to support any executable instead of only nodes. Simultaneously changed the

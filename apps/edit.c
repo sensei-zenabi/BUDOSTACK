@@ -16,11 +16,10 @@
 
 /*
  * Design principles and notes:
- * - Plain C using -std=c11 and only standard libraries.
- * - No separate header files.
+ * - Plain C using -std=c11 and standard C libraries with POSIX-compliant functions.
+ * - No separate header files; full code is in one file.
  * - Append Buffer Implementation: Instead of multiple write() calls,
- *   output is accumulated in a dynamic buffer (struct abuf) and then
- *   flushed with one write() call.
+ *   output is accumulated in a dynamic buffer (struct abuf) and then flushed with one write() call.
  * - TAB Support: The TAB key now inserts four spaces into the text.
  */
 
@@ -1089,7 +1088,9 @@ void editorOpen(const char *filename) {
     }
     char *line = NULL; size_t linecap = 0; ssize_t linelen;
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
-        if (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
+        /* Modified to trim all trailing newline and carriage return characters.
+           This handles Windows-style "\r\n" line endings as well as lone "\r" */
+        while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
             line[linelen - 1] = '\0';
             linelen--;
         }

@@ -38,8 +38,6 @@ int main(int argc, char *argv[]) {
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
 	printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
-    printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
-    printf("  update   : Create an empty file or update its modification time.\n");
 	printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");
 	printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
 	printf("             e.g. 'run git status' or './myexecutable'\n");
@@ -47,6 +45,8 @@ int main(int argc, char *argv[]) {
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");
     printf("  table    : Interactive .csv table editor tool.\n");
+    printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
+    printf("  update   : Create an empty file or update its modification time.\n");
     printf("  exit     : Exit AALTO.\n");
     printf("\n");
 

@@ -18,7 +18,11 @@
  * - Press "Q" to quit and "R" to restart the game.
  * - Key instructions are displayed below the game area.
  *
- * Compilation: gcc -std=c11 -Wall -O2 -o space_invaders games/invaders.c
+ * Modifications:
+ * - When game over (or win) occurs, all movement stops and only 'r' (restart) and 'q' (quit) keys work.
+ * - Collision detection for the bullet is done before moving the bullet so that invaders near the bottom can be hit.
+ *
+ * Compilation: gcc -std=c11 -Wall -O2 -o space_invaders invaders.c
  */
 
 #include <stdio.h>
@@ -29,11 +33,11 @@
 #include <string.h>
 #include <time.h>
 
-#define BOARD_WIDTH 40
+#define BOARD_WIDTH 80
 #define BOARD_HEIGHT 20
 
-#define INV_ROWS 3
-#define INV_COLS 8
+#define INV_ROWS 4
+#define INV_COLS 12
 
 /* Function to sleep for a given number of milliseconds */
 void sleep_ms(int milliseconds) {
@@ -124,10 +128,23 @@ void init_game() {
     invader_dir = 1;
 }
 
-/* Process input: arrow keys, space, Q to quit, and R to restart */
+/* Process input: arrow keys, space, Q to quit, and R to restart.
+ * When game over or win, only R and Q are processed.
+ */
 void process_input() {
     while (kbhit()) {
         int c = getch();
+        // When game over or win, restrict input to 'r' (restart) and 'q' (quit)
+        if (game_over || game_win) {
+            if (c == 'q' || c == 'Q')
+                exit(0);
+            if (c == 'r' || c == 'R') {
+                init_game();
+                return;
+            }
+            // Ignore any other key
+            continue;
+        }
         if (c == 27) { // possible escape sequence for arrow keys
             if (kbhit() && getch() == 91) {
                 int dir = getch();
@@ -156,15 +173,12 @@ void process_input() {
     }
 }
 
-/* Update bullet position and check for collision with invaders */
+/* Update bullet position and check for collision with invaders.
+ * Collision is checked at the bullet's current position before moving it.
+ */
 void update_bullet() {
     if (bullet.active) {
-        bullet.y--; // move bullet up
-        if (bullet.y < 0) {
-            bullet.active = 0;
-            return;
-        }
-        // Check collision with any invader
+        // Check collision at the bullet's current position
         for (int i = 0; i < INV_ROWS; i++) {
             for (int j = 0; j < INV_COLS; j++) {
                 if (invaders[i][j]) {
@@ -174,9 +188,15 @@ void update_bullet() {
                         invaders[i][j] = 0; // invader hit
                         bullet.active = 0;
                         score += 10;  // Increase score
+                        return;
                     }
                 }
             }
+        }
+        // Move bullet up after collision check
+        bullet.y--;
+        if (bullet.y < 0) {
+            bullet.active = 0;
         }
     }
 }
@@ -228,8 +248,12 @@ void update_invaders() {
     }
 }
 
-/* Update game state: bullet and invaders */
+/* Update game state: bullet and invaders.
+ * No movement is performed if game is over or won.
+ */
 void update_game() {
+    if (game_over || game_win)
+        return;
     update_bullet();
     update_invaders();
 }

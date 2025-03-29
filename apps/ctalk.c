@@ -2,20 +2,14 @@
  * ctalk.c - UDP-only chat application for a local network.
  *
  * Design Principles:
- *   - The server uses a UDP socket bound to UDP_CHAT_PORT (60000) to receive messages.
- *   - When a message is received from an unknown client, it is treated as a registration
- *     (the username) and the client is added to a global list.
- *   - All subsequent messages from a client are broadcast to all registered clients,
- *     prefixed with a timestamp (using local machine time) and the sender’s username.
- *   - A separate UDP discovery thread continuously broadcasts "CTALK_SERVER" on UDP_DISCOVERY_PORT (60001)
- *     so that clients can automatically discover the server.
- *   - The client uses a UDP socket to send its registration and chat messages to the server,
- *     and uses select() to multiplex between STDIN (for user input) and incoming UDP messages.
- *   - Both server and client filter out messages originating from themselves.
- *   - When sending a message, the local copy is not immediately printed; it is only shown when
- *     received via UDP (and filtered out on the local side). This avoids duplicate display.
- *   - The prompt ">> " is reprinted after every message output (whether sent or received)
- *     to preserve user input visibility even when multiple sequential messages occur.
+ *   - Uses a UDP socket for chat messages and a separate thread for periodic discovery broadcasts.
+ *   - Uses raw terminal (non-canonical) mode to allow character-by-character input so that incoming
+ *     messages do not disturb the current user input.
+ *   - When an incoming message is received, the current input is cleared (using ANSI escape sequences),
+ *     the message is printed, and then the prompt (with any partially typed input) is reprinted.
+ *   - In client mode, when the user sends a message, it is immediately printed locally (with a timestamp)
+ *     so that the user sees it, and the subsequent network echo (which is filtered) does not cause duplicates.
+ *   - Only plain C (compiled with -std=c11) and POSIX-compliant functions are used.
  *
  * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
  */
@@ -29,6 +23,7 @@
 #include <signal.h>
 #include <pthread.h>
 #include <fcntl.h>
+#include <termios.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/select.h>
@@ -50,8 +45,40 @@ client_t *clients[MAX_CLIENTS];
 int client_count = 0;
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-/* Global variable holding the local username (whether acting as server operator or client) */
+/* Global variable holding the local username */
 const char *my_username = NULL;
+
+/* Terminal raw mode management */
+static struct termios orig_termios;
+
+void disable_raw_mode(void) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+}
+
+void enable_raw_mode(void) {
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+    atexit(disable_raw_mode);
+    struct termios raw = orig_termios;
+    // Disable canonical mode and echo
+    raw.c_lflag &= ~(ICANON | ECHO);
+    // Read one byte at a time
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+}
+
+/* Helper to clear current line and reprint prompt with current input */
+void reprint_prompt(const char *buf) {
+    // \r returns to start of line, \33[2K clears the line.
+    printf("\r\33[2K>> %s", buf);
+    fflush(stdout);
+}
 
 /* Check if a client is already registered by comparing IP and port */
 int find_client(struct sockaddr_in *addr) {
@@ -73,9 +100,7 @@ void add_client(client_t *client) {
     pthread_mutex_unlock(&clients_mutex);
 }
 
-/* Broadcast a message to all registered clients except (optionally) the sender.
- * Note: The broadcast message is sent via separate UDP sockets.
- */
+/* Broadcast a message to all registered clients except (optionally) the sender */
 void broadcast_message(const char *msg, struct sockaddr_in *exclude) {
     pthread_mutex_lock(&clients_mutex);
     for (int i = 0; i < client_count; i++) {
@@ -99,7 +124,7 @@ void broadcast_message(const char *msg, struct sockaddr_in *exclude) {
     pthread_mutex_unlock(&clients_mutex);
 }
 
-/* Get a formatted timestamp string using local machine time */
+/* Get a formatted timestamp string */
 void get_timestamp(char *buf, size_t size) {
     time_t now = time(NULL);
     struct tm *t = localtime(&now);
@@ -117,10 +142,7 @@ void ensure_newline(char *msg, size_t size) {
     }
 }
 
-/* UDP discovery broadcaster thread.
- * This thread continuously broadcasts "CTALK_SERVER" on UDP_DISCOVERY_PORT
- * so that clients can discover the chat server.
- */
+/* UDP discovery broadcaster thread */
 void *udp_discovery_thread(void *arg) {
     (void)arg;
     int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -153,15 +175,13 @@ void *udp_discovery_thread(void *arg) {
     pthread_exit(NULL);
 }
 
-/* Server mode: Listen for UDP chat messages and broadcast them.
- * The first message from a new client is assumed to be its username registration.
- * Subsequent messages are prefixed with a timestamp and the sender's username.
- * In addition, the server monitors STDIN so that the operator can send messages.
- * To avoid echoing its own messages, both operator and incoming messages are filtered based on my_username.
- * Also, the prompt ">> " is reprinted after each message to keep the input at the bottom.
+/*
+ * Server mode: Listen for UDP chat messages and broadcast them.
+ * The operator uses a raw-mode line editor so that incoming messages do not disturb the current input.
  */
 void run_server(void) {
     printf("[INFO] Starting ctalk server (UDP-only) on chat port %d...\n", UDP_CHAT_PORT);
+    enable_raw_mode();
 
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
@@ -186,6 +206,13 @@ void run_server(void) {
     }
 
     char buf[BUF_SIZE];
+    char input_buf[BUF_SIZE] = {0};
+    int input_len = 0;
+
+    /* Print initial prompt */
+    printf(">> ");
+    fflush(stdout);
+
     while (1) {
         fd_set read_fds;
         FD_ZERO(&read_fds);
@@ -199,19 +226,42 @@ void run_server(void) {
             continue;
         }
 
-        /* Handle local server operator input */
+        /* Handle operator input (non-canonical, character-by-character) */
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
-            memset(buf, 0, BUF_SIZE);
-            if (fgets(buf, sizeof(buf), stdin) != NULL) {
-                char timestamp[64];
-                get_timestamp(timestamp, sizeof(timestamp));
-                char message[BUF_SIZE];
-                snprintf(message, sizeof(message), "[%s] %s - %s", timestamp, my_username, buf);
-                ensure_newline(message, sizeof(message));
-                broadcast_message(message, NULL);
-                /* Reprint prompt after sending a message */
+            char c;
+            ssize_t nread = read(STDIN_FILENO, &c, 1);
+            if (nread < 0) {
+                perror("read");
+                continue;
+            }
+            if (c == '\n' || c == '\r') {
+                input_buf[input_len] = '\0';
+                if (input_len > 0) {
+                    char timestamp[64];
+                    get_timestamp(timestamp, sizeof(timestamp));
+                    char message[BUF_SIZE];
+                    snprintf(message, sizeof(message), "[%s] %s - %s", timestamp, my_username, input_buf);
+                    ensure_newline(message, sizeof(message));
+                    broadcast_message(message, NULL);
+                    // Print own message immediately.
+                    printf("\r\33[2K%s", message);
+                }
+                input_len = 0;
+                input_buf[0] = '\0';
                 printf(">> ");
                 fflush(stdout);
+            } else if (c == 127 || c == '\b') { // backspace
+                if (input_len > 0) {
+                    input_len--;
+                    input_buf[input_len] = '\0';
+                }
+                reprint_prompt(input_buf);
+            } else {
+                if (input_len < BUF_SIZE - 1) {
+                    input_buf[input_len++] = c;
+                    input_buf[input_len] = '\0';
+                }
+                reprint_prompt(input_buf);
             }
         }
 
@@ -228,11 +278,11 @@ void run_server(void) {
             }
             buf[n] = '\0';
 
-            /* Filter out messages that are echoes of our own (comparing against my_username). */
+            /* Filter out echo messages from our own username */
             if (strstr(buf, my_username) != NULL && strstr(buf, " - ") != NULL) {
                 char *start = strchr(buf, ']');
                 if (start) {
-                    start++; // skip ']'
+                    start++;
                     while (*start == ' ') start++;
                     char sender[64];
                     char *dash = strstr(start, " - ");
@@ -248,9 +298,7 @@ void run_server(void) {
 
             int idx = find_client(&client_addr);
             if (idx < 0) {
-                /* New client registration; treat the first message as the username.
-                 * Ignore if the username contains our own username.
-                 */
+                /* New client registration */
                 if (strstr(buf, my_username) != NULL) {
                     continue;
                 }
@@ -268,11 +316,9 @@ void run_server(void) {
                 get_timestamp(timestamp, sizeof(timestamp));
                 char join_msg[BUF_SIZE];
                 snprintf(join_msg, sizeof(join_msg), "[%s] %s joined the chat.\n", timestamp, client->username);
-                printf("%s", join_msg);
+                printf("\r\33[2K%s", join_msg);
+                reprint_prompt(input_buf);
                 broadcast_message(join_msg, &client_addr);
-                /* Reprint prompt */
-                printf(">> ");
-                fflush(stdout);
             } else {
                 /* Regular chat message from a known client */
                 char timestamp[64];
@@ -283,11 +329,9 @@ void run_server(void) {
                 pthread_mutex_unlock(&clients_mutex);
                 snprintf(formatted, sizeof(formatted), "[%s] %s - %s", timestamp, sender, buf);
                 ensure_newline(formatted, sizeof(formatted));
-                printf("%s", formatted);
+                printf("\r\33[2K%s", formatted);
+                reprint_prompt(input_buf);
                 broadcast_message(formatted, &client_addr);
-                /* Reprint prompt */
-                printf(">> ");
-                fflush(stdout);
             }
         }
     }
@@ -295,20 +339,18 @@ void run_server(void) {
     exit(EXIT_SUCCESS);
 }
 
-/* Client mode: Discover the server, register the username, and exchange chat messages.
- * The client sends its username as the first message, then uses select() to handle STDIN and
- * incoming UDP messages.
- * When a message is received, the client checks the sender's username from the formatted message.
- * If the sender matches the client's username, the message is skipped.
- * The prompt ">> " is reprinted after each received message to keep the input at the bottom.
+/*
+ * Client mode: Discover the server, register the username, and exchange chat messages.
+ * The client uses a raw-mode line editor so that incoming messages do not disturb the partial input.
+ * In this update, when the user sends a message, it is immediately formatted and printed locally.
  */
 void run_client(const char *username, const char *server_ip) {
+    enable_raw_mode();
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
         perror("socket");
         exit(EXIT_FAILURE);
     }
-    /* Set server address for chat messages */
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
@@ -318,17 +360,20 @@ void run_client(const char *username, const char *server_ip) {
         close(sock);
         exit(EXIT_FAILURE);
     }
-    /* Send registration: the username */
+    /* Send registration (username) */
     if (sendto(sock, username, strlen(username), 0,
                (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         perror("sendto");
     }
     printf("[INFO] Registered as '%s' with ctalk server at %s\n", username, server_ip);
+
+    char buf[BUF_SIZE];
+    char input_buf[BUF_SIZE] = {0};
+    int input_len = 0;
     printf(">> ");
     fflush(stdout);
 
     int maxfd = sock > STDIN_FILENO ? sock : STDIN_FILENO;
-    char buf[BUF_SIZE];
 
     while (1) {
         fd_set read_fds;
@@ -340,20 +385,48 @@ void run_client(const char *username, const char *server_ip) {
             perror("select");
             break;
         }
-        /* Check for local input */
+        /* Handle local input */
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
-            memset(buf, 0, BUF_SIZE);
-            if (fgets(buf, sizeof(buf), stdin) != NULL) {
-                if (sendto(sock, buf, strlen(buf), 0,
-                           (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-                    perror("sendto");
+            char c;
+            ssize_t nread = read(STDIN_FILENO, &c, 1);
+            if (nread < 0) {
+                perror("read");
+                continue;
+            }
+            if (c == '\n' || c == '\r') {
+                input_buf[input_len] = '\0';
+                if (input_len > 0) {
+                    if (sendto(sock, input_buf, strlen(input_buf), 0,
+                               (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+                        perror("sendto");
+                    }
+                    // Format and immediately print the client's own message.
+                    char timestamp[64];
+                    get_timestamp(timestamp, sizeof(timestamp));
+                    char message[BUF_SIZE];
+                    snprintf(message, sizeof(message), "[%s] %s - %s", timestamp, username, input_buf);
+                    ensure_newline(message, sizeof(message));
+                    printf("\r\33[2K%s", message);
                 }
-                /* Reprint prompt after sending a message */
+                input_len = 0;
+                input_buf[0] = '\0';
                 printf(">> ");
                 fflush(stdout);
+            } else if (c == 127 || c == '\b') { // backspace
+                if (input_len > 0) {
+                    input_len--;
+                    input_buf[input_len] = '\0';
+                }
+                reprint_prompt(input_buf);
+            } else {
+                if (input_len < BUF_SIZE - 1) {
+                    input_buf[input_len++] = c;
+                    input_buf[input_len] = '\0';
+                }
+                reprint_prompt(input_buf);
             }
         }
-        /* Check for incoming messages */
+        /* Handle incoming messages */
         if (FD_ISSET(sock, &read_fds)) {
             struct sockaddr_in from_addr;
             socklen_t addrlen = sizeof(from_addr);
@@ -365,36 +438,35 @@ void run_client(const char *username, const char *server_ip) {
                 continue;
             }
             buf[n] = '\0';
-            /* Parse the formatted message to extract the sender's username.
+            /* Parse formatted message to extract sender.
              * Expected format: "[timestamp] <username> - <message>"
              */
             char *start = strchr(buf, ']');
             if (start) {
-                start++; // skip ']'
-                while (*start == ' ') start++; // skip spaces
+                start++;
+                while (*start == ' ') start++;
                 char sender[64];
                 char *dash = strstr(start, " - ");
                 if (dash && (size_t)(dash - start) < sizeof(sender)) {
                     memcpy(sender, start, dash - start);
                     sender[dash - start] = '\0';
+                    // Filter out the echo of our own message (since we print it immediately on send)
                     if (strcmp(sender, username) == 0) {
-                        /* Skip our own echoed message */
                         continue;
                     }
                 }
             }
             ensure_newline(buf, sizeof(buf));
-            printf("%s", buf);
-            /* Reprint prompt to keep input at the bottom */
-            printf(">> ");
-            fflush(stdout);
+            printf("\r\33[2K%s", buf);
+            reprint_prompt(input_buf);
         }
     }
     close(sock);
     exit(EXIT_SUCCESS);
 }
 
-/* Discover the server by listening for a UDP broadcast on UDP_DISCOVERY_PORT.
+/*
+ * Discover the server by listening for a UDP broadcast on UDP_DISCOVERY_PORT.
  * If a "CTALK_SERVER" broadcast is received within 10 seconds, returns the sender's IP.
  */
 char *discover_server(void) {

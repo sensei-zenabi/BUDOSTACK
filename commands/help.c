@@ -27,6 +27,7 @@ int main(int argc, char *argv[]) {
 	printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
 	printf("  csv_print: Pretty prints a .csv file.\n");
+	printf("  ctalk    : Simple UDP based LAN chat. Start with 'ctalk myname'.\n");
     printf("  display  : Display the contents of a file.\n");
 	printf("  drives   : Lists all found drives.\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");

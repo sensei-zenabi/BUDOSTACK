@@ -2,6 +2,24 @@
 
 This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
 
+#### RANKING BOARD ####
+1. Live file editing with "share.c" and "edit.c"
+
+### Saturday, 29th of March 2025 ###
+
+Came up with a funny little app called ctalk, an UDP based LAN messaging app to which users can dynamically
+log in and have IRC like discussions with nicknames. Is able to keep up the chat as long as the user acting
+as a server is online. In the future intention is to add dynamic server switching in case the user with the
+running server decides to quit the chat.
+<br><br>
+Started also an app called "share", which is a collaborative tool that syncs a file to multiple PCs in LAN
+using UDP. Got the basics to work, but need to add "edit mysharedfile.c - live" mode to edit.c so that when
+collaborating, it would periodically refresh the file from disk to update the changes done by other users
+contributing to the same file in the same session.
+<br><br>
+Established a ranking board on top of this development diary to keep the ideas that interest me the most
+visible for everybody.
+
 ### Friday, 28th of March 2025 ###
 
 Added basic markup support to edit.c. The issue with multiline comments with C/C++ in edit.c seems to be a

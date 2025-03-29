@@ -9,6 +9,9 @@
  *     the message is printed, and then the prompt (with any partially typed input) is reprinted.
  *   - In client mode, when the user sends a message, it is immediately printed locally (with a timestamp)
  *     so that the user sees it, and the subsequent network echo (which is filtered) does not cause duplicates.
+ *   - Added feature: if the user types "/quit" (as the only input), a quit message ("user quit the chat.")
+ *     is sent before the application exits. In addition, if a client sends a quit message, the server
+ *     removes that client from its registry so that messaging between the remaining users continues normally.
  *   - Only plain C (compiled with -std=c11) and POSIX-compliant functions are used.
  *
  * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
@@ -62,9 +65,9 @@ void enable_raw_mode(void) {
     }
     atexit(disable_raw_mode);
     struct termios raw = orig_termios;
-    // Disable canonical mode and echo
+    /* Disable canonical mode and echo */
     raw.c_lflag &= ~(ICANON | ECHO);
-    // Read one byte at a time
+    /* Read one byte at a time */
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
@@ -75,7 +78,7 @@ void enable_raw_mode(void) {
 
 /* Helper to clear current line and reprint prompt with current input */
 void reprint_prompt(const char *buf) {
-    // \r returns to start of line, \33[2K clears the line.
+    /* \r returns to start of line, \33[2K clears the line */
     printf("\r\33[2K>> %s", buf);
     fflush(stdout);
 }
@@ -96,6 +99,23 @@ void add_client(client_t *client) {
     pthread_mutex_lock(&clients_mutex);
     if (client_count < MAX_CLIENTS) {
         clients[client_count++] = client;
+    }
+    pthread_mutex_unlock(&clients_mutex);
+}
+
+/* Remove a client from the registry given its address */
+void remove_client(struct sockaddr_in *addr) {
+    pthread_mutex_lock(&clients_mutex);
+    for (int i = 0; i < client_count; i++) {
+        if (clients[i]->addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
+            clients[i]->addr.sin_port == addr->sin_port) {
+            free(clients[i]);
+            for (int j = i; j < client_count - 1; j++) {
+                clients[j] = clients[j+1];
+            }
+            client_count--;
+            break;
+        }
     }
     pthread_mutex_unlock(&clients_mutex);
 }
@@ -178,6 +198,8 @@ void *udp_discovery_thread(void *arg) {
 /*
  * Server mode: Listen for UDP chat messages and broadcast them.
  * The operator uses a raw-mode line editor so that incoming messages do not disturb the current input.
+ * When the operator types "/quit", a quit message is broadcast before the entire application exits.
+ * Also, if a client sends a quit message, the server broadcasts it and removes the client.
  */
 void run_server(void) {
     printf("[INFO] Starting ctalk server (UDP-only) on chat port %d...\n", UDP_CHAT_PORT);
@@ -236,21 +258,33 @@ void run_server(void) {
             }
             if (c == '\n' || c == '\r') {
                 input_buf[input_len] = '\0';
+                /* Check for graceful exit command */
+                if (strcmp(input_buf, "/quit") == 0) {
+                    char timestamp[64];
+                    char quit_msg[BUF_SIZE];
+                    get_timestamp(timestamp, sizeof(timestamp));
+                    snprintf(quit_msg, sizeof(quit_msg), "[%s] %s quit the chat.\n", timestamp, my_username);
+                    broadcast_message(quit_msg, NULL);
+                    printf("\r\33[2K[INFO] Exiting chat...\n");
+                    disable_raw_mode();
+                    close(sock);
+                    exit(EXIT_SUCCESS);
+                }
                 if (input_len > 0) {
                     char timestamp[64];
-                    get_timestamp(timestamp, sizeof(timestamp));
                     char message[BUF_SIZE];
+                    get_timestamp(timestamp, sizeof(timestamp));
                     snprintf(message, sizeof(message), "[%s] %s - %s", timestamp, my_username, input_buf);
                     ensure_newline(message, sizeof(message));
                     broadcast_message(message, NULL);
-                    // Print own message immediately.
+                    /* Print own message immediately */
                     printf("\r\33[2K%s", message);
                 }
                 input_len = 0;
                 input_buf[0] = '\0';
                 printf(">> ");
                 fflush(stdout);
-            } else if (c == 127 || c == '\b') { // backspace
+            } else if (c == 127 || c == '\b') { /* backspace */
                 if (input_len > 0) {
                     input_len--;
                     input_buf[input_len] = '\0';
@@ -299,7 +333,8 @@ void run_server(void) {
             int idx = find_client(&client_addr);
             if (idx < 0) {
                 /* New client registration */
-                if (strstr(buf, my_username) != NULL) {
+                if (strstr(buf, "quit the chat.") != NULL) {
+                    /* Do not register a client that immediately quits */
                     continue;
                 }
                 client_t *client = malloc(sizeof(client_t));
@@ -313,8 +348,8 @@ void run_server(void) {
                 add_client(client);
 
                 char timestamp[64];
-                get_timestamp(timestamp, sizeof(timestamp));
                 char join_msg[BUF_SIZE];
+                get_timestamp(timestamp, sizeof(timestamp));
                 snprintf(join_msg, sizeof(join_msg), "[%s] %s joined the chat.\n", timestamp, client->username);
                 printf("\r\33[2K%s", join_msg);
                 reprint_prompt(input_buf);
@@ -322,8 +357,8 @@ void run_server(void) {
             } else {
                 /* Regular chat message from a known client */
                 char timestamp[64];
-                get_timestamp(timestamp, sizeof(timestamp));
                 char formatted[BUF_SIZE];
+                get_timestamp(timestamp, sizeof(timestamp));
                 pthread_mutex_lock(&clients_mutex);
                 const char *sender = clients[idx]->username;
                 pthread_mutex_unlock(&clients_mutex);
@@ -331,6 +366,12 @@ void run_server(void) {
                 ensure_newline(formatted, sizeof(formatted));
                 printf("\r\33[2K%s", formatted);
                 reprint_prompt(input_buf);
+                /* If the message is a quit message, broadcast it and remove the client */
+                if (strstr(buf, "quit the chat.") != NULL) {
+                    broadcast_message(formatted, &client_addr);
+                    remove_client(&client_addr);
+                    continue;
+                }
                 broadcast_message(formatted, &client_addr);
             }
         }
@@ -342,7 +383,7 @@ void run_server(void) {
 /*
  * Client mode: Discover the server, register the username, and exchange chat messages.
  * The client uses a raw-mode line editor so that incoming messages do not disturb the partial input.
- * In this update, when the user sends a message, it is immediately formatted and printed locally.
+ * When the user sends a message, if the input equals "/quit", a quit message is sent before the client gracefully exits.
  */
 void run_client(const char *username, const char *server_ip) {
     enable_raw_mode();
@@ -395,15 +436,30 @@ void run_client(const char *username, const char *server_ip) {
             }
             if (c == '\n' || c == '\r') {
                 input_buf[input_len] = '\0';
+                /* Check for graceful exit command */
+                if (strcmp(input_buf, "/quit") == 0) {
+                    char timestamp[64];
+                    char quit_msg[BUF_SIZE];
+                    get_timestamp(timestamp, sizeof(timestamp));
+                    snprintf(quit_msg, sizeof(quit_msg), "[%s] %s quit the chat.\n", timestamp, username);
+                    if (sendto(sock, quit_msg, strlen(quit_msg), 0,
+                               (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+                        perror("sendto");
+                    }
+                    printf("\r\33[2K[INFO] Exiting chat...\n");
+                    disable_raw_mode();
+                    close(sock);
+                    exit(EXIT_SUCCESS);
+                }
                 if (input_len > 0) {
                     if (sendto(sock, input_buf, strlen(input_buf), 0,
                                (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
                         perror("sendto");
                     }
-                    // Format and immediately print the client's own message.
+                    /* Format and immediately print the client's own message */
                     char timestamp[64];
-                    get_timestamp(timestamp, sizeof(timestamp));
                     char message[BUF_SIZE];
+                    get_timestamp(timestamp, sizeof(timestamp));
                     snprintf(message, sizeof(message), "[%s] %s - %s", timestamp, username, input_buf);
                     ensure_newline(message, sizeof(message));
                     printf("\r\33[2K%s", message);
@@ -412,7 +468,7 @@ void run_client(const char *username, const char *server_ip) {
                 input_buf[0] = '\0';
                 printf(">> ");
                 fflush(stdout);
-            } else if (c == 127 || c == '\b') { // backspace
+            } else if (c == 127 || c == '\b') { /* backspace */
                 if (input_len > 0) {
                     input_len--;
                     input_buf[input_len] = '\0';
@@ -450,7 +506,7 @@ void run_client(const char *username, const char *server_ip) {
                 if (dash && (size_t)(dash - start) < sizeof(sender)) {
                     memcpy(sender, start, dash - start);
                     sender[dash - start] = '\0';
-                    // Filter out the echo of our own message (since we print it immediately on send)
+                    /* Filter out the echo of our own message (since we print it immediately on send) */
                     if (strcmp(sender, username) == 0) {
                         continue;
                     }

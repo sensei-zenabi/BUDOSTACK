@@ -1,29 +1,21 @@
 /*
  * ctalk.c - A minimal MVP chat application for a local network.
  *
- * Design:
- *   - When started with a username (ctalk username), the app first tries to bind
- *     a TCP listening socket on a well-known port (60000). If binding succeeds,
- *     it assumes the role of the server.
- *
- *   - The server spawns a UDP broadcast thread that periodically sends a fixed
- *     advertisement ("CTALK_SERVER") on UDP port 60001.
- *
- *   - Clients (which fail to bind the TCP port) call discover_server() to listen
- *     on UDP port 60001 for the advertisement and then connect to the server's IP.
- *
- *   - After connecting via TCP, the client immediately sends its username.
- *     Thereafter, both server and client use select() to monitor standard input
- *     (for outgoing messages) and the socket (for incoming messages). All messages
- *     are displayed with a timestamp and sender’s username in an IRC-like view.
- *
- *   - The server accepts new client connections, reads the initial username from
- *     each, and then relays any message received from one client to all the others.
- *
- *   - This implementation uses basic POSIX socket APIs, select() for I/O multiplexing,
- *     and pthread for running the UDP broadcaster concurrently.
+ * Design (Modified with Diagnostics):
+ *   - Every instance first attempts UDP discovery for an existing ctalk server.
+ *     Diagnostic messages indicate that the instance is listening for broadcasts.
+ *   - If a broadcast ("CTALK_SERVER") is received within the timeout, the instance
+ *     joins as a client; otherwise, it becomes the server.
+ *   - Server mode prints extra diagnostic messages about binding and starting the UDP
+ *     broadcast thread.
+ *   - Client mode prints messages to indicate successful discovery and connection.
  *
  * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
+ *
+ * Design principles:
+ *   - Use UDP discovery first to ensure later instances become clients.
+ *   - Provide clear diagnostic output to inform the user of the current mode and actions.
+ *   - Use standard C libraries and POSIX APIs.
  */
 
 #include <stdio.h>
@@ -47,7 +39,7 @@
 #define BUF_SIZE 1024
 #define MAX_CLIENTS FD_SETSIZE
 
-// Structure to hold connected client info.
+/* Structure to hold connected client info. */
 typedef struct {
     int sockfd;
     char username[64];
@@ -104,7 +96,7 @@ void get_timestamp(char *buf, size_t size) {
  * Periodically sends "CTALK_SERVER" as a broadcast message.
  */
 void *udp_broadcast_thread(void *arg) {
-	(void)arg;
+    (void)arg;
     int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (udp_sock < 0) {
         perror("UDP socket");
@@ -123,9 +115,12 @@ void *udp_broadcast_thread(void *arg) {
     broadcast_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
 
     const char *broadcast_msg = "CTALK_SERVER";
+    fprintf(stdout, "[INFO] Starting UDP broadcast thread: advertising ctalk server on UDP port %d every %d seconds.\n", UDP_PORT, BROADCAST_INTERVAL);
     while (1) {
-        sendto(udp_sock, broadcast_msg, strlen(broadcast_msg), 0,
-               (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr));
+        if (sendto(udp_sock, broadcast_msg, strlen(broadcast_msg), 0,
+               (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr)) < 0) {
+            perror("sendto");
+        }
         sleep(BROADCAST_INTERVAL);
     }
     close(udp_sock);
@@ -136,7 +131,7 @@ void *udp_broadcast_thread(void *arg) {
  * Uses select() to multiplex the listening socket, STDIN, and all client sockets.
  */
 void run_server(const char *username) {
-    printf("Starting ctalk server as '%s' on TCP port %d...\n", username, TCP_PORT);
+    printf("[INFO] Starting ctalk server as '%s' on TCP port %d...\n", username, TCP_PORT);
 
     int listen_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_sock < 0) {
@@ -163,11 +158,11 @@ void run_server(const char *username) {
         exit(EXIT_FAILURE);
     }
 
-    // Start UDP broadcast thread
+    /* Start UDP broadcast thread so that clients can discover this server. */
     pthread_t udp_thread;
     if (pthread_create(&udp_thread, NULL, udp_broadcast_thread, NULL) != 0) {
         perror("pthread_create");
-        // Continue even if broadcasting fails
+        /* Continue even if broadcasting fails */
     }
 
     fd_set read_fds;
@@ -192,7 +187,7 @@ void run_server(const char *username) {
             break;
         }
 
-        // New client connection
+        /* New client connection */
         if (FD_ISSET(listen_sock, &read_fds)) {
             struct sockaddr_in client_addr;
             socklen_t addrlen = sizeof(client_addr);
@@ -200,7 +195,6 @@ void run_server(const char *username) {
             if (client_sock < 0) {
                 perror("accept");
             } else {
-                // Expect the client to send its username as the first message
                 memset(buf, 0, BUF_SIZE);
                 int n = recv(client_sock, buf, sizeof(buf) - 1, 0);
                 if (n <= 0) {
@@ -227,7 +221,7 @@ void run_server(const char *username) {
             }
         }
 
-        // Local input from server user
+        /* Local input from server user */
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             memset(buf, 0, BUF_SIZE);
             if (fgets(buf, sizeof(buf), stdin) != NULL) {
@@ -240,7 +234,7 @@ void run_server(const char *username) {
             }
         }
 
-        // Check each client socket for incoming messages
+        /* Check each client socket for incoming messages */
         pthread_mutex_lock(&clients_mutex);
         for (int i = 0; i < client_count; i++) {
             int sd = clients[i]->sockfd;
@@ -296,9 +290,9 @@ void run_client(const char *username, const char *server_ip) {
         close(sock);
         exit(EXIT_FAILURE);
     }
-    // Send the client's username as the first message.
+    /* Send the client's username as the first message. */
     send(sock, username, strlen(username), 0);
-    printf("Connected to ctalk server at %s\n", server_ip);
+    printf("[INFO] Connected to ctalk server at %s\n", server_ip);
 
     fd_set read_fds;
     int maxfd = sock > STDIN_FILENO ? sock : STDIN_FILENO;
@@ -314,19 +308,19 @@ void run_client(const char *username, const char *server_ip) {
             perror("select");
             break;
         }
-        // Handle local input
+        /* Handle local input */
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             memset(buf, 0, BUF_SIZE);
             if (fgets(buf, sizeof(buf), stdin) != NULL) {
                 send(sock, buf, strlen(buf), 0);
             }
         }
-        // Handle incoming messages from server
+        /* Handle incoming messages from server */
         if (FD_ISSET(sock, &read_fds)) {
             memset(buf, 0, BUF_SIZE);
             int n = recv(sock, buf, sizeof(buf) - 1, 0);
             if (n <= 0) {
-                printf("Disconnected from server.\n");
+                printf("[WARN] Disconnected from server.\n");
                 break;
             } else {
                 printf("%s", buf);
@@ -340,6 +334,8 @@ void run_client(const char *username, const char *server_ip) {
 /* Client UDP discovery: Listens for a UDP broadcast message ("CTALK_SERVER")
  * on UDP_PORT and returns the sender's IP address as a string.
  * Caller is responsible for freeing the returned string.
+ *
+ * Diagnostic messages are printed to inform the user about the discovery process.
  */
 char *discover_server() {
     int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -357,11 +353,16 @@ char *discover_server() {
         close(udp_sock);
         return NULL;
     }
-    // Set a 5-second timeout on recvfrom()
+    fprintf(stdout, "[INFO] Listening for ctalk server broadcast on UDP port %d (timeout 10 seconds)...\n", UDP_PORT);
+    /* Set a 10-second timeout on recvfrom() to allow for delayed broadcasts */
     struct timeval tv;
-    tv.tv_sec = 5;
+    tv.tv_sec = 10;
     tv.tv_usec = 0;
-    setsockopt(udp_sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv));
+    if (setsockopt(udp_sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv)) < 0) {
+        perror("setsockopt");
+        close(udp_sock);
+        return NULL;
+    }
 
     char buffer[128];
     struct sockaddr_in sender;
@@ -378,6 +379,7 @@ char *discover_server() {
         server_ip = malloc(INET_ADDRSTRLEN);
         if (server_ip) {
             inet_ntop(AF_INET, &(sender.sin_addr), server_ip, INET_ADDRSTRLEN);
+            fprintf(stdout, "[INFO] Received ctalk server broadcast from %s\n", server_ip);
         }
     }
     close(udp_sock);
@@ -385,9 +387,9 @@ char *discover_server() {
 }
 
 /* Main function: expects one argument - the username.
- * It tries to bind a TCP listening socket on TCP_PORT.
- * If binding succeeds, it runs in server mode.
- * Otherwise, it acts as a client by discovering the server via UDP.
+ * Modified: Instead of checking for local TCP bind success,
+ * the instance first attempts to discover an existing server via UDP.
+ * If found, it joins as a client; otherwise, it becomes the server.
  */
 int main(int argc, char *argv[]) {
     if (argc != 2) {
@@ -396,42 +398,16 @@ int main(int argc, char *argv[]) {
     }
     const char *username = argv[1];
 
-    // Try to bind a TCP socket on TCP_PORT to check if we're the first
-    int test_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (test_sock < 0) {
-        perror("socket");
-        exit(EXIT_FAILURE);
-    }
-    int opt = 1;
-    setsockopt(test_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    struct sockaddr_in test_addr;
-    memset(&test_addr, 0, sizeof(test_addr));
-    test_addr.sin_family = AF_INET;
-    test_addr.sin_port = htons(TCP_PORT);
-    test_addr.sin_addr.s_addr = INADDR_ANY;
-
-    int server_mode = 0;
-    if (bind(test_sock, (struct sockaddr *)&test_addr, sizeof(test_addr)) == 0) {
-        // Binding succeeded: we are the first; run as server.
-        server_mode = 1;
-        close(test_sock); // Will re-create socket in run_server()
-    } else {
-        // Binding failed: assume server already exists.
-        server_mode = 0;
-        close(test_sock);
-    }
-
-    if (server_mode) {
-        run_server(username);
-    } else {
-        // Discover the server using UDP broadcast
-        char *server_ip = discover_server();
-        if (server_ip == NULL) {
-            fprintf(stderr, "No ctalk server found in the network.\n");
-            exit(EXIT_FAILURE);
-        }
+    fprintf(stdout, "[INFO] Starting ctalk instance with username '%s'\n", username);
+    /* Try to discover an existing ctalk server on the LAN */
+    char *server_ip = discover_server();
+    if (server_ip != NULL) {
+        printf("[INFO] Discovered ctalk server at %s. Joining as client...\n", server_ip);
         run_client(username, server_ip);
         free(server_ip);
+        exit(EXIT_SUCCESS);
     }
+    printf("[INFO] No ctalk server discovered. Becoming the server...\n");
+    run_server(username);
     return 0;
 }

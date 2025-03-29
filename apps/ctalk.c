@@ -1,23 +1,21 @@
 /*
  * ctalk.c - A minimal MVP chat application for a local network.
  *
- * Design (Modified with Diagnostics and Non-blocking Sockets):
+ * Design (Modified for Proper Non-blocking Handling):
  *   - Every instance first attempts UDP discovery for an existing ctalk server.
  *     Diagnostic messages indicate that the instance is listening for broadcasts.
  *   - If a broadcast ("CTALK_SERVER") is received within the timeout, the instance
  *     joins as a client; otherwise, it becomes the server.
- *   - In server mode, each accepted client socket is set to non-blocking mode so that
- *     a slow or non-responsive client does not block broadcast_message().
- *   - In client mode, the socket is also set to non-blocking mode.
- *   - Diagnostic messages (prefixed with [INFO] or [WARN]) show key events and potential
- *     send() issues.
+ *   - In both server and client modes, sockets are set to non-blocking mode.
+ *   - When reading from a non-blocking socket, a return value of -1 with errno set
+ *     to EAGAIN/EWOULDBLOCK is not considered a disconnection.
  *
  * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
  *
  * Design principles:
- *   - Prioritize UDP discovery so that later instances join as clients.
- *   - Use non-blocking sockets for clients to avoid blocking on send() if a client is slow.
- *   - Provide clear diagnostic output to inform the user of current mode and actions.
+ *   - Use UDP discovery so that later instances join as clients.
+ *   - Use non-blocking sockets and proper error checks on recv() to avoid premature disconnect.
+ *   - Provide clear diagnostic output.
  *   - Use standard C libraries and POSIX APIs.
  */
 
@@ -216,7 +214,12 @@ void run_server(const char *username) {
                 memset(buf, 0, BUF_SIZE);
                 int n = recv(client_sock, buf, sizeof(buf) - 1, 0);
                 if (n <= 0) {
-                    close(client_sock);
+                    if(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                        // No data yet; wait for the client to send its username.
+                        fprintf(stderr, "[WARN] No initial data from client on socket %d. Waiting...\n", client_sock);
+                    } else {
+                        close(client_sock);
+                    }
                 } else {
                     client_t *client = malloc(sizeof(client_t));
                     if (!client) {
@@ -259,7 +262,8 @@ void run_server(const char *username) {
             if (FD_ISSET(sd, &read_fds)) {
                 memset(buf, 0, BUF_SIZE);
                 int n = recv(sd, buf, sizeof(buf) - 1, 0);
-                if (n <= 0) {
+                if (n == 0) {
+                    // Client closed connection
                     char timestamp[64];
                     get_timestamp(timestamp, sizeof(timestamp));
                     char leave_msg[BUF_SIZE];
@@ -269,6 +273,22 @@ void run_server(const char *username) {
                     close(sd);
                     remove_client(sd);
                     i--; // Adjust index since we removed a client
+                } else if (n < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        // No data available, not an error.
+                        continue;
+                    } else {
+                        perror("recv");
+                        char timestamp[64];
+                        get_timestamp(timestamp, sizeof(timestamp));
+                        char leave_msg[BUF_SIZE];
+                        snprintf(leave_msg, sizeof(leave_msg), "[%s] %s left the chat (error).\n", timestamp, clients[i]->username);
+                        printf("%s", leave_msg);
+                        broadcast_message(leave_msg, sd);
+                        close(sd);
+                        remove_client(sd);
+                        i--;
+                    }
                 } else {
                     char timestamp[64];
                     get_timestamp(timestamp, sizeof(timestamp));
@@ -348,9 +368,17 @@ void run_client(const char *username, const char *server_ip) {
         if (FD_ISSET(sock, &read_fds)) {
             memset(buf, 0, BUF_SIZE);
             int n = recv(sock, buf, sizeof(buf) - 1, 0);
-            if (n <= 0) {
+            if (n == 0) {
                 printf("[WARN] Disconnected from server.\n");
                 break;
+            } else if (n < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // No data available.
+                    continue;
+                } else {
+                    perror("recv");
+                    break;
+                }
             } else {
                 printf("%s", buf);
             }

@@ -1,22 +1,18 @@
 /*
  * ctalk.c - A minimal MVP chat application for a local network.
  *
- * Design (Modified for Proper Non-blocking Handling):
- *   - Every instance first attempts UDP discovery for an existing ctalk server.
- *     Diagnostic messages indicate that the instance is listening for broadcasts.
- *   - If a broadcast ("CTALK_SERVER") is received within the timeout, the instance
- *     joins as a client; otherwise, it becomes the server.
- *   - In both server and client modes, sockets are set to non-blocking mode.
- *   - When reading from a non-blocking socket, a return value of -1 with errno set
- *     to EAGAIN/EWOULDBLOCK is not considered a disconnection.
+ * Fixed version with output buffering for non-blocking sockets.
+ *
+ * Design:
+ *   - Each client_t now has an output buffer (outbuf) to hold unsent data.
+ *   - When send() returns EAGAIN/EWOULDBLOCK or sends only part of a message,
+ *     the unsent data is buffered.
+ *   - The main select() loop now monitors for write-readiness on client sockets
+ *     (or the single socket on the client side) so that buffered data can be flushed.
  *
  * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
  *
- * Design principles:
- *   - Use UDP discovery so that later instances join as clients.
- *   - Use non-blocking sockets and proper error checks on recv() to avoid premature disconnect.
- *   - Provide clear diagnostic output.
- *   - Use standard C libraries and POSIX APIs.
+ * Note: This is a simple solution and does not implement a fully robust buffering mechanism.
  */
 
 #include <stdio.h>
@@ -40,32 +36,73 @@
 #define BUF_SIZE 1024
 #define MAX_CLIENTS FD_SETSIZE
 
-/* Structure to hold connected client info. */
+/* Structure to hold connected client info.
+ * An output buffer (outbuf) is used to store messages that could not be sent immediately.
+ */
 typedef struct {
     int sockfd;
     char username[64];
+    char *outbuf;         // Pointer to output buffer
+    size_t outbuf_len;    // Total size of the buffer
+    size_t outbuf_sent;   // Bytes already sent from the buffer
 } client_t;
 
 client_t *clients[MAX_CLIENTS];
 int client_count = 0;
 pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* Flush as much of a client's output buffer as possible.
+ * If an error occurs, the caller should remove the client.
+ */
+void flush_client_buffer(client_t *client) {
+    while (client->outbuf_sent < client->outbuf_len) {
+        ssize_t n = send(client->sockfd, client->outbuf + client->outbuf_sent,
+                         client->outbuf_len - client->outbuf_sent, 0);
+        if (n > 0) {
+            client->outbuf_sent += n;
+        } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            break;
+        } else {
+            perror("send");
+            break;
+        }
+    }
+    if (client->outbuf_sent == client->outbuf_len) {
+        free(client->outbuf);
+        client->outbuf = NULL;
+        client->outbuf_len = 0;
+        client->outbuf_sent = 0;
+    }
+}
+
+/* Append message to a client's output buffer.
+ * The unsent data is preserved and the function attempts to flush the buffer immediately.
+ */
+void append_to_client_buffer(client_t *client, const char *msg) {
+    size_t msg_len = strlen(msg);
+    size_t pending = client->outbuf_len - client->outbuf_sent;
+    size_t new_size = pending + msg_len;
+    char *newbuf = malloc(new_size);
+    if (!newbuf) return;
+    if (pending > 0) {
+        memcpy(newbuf, client->outbuf + client->outbuf_sent, pending);
+    }
+    memcpy(newbuf + pending, msg, msg_len);
+    free(client->outbuf);
+    client->outbuf = newbuf;
+    client->outbuf_len = new_size;
+    client->outbuf_sent = 0;
+    flush_client_buffer(client);
+}
+
 /* Broadcast a message to all connected clients.
- * If exclude_fd is not -1, do not send the message to that socket.
- * Non-blocking send is used; if a send would block, the message is dropped.
+ * Each client gets the message appended to its output buffer.
  */
 void broadcast_message(const char *msg, int exclude_fd) {
     pthread_mutex_lock(&clients_mutex);
     for (int i = 0; i < client_count; i++) {
         if (clients[i]->sockfd != exclude_fd) {
-            ssize_t sent = send(clients[i]->sockfd, msg, strlen(msg), 0);
-            if (sent < 0) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    fprintf(stderr, "[WARN] send() would block on socket %d. Message dropped.\n", clients[i]->sockfd);
-                } else {
-                    perror("send");
-                }
-            }
+            append_to_client_buffer(clients[i], msg);
         }
     }
     pthread_mutex_unlock(&clients_mutex);
@@ -85,6 +122,7 @@ void remove_client(int sockfd) {
     pthread_mutex_lock(&clients_mutex);
     for (int i = 0; i < client_count; i++) {
         if (clients[i]->sockfd == sockfd) {
+            free(clients[i]->outbuf);
             free(clients[i]);
             clients[i] = clients[client_count - 1];
             client_count--;
@@ -136,8 +174,9 @@ void *udp_broadcast_thread(void *arg) {
     pthread_exit(NULL);
 }
 
-/* Server mode: Accept connections, relay messages, and include local input.
- * Uses select() to multiplex the listening socket, STDIN, and all client sockets.
+/* Server mode: Accept connections, relay messages, and handle local input.
+ * Uses select() to multiplex the listening socket, STDIN, client sockets for reading,
+ * and also monitors client sockets for writability when output buffers are not empty.
  */
 void run_server(const char *username) {
     printf("[INFO] Starting ctalk server as '%s' on TCP port %d...\n", username, TCP_PORT);
@@ -171,32 +210,48 @@ void run_server(const char *username) {
     pthread_t udp_thread;
     if (pthread_create(&udp_thread, NULL, udp_broadcast_thread, NULL) != 0) {
         perror("pthread_create");
-        /* Continue even if broadcasting fails */
     }
 
-    fd_set read_fds;
-    int maxfd = listen_sock > STDIN_FILENO ? listen_sock : STDIN_FILENO;
+    int maxfd;
     char buf[BUF_SIZE];
 
     while (1) {
+        fd_set read_fds, write_fds;
         FD_ZERO(&read_fds);
+        FD_ZERO(&write_fds);
         FD_SET(listen_sock, &read_fds);
         FD_SET(STDIN_FILENO, &read_fds);
+        maxfd = listen_sock;
+        if (STDIN_FILENO > maxfd) maxfd = STDIN_FILENO;
+        
         pthread_mutex_lock(&clients_mutex);
         for (int i = 0; i < client_count; i++) {
             FD_SET(clients[i]->sockfd, &read_fds);
             if (clients[i]->sockfd > maxfd)
                 maxfd = clients[i]->sockfd;
+            /* Monitor for writability if there is pending data */
+            if (clients[i]->outbuf && clients[i]->outbuf_len > clients[i]->outbuf_sent) {
+                FD_SET(clients[i]->sockfd, &write_fds);
+            }
         }
         pthread_mutex_unlock(&clients_mutex);
 
-        int activity = select(maxfd + 1, &read_fds, NULL, NULL, NULL);
+        int activity = select(maxfd + 1, &read_fds, &write_fds, NULL, NULL);
         if (activity < 0) {
             perror("select");
             break;
         }
 
-        /* New client connection */
+        /* First, flush output buffers for clients that are writable. */
+        pthread_mutex_lock(&clients_mutex);
+        for (int i = 0; i < client_count; i++) {
+            if (FD_ISSET(clients[i]->sockfd, &write_fds)) {
+                flush_client_buffer(clients[i]);
+            }
+        }
+        pthread_mutex_unlock(&clients_mutex);
+
+        /* Accept new connections. */
         if (FD_ISSET(listen_sock, &read_fds)) {
             struct sockaddr_in client_addr;
             socklen_t addrlen = sizeof(client_addr);
@@ -204,7 +259,6 @@ void run_server(const char *username) {
             if (client_sock < 0) {
                 perror("accept");
             } else {
-                /* Set the client socket to non-blocking mode */
                 int flags = fcntl(client_sock, F_GETFL, 0);
                 if (flags == -1) flags = 0;
                 fcntl(client_sock, F_SETFL, flags | O_NONBLOCK);
@@ -215,7 +269,6 @@ void run_server(const char *username) {
                 int n = recv(client_sock, buf, sizeof(buf) - 1, 0);
                 if (n <= 0) {
                     if(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                        // No data yet; wait for the client to send its username.
                         fprintf(stderr, "[WARN] No initial data from client on socket %d. Waiting...\n", client_sock);
                     } else {
                         close(client_sock);
@@ -229,6 +282,9 @@ void run_server(const char *username) {
                         client->sockfd = client_sock;
                         strncpy(client->username, buf, sizeof(client->username) - 1);
                         client->username[sizeof(client->username) - 1] = '\0';
+                        client->outbuf = NULL;
+                        client->outbuf_len = 0;
+                        client->outbuf_sent = 0;
                         add_client(client);
 
                         char timestamp[64];
@@ -242,7 +298,7 @@ void run_server(const char *username) {
             }
         }
 
-        /* Local input from server user */
+        /* Handle local input from server user. */
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             memset(buf, 0, BUF_SIZE);
             if (fgets(buf, sizeof(buf), stdin) != NULL) {
@@ -255,7 +311,7 @@ void run_server(const char *username) {
             }
         }
 
-        /* Check each client socket for incoming messages */
+        /* Handle incoming messages from clients. */
         pthread_mutex_lock(&clients_mutex);
         for (int i = 0; i < client_count; i++) {
             int sd = clients[i]->sockfd;
@@ -263,7 +319,6 @@ void run_server(const char *username) {
                 memset(buf, 0, BUF_SIZE);
                 int n = recv(sd, buf, sizeof(buf) - 1, 0);
                 if (n == 0) {
-                    // Client closed connection
                     char timestamp[64];
                     get_timestamp(timestamp, sizeof(timestamp));
                     char leave_msg[BUF_SIZE];
@@ -272,10 +327,9 @@ void run_server(const char *username) {
                     broadcast_message(leave_msg, sd);
                     close(sd);
                     remove_client(sd);
-                    i--; // Adjust index since we removed a client
+                    i--;
                 } else if (n < 0) {
                     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                        // No data available, not an error.
                         continue;
                     } else {
                         perror("recv");
@@ -307,6 +361,7 @@ void run_server(const char *username) {
 
 /* Client mode: Discover the server via UDP broadcast, connect via TCP,
  * send the client’s username, and then use select() to handle incoming and outgoing messages.
+ * This version uses an output buffer for unsent messages and monitors the socket for writability.
  */
 void run_client(const char *username, const char *server_ip) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -328,7 +383,6 @@ void run_client(const char *username, const char *server_ip) {
         close(sock);
         exit(EXIT_FAILURE);
     }
-    /* Set client socket to non-blocking mode */
     int flags = fcntl(sock, F_GETFL, 0);
     if (flags == -1) flags = 0;
     fcntl(sock, F_SETFL, flags | O_NONBLOCK);
@@ -338,33 +392,72 @@ void run_client(const char *username, const char *server_ip) {
     send(sock, username, strlen(username), 0);
     printf("[INFO] Connected to ctalk server at %s\n", server_ip);
 
-    fd_set read_fds;
-    int maxfd = sock > STDIN_FILENO ? sock : STDIN_FILENO;
     char buf[BUF_SIZE];
+    char *outbuf = NULL;
+    size_t outbuf_len = 0;
+    size_t outbuf_sent = 0;
+    int maxfd = sock > STDIN_FILENO ? sock : STDIN_FILENO;
 
     while (1) {
+        fd_set read_fds, write_fds;
         FD_ZERO(&read_fds);
+        FD_ZERO(&write_fds);
         FD_SET(STDIN_FILENO, &read_fds);
         FD_SET(sock, &read_fds);
-
-        int activity = select(maxfd + 1, &read_fds, NULL, NULL, NULL);
+        if (outbuf && outbuf_len > outbuf_sent) {
+            FD_SET(sock, &write_fds);
+        }
+        int activity = select(maxfd + 1, &read_fds, &write_fds, NULL, NULL);
         if (activity < 0) {
             perror("select");
             break;
         }
-        /* Handle local input */
+        /* Flush outgoing buffer if the socket is writable. */
+        if (outbuf && FD_ISSET(sock, &write_fds)) {
+            while (outbuf_sent < outbuf_len) {
+                ssize_t n = send(sock, outbuf + outbuf_sent, outbuf_len - outbuf_sent, 0);
+                if(n > 0) {
+                    outbuf_sent += n;
+                } else if(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                    break;
+                } else {
+                    perror("send");
+                    break;
+                }
+            }
+            if (outbuf_sent == outbuf_len) {
+                free(outbuf);
+                outbuf = NULL;
+                outbuf_len = 0;
+                outbuf_sent = 0;
+            }
+        }
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             memset(buf, 0, BUF_SIZE);
             if (fgets(buf, sizeof(buf), stdin) != NULL) {
-                if (send(sock, buf, strlen(buf), 0) < 0) {
-                    if (errno == EAGAIN || errno == EWOULDBLOCK)
-                        fprintf(stderr, "[WARN] send() would block. Message dropped.\n");
-                    else
+                size_t msg_len = strlen(buf);
+                ssize_t n = send(sock, buf, msg_len, 0);
+                if(n < 0) {
+                    if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                        size_t pending = outbuf ? (outbuf_len - outbuf_sent) : 0;
+                        size_t new_size = pending + msg_len;
+                        char *newbuf = malloc(new_size);
+                        if(newbuf) {
+                            if(outbuf && pending > 0) {
+                                memcpy(newbuf, outbuf + outbuf_sent, pending);
+                                free(outbuf);
+                            }
+                            memcpy(newbuf + pending, buf, msg_len);
+                            outbuf = newbuf;
+                            outbuf_len = new_size;
+                            outbuf_sent = 0;
+                        }
+                    } else {
                         perror("send");
+                    }
                 }
             }
         }
-        /* Handle incoming messages from server */
         if (FD_ISSET(sock, &read_fds)) {
             memset(buf, 0, BUF_SIZE);
             int n = recv(sock, buf, sizeof(buf) - 1, 0);
@@ -373,7 +466,6 @@ void run_client(const char *username, const char *server_ip) {
                 break;
             } else if (n < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    // No data available.
                     continue;
                 } else {
                     perror("recv");
@@ -390,9 +482,6 @@ void run_client(const char *username, const char *server_ip) {
 
 /* Client UDP discovery: Listens for a UDP broadcast message ("CTALK_SERVER")
  * on UDP_PORT and returns the sender's IP address as a string.
- * Caller is responsible for freeing the returned string.
- *
- * Diagnostic messages are printed to inform the user about the discovery process.
  */
 char *discover_server() {
     int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -411,7 +500,6 @@ char *discover_server() {
         return NULL;
     }
     fprintf(stdout, "[INFO] Listening for ctalk server broadcast on UDP port %d (timeout 10 seconds)...\n", UDP_PORT);
-    /* Set a 10-second timeout on recvfrom() to allow for delayed broadcasts */
     struct timeval tv;
     tv.tv_sec = 10;
     tv.tv_usec = 0;
@@ -420,7 +508,6 @@ char *discover_server() {
         close(udp_sock);
         return NULL;
     }
-
     char buffer[128];
     struct sockaddr_in sender;
     socklen_t sender_len = sizeof(sender);
@@ -443,11 +530,6 @@ char *discover_server() {
     return server_ip;
 }
 
-/* Main function: expects one argument - the username.
- * Modified: Instead of checking for local TCP bind success,
- * the instance first attempts to discover an existing server via UDP.
- * If found, it joins as a client; otherwise, it becomes the server.
- */
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s username\n", argv[0]);
@@ -456,7 +538,6 @@ int main(int argc, char *argv[]) {
     const char *username = argv[1];
 
     fprintf(stdout, "[INFO] Starting ctalk instance with username '%s'\n", username);
-    /* Try to discover an existing ctalk server on the LAN */
     char *server_ip = discover_server();
     if (server_ip != NULL) {
         printf("[INFO] Discovered ctalk server at %s. Joining as client...\n", server_ip);

@@ -55,14 +55,14 @@ int main(int argc, char *argv[]) {
         }
         // If the argument is "changes", execute "git log --name-only"
         else if (strcmp(argv[1], "changes") == 0) {
-            char *args[] = {"git", "log", "--name-only", NULL};
+            char *args[] = {"git", "log", "--stat", "--graph", NULL};
             execvp("git", args);
             perror("execvp failed");
             exit(EXIT_FAILURE);
         }
         // Otherwise treat it as a file path and execute "git log --follow -- <file>"
         else {
-            char *args[] = {"git", "log", "--follow", "--", argv[1], NULL};
+            char *args[] = {"git", "log", "--stat", "--graph", "--follow", "--", argv[1], NULL};
             execvp("git", args);
             perror("execvp failed");
             exit(EXIT_FAILURE);

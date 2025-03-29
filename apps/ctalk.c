@@ -11,11 +11,11 @@
  *     so that clients can automatically discover the server.
  *   - The client uses a UDP socket to send its registration and chat messages to the server,
  *     and uses select() to multiplex between STDIN (for user input) and incoming UDP messages.
- *   - Both server and client now filter out messages originating from themselves.
- *   - The server now uses the provided username (instead of hardcoded "SERVER").
+ *   - Both server and client filter out messages originating from themselves.
  *   - When sending a message, the local copy is not immediately printed; it is only shown when
  *     received via UDP (and filtered out on the local side). This avoids duplicate display.
- *   - A simple prompt (">> ") is printed after received messages to help keep the input at the bottom.
+ *   - The prompt ">> " is reprinted after every message output (whether sent or received)
+ *     to preserve user input visibility even when multiple sequential messages occur.
  *
  * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
  */
@@ -106,6 +106,17 @@ void get_timestamp(char *buf, size_t size) {
     strftime(buf, size, "%Y-%m-%d %H:%M:%S", t);
 }
 
+/* Helper to ensure message ends with a newline */
+void ensure_newline(char *msg, size_t size) {
+    size_t len = strlen(msg);
+    if (len > 0 && msg[len - 1] != '\n') {
+        if (len + 1 < size) {
+            msg[len] = '\n';
+            msg[len + 1] = '\0';
+        }
+    }
+}
+
 /* UDP discovery broadcaster thread.
  * This thread continuously broadcasts "CTALK_SERVER" on UDP_DISCOVERY_PORT
  * so that clients can discover the chat server.
@@ -147,7 +158,7 @@ void *udp_discovery_thread(void *arg) {
  * Subsequent messages are prefixed with a timestamp and the sender's username.
  * In addition, the server monitors STDIN so that the operator can send messages.
  * To avoid echoing its own messages, both operator and incoming messages are filtered based on my_username.
- * Also, a simple prompt (">> ") is printed after messages to help keep the text input at the bottom.
+ * Also, the prompt ">> " is reprinted after each message to keep the input at the bottom.
  */
 void run_server(void) {
     printf("[INFO] Starting ctalk server (UDP-only) on chat port %d...\n", UDP_CHAT_PORT);
@@ -188,10 +199,7 @@ void run_server(void) {
             continue;
         }
 
-        /* Handle local server operator input.
-         * Instead of printing the message immediately, we simply broadcast it.
-         * (The operator will not see their own message printed, matching the client behavior.)
-         */
+        /* Handle local server operator input */
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             memset(buf, 0, BUF_SIZE);
             if (fgets(buf, sizeof(buf), stdin) != NULL) {
@@ -199,7 +207,11 @@ void run_server(void) {
                 get_timestamp(timestamp, sizeof(timestamp));
                 char message[BUF_SIZE];
                 snprintf(message, sizeof(message), "[%s] %s - %s", timestamp, my_username, buf);
+                ensure_newline(message, sizeof(message));
                 broadcast_message(message, NULL);
+                /* Reprint prompt after sending a message */
+                printf(">> ");
+                fflush(stdout);
             }
         }
 
@@ -216,9 +228,8 @@ void run_server(void) {
             }
             buf[n] = '\0';
 
-            /* Filter out messages that are echoes of our own (now comparing against my_username). */
+            /* Filter out messages that are echoes of our own (comparing against my_username). */
             if (strstr(buf, my_username) != NULL && strstr(buf, " - ") != NULL) {
-                /* A simple check: if the formatted message contains our username as the sender, skip it */
                 char *start = strchr(buf, ']');
                 if (start) {
                     start++; // skip ']'
@@ -238,7 +249,7 @@ void run_server(void) {
             int idx = find_client(&client_addr);
             if (idx < 0) {
                 /* New client registration; treat the first message as the username.
-                 * If the message contains our own username (or the local operator’s name), ignore it.
+                 * Ignore if the username contains our own username.
                  */
                 if (strstr(buf, my_username) != NULL) {
                     continue;
@@ -263,9 +274,7 @@ void run_server(void) {
                 printf(">> ");
                 fflush(stdout);
             } else {
-                /* Regular chat message from a known client.
-                 * Format and broadcast the message.
-                 */
+                /* Regular chat message from a known client */
                 char timestamp[64];
                 get_timestamp(timestamp, sizeof(timestamp));
                 char formatted[BUF_SIZE];
@@ -273,6 +282,7 @@ void run_server(void) {
                 const char *sender = clients[idx]->username;
                 pthread_mutex_unlock(&clients_mutex);
                 snprintf(formatted, sizeof(formatted), "[%s] %s - %s", timestamp, sender, buf);
+                ensure_newline(formatted, sizeof(formatted));
                 printf("%s", formatted);
                 broadcast_message(formatted, &client_addr);
                 /* Reprint prompt */
@@ -290,7 +300,7 @@ void run_server(void) {
  * incoming UDP messages.
  * When a message is received, the client checks the sender's username from the formatted message.
  * If the sender matches the client's username, the message is skipped.
- * A prompt is printed after each received message to keep the text input at the bottom.
+ * The prompt ">> " is reprinted after each received message to keep the input at the bottom.
  */
 void run_client(const char *username, const char *server_ip) {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -338,6 +348,9 @@ void run_client(const char *username, const char *server_ip) {
                            (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
                     perror("sendto");
                 }
+                /* Reprint prompt after sending a message */
+                printf(">> ");
+                fflush(stdout);
             }
         }
         /* Check for incoming messages */
@@ -365,11 +378,12 @@ void run_client(const char *username, const char *server_ip) {
                     memcpy(sender, start, dash - start);
                     sender[dash - start] = '\0';
                     if (strcmp(sender, username) == 0) {
-                        /* This is our own message echoed back; skip printing */
+                        /* Skip our own echoed message */
                         continue;
                     }
                 }
             }
+            ensure_newline(buf, sizeof(buf));
             printf("%s", buf);
             /* Reprint prompt to keep input at the bottom */
             printf(">> ");

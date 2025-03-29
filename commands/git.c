@@ -33,9 +33,11 @@ void print_help(const char *prog_name) {
 
     printf("Usage:\n");
     printf("  %s                : Equivalent to 'git status'\n", base_name);
-    printf("  %s <path_to_file> : Equivalent to 'git log --follow -- <path_to_file>'\n", base_name);
-    printf("  %s changes       : Equivalent to 'git log --name-only'\n", base_name);
-    printf("  %s -help         : Display this help message\n", base_name);
+    printf("  %s <path_to_file> : Displays commits and stats of a <file>\n", base_name);
+    printf("  %s changes        : Displays all commits with stats.\n", base_name);
+    printf("  %s commits        : Displays commits per file in repo.\n", base_name);
+	printf("  %s rate           : Displays the number of commits per day.\n", base_name);
+    printf("  %s -help          : Display this help message.\n", base_name);
 }
 
 int main(int argc, char *argv[]) {
@@ -60,9 +62,16 @@ int main(int argc, char *argv[]) {
             perror("execvp failed");
             exit(EXIT_FAILURE);
         }
+        // 
+        else if (strcmp(argv[1], "rate") == 0) {
+            char *args[] = {"sh", "-c", "echo '\nNumber of Commits per Day:\n' && git log --date=format:\"%Y-%m-%d %a\" --pretty=format:\"%ad\" | sort | uniq -c | sort -r -k2,2 | awk '{print $2, $3 \":\", $1}'", NULL};
+            execvp("sh", args);
+            perror("execvp failed");
+            exit(EXIT_FAILURE);
+        }
         // If the argument is "commits"
 		else if (strcmp(argv[1], "commits") == 0) {
-            char *args[] = {"sh", "-c", "echo '\nCOMMITS PER FILE:\n' && git log --pretty=format: --name-only | sort | uniq -c | sort -rn", NULL};
+            char *args[] = {"sh", "-c", "echo '\nNumber of Commits per File:\n' && git log --pretty=format: --name-only | sort | uniq -c | sort -rn", NULL};
             execvp("sh", args);
             perror("execvp failed");
             exit(EXIT_FAILURE);

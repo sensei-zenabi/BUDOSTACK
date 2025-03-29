@@ -1,20 +1,23 @@
 /*
  * ctalk.c - A minimal MVP chat application for a local network.
  *
- * Design (Modified with Diagnostics):
+ * Design (Modified with Diagnostics and Non-blocking Sockets):
  *   - Every instance first attempts UDP discovery for an existing ctalk server.
  *     Diagnostic messages indicate that the instance is listening for broadcasts.
  *   - If a broadcast ("CTALK_SERVER") is received within the timeout, the instance
  *     joins as a client; otherwise, it becomes the server.
- *   - Server mode prints extra diagnostic messages about binding and starting the UDP
- *     broadcast thread.
- *   - Client mode prints messages to indicate successful discovery and connection.
+ *   - In server mode, each accepted client socket is set to non-blocking mode so that
+ *     a slow or non-responsive client does not block broadcast_message().
+ *   - In client mode, the socket is also set to non-blocking mode.
+ *   - Diagnostic messages (prefixed with [INFO] or [WARN]) show key events and potential
+ *     send() issues.
  *
  * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
  *
  * Design principles:
- *   - Use UDP discovery first to ensure later instances become clients.
- *   - Provide clear diagnostic output to inform the user of the current mode and actions.
+ *   - Prioritize UDP discovery so that later instances join as clients.
+ *   - Use non-blocking sockets for clients to avoid blocking on send() if a client is slow.
+ *   - Provide clear diagnostic output to inform the user of current mode and actions.
  *   - Use standard C libraries and POSIX APIs.
  */
 
@@ -51,12 +54,20 @@ pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Broadcast a message to all connected clients.
  * If exclude_fd is not -1, do not send the message to that socket.
+ * Non-blocking send is used; if a send would block, the message is dropped.
  */
 void broadcast_message(const char *msg, int exclude_fd) {
     pthread_mutex_lock(&clients_mutex);
     for (int i = 0; i < client_count; i++) {
         if (clients[i]->sockfd != exclude_fd) {
-            send(clients[i]->sockfd, msg, strlen(msg), 0);
+            ssize_t sent = send(clients[i]->sockfd, msg, strlen(msg), 0);
+            if (sent < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    fprintf(stderr, "[WARN] send() would block on socket %d. Message dropped.\n", clients[i]->sockfd);
+                } else {
+                    perror("send");
+                }
+            }
         }
     }
     pthread_mutex_unlock(&clients_mutex);
@@ -195,6 +206,13 @@ void run_server(const char *username) {
             if (client_sock < 0) {
                 perror("accept");
             } else {
+                /* Set the client socket to non-blocking mode */
+                int flags = fcntl(client_sock, F_GETFL, 0);
+                if (flags == -1) flags = 0;
+                fcntl(client_sock, F_SETFL, flags | O_NONBLOCK);
+                fprintf(stdout, "[INFO] Accepted connection from %s, socket %d set to non-blocking mode.\n",
+                        inet_ntoa(client_addr.sin_addr), client_sock);
+
                 memset(buf, 0, BUF_SIZE);
                 int n = recv(client_sock, buf, sizeof(buf) - 1, 0);
                 if (n <= 0) {
@@ -290,6 +308,12 @@ void run_client(const char *username, const char *server_ip) {
         close(sock);
         exit(EXIT_FAILURE);
     }
+    /* Set client socket to non-blocking mode */
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags == -1) flags = 0;
+    fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+    fprintf(stdout, "[INFO] Client socket set to non-blocking mode.\n");
+
     /* Send the client's username as the first message. */
     send(sock, username, strlen(username), 0);
     printf("[INFO] Connected to ctalk server at %s\n", server_ip);
@@ -312,7 +336,12 @@ void run_client(const char *username, const char *server_ip) {
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             memset(buf, 0, BUF_SIZE);
             if (fgets(buf, sizeof(buf), stdin) != NULL) {
-                send(sock, buf, strlen(buf), 0);
+                if (send(sock, buf, strlen(buf), 0) < 0) {
+                    if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        fprintf(stderr, "[WARN] send() would block. Message dropped.\n");
+                    else
+                        perror("send");
+                }
             }
         }
         /* Handle incoming messages from server */

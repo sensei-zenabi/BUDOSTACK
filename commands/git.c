@@ -48,15 +48,22 @@ int main(int argc, char *argv[]) {
     }
     // Single argument provided
     else if (argc == 2) {
-        // If the argument is "-help", print help message
+        // If the argument is "-help"
         if (strcmp(argv[1], "-help") == 0) {
             print_help(argv[0]);
             return EXIT_SUCCESS;
         }
-        // If the argument is "changes", execute "git log --name-only"
+        // If the argument is "changes"
         else if (strcmp(argv[1], "changes") == 0) {
             char *args[] = {"git", "log", "--stat", "--graph", NULL};
             execvp("git", args);
+            perror("execvp failed");
+            exit(EXIT_FAILURE);
+        }
+        // If the argument is "commits"
+		else if (strcmp(argv[1], "commits") == 0) {
+            char *args[] = {"sh", "-c", "echo '\nCOMMITS PER FILE:\n' && git log --pretty=format: --name-only | sort | uniq -c | sort -rn", NULL};
+            execvp("sh", args);
             perror("execvp failed");
             exit(EXIT_FAILURE);
         }

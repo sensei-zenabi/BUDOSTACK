@@ -54,6 +54,7 @@ void abFree(struct abuf *ab) {
 
 /* Prototype for the syntax highlighter from libedit.c */
 char *highlight_c_line(const char *line);
+char *highlight_other_line(const char *line);
 
 /* Enumeration for editor keys.
    New keys added:
@@ -189,6 +190,12 @@ int is_c_source(void) {
     if (!E.filename) return 0;
     const char *ext = strrchr(E.filename, '.');
     return (ext && ((strcmp(ext, ".c") == 0) || (strcmp(ext, ".h") == 0)));
+}
+
+int is_other_source(void) {
+    if (!E.filename) return 0;
+    const char *ext = strrchr(E.filename, '.');
+    return (ext && ((strcmp(ext, ".c") != 0) && (strcmp(ext, ".h") != 0)));
 }
 
 int getRowNumWidth(void) {
@@ -333,7 +340,13 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
                 if (highlighted) {
                     abAppend(ab, highlighted, strlen(highlighted));
                     free(highlighted);
-                }
+                } 
+            } else if (is_other_source()) {
+                char *highlighted = highlight_other_line(E.row[file_row].chars);
+                if (highlighted) {
+                    abAppend(ab, highlighted, strlen(highlighted));
+                    free(highlighted);
+				}
             } else {
                 editorRenderRow(&E.row[file_row], text_width, ab);
             }

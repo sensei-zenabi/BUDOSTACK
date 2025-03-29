@@ -11,6 +11,7 @@
  *     to let clients automatically discover the server.
  *   - The client uses a UDP socket to send its registration and chat messages to the server,
  *     and uses select() to multiplex between STDIN (for user input) and incoming UDP messages.
+ *   - The server instance now also monitors STDIN so that the server operator can participate.
  *
  * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
  */
@@ -135,6 +136,7 @@ void *udp_discovery_thread(void *arg) {
 /* Server mode: Listen for UDP chat messages and broadcast them.
  * The first message from a new client is assumed to be its username registration.
  * Subsequent messages are prefixed with a timestamp and the sender's username.
+ * In addition, the server monitors STDIN so that the operator can send messages.
  */
 void run_server(void) {
     printf("[INFO] Starting ctalk server (UDP-only) on chat port %d...\n", UDP_CHAT_PORT);
@@ -163,47 +165,76 @@ void run_server(void) {
 
     char buf[BUF_SIZE];
     while (1) {
-        struct sockaddr_in client_addr;
-        socklen_t addrlen = sizeof(client_addr);
-        memset(buf, 0, BUF_SIZE);
-        ssize_t n = recvfrom(sock, buf, BUF_SIZE - 1, 0,
-                             (struct sockaddr *)&client_addr, &addrlen);
-        if (n < 0) {
-            perror("recvfrom");
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(sock, &read_fds);
+        FD_SET(STDIN_FILENO, &read_fds);
+        int maxfd = sock > STDIN_FILENO ? sock : STDIN_FILENO;
+
+        int activity = select(maxfd + 1, &read_fds, NULL, NULL, NULL);
+        if (activity < 0) {
+            perror("select");
             continue;
         }
-        buf[n] = '\0';
 
-        int idx = find_client(&client_addr);
-        if (idx < 0) {
-            /* New client registration */
-            client_t *client = malloc(sizeof(client_t));
-            if (!client) {
-                perror("malloc");
+        /* Handle local server operator input */
+        if (FD_ISSET(STDIN_FILENO, &read_fds)) {
+            memset(buf, 0, BUF_SIZE);
+            if (fgets(buf, sizeof(buf), stdin) != NULL) {
+                char timestamp[64];
+                get_timestamp(timestamp, sizeof(timestamp));
+                char message[BUF_SIZE];
+                snprintf(message, sizeof(message), "[%s] SERVER - %s", timestamp, buf);
+                printf("%s", message);
+                /* Broadcast to all clients (NULL exclude to send to everyone) */
+                broadcast_message(message, NULL);
+            }
+        }
+
+        /* Handle incoming UDP messages from clients */
+        if (FD_ISSET(sock, &read_fds)) {
+            struct sockaddr_in client_addr;
+            socklen_t addrlen = sizeof(client_addr);
+            memset(buf, 0, BUF_SIZE);
+            ssize_t n = recvfrom(sock, buf, BUF_SIZE - 1, 0,
+                                 (struct sockaddr *)&client_addr, &addrlen);
+            if (n < 0) {
+                perror("recvfrom");
                 continue;
             }
-            client->addr = client_addr;
-            strncpy(client->username, buf, sizeof(client->username) - 1);
-            client->username[sizeof(client->username) - 1] = '\0';
-            add_client(client);
+            buf[n] = '\0';
 
-            char timestamp[64];
-            get_timestamp(timestamp, sizeof(timestamp));
-            char join_msg[BUF_SIZE];
-            snprintf(join_msg, sizeof(join_msg), "[%s] %s joined the chat.\n", timestamp, client->username);
-            printf("%s", join_msg);
-            broadcast_message(join_msg, &client_addr);
-        } else {
-            /* Regular chat message from a known client */
-            char timestamp[64];
-            get_timestamp(timestamp, sizeof(timestamp));
-            char formatted[BUF_SIZE];
-            pthread_mutex_lock(&clients_mutex);
-            const char *username = clients[idx]->username;
-            pthread_mutex_unlock(&clients_mutex);
-            snprintf(formatted, sizeof(formatted), "[%s] %s - %s", timestamp, username, buf);
-            printf("%s", formatted);
-            broadcast_message(formatted, &client_addr);
+            int idx = find_client(&client_addr);
+            if (idx < 0) {
+                /* New client registration */
+                client_t *client = malloc(sizeof(client_t));
+                if (!client) {
+                    perror("malloc");
+                    continue;
+                }
+                client->addr = client_addr;
+                strncpy(client->username, buf, sizeof(client->username) - 1);
+                client->username[sizeof(client->username) - 1] = '\0';
+                add_client(client);
+
+                char timestamp[64];
+                get_timestamp(timestamp, sizeof(timestamp));
+                char join_msg[BUF_SIZE];
+                snprintf(join_msg, sizeof(join_msg), "[%s] %s joined the chat.\n", timestamp, client->username);
+                printf("%s", join_msg);
+                broadcast_message(join_msg, &client_addr);
+            } else {
+                /* Regular chat message from a known client */
+                char timestamp[64];
+                get_timestamp(timestamp, sizeof(timestamp));
+                char formatted[BUF_SIZE];
+                pthread_mutex_lock(&clients_mutex);
+                const char *username = clients[idx]->username;
+                pthread_mutex_unlock(&clients_mutex);
+                snprintf(formatted, sizeof(formatted), "[%s] %s - %s", timestamp, username, buf);
+                printf("%s", formatted);
+                broadcast_message(formatted, &client_addr);
+            }
         }
     }
     close(sock);

@@ -35,7 +35,7 @@ int main(int argc, char *argv[]) {
 	printf("  find     : Find anything.\n");
 	printf("  git      : Git helper, type git -help.\n");
     printf("  inet     : Interactive internet connection manager.\n");
-    printf("  list     : List contents of a directory (e.g. 'list tasks' or 'list apps').\n");
+    printf("  list     : List contents of a directory (type 'list -help').\n");
 	printf("  makedir  : Create a new directory.\n");
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
 	printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");

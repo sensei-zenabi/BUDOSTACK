@@ -12,6 +12,9 @@
  *   - Added feature: if the user types "/quit" (as the only input), a quit message ("user quit the chat.")
  *     is sent before the application exits. In addition, if a client sends a quit message, the server
  *     removes that client from its registry so that messaging between the remaining users continues normally.
+ *   - To fix a bug that occurred when one client quits and only one client remains, we now always broadcast
+ *     to all registered clients (i.e. we no longer exclude the sender). The client code filters out echoes,
+ *     so duplicate display is avoided.
  *   - Only plain C (compiled with -std=c11) and POSIX-compliant functions are used.
  *
  * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
@@ -120,10 +123,16 @@ void remove_client(struct sockaddr_in *addr) {
     pthread_mutex_unlock(&clients_mutex);
 }
 
-/* Broadcast a message to all registered clients except (optionally) the sender */
+/* Broadcast a message to all registered clients.
+ * Note: We removed the exclusion parameter to ensure every registered client gets the message.
+ * The client side filters out echoes of its own message.
+ */
 void broadcast_message(const char *msg, struct sockaddr_in *exclude) {
     pthread_mutex_lock(&clients_mutex);
     for (int i = 0; i < client_count; i++) {
+        /* Only use the exclusion if desired. For our fix we pass exclude as NULL when broadcasting.
+         * (This avoids the case where the sender is the only client in the registry.)
+         */
         if (exclude != NULL) {
             if (clients[i]->addr.sin_addr.s_addr == exclude->sin_addr.s_addr &&
                 clients[i]->addr.sin_port == exclude->sin_port) {
@@ -200,6 +209,10 @@ void *udp_discovery_thread(void *arg) {
  * The operator uses a raw-mode line editor so that incoming messages do not disturb the current input.
  * When the operator types "/quit", a quit message is broadcast before the entire application exits.
  * Also, if a client sends a quit message, the server broadcasts it and removes the client.
+ *
+ * Modification:
+ *   - We now always broadcast messages to all registered clients (i.e. exclude parameter is set to NULL)
+ *     to avoid the situation where a sole remaining client never receives messages.
  */
 void run_server(void) {
     printf("[INFO] Starting ctalk server (UDP-only) on chat port %d...\n", UDP_CHAT_PORT);
@@ -263,7 +276,7 @@ void run_server(void) {
                     char timestamp[64];
                     char quit_msg[BUF_SIZE];
                     get_timestamp(timestamp, sizeof(timestamp));
-                    snprintf(quit_msg, sizeof(quit_msg), "[%s] %s quit the chat.\n", timestamp, my_username);
+                    snprintf(quit_msg, sizeof(quit_msg), "%s quit the chat.\n", my_username);
                     broadcast_message(quit_msg, NULL);
                     printf("\r\33[2K[INFO] Exiting chat...\n");
                     disable_raw_mode();
@@ -353,7 +366,7 @@ void run_server(void) {
                 snprintf(join_msg, sizeof(join_msg), "[%s] %s joined the chat.\n", timestamp, client->username);
                 printf("\r\33[2K%s", join_msg);
                 reprint_prompt(input_buf);
-                broadcast_message(join_msg, &client_addr);
+                broadcast_message(join_msg, NULL);
             } else {
                 /* Regular chat message from a known client */
                 char timestamp[64];
@@ -368,11 +381,11 @@ void run_server(void) {
                 reprint_prompt(input_buf);
                 /* If the message is a quit message, broadcast it and remove the client */
                 if (strstr(buf, "quit the chat.") != NULL) {
-                    broadcast_message(formatted, &client_addr);
+                    broadcast_message(formatted, NULL);
                     remove_client(&client_addr);
                     continue;
                 }
-                broadcast_message(formatted, &client_addr);
+                broadcast_message(formatted, NULL);
             }
         }
     }
@@ -506,7 +519,7 @@ void run_client(const char *username, const char *server_ip) {
                 if (dash && (size_t)(dash - start) < sizeof(sender)) {
                     memcpy(sender, start, dash - start);
                     sender[dash - start] = '\0';
-                    /* Filter out the echo of our own message (since we print it immediately on send) */
+                    /* Filter out the echo of our own message */
                     if (strcmp(sender, username) == 0) {
                         continue;
                     }

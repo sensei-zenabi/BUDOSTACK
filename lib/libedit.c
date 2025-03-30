@@ -16,10 +16,25 @@
  *
  * The caller is responsible for freeing the returned string.
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+
+/*
+ * Helper function to determine if the character at position pos in the line
+ * is escaped by counting the consecutive backslashes immediately preceding it.
+ * Returns nonzero if an odd number of backslashes is found.
+ */
+static int is_escaped(const char *line, size_t pos) {
+    int count = 0;
+    while (pos > 0 && line[pos - 1] == '\\') {
+        count++;
+        pos--;
+    }
+    return count % 2;
+}
 
 char *highlight_c_line(const char *line) {
     size_t len = strlen(line);
@@ -67,7 +82,7 @@ char *highlight_c_line(const char *line) {
             while (i < len) {
                 result[ri++] = line[i];
                 /* End string literal if an unescaped quote is found */
-                if (line[i] == '"' && (i == 0 || line[i - 1] != '\\')) {
+                if (line[i] == '"' && !is_escaped(line, i)) {
                     i++;
                     break;
                 }
@@ -95,7 +110,7 @@ char *highlight_c_line(const char *line) {
             i++;
             while (i < len) {
                 result[ri++] = line[i];
-                if (line[i] == '\'' && (i == 0 || line[i - 1] != '\\')) {
+                if (line[i] == '\'' && !is_escaped(line, i)) {
                     i++;
                     break;
                 }
@@ -113,7 +128,7 @@ char *highlight_c_line(const char *line) {
 
         /* --- Check for identifier (potential keyword) --- */
         if ((c == '_' || isalpha((unsigned char)c)) &&
-            ((i == 0) || ((i > 0) && (!isalnum((unsigned char)line[i - 1]) && line[i - 1] != '_')))) {
+            ((i == 0) || (!isalnum((unsigned char)line[i - 1]) && line[i - 1] != '_'))) {
             size_t j = i;
             while (j < len && (line[j] == '_' || isalnum((unsigned char)line[j])))
                 j++;
@@ -193,16 +208,39 @@ char *highlight_c_line(const char *line) {
                 memcpy(result + ri, num_color, cl);
                 ri += cl;
             }
-            /* Copy digits (integer part) */
-            while (i < len && isdigit((unsigned char)line[i])) {
-                result[ri++] = line[i++];
-            }
-            /* Handle decimal part if present */
-            if (i < len && line[i] == '.') {
-                result[ri++] = line[i++];
+            /* Handle hexadecimal literals starting with "0x" or "0X" */
+            if (c == '0' && i + 1 < len && (line[i + 1] == 'x' || line[i + 1] == 'X')) {
+                result[ri++] = line[i++]; // copy '0'
+                result[ri++] = line[i++]; // copy 'x' or 'X'
+                while (i < len && isxdigit((unsigned char)line[i])) {
+                    result[ri++] = line[i++];
+                }
+            } else {
+                /* Handle decimal numbers */
                 while (i < len && isdigit((unsigned char)line[i])) {
                     result[ri++] = line[i++];
                 }
+                /* Handle fractional part if present */
+                if (i < len && line[i] == '.') {
+                    result[ri++] = line[i++];
+                    while (i < len && isdigit((unsigned char)line[i])) {
+                        result[ri++] = line[i++];
+                    }
+                }
+                /* Handle exponent part (e.g., 1.23e+4) */
+                if (i < len && (line[i] == 'e' || line[i] == 'E')) {
+                    result[ri++] = line[i++];
+                    if (i < len && (line[i] == '+' || line[i] == '-')) {
+                        result[ri++] = line[i++];
+                    }
+                    while (i < len && isdigit((unsigned char)line[i])) {
+                        result[ri++] = line[i++];
+                    }
+                }
+            }
+            /* Copy any literal suffix (e.g., U, L) */
+            while (i < len && (isalpha((unsigned char)line[i]) || line[i] == '_')) {
+                result[ri++] = line[i++];
             }
             const char *reset = "\x1b[0m";
             size_t rl = strlen(reset);
@@ -312,6 +350,15 @@ char *highlight_other_line(const char *line) {
                     ri += rl;
                 }
                 in_tag = 0;
+            }
+        }
+        // If a tag was never closed, ensure we reset the color
+        if (in_tag) {
+            const char *reset = "\x1b[0m";
+            size_t rl = strlen(reset);
+            if (ri + rl < buf_size) {
+                memcpy(result + ri, reset, rl);
+                ri += rl;
             }
         }
     }

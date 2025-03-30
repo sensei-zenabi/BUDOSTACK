@@ -22,6 +22,10 @@
    - Case–insensitive search helper for CTRL+F searches.
 */
 
+/* BUG REPORT:
+   This edit.c editor has issues when lines are lenghtier than the terminal window.
+*/
+
 /*** Macros ***/
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))

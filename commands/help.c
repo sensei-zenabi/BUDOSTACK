@@ -16,33 +16,33 @@ int main(int argc, char *argv[]) {
     printf("Programmed by: Ville Suoranta (and mr. AI)\n");
     printf("License: GPLv2\n");
     printf("\n");
-    
+
     // Print available apps and commands
     printf("Available Apps & Commands:\n");
     printf("\n");
     printf("  help     : Display this help message.\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
-	printf("  cls      : Clear terminal screen.\n");
-	printf("  cmath    : Opens a math editor.\n");
-	printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
+    printf("  cls      : Clear terminal screen.\n");
+    printf("  cmath    : Opens a math editor.\n");
+    printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
-	printf("  csv_print: Pretty prints a .csv file.\n");
-	printf("  ctalk    : Simple UDP based LAN chat. Start with 'ctalk myname'.\n");
+    printf("  csv_print: Pretty prints a .csv file.\n");
+    printf("  ctalk    : Simple UDP based LAN chat. Start with 'ctalk myname'.\n");
     printf("  display  : Display the contents of a file.\n");
-	printf("  drives   : Lists all found drives.\n");
+    printf("  drives   : Lists all found drives.\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");
-	printf("  exchange : Retrieves exchange rates of common currencies to euro.\n");
-	printf("  find     : Find anything.\n");
-	printf("  git      : Git helper, type git -help.\n");
+    printf("  exchange : Retrieves exchange rates of common currencies to euro.\n");
+    printf("  find     : Find anything.\n");
+    printf("  git      : Git helper, type git -help.\n");
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (type 'list -help').\n");
-	printf("  makedir  : Create a new directory.\n");
+    printf("  makedir  : Create a new directory.\n");
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
-	printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
+    printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
-	printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");
-	printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
-	printf("             e.g. 'run git status' or './myexecutable'\n");
+    printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");
+    printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
+    printf("             e.g. 'run git status' or './myexecutable'\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");
@@ -74,6 +74,6 @@ int main(int argc, char *argv[]) {
     printf("  Tips:\n");
     printf("  Start AALTO faster: ./aalto -f | Start TASK from cmd line: ./aalto mytask.task\n");
     printf("\n");
-    
+
     return 0;
 }

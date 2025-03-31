@@ -119,6 +119,7 @@ typedef struct {
     int cx, cy;
     int numrows;
     EditorLine *row;
+    int *modified;
 } UndoState;
 
 UndoState *undo_history[100];
@@ -493,12 +494,15 @@ void push_undo_state(void) {
     state->cx = E.cx; state->cy = E.cy; state->numrows = E.numrows;
     state->row = malloc(sizeof(EditorLine) * E.numrows);
     if (!state->row) die("malloc undo rows");
+    state->modified = malloc(sizeof(int) * E.numrows);
+    if (!state->modified) die("malloc undo modified");
     for (int i = 0; i < E.numrows; i++) {
         state->row[i].size = E.row[i].size;
         state->row[i].chars = malloc(E.row[i].size + 1);
         if (!state->row[i].chars) die("malloc undo row char");
         memcpy(state->row[i].chars, E.row[i].chars, E.row[i].size);
         state->row[i].chars[E.row[i].size] = '\0';
+        state->modified[i] = E.row[i].modified; // Save the modified flag
     }
     if (undo_history_len == 100) {
         free_undo_state(undo_history[0]);
@@ -509,12 +513,15 @@ void push_undo_state(void) {
     undo_history[undo_history_len++] = state;
 }
 
+
 void free_undo_state(UndoState *state) {
     for (int i = 0; i < state->numrows; i++)
         free(state->row[i].chars);
     free(state->row);
+    free(state->modified);  // Free the modified flags array
     free(state);
 }
+
 
 void pop_undo_state(void) {
     if (undo_history_len == 0)
@@ -533,11 +540,12 @@ void pop_undo_state(void) {
         if (!E.row[i].chars) die("malloc restore row char");
         memcpy(E.row[i].chars, state->row[i].chars, E.row[i].size);
         E.row[i].chars[E.row[i].size] = '\0';
-        E.row[i].modified = 0;
+        E.row[i].modified = state->modified[i];  // Restore modified flag
     }
     E.cx = state->cx; E.cy = state->cy;
     free_undo_state(state);
 }
+
 
 /* --- Terminal Setup Functions --- */
 

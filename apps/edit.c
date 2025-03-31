@@ -236,7 +236,7 @@ int editorRowCxToByteIndex(EditorLine *row, int cx) {
 
 /*** Modified Drawing Functions Using Append Buffer ***/
 void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
-    int logical_width = 0, byte_index = editorRowCxToByteIndex(row, E.coloff);
+    int logical_width = 0, byte_index = 0;
     char buffer[1024];
     int buf_index = 0;
     size_t bytes;
@@ -259,7 +259,7 @@ void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
 }
 
 void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab) {
-    int logical_width = 0, byte_index = editorRowCxToByteIndex(row, E.coloff);
+    int logical_width = 0, byte_index = 0;
     size_t bytes;
     wchar_t wc;
     int current_disp = 0;
@@ -421,7 +421,7 @@ void editorRefreshScreen(void) {
     abAppend(&ab, buf, len);
     editorDrawShortcutBar(&ab);
     int cursor_y = (E.cy - E.rowoff) + 1;
-    int cursor_x = rn_width + (E.cx - E.coloff) + 1;
+    int cursor_x = rn_width + E.cx + 1;
     if (cursor_y < 1) cursor_y = 1;
     if (cursor_x < 1) cursor_x = 1;
     len = snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cursor_y, cursor_x);
@@ -759,11 +759,12 @@ void editorProcessKeypress(void) {
             last_key_was_vertical = 0;
             break;
     }
-    int rn_width = getRowNumWidth();
-    if (E.cx < E.coloff)
-        E.coloff = E.cx;
-    if (E.cx >= E.coloff + (E.screencols - rn_width - 1))
-        E.coloff = E.cx - (E.screencols - rn_width - 1) + 1;
+    /* Removed 31.3.2025 */
+    //int rn_width = getRowNumWidth();
+    //if (E.cx < E.coloff)
+    //    E.coloff = E.cx;
+    //if (E.cx >= E.coloff + (E.screencols - rn_width - 1))
+    //    E.coloff = E.cx - (E.screencols - rn_width - 1) + 1;
     if (E.cy < E.rowoff)
         E.rowoff = E.cy;
     if (E.cy >= E.rowoff + E.textrows)

@@ -30,6 +30,30 @@ char *highlight_c_line(const char *line) {
         return NULL;
     size_t ri = 0;  // result buffer index
 
+    /* --- Check for preprocessor directive (macros, defines, etc.) --- */
+    size_t j = 0;
+    while (j < len && isspace((unsigned char)line[j]))
+        j++;
+    if (j < len && line[j] == '#') {
+        const char *prep_color = "\x1b[95m";  // bright magenta for preprocessor directives
+        size_t cl = strlen(prep_color);
+        if (ri + cl < buf_size) {
+            memcpy(result + ri, prep_color, cl);
+            ri += cl;
+        }
+        /* Copy the entire preprocessor directive line */
+        memcpy(result + ri, line, len);
+        ri += len;
+        const char *reset = "\x1b[0m";
+        size_t rl = strlen(reset);
+        if (ri + rl < buf_size) {
+            memcpy(result + ri, reset, rl);
+            ri += rl;
+        }
+        result[ri] = '\0';
+        return result;
+    }
+
     for (size_t i = 0; i < len; i++) {
         char c = line[i];
 

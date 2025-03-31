@@ -148,6 +148,44 @@ char *strcasestr_custom(const char *haystack, const char *needle) {
     return NULL;
 }
 
+/* Expand tabs in the input string to spaces based on a fixed tab size.
+   Returns a newly allocated string with TAB characters replaced by the proper
+   number of space characters. */
+char *expand_tabs(const char *s) {
+    int tab_size = 4;  // You can make this configurable if needed.
+    int col = 0;
+    int new_len = 0;
+    for (const char *p = s; *p; p++) {
+        if (*p == '\t') {
+            int spaces = tab_size - (col % tab_size);
+            new_len += spaces;
+            col += spaces;
+        } else {
+            new_len++;
+            col++;
+        }
+    }
+    char *result = malloc(new_len + 1);
+    if (!result)
+        return NULL;
+    col = 0;
+    int idx = 0;
+    for (const char *p = s; *p; p++) {
+        if (*p == '\t') {
+            int spaces = tab_size - (col % tab_size);
+            for (int i = 0; i < spaces; i++) {
+                result[idx++] = ' ';
+                col++;
+            }
+        } else {
+            result[idx++] = *p;
+            col++;
+        }
+    }
+    result[idx] = '\0';
+    return result;
+}
+
 /* --- Function Prototypes --- */
 void die(const char *s);
 void disableRawMode(void);
@@ -1136,13 +1174,19 @@ void editorOpen(const char *filename) {
     }
     char *line = NULL; size_t linecap = 0; ssize_t linelen;
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
-        /* Modified to trim all trailing newline and carriage return characters.
-           This handles Windows-style "\r\n" line endings as well as lone "\r" */
+        /* Trim newline and carriage return characters. */
         while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
             line[linelen - 1] = '\0';
             linelen--;
         }
-        editorAppendLine(line, linelen);
+        /* Convert TABs to spaces. */
+        char *expanded = expand_tabs(line);
+        if (expanded) {
+            editorAppendLine(expanded, strlen(expanded));
+            free(expanded);
+        } else {
+            editorAppendLine(line, linelen);
+        }
     }
     free(line); fclose(fp);
     E.dirty = 0;

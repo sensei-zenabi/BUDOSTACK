@@ -14,21 +14,15 @@
 #include <fcntl.h>
 #include <signal.h>
 
-/* Design principles and notes:
-   - Plain C using -std=c11 and standard C libraries with POSIX–compliant functions.
-   - No separate header files; full code is in one file.
-   - Append Buffer Implementation: Accumulate output in a dynamic buffer and flush it with one write() call.
-   - TAB support: The TAB key inserts four spaces.
-   - Case–insensitive search helper for CTRL+F searches.
-*/
-
-/* BUG REPORT:
-   This edit.c editor has issues when lines are lenghtier than the terminal window.
-*/
-
-/*** Macros ***/
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
+/*
+ * Design principles and notes:
+ * - Plain C using -std=c11 and standard C libraries with POSIX-compliant functions.
+ * - No separate header files; full code is in one file.
+ * - Append Buffer Implementation: Instead of multiple write() calls,
+ *   output is accumulated in a dynamic buffer (struct abuf) and then flushed with one write() call.
+ * - TAB Support: The TAB key now inserts four spaces into the text.
+ * - Added a case-insensitive search helper to support CTRL+F searches that ignore case.
+ */
 
 /*** Append Buffer Implementation ***/
 struct abuf {
@@ -62,7 +56,13 @@ void abFree(struct abuf *ab) {
 char *highlight_c_line(const char *line);
 char *highlight_other_line(const char *line);
 
-/* Enumeration for editor keys */
+/* Enumeration for editor keys.
+   New keys added:
+     HOME_KEY: Home key (beginning of line).
+     END_KEY: End key (end of line).
+     PGUP_KEY: Page Up key.
+     PGDN_KEY: Page Down key.
+*/
 enum EditorKey {
     ARROW_LEFT = 1000,
     ARROW_RIGHT,    // 1001
@@ -99,7 +99,7 @@ struct EditorConfig {
     struct termios orig_termios; // original terminal settings
 
     char status_message[80];
-    int textrows;         // text area rows (screenrows - 2)
+    int textrows;         // text area rows (will be screenrows - 2)
 
     /* Selection fields:
        CTRL+T toggles selection mode.
@@ -114,10 +114,9 @@ struct EditorConfig {
     int preferred_cx;
 } E;
 
-/* Undo state structure (extended to save scroll offsets) */
+/* Undo state structure */
 typedef struct {
     int cx, cy;
-    int coloff, rowoff;
     int numrows;
     EditorLine *row;
 } UndoState;
@@ -126,6 +125,12 @@ UndoState *undo_history[100];
 int undo_history_len = 0;
 
 /*** New Helper Function for Case-Insensitive Search ***/
+/*
+ * strcasestr_custom:
+ *   A simple implementation of a case-insensitive substring search.
+ *   It returns a pointer to the first occurrence of needle in haystack ignoring case,
+ *   or NULL if not found.
+ */
 char *strcasestr_custom(const char *haystack, const char *needle) {
     if (!*needle)
         return (char *)haystack;
@@ -172,6 +177,8 @@ void editorCopySelection(void);
 void editorCutSelection(void);
 void editorPasteClipboard(void);
 void editorInsertString(const char *s);
+
+/* New function prototypes */
 void editorDeleteSelection(void);
 void editorDelCharAtCursor(void);
 void editorSearch(void);
@@ -197,47 +204,32 @@ int getRowNumWidth(void) {
     return digits + 1;
 }
 
-/* Updated editorDisplayWidth: use a local mbstate_t */
 int editorDisplayWidth(const char *s) {
     int width = 0;
     size_t bytes;
     wchar_t wc;
-    mbstate_t state;
-    memset(&state, 0, sizeof(state));
     while (*s) {
-        bytes = mbrtowc(&wc, s, MB_CUR_MAX, &state);
-        if (bytes == (size_t)-1 || bytes == (size_t)-2) { 
-            bytes = 1; 
-            wc = *s; 
-            memset(&state, 0, sizeof(state));
-        }
+        bytes = mbrtowc(&wc, s, MB_CUR_MAX, NULL);
+        if (bytes == (size_t)-1 || bytes == (size_t)-2) { bytes = 1; wc = *s; }
         int w = wcwidth(wc);
         if (w < 0) w = 0;
-        width += w; 
-        s += bytes;
+        width += w; s += bytes;
     }
     return width;
 }
 
-/* Updated editorRowCxToByteIndex: use local mbstate_t */
 int editorRowCxToByteIndex(EditorLine *row, int cx) {
     int cur_width = 0, index = 0;
     size_t bytes;
     wchar_t wc;
     while (index < row->size) {
-        mbstate_t state;
-        memset(&state, 0, sizeof(state));
-        bytes = mbrtowc(&wc, row->chars + index, MB_CUR_MAX, &state);
-        if (bytes == (size_t)-1 || bytes == (size_t)-2) { 
-            bytes = 1; 
-            wc = row->chars[index]; 
-        }
+        bytes = mbrtowc(&wc, row->chars + index, MB_CUR_MAX, NULL);
+        if (bytes == (size_t)-1 || bytes == (size_t)-2) { bytes = 1; wc = row->chars[index]; }
         int w = wcwidth(wc);
         if (w < 0) w = 0;
         if (cur_width + w > cx)
             break;
-        cur_width += w; 
-        index += bytes;
+        cur_width += w; index += bytes;
     }
     return index;
 }
@@ -250,9 +242,7 @@ void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
     size_t bytes;
     wchar_t wc;
     while (byte_index < row->size && logical_width < avail) {
-        mbstate_t state;
-        memset(&state, 0, sizeof(state));
-        bytes = mbrtowc(&wc, row->chars + byte_index, MB_CUR_MAX, &state);
+        bytes = mbrtowc(&wc, row->chars + byte_index, MB_CUR_MAX, NULL);
         if (bytes == (size_t)-1 || bytes == (size_t)-2)
             bytes = 1;
         int w = wcwidth(wc);
@@ -263,8 +253,7 @@ void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
             if (buf_index < (int)sizeof(buffer) - 1)
                 buffer[buf_index++] = row->chars[byte_index + j];
         }
-        logical_width += w; 
-        byte_index += bytes;
+        logical_width += w; byte_index += bytes;
     }
     abAppend(ab, buffer, buf_index);
 }
@@ -276,19 +265,29 @@ void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, stru
     int current_disp = 0;
     int selection_active_for_row = 0, sel_local_start = 0, sel_local_end = 0;
     if (E.selecting) {
-        int start_line = MIN(E.sel_anchor_y, E.cy);
-        int end_line = MAX(E.sel_anchor_y, E.cy);
+        int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
+        int end_line = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
         if (file_row >= start_line && file_row <= end_line) {
             selection_active_for_row = 1;
             if (start_line == end_line) {
-                sel_local_start = MIN(E.sel_anchor_x, E.cx);
-                sel_local_end = MAX(E.sel_anchor_x, E.cx);
+                sel_local_start = (E.sel_anchor_x < E.cx ? E.sel_anchor_x : E.cx);
+                sel_local_end   = (E.sel_anchor_x < E.cx ? E.cx   : E.sel_anchor_x);
             } else if (file_row == start_line) {
-                sel_local_start = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : 0);
-                sel_local_end = editorDisplayWidth(row->chars);
+                if (E.sel_anchor_y < E.cy) {
+                    sel_local_start = E.sel_anchor_x;
+                    sel_local_end = editorDisplayWidth(row->chars);
+                } else {
+                    sel_local_start = 0;
+                    sel_local_end = E.sel_anchor_x;
+                }
             } else if (file_row == end_line) {
-                sel_local_start = 0;
-                sel_local_end = (E.sel_anchor_y < E.cy ? E.cx : E.sel_anchor_x);
+                if (E.sel_anchor_y < E.cy) {
+                    sel_local_start = 0;
+                    sel_local_end = E.cx;
+                } else {
+                    sel_local_start = E.cx;
+                    sel_local_end = editorDisplayWidth(row->chars);
+                }
             } else {
                 sel_local_start = 0;
                 sel_local_end = editorDisplayWidth(row->chars);
@@ -305,9 +304,7 @@ void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, stru
     }
     int in_selection = 0;
     while (byte_index < row->size && logical_width < avail) {
-        mbstate_t state;
-        memset(&state, 0, sizeof(state));
-        bytes = mbrtowc(&wc, row->chars + byte_index, MB_CUR_MAX, &state);
+        bytes = mbrtowc(&wc, row->chars + byte_index, MB_CUR_MAX, NULL);
         if (bytes == (size_t)-1 || bytes == (size_t)-2)
             bytes = 1;
         int w = wcwidth(wc);
@@ -320,9 +317,7 @@ void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, stru
         if (logical_width + w > avail)
             break;
         abAppend(ab, row->chars + byte_index, bytes);
-        logical_width += w; 
-        current_disp += w; 
-        byte_index += bytes;
+        logical_width += w; current_disp += w; byte_index += bytes;
     }
     if (in_selection)
         abAppend(ab, "\x1b[0m", 4);
@@ -351,7 +346,7 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
                 if (highlighted) {
                     abAppend(ab, highlighted, strlen(highlighted));
                     free(highlighted);
-                }
+				}
             } else {
                 editorRenderRow(&E.row[file_row], text_width, ab);
             }
@@ -412,19 +407,7 @@ void editorDrawShortcutBar(struct abuf *ab) {
 void editorRefreshScreen(void) {
     struct abuf ab = ABUF_INIT;
     int rn_width = getRowNumWidth();
-    int text_width = E.screencols - rn_width - 1;
     E.textrows = E.screenrows - 2;
-
-    /* Recalculate horizontal offset if necessary (fix for row number width changes) */
-    if (E.cx < E.coloff)
-        E.coloff = E.cx;
-    if (E.cx >= E.coloff + text_width)
-        E.coloff = E.cx - text_width + 1;
-    if (E.cy < E.rowoff)
-        E.rowoff = E.cy;
-    if (E.cy >= E.rowoff + E.textrows)
-        E.rowoff = E.cy - E.textrows + 1;
-
     abAppend(&ab, "\x1b[?25l", 6);
     abAppend(&ab, "\x1b[H", 3);
     editorDrawRows(&ab, rn_width);
@@ -437,9 +420,8 @@ void editorRefreshScreen(void) {
     len = snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.screenrows);
     abAppend(&ab, buf, len);
     editorDrawShortcutBar(&ab);
-    int rn = getRowNumWidth();  /* recalc in case needed */
     int cursor_y = (E.cy - E.rowoff) + 1;
-    int cursor_x = rn + (E.cx - E.coloff) + 1;
+    int cursor_x = rn_width + (E.cx - E.coloff) + 1;
     if (cursor_y < 1) cursor_y = 1;
     if (cursor_x < 1) cursor_x = 1;
     len = snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cursor_y, cursor_x);
@@ -452,8 +434,7 @@ void editorRefreshScreen(void) {
 /* --- Input Function --- */
 
 int editorReadKey(void) {
-    char c; 
-    int nread;
+    char c; int nread;
     while ((nread = read(STDIN_FILENO, &c, 1)) == 0)
         ;
     if (nread == -1 && errno != EAGAIN)
@@ -500,21 +481,16 @@ int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
         return -1;
-    *cols = ws.ws_col; 
-    *rows = ws.ws_row;
+    *cols = ws.ws_col; *rows = ws.ws_row;
     return 0;
 }
 
-/* --- Undo Functions (extended to include scroll offsets) --- */
+/* --- Undo Functions --- */
 
 void push_undo_state(void) {
     UndoState *state = malloc(sizeof(UndoState));
     if (!state) die("malloc undo state");
-    state->cx = E.cx; 
-    state->cy = E.cy; 
-    state->coloff = E.coloff;
-    state->rowoff = E.rowoff;
-    state->numrows = E.numrows;
+    state->cx = E.cx; state->cy = E.cy; state->numrows = E.numrows;
     state->row = malloc(sizeof(EditorLine) * E.numrows);
     if (!state->row) die("malloc undo rows");
     for (int i = 0; i < E.numrows; i++) {
@@ -523,7 +499,6 @@ void push_undo_state(void) {
         if (!state->row[i].chars) die("malloc undo row char");
         memcpy(state->row[i].chars, E.row[i].chars, E.row[i].size);
         state->row[i].chars[E.row[i].size] = '\0';
-        state->row[i].modified = E.row[i].modified;
     }
     if (undo_history_len == 100) {
         free_undo_state(undo_history[0]);
@@ -558,12 +533,9 @@ void pop_undo_state(void) {
         if (!E.row[i].chars) die("malloc restore row char");
         memcpy(E.row[i].chars, state->row[i].chars, E.row[i].size);
         E.row[i].chars[E.row[i].size] = '\0';
-        E.row[i].modified = state->row[i].modified;
+        E.row[i].modified = 0;
     }
-    E.cx = state->cx; 
-    E.cy = state->cy;
-    E.coloff = state->coloff;
-    E.rowoff = state->rowoff;
+    E.cx = state->cx; E.cy = state->cy;
     free_undo_state(state);
 }
 
@@ -591,8 +563,7 @@ void enableRawMode(void) {
     raw.c_oflag &= ~(OPOST);
     raw.c_cflag |= (CS8);
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-    raw.c_cc[VMIN] = 0; 
-    raw.c_cc[VTIME] = 1;
+    raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 1;
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
         die("tcsetattr");
 }
@@ -659,7 +630,7 @@ void editorProcessKeypress(void) {
         case CTRL_KEY('c'):
             push_undo_state();
             editorCopySelection();
-            E.selecting = 0;
+            E.selecting = 0; // Disable selection toggle after copying
             break;
         case CTRL_KEY('v'):
             push_undo_state();
@@ -788,19 +759,15 @@ void editorProcessKeypress(void) {
             last_key_was_vertical = 0;
             break;
     }
-    /* Update horizontal and vertical offsets using the computed text width */
-    {
-        int rn_width = getRowNumWidth();
-        int text_width = E.screencols - rn_width - 1;
-        if (E.cx < E.coloff)
-            E.coloff = E.cx;
-        if (E.cx >= E.coloff + text_width)
-            E.coloff = E.cx - text_width + 1;
-        if (E.cy < E.rowoff)
-            E.rowoff = E.cy;
-        if (E.cy >= E.rowoff + E.textrows)
-            E.rowoff = E.cy - E.textrows + 1;
-    }
+    int rn_width = getRowNumWidth();
+    if (E.cx < E.coloff)
+        E.coloff = E.cx;
+    if (E.cx >= E.coloff + (E.screencols - rn_width - 1))
+        E.coloff = E.cx - (E.screencols - rn_width - 1) + 1;
+    if (E.cy < E.rowoff)
+        E.rowoff = E.cy;
+    if (E.cy >= E.rowoff + E.textrows)
+        E.rowoff = E.cy - E.textrows + 1;
 }
 
 /* --- New Functions for Selection Deletion and Delete Key --- */
@@ -808,16 +775,16 @@ void editorProcessKeypress(void) {
 void editorDeleteSelection(void) {
     if (!E.selecting)
         return;
-    int start_line = MIN(E.sel_anchor_y, E.cy);
-    int end_line = MAX(E.sel_anchor_y, E.cy);
+    int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
+    int end_line = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
     int anchor_x = (E.sel_anchor_y <= E.cy ? E.sel_anchor_x : E.cx);
     int current_x = (E.sel_anchor_y <= E.cy ? E.cx : E.sel_anchor_x);
     for (int i = start_line; i <= end_line; i++) {
         int line_width = editorDisplayWidth(E.row[i].chars);
         int sel_start, sel_end;
         if (start_line == end_line) {
-            sel_start = MIN(anchor_x, current_x);
-            sel_end   = MAX(anchor_x, current_x);
+            sel_start = (anchor_x < current_x ? anchor_x : current_x);
+            sel_end   = (anchor_x < current_x ? current_x : anchor_x);
         } else if (i == start_line) {
             sel_start = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : 0);
             sel_end = line_width;
@@ -845,9 +812,9 @@ void editorDeleteSelection(void) {
             E.row[i].chars = new_last;
             E.row[i].size = strlen(new_last);
         } else {
+            E.row[i].size = 0;
             free(E.row[i].chars);
             E.row[i].chars = strdup("");
-            E.row[i].size = 0;
         }
     }
     if (start_line != end_line) {
@@ -855,15 +822,14 @@ void editorDeleteSelection(void) {
         EditorLine *last_line = &E.row[end_line];
         int new_size = first_line->size + last_line->size;
         first_line->chars = realloc(first_line->chars, new_size + 1);
-        if (!first_line->chars) die("realloc");
         memcpy(first_line->chars + first_line->size, last_line->chars, last_line->size + 1);
         first_line->size = new_size;
-        int num_to_remove = end_line - start_line;
-        for (int i = start_line + 1; i <= end_line; i++) {
+        for (int i = end_line; i > start_line; i--) {
             free(E.row[i].chars);
+            for (int j = i; j < E.numrows - 1; j++)
+                E.row[j] = E.row[j + 1];
+            E.numrows--;
         }
-        memmove(&E.row[start_line+1], &E.row[end_line+1], (E.numrows - end_line - 1) * sizeof(EditorLine));
-        E.numrows -= num_to_remove;
     }
     E.cx = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : E.cx);
     E.cy = start_line;
@@ -893,7 +859,8 @@ void editorDelCharAtCursor(void) {
        line->chars[line->size] = '\0';
        line->modified = 1;
        free(next_line->chars);
-       memmove(&E.row[E.cy+1], &E.row[E.cy+2], (E.numrows - E.cy - 2) * sizeof(EditorLine));
+       for (int j = E.cy+1; j < E.numrows - 1; j++)
+           E.row[j] = E.row[j+1];
        E.numrows--;
        E.dirty = 1;
     }
@@ -931,7 +898,7 @@ void editorSearch(void) {
     int *matches = malloc(E.numrows * sizeof(int));
     if (!matches) {
         snprintf(E.status_message, sizeof(E.status_message), "Search: malloc failed");
-        printf("\033[?1049l");
+        printf("\033[?1049l"); // restore main screen
         fflush(stdout);
         return;
     }
@@ -943,7 +910,7 @@ void editorSearch(void) {
     if (match_count == 0) {
         free(matches);
         snprintf(E.status_message, sizeof(E.status_message), "No matches found");
-        printf("\033[?1049l");
+        printf("\033[?1049l"); // restore main screen
         fflush(stdout);
         return;
     }
@@ -951,10 +918,12 @@ void editorSearch(void) {
     /* Improved full-screen menu UI */
     int active = 0;
     int menu_start = 0;
-    int menu_height = rows - 4;
+    int menu_height = rows - 4;  /* Reserve some lines for header and footer */
 
     while (1) {
+        /* Clear the alternate screen */
         printf("\033[2J\033[H");
+        /* Header */
         printf("Search results for: \"%s\"\n", query);
         printf("\r--------------------------------------------------\n");
 
@@ -963,10 +932,12 @@ void editorSearch(void) {
             end = match_count;
         for (int i = menu_start; i < end; i++) {
             if (i == active)
-                printf("\033[7m");
+                printf("\033[7m");  /* Inverse video for active selection */
+            /* Ensure each line starts at column 1 */
             printf("\rLine %d: %s", matches[i] + 1, E.row[matches[i]].chars);
-            printf("\033[0m\n");
+            printf("\033[0m\n");   /* Reset formatting and newline */
         }
+        /* Footer prompt */
         printf("\r--------------------------------------------------\n");
         printf("\rUse Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
         fflush(stdout);
@@ -996,6 +967,7 @@ void editorSearch(void) {
         result = matches[active];
     free(matches);
 
+    /* Restore the main screen buffer so the editor content is visible again */
     printf("\033[?1049l");
     fflush(stdout);
 
@@ -1022,8 +994,8 @@ void editorSearch(void) {
 void editorCopySelection(void) {
     if (!E.selecting)
         return;
-    int start_line = MIN(E.sel_anchor_y, E.cy);
-    int end_line = MAX(E.sel_anchor_y, E.cy);
+    int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
+    int end_line = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
     int anchor_x = (E.sel_anchor_y <= E.cy ? E.sel_anchor_x : E.cx);
     int current_x = (E.sel_anchor_y <= E.cy ? E.cx : E.sel_anchor_x);
     size_t bufsize = 1024;
@@ -1035,8 +1007,8 @@ void editorCopySelection(void) {
         int line_width = editorDisplayWidth(E.row[i].chars);
         int sel_start, sel_end;
         if (start_line == end_line) {
-            sel_start = MIN(anchor_x, current_x);
-            sel_end   = MAX(anchor_x, current_x);
+            sel_start = (anchor_x < current_x ? anchor_x : current_x);
+            sel_end   = (anchor_x < current_x ? current_x : anchor_x);
         } else if (i == start_line) {
             sel_start = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : 0);
             sel_end = line_width;
@@ -1072,13 +1044,13 @@ void editorCutSelection(void) {
     if (!E.selecting)
         return;
     editorCopySelection();
-    int start_line = MIN(E.sel_anchor_y, E.cy);
-    int end_line = MAX(E.sel_anchor_y, E.cy);
+    int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
+    int end_line = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
     int anchor_x = (E.sel_anchor_y <= E.cy ? E.sel_anchor_x : E.cx);
     int current_x = (E.sel_anchor_y <= E.cy ? E.cx : E.sel_anchor_x);
     if (start_line == end_line) {
-        int sel_start = MIN(anchor_x, current_x);
-        int sel_end   = MAX(anchor_x, current_x);
+        int sel_start = (anchor_x < current_x ? anchor_x : current_x);
+        int sel_end   = (anchor_x < current_x ? current_x : anchor_x);
         int start_byte = editorRowCxToByteIndex(&E.row[start_line], sel_start);
         int end_byte = editorRowCxToByteIndex(&E.row[start_line], sel_end);
         int new_size = E.row[start_line].size - (end_byte - start_byte);
@@ -1099,17 +1071,16 @@ void editorCutSelection(void) {
         E.row[end_line].size = strlen(new_last);
         int new_size = E.row[start_line].size + E.row[end_line].size;
         E.row[start_line].chars = realloc(E.row[start_line].chars, new_size + 1);
-        if (!E.row[start_line].chars) die("realloc");
         memcpy(E.row[start_line].chars + E.row[start_line].size,
                E.row[end_line].chars,
                E.row[end_line].size + 1);
         E.row[start_line].size = new_size;
-        int num_to_remove = end_line - start_line;
-        for (int i = start_line + 1; i <= end_line; i++) {
+        for (int i = end_line; i > start_line; i--) {
             free(E.row[i].chars);
+            for (int j = i; j < E.numrows - 1; j++)
+                E.row[j] = E.row[j + 1];
+            E.numrows--;
         }
-        memmove(&E.row[start_line+1], &E.row[end_line+1], (E.numrows - end_line - 1) * sizeof(EditorLine));
-        E.numrows -= num_to_remove;
     }
     E.cx = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : E.cx);
     E.cy = start_line;
@@ -1154,18 +1125,17 @@ void editorOpen(const char *filename) {
             die("fopen");
         }
     }
-    char *line = NULL; 
-    size_t linecap = 0; 
-    ssize_t linelen;
+    char *line = NULL; size_t linecap = 0; ssize_t linelen;
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
+        /* Modified to trim all trailing newline and carriage return characters.
+           This handles Windows-style "\r\n" line endings as well as lone "\r" */
         while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
             line[linelen - 1] = '\0';
             linelen--;
         }
         editorAppendLine(line, linelen);
     }
-    free(line); 
-    fclose(fp);
+    free(line); fclose(fp);
     E.dirty = 0;
     if (E.numrows == 0)
         editorAppendLine("", 0);
@@ -1190,8 +1160,7 @@ void editorSave(void) {
     int fd = open(E.filename, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd != -1) {
         if (write(fd, buf, total_len) == total_len) {
-            close(fd); 
-            free(buf);
+            close(fd); free(buf);
             E.dirty = 0;
             for (int i = 0; i < E.numrows; i++)
                 E.row[i].modified = 0;
@@ -1234,8 +1203,7 @@ void editorInsertChar(int c) {
     line->size++;
     E.cx++;
     E.preferred_cx = E.cx;
-    line->modified = 1; 
-    E.dirty = 1;
+    line->modified = 1; E.dirty = 1;
 }
 
 void editorInsertUTF8(const char *s, int len) {
@@ -1252,48 +1220,47 @@ void editorInsertUTF8(const char *s, int len) {
     memmove(&line->chars[index + len], &line->chars[index], line->size - index + 1);
     memcpy(&line->chars[index], s, len);
     line->size += len;
-    {
-        wchar_t wc;
-        mbstate_t state;
-        memset(&state, 0, sizeof(state));
-        size_t bytes = mbrtowc(&wc, s, len, &state);
-        int width = (bytes == (size_t)-1 || bytes == (size_t)-2) ? 1 : wcwidth(wc);
-        if (width < 0) width = 1;
-        E.cx += width;
-    }
+    wchar_t wc;
+    size_t bytes = mbrtowc(&wc, s, len, NULL);
+    int width = (bytes == (size_t)-1 || bytes == (size_t)-2) ? 1 : wcwidth(wc);
+    if (width < 0) width = 1;
+    E.cx += width;
     E.preferred_cx = E.cx;
-    line->modified = 1; 
-    E.dirty = 1;
+    line->modified = 1; E.dirty = 1;
 }
 
-/* Updated editorInsertNewline: unified “split” logic */
 void editorInsertNewline(void) {
-    if (E.cy >= E.numrows) {
+    if (E.cx == 0) {
         editorAppendLine("", 0);
+        for (int i = E.numrows - 1; i > E.cy; i--)
+            E.row[i] = E.row[i - 1];
+        E.row[E.cy].chars = malloc(1);
+        E.row[E.cy].chars[0] = '\0';
+        E.row[E.cy].size = 0; E.row[E.cy].modified = 0;
         E.cy++;
-        E.cx = 0;
-        E.preferred_cx = 0;
-        E.dirty = 1;
-        return;
+    } else {
+        EditorLine *line = &E.row[E.cy];
+        int index = editorRowCxToByteIndex(line, E.cx);
+        char *new_chars = malloc(line->size - index + 1);
+        if (new_chars == NULL)
+            die("malloc");
+        memcpy(new_chars, &line->chars[index], line->size - index);
+        new_chars[line->size - index] = '\0';
+        int new_len = line->size - index;
+        line->size = index; line->chars[index] = '\0';
+        EditorLine *new_row = realloc(E.row, sizeof(EditorLine) * (E.numrows + 1));
+        if (new_row == NULL)
+            die("realloc");
+        E.row = new_row;
+        for (int j = E.numrows; j > E.cy; j--)
+            E.row[j] = E.row[j - 1];
+        E.numrows++;
+        E.row[E.cy + 1].chars = new_chars;
+        E.row[E.cy + 1].size = new_len;
+        E.row[E.cy + 1].modified = 1;
+        E.cy++; E.cx = 0;
+        E.preferred_cx = E.cx;
     }
-    EditorLine *line = &E.row[E.cy];
-    int index = editorRowCxToByteIndex(line, E.cx);
-    char *new_line_chars = strdup(&line->chars[index]);
-    if (!new_line_chars)
-         die("strdup");
-    line->chars[index] = '\0';
-    line->size = index;
-    E.row = realloc(E.row, sizeof(EditorLine) * (E.numrows + 1));
-    if (!E.row) die("realloc");
-    for (int j = E.numrows; j > E.cy + 1; j--)
-         E.row[j] = E.row[j - 1];
-    E.row[E.cy + 1].chars = new_line_chars;
-    E.row[E.cy + 1].size = strlen(new_line_chars);
-    E.row[E.cy + 1].modified = 1;
-    E.numrows++;
-    E.cy++;
-    E.cx = 0;
-    E.preferred_cx = 0;
     E.dirty = 1;
 }
 
@@ -1311,12 +1278,11 @@ void editorDelChar(void) {
             die("realloc");
         memcpy(&prev_line->chars[prev_size], line->chars, line->size);
         prev_line->chars[prev_size + line->size] = '\0';
-        prev_line->size = prev_size + line->size; 
-        prev_line->modified = 1;
+        prev_line->size = prev_size + line->size; prev_line->modified = 1;
         free(line->chars);
-        memmove(&E.row[E.cy], &E.row[E.cy + 1], (E.numrows - E.cy - 1) * sizeof(EditorLine));
-        E.numrows--; 
-        E.cy--;
+        for (int j = E.cy; j < E.numrows - 1; j++)
+            E.row[j] = E.row[j + 1];
+        E.numrows--; E.cy--;
         E.cx = editorDisplayWidth(prev_line->chars);
         E.preferred_cx = E.cx;
     } else {
@@ -1335,18 +1301,12 @@ void editorDelChar(void) {
 
 int main(int argc, char *argv[]) {
     setlocale(LC_CTYPE, "");
-    E.cx = 0; 
-    E.cy = 0;
-    E.rowoff = 0; 
-    E.coloff = 0;
-    E.numrows = 0; 
-    E.row = NULL;
-    E.filename = NULL; 
-    E.dirty = 0;
+    E.cx = 0; E.cy = 0;
+    E.rowoff = 0; E.coloff = 0;
+    E.numrows = 0; E.row = NULL;
+    E.filename = NULL; E.dirty = 0;
     E.status_message[0] = '\0';
-    E.selecting = 0; 
-    E.sel_anchor_x = 0; 
-    E.sel_anchor_y = 0;
+    E.selecting = 0; E.sel_anchor_x = 0; E.sel_anchor_y = 0;
     E.preferred_cx = 0;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1)

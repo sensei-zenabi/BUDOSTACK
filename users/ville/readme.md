@@ -5,6 +5,17 @@ This is my development diary for AALTO. Hope you'll enjoy it! Newest post is alw
 #### RANKING BOARD ####
 1. Live file editing with "share.c" and "edit.c"
 
+### Tuesday, 1st of April 2025 ###
+
+I think I am starting to find the limits of ChatGPT Plus models. Building a robust multi-line comment
+detection into editor that displays and processes files only one visible terminal screen per time seems to 
+cause gray hair to mr. AI. I am in a situation, where doing it myself would be faster. Also, as in real 
+life, refactoring seems to be troublesome for AI as well. Many times obsole content is left to the code 
+or vice versa required content is left out. It is almost like the AI would not memorize the whole code 
+and sometimes feels just like "swinging it", hoping that the answer is "close enough" what the user is 
+requesting. Well, I guess it should not be a surporise, when the underlying principles are based to
+probability...
+
 ### Saturday, 29th of March 2025 ###
 
 Came up with a funny little app called ctalk, an UDP based LAN messaging app to which users can dynamically

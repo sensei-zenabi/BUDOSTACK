@@ -13,7 +13,7 @@ cause gray hair to mr. AI. I am in a situation, where doing it myself would be f
 life, refactoring seems to be troublesome for AI as well. Many times obsole content is left to the code 
 or vice versa required content is left out. It is almost like the AI would not memorize the whole code 
 and sometimes feels just like "swinging it", hoping that the answer is "close enough" what the user is 
-requesting. Well, I guess it should not be a surporise, when the underlying principles are based to
+requesting. Well, I guess it should not be a surprise, when the underlying principles are based to
 probability...
 
 ### Saturday, 29th of March 2025 ###

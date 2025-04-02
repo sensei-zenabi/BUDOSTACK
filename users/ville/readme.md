@@ -2,19 +2,27 @@
 
 This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
 
-#### RANKING BOARD ####
-1. Live file editing with "share.c" and "edit.c"
+#### WISH LIST ####
+1. Live file editing with "share.c" and "edit.c" - requires implementing auto-refresh to "edit.c".
+2. Working selection with shift to "edit.c", however apparently it is not possible with standard libs.
+3. Separating the server API as a separate library from the node apps.
+4. Code-analysis tools?
 
-### Tuesday, 1st of April 2025 ###
+### Wednesday, 2nd of April 2025 ###
 
-I think I am starting to find the limits of ChatGPT Plus models. Building a robust multi-line comment
-detection into editor that displays and processes files only one visible terminal screen per time seems to 
-cause gray hair to mr. AI. I am in a situation, where doing it myself would be faster. Also, as in real 
-life, refactoring seems to be troublesome for AI as well. Many times obsole content is left to the code 
-or vice versa required content is left out. It is almost like the AI would not memorize the whole code 
-and sometimes feels just like "swinging it", hoping that the answer is "close enough" what the user is 
-requesting. Well, I guess it should not be a surprise, when the underlying principles are based to
-probability...
+**edit.c:**<br>
+Ok, I had to delete my post from yesterday as it was proven to be a human error. I had configured my GPT
+to produce gibberish. After changing my customization settings for o3-mini-high, it succeeded with first 
+attempt and produced a high-quality and robust multi-line comment detection with one bug only; row numbers 
+marked with green color from the region of the multi-line comment. The second prompt with bug report 
+provided gave me fix to that as well. Decided to implement auto-indent also, that is disabled when pasting 
+content.
+<br><br>
+**Next Steps:**<br>
+The AALTO system has reached a point where it has all kinds of apps and commands. Next I will try to start
+using them and fine-tuning them as usable as possible instead of adding more apps and commands. However, I
+cannot promise that I do not sneak in a game here and there. You can follow the progress of this from the
+git commit logs, it's to tedious to report them separately to this dev. diary.
 
 ### Saturday, 29th of March 2025 ###
 
@@ -28,7 +36,7 @@ using UDP. Got the basics to work, but need to add "edit mysharedfile.c - live" 
 collaborating, it would periodically refresh the file from disk to update the changes done by other users
 contributing to the same file in the same session.
 <br><br>
-Established a ranking board on top of this development diary to keep the ideas that interest me the most
+Established a wish list on top of this development diary to keep the ideas that interest me the most
 visible for everybody.
 
 ### Friday, 28th of March 2025 ###

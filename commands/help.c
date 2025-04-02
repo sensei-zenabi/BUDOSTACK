@@ -60,6 +60,15 @@ int main(int argc, char *argv[]) {
         printf("\n");
     }
 
+	// Games list
+	printf("List of Games:\n");
+	printf("\n");
+	printf("  invaders : A space invaders clone tailored to terminal.\n");
+	printf("  snake    : A snake clone, reminence from the good old Nokia days.\n");
+	printf("\n");
+	printf("  > Go to games folder, and type \"run ./invaders\"\n");
+	printf("\n");
+
     // Print node applications information
     printf("Running Node Applications:\n");
     printf("\n");

@@ -13,9 +13,8 @@
 
 /* List of available commands for autocomplete */
 static const char *commands[] = {
-    "discover", "help", "list", "display", "copy",
-    "move", "remove", "update", "makedir", "rmdir",
-    "exit", "cd"
+	"help",
+    "exit"
 };
 
 static const int num_commands = sizeof(commands) / sizeof(commands[0]);

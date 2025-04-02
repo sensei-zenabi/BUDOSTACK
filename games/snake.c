@@ -12,6 +12,12 @@
 // Maximum snake length
 #define MAX_SNAKE_LENGTH 100
 
+// Minimum delay (in microseconds) to ensure game remains playable
+#define MIN_DELAY 30000
+
+// Global delay variable (in microseconds) controlling game speed
+unsigned int delay_time = 100000;
+
 // Enum for snake movement directions
 enum Direction { UP, DOWN, LEFT, RIGHT };
 
@@ -51,11 +57,12 @@ void enableRawMode() {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
-// Initialize or restart the game: reset snake and fruit positions, direction, and game_over flag
+// Initialize or restart the game: reset snake and fruit positions, direction, game_over flag, and delay
 void initGame() {
-    // Reset snake length and direction
+    // Reset snake length, direction, and delay
     snake_length = 3;
     dir = RIGHT;
+    delay_time = 100000;
     // Start snake at center going right
     snake[0].x = WIDTH / 2;
     snake[0].y = HEIGHT / 2;
@@ -156,6 +163,12 @@ void updateSnake() {
         snake_length++;
         if(snake_length >= MAX_SNAKE_LENGTH)
             snake_length = MAX_SNAKE_LENGTH;
+        // Calculate score (number of apples eaten)
+        int score = snake_length - 3;
+        // Speed up after every 5 apples, reducing delay by 10000 microseconds until a minimum delay is reached
+        if(score % 5 == 0 && delay_time > MIN_DELAY) {
+            delay_time -= 10000;
+        }
         // Place new fruit ensuring it does not appear on the snake
         int valid = 0;
         while(!valid) {
@@ -172,7 +185,7 @@ void updateSnake() {
     }
 }
 
-// Draw the game board with borders, snake, and fruit.
+// Draw the game board with borders, snake, and fruit, and display instructions.
 void drawBoard() {
     // Clear the screen and move cursor to home position
     printf("\033[2J\033[H");
@@ -197,9 +210,11 @@ void drawBoard() {
                 for (int k = 0; k < snake_length; k++) {
                     if(snake[k].x == x && snake[k].y == y) {
                         if(k == 0)
-                            printf("O"); // head
+                            // Unicode full block for snake head
+                            printf("\u2588");
                         else
-                            printf("o"); // body
+                            // Unicode dark shade block for snake body
+                            printf("\u2593");
                         printed = 1;
                         break;
                     }
@@ -217,11 +232,14 @@ void drawBoard() {
     }
     printf("\n");
     
-    // Display current score (snake length minus initial length)
+    // Display game status, score, and instructions
+    if(game_over)
+        printf("Game Over!\n");
     printf("Score: %d\n", snake_length - 3);
+    printf("Press 'r' to restart, 'q' to quit.\n");
 }
 
-// Main game loop: if game_over is set, prompt for 'r' (restart) or 'q' (quit)
+// Main game loop: if game_over is set, wait for 'r' (restart) or 'q' (quit)
 int main() {
     enableRawMode();
     initGame();
@@ -234,9 +252,8 @@ int main() {
         
         drawBoard();        // render the game board
         
-        // If game over, display message and wait for restart or quit
+        // If game over, wait for restart or quit input
         if(game_over) {
-            printf("Game Over! Press 'r' to restart or 'q' to quit.\n");
             char c = getInput();
             if(c == 'r' || c == 'R') {
                 initGame();
@@ -245,7 +262,7 @@ int main() {
             }
         }
         
-        usleep(100000); // delay (100 ms) to control game speed
+        usleep(delay_time); // delay to control game speed
     }
     
     return 0;

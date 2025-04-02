@@ -192,6 +192,7 @@ void list_directory(const char *dir_path) {
     }
 
     /* Print header for directory listing */
+	printf("\n"); // start with and empty row
     printf("%-30s %-11s %-10s %-20s\n", "Filename", "Permissions", "Size", "Last Modified");
     printf("--------------------------------------------------------------------------------\n");
 
@@ -202,6 +203,7 @@ void list_directory(const char *dir_path) {
         free(namelist[i]);
     }
     free(namelist);
+	printf("\n"); // end with an empty row
 }
 
 /*

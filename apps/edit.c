@@ -53,7 +53,7 @@ void abFree(struct abuf *ab) {
 #define DEL_KEY 1004  // Key code for Delete
 
 /* Prototype for the syntax highlighter from libedit.c */
-char *highlight_c_line(const char *line);
+char *highlight_c_line(const char *line, int hl_in_comment);
 char *highlight_other_line(const char *line);
 
 /* Enumeration for editor keys.
@@ -79,6 +79,7 @@ typedef struct {
     int size;
     char *chars;
     int modified;
+    int hl_in_comment;  // new field to store multi-line comment state for syntax highlighting
 } EditorLine;
 
 /* Global clipboard for cut/copy/paste functionality */
@@ -222,7 +223,33 @@ void editorDeleteSelection(void);
 void editorDelCharAtCursor(void);
 void editorSearch(void);
 
-/* --- Helper Functions --- */
+/* --- New Function: update_syntax ---
+   Updates each line’s multi-line comment state.
+   This simple state machine (which does not consider string/char literals) scans
+   through all lines so that the highlighter can know whether a line starts in a comment.
+*/
+void update_syntax(void) {
+    int in_comment = 0;
+    for (int i = 0; i < E.numrows; i++) {
+        E.row[i].hl_in_comment = in_comment;
+        char *line = E.row[i].chars;
+        int j = 0;
+        // Simple scan for multi-line comment delimiters (ignoring strings/chars)
+        while (j < E.row[i].size) {
+            if (!in_comment && j + 1 < E.row[i].size && line[j] == '/' && line[j + 1] == '*') {
+                in_comment = 1;
+                j += 2;
+                continue;
+            }
+            if (in_comment && j + 1 < E.row[i].size && line[j] == '*' && line[j + 1] == '/') {
+                in_comment = 0;
+                j += 2;
+                continue;
+            }
+            j++;
+        }
+    }
+}
 
 /* Returns nonzero if the current file is a C source file */
 int is_c_source(void) {
@@ -375,7 +402,8 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
             if (E.selecting) {
                 editorRenderRowWithSelection(&E.row[file_row], file_row, text_width, ab);
             } else if (is_c_source()) {
-                char *highlighted = highlight_c_line(E.row[file_row].chars);
+                /* Pass the current multi-line comment state for this line */
+                char *highlighted = highlight_c_line(E.row[file_row].chars, E.row[file_row].hl_in_comment);
                 if (highlighted) {
                     abAppend(ab, highlighted, strlen(highlighted));
                     free(highlighted);
@@ -444,6 +472,7 @@ void editorDrawShortcutBar(struct abuf *ab) {
 
 /*** Modified Screen Refresh Routine ***/
 void editorRefreshScreen(void) {
+    update_syntax();  // update multi-line comment state before drawing
     struct abuf ab = ABUF_INIT;
     int rn_width = getRowNumWidth();
     E.textrows = E.screenrows - 2;
@@ -805,12 +834,6 @@ void editorProcessKeypress(void) {
             last_key_was_vertical = 0;
             break;
     }
-    /* Removed 31.3.2025 */
-    //int rn_width = getRowNumWidth();
-    //if (E.cx < E.coloff)
-    //    E.coloff = E.cx;
-    //if (E.cx >= E.coloff + (E.screencols - rn_width - 1))
-    //    E.coloff = E.cx - (E.screencols - rn_width - 1) + 1;
     if (E.cy < E.rowoff)
         E.rowoff = E.cy;
     if (E.cy >= E.rowoff + E.textrows)
@@ -1237,6 +1260,7 @@ void editorAppendLine(char *s, size_t len) {
     E.row[E.numrows].chars[len] = '\0';
     E.row[E.numrows].size = (int)len;
     E.row[E.numrows].modified = 0;
+    E.row[E.numrows].hl_in_comment = 0;  // initialize multi-line comment flag
     E.numrows++;
 }
 
@@ -1290,6 +1314,7 @@ void editorInsertNewline(void) {
         E.row[E.cy].chars = malloc(1);
         E.row[E.cy].chars[0] = '\0';
         E.row[E.cy].size = 0; E.row[E.cy].modified = 0;
+        E.row[E.cy].hl_in_comment = 0;
         E.cy++;
     } else {
         EditorLine *line = &E.row[E.cy];
@@ -1311,6 +1336,7 @@ void editorInsertNewline(void) {
         E.row[E.cy + 1].chars = new_chars;
         E.row[E.cy + 1].size = new_len;
         E.row[E.cy + 1].modified = 1;
+        E.row[E.cy + 1].hl_in_comment = 0;
         E.cy++; E.cx = 0;
         E.preferred_cx = E.cx;
     }

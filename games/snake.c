@@ -185,20 +185,22 @@ void updateSnake() {
     }
 }
 
-// Draw the game board with borders, snake, and fruit, and display instructions.
+// Draw the game board using line-drawing characters for the borders,
+// and display the snake, fruit, score, and instructions.
 void drawBoard() {
     // Clear the screen and move cursor to home position
     printf("\033[2J\033[H");
     
-    // Draw top border
-    for (int x = 0; x < WIDTH + 2; x++) {
-        printf("#");
+    // Draw top border using line-drawing characters
+    printf("┌");
+    for (int x = 0; x < WIDTH; x++) {
+        printf("─");
     }
-    printf("\n");
+    printf("┐\n");
     
     // Draw board rows with left/right borders
     for (int y = 0; y < HEIGHT; y++) {
-        printf("#"); // left border
+        printf("│"); // left border
         for (int x = 0; x < WIDTH; x++) {
             int printed = 0;
             // Draw fruit if at this position
@@ -223,14 +225,15 @@ void drawBoard() {
             if(!printed)
                 printf(" ");
         }
-        printf("#\n"); // right border
+        printf("│\n"); // right border
     }
     
-    // Draw bottom border
-    for (int x = 0; x < WIDTH + 2; x++) {
-        printf("#");
+    // Draw bottom border using line-drawing characters
+    printf("└");
+    for (int x = 0; x < WIDTH; x++) {
+        printf("─");
     }
-    printf("\n");
+    printf("┘\n");
     
     // Display game status, score, and instructions
     if(game_over)

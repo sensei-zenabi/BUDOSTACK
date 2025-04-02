@@ -6,7 +6,7 @@
  *   - C keywords: control keywords in blue and data type keywords in cyan.
  *   - Numeric literals in yellow.
  *   - String and character literals in green.
- *   - Single-line comments (//) and multi-line comments (/* ... * /) in gray.
+ *   - Single-line comments (dashdash) and multi-line comments (dashstar ... stardash) in gray.
  *   - Parentheses in magenta.
  *
  * Design principles:
@@ -251,6 +251,15 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
             }
             /* Default: copy the character unchanged */
             result[ri++] = line[i++];
+        }
+    }
+    /* If still inside a multi-line comment, append a reset to ensure color does not leak */
+    if (in_comment) {
+        const char *reset = "\x1b[0m";
+        size_t rl = strlen(reset);
+        if (ri + rl < buf_size) {
+            memcpy(result + ri, reset, rl);
+            ri += rl;
         }
     }
     result[ri] = '\0';

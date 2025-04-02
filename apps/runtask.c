@@ -66,16 +66,16 @@ void print_help(void) {
     printf("Usage:\n");
     printf("  ./runtask taskfile [-d]\n\n");
     printf("Supported Commands:\n");
-    printf("  PRINT \"message\"\n");
-    printf("  WAIT milliseconds\n");
-    printf("  GOTO line_number\n");
-    printf("  RUN executable   	(adds an executable from any subdirectory as a new tmux window)\n");
-    printf("  SHELL script      (runs a shell script from the 'shell/' directory in a new tmux window)\n");
-    printf("  CMD executable    (runs an executable from the 'commands/' directory)\n");
-    printf("  CLEAR             (clears the screen)\n");
-    printf("  ROUTE clear       (clears the file route.rt)\n");
-    printf("  ROUTE ...         (appends a route command to route.rt)\n");
-    printf("  START             (attaches to the tmux session with all RUN/SHELL clients running)\n\n");
+    printf("  PRINT \"message\"    : Prints any message\n");
+    printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
+    printf("  GOTO line_number   : Jumps into a specified line number (line numbers are a must!)\n");
+    printf("  RUN executable     : Adds an executable from any subdirectory as a new tmux window\n");
+    printf("  SHELL script       : Runs a shell script from the 'shell/' directory in a new tmux window\n");
+    printf("  CMD executable     : Runs an executable from the 'commands/' directory\n");
+    printf("  CLEAR              : Clears the screen\n");
+    printf("  ROUTE clear        : Clears the file route.rt\n");
+    printf("  ROUTE ...          : Appends a route command to route.rt\n");
+    printf("  START              : Attaches to the tmux session with all RUN/SHELL clients running\n\n");
     printf("Compilation:\n");
     printf("  gcc -std=c11 -o runtask runtask.c\n\n");
 }

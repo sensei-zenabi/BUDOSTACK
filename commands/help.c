@@ -31,6 +31,7 @@ int main(int argc, char *argv[]) {
     printf("  display  : Display the contents of a file.\n");
     printf("  drives   : Lists all found drives.\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");
+    printf("             Supported languages: C/C++, Markup\n");
     printf("  exchange : Retrieves exchange rates of common currencies to euro.\n");
     printf("  find     : Find anything.\n");
     printf("  git      : Git helper, type git -help.\n");

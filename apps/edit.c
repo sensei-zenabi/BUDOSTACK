@@ -414,15 +414,14 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
                     abAppend(ab, highlighted, strlen(highlighted));
                     free(highlighted);
                 } 
-            } else if (is_other_source()) {
+            } else {
+				// Use this for all other files
                 char *highlighted = highlight_other_line(E.row[file_row].chars);
                 if (highlighted) {
                     abAppend(ab, highlighted, strlen(highlighted));
                     free(highlighted);
 				}
-            } else {
-                editorRenderRow(&E.row[file_row], text_width, ab);
-            }
+			}
             
             int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;
             if (printed_width < 0) printed_width = 0;

@@ -269,17 +269,18 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
 /*
  * highlight_other_line (general text and markup language highlighting)
  *
- * This version provides basic syntax highlighting for general text processing
- * and markup languages. It highlights:
+ * This updated version provides syntax highlighting for:
  *   - Markdown headers: if the first non-space character is '#' the entire line is colored red.
  *   - Markup tags: any content between '<' and '>' is colored blue.
+ *   - Inline code spans: text enclosed in backticks (`) is colored cyan.
+ *   - Bold text: text enclosed in double asterisks (**) is colored bold yellow.
+ *   - Italic text: text enclosed in single asterisks (*) is colored italic magenta.
  *
  * Design principles:
  *  - Plain C using -std=c11 and only standard libraries.
  *  - No separate header files.
  *  - The function processes the input line character by character and applies ANSI
- *    escape sequences for coloring. It handles two cases: whole-line markdown headers,
- *    and inline markup tags.
+ *    escape sequences for coloring.
  *
  * The caller is responsible for freeing the returned string.
  */
@@ -315,13 +316,107 @@ char *highlight_other_line(const char *line) {
             ri += rl;
         }
     } else {
-        // Process the line for markup tags
-        int in_tag = 0;
+        // Process the line for markup tags, inline code, bold and italic markers
+        int in_tag = 0;     // inside a <...> tag
+        int in_bold = 0;    // inside a bold (**...**) span
+        int in_italic = 0;  // inside an italic (*...*) span
         for (; i < len; i++) {
             char c = line[i];
+            // Check for inline code span start (backtick) if not inside a tag
+            if (!in_tag && c == '`') {
+                const char *code_color = "\x1b[36m";  // cyan for inline code
+                size_t cl = strlen(code_color);
+                if (ri + cl < buf_size) {
+                    memcpy(result + ri, code_color, cl);
+                    ri += cl;
+                }
+                // Append the starting backtick
+                result[ri++] = c;
+                i++;  // move past the starting backtick
+                // Copy characters until a closing backtick is found or end of line
+                while (i < len && line[i] != '`') {
+                    result[ri++] = line[i++];
+                }
+                // If closing backtick found, copy it as well
+                if (i < len && line[i] == '`') {
+                    result[ri++] = line[i++];
+                }
+                const char *reset = "\x1b[0m";
+                size_t rl = strlen(reset);
+                if (ri + rl < buf_size) {
+                    memcpy(result + ri, reset, rl);
+                    ri += rl;
+                }
+                i--; // adjust for the outer loop increment
+                continue;
+            }
+            // Check for bold and italic markers if not inside a tag
+            if (!in_tag && c == '*') {
+                // Bold marker: two asterisks
+                if (i + 1 < len && line[i + 1] == '*') {
+                    if (!in_bold) {
+                        // Start bold formatting
+                        const char *bold_color = "\x1b[1;33m";  // bold yellow
+                        size_t cl = strlen(bold_color);
+                        if (ri + cl < buf_size) {
+                            memcpy(result + ri, bold_color, cl);
+                            ri += cl;
+                        }
+                        // Append the bold marker "**"
+                        result[ri++] = '*';
+                        result[ri++] = '*';
+                        in_bold = 1;
+                        i++;  // Skip the next '*'
+                        continue;
+                    } else {
+                        // End bold formatting
+                        result[ri++] = '*';
+                        result[ri++] = '*';
+                        const char *reset = "\x1b[0m";
+                        size_t rl = strlen(reset);
+                        if (ri + rl < buf_size) {
+                            memcpy(result + ri, reset, rl);
+                            ri += rl;
+                        }
+                        in_bold = 0;
+                        i++;  // Skip the next '*'
+                        continue;
+                    }
+                } else {
+                    // Single asterisk marker for italic
+                    // If currently in bold, treat single '*' as literal
+                    if (in_bold) {
+                        result[ri++] = '*';
+                        continue;
+                    }
+                    if (!in_italic) {
+                        // Start italic formatting
+                        const char *italic_color = "\x1b[3;35m";  // italic magenta
+                        size_t cl = strlen(italic_color);
+                        if (ri + cl < buf_size) {
+                            memcpy(result + ri, italic_color, cl);
+                            ri += cl;
+                        }
+                        result[ri++] = '*';
+                        in_italic = 1;
+                        continue;
+                    } else {
+                        // End italic formatting
+                        result[ri++] = '*';
+                        const char *reset = "\x1b[0m";
+                        size_t rl = strlen(reset);
+                        if (ri + rl < buf_size) {
+                            memcpy(result + ri, reset, rl);
+                            ri += rl;
+                        }
+                        in_italic = 0;
+                        continue;
+                    }
+                }
+            }
+            // Check for start of a markup tag
             if (c == '<') {
-                // Start of a markup tag: insert tag color (blue)
-                const char *tag_color = "\x1b[34m";
+                const char *tag_color = "\x1b[34m";  // blue for tags
                 size_t cl = strlen(tag_color);
                 if (ri + cl < buf_size) {
                     memcpy(result + ri, tag_color, cl);
@@ -329,9 +424,10 @@ char *highlight_other_line(const char *line) {
                 }
                 in_tag = 1;
             }
+            // Copy the current character
             result[ri++] = c;
+            // Check for end of a markup tag
             if (c == '>' && in_tag) {
-                // End of tag: reset color
                 const char *reset = "\x1b[0m";
                 size_t rl = strlen(reset);
                 if (ri + rl < buf_size) {
@@ -339,6 +435,15 @@ char *highlight_other_line(const char *line) {
                     ri += rl;
                 }
                 in_tag = 0;
+            }
+        }
+        // If any formatting is still active, reset it at the end
+        if (in_bold || in_italic) {
+            const char *reset = "\x1b[0m";
+            size_t rl = strlen(reset);
+            if (ri + rl < buf_size) {
+                memcpy(result + ri, reset, rl);
+                ri += rl;
             }
         }
     }

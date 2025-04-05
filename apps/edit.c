@@ -131,6 +131,10 @@ int undo_history_len = 0;
    When disabled (e.g. during paste), newlines are inserted verbatim.
 */
 static int auto_indent_enabled = 1;
+/* Global flag to indicate bracketed paste mode.
+   When true, auto-indent is temporarily disabled.
+*/
+static int in_paste_mode = 0;
 
 /*** New Helper Function for Case-Insensitive Search ***/
 /*
@@ -157,7 +161,8 @@ char *strcasestr_custom(const char *haystack, const char *needle) {
 
 /* Expand tabs in the input string to spaces based on a fixed tab size.
    Returns a newly allocated string with TAB characters replaced by the proper
-   number of space characters. */
+   number of space characters.
+*/
 char *expand_tabs(const char *s) {
     int tab_size = 4;  // You can make this configurable if needed.
     int col = 0;
@@ -415,13 +420,13 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
                     free(highlighted);
                 } 
             } else {
-				// Use this for all other files
+                // Use this for all other files
                 char *highlighted = highlight_other_line(E.row[file_row].chars);
                 if (highlighted) {
                     abAppend(ab, highlighted, strlen(highlighted));
                     free(highlighted);
-				}
-			}
+                }
+            }
             
             int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;
             if (printed_width < 0) printed_width = 0;
@@ -505,47 +510,77 @@ void editorRefreshScreen(void) {
 }
 
 /* --- Input Function --- */
-
+/*
+   This implementation follows the original approach:
+   - If a non-ESC character is read, it is returned.
+   - If an ESC is read, two characters are read.
+     * If the sequence is ESC [ followed by a digit and '~', the appropriate key is returned.
+     * If the sequence is ESC [ followed by a letter, arrow keys and Home/End are handled.
+   - Additionally, if the sequence matches a bracketed paste start ([200~) or end ([201~)
+     the global flag in_paste_mode is set or cleared accordingly and the sequence is discarded.
+*/
 int editorReadKey(void) {
     char c; int nread;
     while ((nread = read(STDIN_FILENO, &c, 1)) == 0)
         ;
     if (nread == -1 && errno != EAGAIN)
         die("read");
+
     if (c == '\x1b') {
         char seq[6];
         if (read(STDIN_FILENO, &seq[0], 1) != 1)
             return '\x1b';
         if (read(STDIN_FILENO, &seq[1], 1) != 1)
             return '\x1b';
-        if (seq[0] == '[') {
-            if (seq[1] >= '0' && seq[1] <= '9') {
-                char seq3;
-                if (read(STDIN_FILENO, &seq3, 1) != 1)
+        if (seq[0] != '[')
+            return '\x1b';
+
+        // Check for bracketed paste sequences.
+        if (seq[1] == '2') {
+            if (read(STDIN_FILENO, &seq[2], 1) != 1)
+                return '\x1b';
+            if (seq[2] == '0') {
+                if (read(STDIN_FILENO, &seq[3], 1) != 1)
                     return '\x1b';
-                if (seq3 == '~') {
-                    switch(seq[1]) {
-                        case '1': return HOME_KEY;   // ESC [ 1 ~ (Home)
-                        case '3': return DEL_KEY;    // ESC [ 3 ~ (Delete)
-                        case '4': return END_KEY;    // ESC [ 4 ~ (End)
-                        case '5': return PGUP_KEY;   // ESC [ 5 ~ (Page Up)
-                        case '6': return PGDN_KEY;   // ESC [ 6 ~ (Page Down)
-                        default: return '\x1b';
-                    }
+                if (read(STDIN_FILENO, &seq[4], 1) != 1)
+                    return '\x1b';
+                if (seq[3] == '0' && seq[4] == '~') {
+                    in_paste_mode = 1;
+                    return editorReadKey(); // Discard paste start sequence.
                 }
-            } else {
-                switch (seq[1]) {
-                    case 'A': return ARROW_UP;
-                    case 'B': return ARROW_DOWN;
-                    case 'C': return ARROW_RIGHT;
-                    case 'D': return ARROW_LEFT;
-                    case 'H': return HOME_KEY;
-                    case 'F': return END_KEY;
-                    default: return '\x1b';
+                if (seq[3] == '1' && seq[4] == '~') {
+                    in_paste_mode = 0;
+                    return editorReadKey(); // Discard paste end sequence.
                 }
             }
         }
-        return '\x1b';
+        // If the second character is a digit, handle numeric escape sequences.
+        if (seq[1] >= '0' && seq[1] <= '9') {
+            char seq3;
+            if (read(STDIN_FILENO, &seq3, 1) != 1)
+                return '\x1b';
+            if (seq3 == '~') {
+                switch (seq[1]) {
+                    case '1': return HOME_KEY;
+                    case '3': return DEL_KEY;
+                    case '4': return END_KEY;
+                    case '5': return PGUP_KEY;
+                    case '6': return PGDN_KEY;
+                    default: return '\x1b';
+                }
+            }
+        } else {
+            // Otherwise, handle arrow keys and similar.
+            switch (seq[1]) {
+                case 'A': return ARROW_UP;
+                case 'B': return ARROW_DOWN;
+                case 'C': return ARROW_RIGHT;
+                case 'D': return ARROW_LEFT;
+                case 'H': return HOME_KEY;
+                case 'F': return END_KEY;
+                default: return '\x1b';
+            }
+        }
     }
     return c;
 }
@@ -558,8 +593,7 @@ int getWindowSize(int *rows, int *cols) {
     return 0;
 }
 
-/* --- Undo Functions --- */
-
+/*** Undo Functions ***/
 void push_undo_state(void) {
     UndoState *state = malloc(sizeof(UndoState));
     if (!state) die("malloc undo state");
@@ -574,7 +608,7 @@ void push_undo_state(void) {
         if (!state->row[i].chars) die("malloc undo row char");
         memcpy(state->row[i].chars, E.row[i].chars, E.row[i].size);
         state->row[i].chars[E.row[i].size] = '\0';
-        state->modified[i] = E.row[i].modified; // Save the modified flag
+        state->modified[i] = E.row[i].modified;
     }
     if (undo_history_len == 100) {
         free_undo_state(undo_history[0]);
@@ -585,15 +619,13 @@ void push_undo_state(void) {
     undo_history[undo_history_len++] = state;
 }
 
-
 void free_undo_state(UndoState *state) {
     for (int i = 0; i < state->numrows; i++)
         free(state->row[i].chars);
     free(state->row);
-    free(state->modified);  // Free the modified flags array
+    free(state->modified);
     free(state);
 }
-
 
 void pop_undo_state(void) {
     if (undo_history_len == 0)
@@ -612,15 +644,13 @@ void pop_undo_state(void) {
         if (!E.row[i].chars) die("malloc restore row char");
         memcpy(E.row[i].chars, state->row[i].chars, E.row[i].size);
         E.row[i].chars[E.row[i].size] = '\0';
-        E.row[i].modified = state->modified[i];  // Restore modified flag
+        E.row[i].modified = state->modified[i];
     }
     E.cx = state->cx; E.cy = state->cy;
     free_undo_state(state);
 }
 
-
-/* --- Terminal Setup Functions --- */
-
+/*** Terminal Setup Functions ***/
 void die(const char *s) {
     write(STDOUT_FILENO, "\x1b[2J", 4);
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -629,6 +659,8 @@ void die(const char *s) {
 }
 
 void disableRawMode(void) {
+    // Disable bracketed paste mode before restoring terminal settings.
+    write(STDOUT_FILENO, "\x1b[?2004l", 9);
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios);
 }
 
@@ -646,10 +678,11 @@ void enableRawMode(void) {
     raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 1;
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
         die("tcsetattr");
+    // Enable bracketed paste mode.
+    write(STDOUT_FILENO, "\x1b[?2004h", 9);
 }
 
-/* --- Input Processing --- */
-
+/*** Input Processing ***/
 void editorProcessKeypress(void) {
     int c = editorReadKey();
     static int last_key_was_vertical = 0;
@@ -710,11 +743,11 @@ void editorProcessKeypress(void) {
         case CTRL_KEY('c'):
             push_undo_state();
             editorCopySelection();
-            E.selecting = 0; // Disable selection toggle after copying
+            E.selecting = 0;
             break;
         case CTRL_KEY('v'):
             push_undo_state();
-            /* Disable auto-indent during paste */
+            /* Disable auto-indent during paste initiated by CTRL+V */
             {
                 int old_auto_indent = auto_indent_enabled;
                 auto_indent_enabled = 0;
@@ -851,8 +884,7 @@ void editorProcessKeypress(void) {
         E.rowoff = E.cy - E.textrows + 1;
 }
 
-/* --- New Functions for Selection Deletion and Delete Key --- */
-
+/*** New Functions for Selection Deletion and Delete Key ***/
 void editorDeleteSelection(void) {
     if (!E.selecting)
         return;
@@ -947,8 +979,7 @@ void editorDelCharAtCursor(void) {
     }
 }
 
-/* --- New Function for Search --- */
-
+/*** New Function for Search ***/
 void editorSearch(void) {
     char query[256];
     /* Switch to the alternate screen buffer so the search UI doesn't overlay the editor */
@@ -979,7 +1010,7 @@ void editorSearch(void) {
     int *matches = malloc(E.numrows * sizeof(int));
     if (!matches) {
         snprintf(E.status_message, sizeof(E.status_message), "Search: malloc failed");
-        printf("\033[?1049l"); // restore main screen
+        printf("\033[?1049l");
         fflush(stdout);
         return;
     }
@@ -991,7 +1022,7 @@ void editorSearch(void) {
     if (match_count == 0) {
         free(matches);
         snprintf(E.status_message, sizeof(E.status_message), "No matches found");
-        printf("\033[?1049l"); // restore main screen
+        printf("\033[?1049l");
         fflush(stdout);
         return;
     }
@@ -999,12 +1030,10 @@ void editorSearch(void) {
     /* Improved full-screen menu UI */
     int active = 0;
     int menu_start = 0;
-    int menu_height = rows - 4;  /* Reserve some lines for header and footer */
+    int menu_height = rows - 4;
 
     while (1) {
-        /* Clear the alternate screen */
         printf("\033[2J\033[H");
-        /* Header */
         printf("Search results for: \"%s\"\n", query);
         printf("\r--------------------------------------------------\n");
 
@@ -1013,12 +1042,10 @@ void editorSearch(void) {
             end = match_count;
         for (int i = menu_start; i < end; i++) {
             if (i == active)
-                printf("\033[7m");  /* Inverse video for active selection */
-            /* Ensure each line starts at column 1 */
+                printf("\033[7m");
             printf("\rLine %d: %s", matches[i] + 1, E.row[matches[i]].chars);
-            printf("\033[0m\n");   /* Reset formatting and newline */
+            printf("\033[0m\n");
         }
-        /* Footer prompt */
         printf("\r--------------------------------------------------\n");
         printf("\rUse Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
         fflush(stdout);
@@ -1048,7 +1075,6 @@ void editorSearch(void) {
         result = matches[active];
     free(matches);
 
-    /* Restore the main screen buffer so the editor content is visible again */
     printf("\033[?1049l");
     fflush(stdout);
 
@@ -1070,8 +1096,7 @@ void editorSearch(void) {
     }
 }
 
-/* --- Clipboard and Selection Functions --- */
-
+/*** Clipboard and Selection Functions ***/
 void editorCopySelection(void) {
     if (!E.selecting)
         return;
@@ -1189,8 +1214,93 @@ void editorInsertString(const char *s) {
     }
 }
 
-/* --- File/Buffer Operations --- */
+/*** Modified editorInsertNewline with auto-indent ***
+   When auto_indent_enabled is true and not in paste mode, the new line is pre-filled with the current line's leading whitespace.
+   When disabled (or in paste mode), newlines are inserted without auto-indent.
+*/
+void editorInsertNewline(void) {
+    EditorLine *line = &E.row[E.cy];
+    char *indent = "";
+    if (auto_indent_enabled && !in_paste_mode) {
+        int pos = 0;
+        while (pos < line->size && (line->chars[pos] == ' ' || line->chars[pos] == '\t'))
+            pos++;
+        indent = malloc(pos + 1);
+        if (!indent) die("malloc");
+        memcpy(indent, line->chars, pos);
+        indent[pos] = '\0';
+    }
+    int index = editorRowCxToByteIndex(line, E.cx);
+    char *remainder = malloc(line->size - index + 1);
+    if (!remainder) die("malloc");
+    memcpy(remainder, &line->chars[index], line->size - index);
+    remainder[line->size - index] = '\0';
+    line->size = index;
+    line->chars[index] = '\0';
+    char *new_content;
+    if (auto_indent_enabled && !in_paste_mode) {
+        size_t indent_len = strlen(indent);
+        size_t rem_len = strlen(remainder);
+        new_content = malloc(indent_len + rem_len + 1);
+        if (!new_content) die("malloc");
+        memcpy(new_content, indent, indent_len);
+        memcpy(new_content + indent_len, remainder, rem_len + 1);
+        E.cx = indent_len;
+        free(indent);
+    } else {
+        new_content = strdup(remainder);
+        E.cx = 0;
+    }
+    free(remainder);
+    EditorLine *new_row = realloc(E.row, sizeof(EditorLine) * (E.numrows + 1));
+    if (!new_row) die("realloc");
+    E.row = new_row;
+    for (int j = E.numrows; j > E.cy; j--)
+        E.row[j] = E.row[j - 1];
+    E.numrows++;
+    E.row[E.cy + 1].chars = new_content;
+    E.row[E.cy + 1].size = strlen(new_content);
+    E.row[E.cy + 1].modified = 1;
+    E.row[E.cy + 1].hl_in_comment = 0;
+    E.cy++;
+    E.preferred_cx = E.cx;
+    E.dirty = 1;
+}
 
+void editorDelChar(void) {
+    if (E.cy == E.numrows)
+        return;
+    if (E.cx == 0 && E.cy == 0)
+        return;
+    EditorLine *line = &E.row[E.cy];
+    if (E.cx == 0) {
+        EditorLine *prev_line = &E.row[E.cy - 1];
+        int prev_size = prev_line->size;
+        prev_line->chars = realloc(prev_line->chars, prev_size + line->size + 1);
+        if (prev_line->chars == NULL)
+            die("realloc");
+        memcpy(prev_line->chars + prev_size, line->chars, line->size);
+        prev_line->chars[prev_size + line->size] = '\0';
+        prev_line->size = prev_size + line->size; prev_line->modified = 1;
+        free(line->chars);
+        for (int j = E.cy; j < E.numrows - 1; j++)
+            E.row[j] = E.row[j + 1];
+        E.numrows--; E.cy--;
+        E.cx = editorDisplayWidth(prev_line->chars);
+        E.preferred_cx = E.cx;
+    } else {
+        int index = editorRowCxToByteIndex(line, E.cx);
+        int prev_index = editorRowCxToByteIndex(line, E.cx - 1);
+        memmove(&line->chars[prev_index], &line->chars[index], line->size - index + 1);
+        line->size -= (index - prev_index);
+        E.cx -= 1;
+        E.preferred_cx = E.cx;
+        line->modified = 1;
+    }
+    E.dirty = 1;
+}
+
+/*** File/Buffer Operations ***/
 void editorOpen(const char *filename) {
     free(E.filename);
     E.filename = strdup(filename);
@@ -1208,12 +1318,10 @@ void editorOpen(const char *filename) {
     }
     char *line = NULL; size_t linecap = 0; ssize_t linelen;
     while ((linelen = getline(&line, &linecap, fp)) != -1) {
-        /* Trim newline and carriage return characters. */
         while (linelen > 0 && (line[linelen - 1] == '\n' || line[linelen - 1] == '\r')) {
             line[linelen - 1] = '\0';
             linelen--;
         }
-        /* Convert TABs to spaces. */
         char *expanded = expand_tabs(line);
         if (expanded) {
             editorAppendLine(expanded, strlen(expanded));
@@ -1271,7 +1379,7 @@ void editorAppendLine(char *s, size_t len) {
     E.row[E.numrows].chars[len] = '\0';
     E.row[E.numrows].size = (int)len;
     E.row[E.numrows].modified = 0;
-    E.row[E.numrows].hl_in_comment = 0;  // initialize multi-line comment flag
+    E.row[E.numrows].hl_in_comment = 0;
     E.numrows++;
 }
 
@@ -1317,99 +1425,7 @@ void editorInsertUTF8(const char *s, int len) {
     line->modified = 1; E.dirty = 1;
 }
 
-/* --- Modified editorInsertNewline with auto-indent ---
-   When auto_indent_enabled is true, the new line is pre-filled with the current line's leading whitespace.
-   When disabled (e.g. during paste), newlines are inserted without auto-indent.
-*/
-void editorInsertNewline(void) {
-    EditorLine *line = &E.row[E.cy];
-    // Compute leading whitespace (indent) if auto-indent is enabled.
-    char *indent = "";
-    if (auto_indent_enabled) {
-        int pos = 0;
-        while (pos < line->size && (line->chars[pos] == ' ' || line->chars[pos] == '\t'))
-            pos++;
-        indent = malloc(pos + 1);
-        if (!indent) die("malloc");
-        memcpy(indent, line->chars, pos);
-        indent[pos] = '\0';
-    }
-    int index = editorRowCxToByteIndex(line, E.cx);
-    // Get the remainder of the current line.
-    char *remainder = malloc(line->size - index + 1);
-    if (!remainder) die("malloc");
-    memcpy(remainder, &line->chars[index], line->size - index);
-    remainder[line->size - index] = '\0';
-    // Trim current line at the cursor.
-    line->size = index;
-    line->chars[index] = '\0';
-    // Prepare new line content.
-    char *new_content;
-    if (auto_indent_enabled) {
-        size_t indent_len = strlen(indent);
-        size_t rem_len = strlen(remainder);
-        new_content = malloc(indent_len + rem_len + 1);
-        if (!new_content) die("malloc");
-        memcpy(new_content, indent, indent_len);
-        memcpy(new_content + indent_len, remainder, rem_len + 1);
-        E.cx = indent_len;  // Place cursor after the indent.
-        free(indent);
-    } else {
-        new_content = strdup(remainder);
-        E.cx = 0;
-    }
-    free(remainder);
-    // Insert new line at position E.cy + 1.
-    EditorLine *new_row = realloc(E.row, sizeof(EditorLine) * (E.numrows + 1));
-    if (!new_row) die("realloc");
-    E.row = new_row;
-    for (int j = E.numrows; j > E.cy; j--)
-        E.row[j] = E.row[j - 1];
-    E.numrows++;
-    E.row[E.cy + 1].chars = new_content;
-    E.row[E.cy + 1].size = strlen(new_content);
-    E.row[E.cy + 1].modified = 1;
-    E.row[E.cy + 1].hl_in_comment = 0;
-    E.cy++;
-    E.preferred_cx = E.cx;
-    E.dirty = 1;
-}
-
-void editorDelChar(void) {
-    if (E.cy == E.numrows)
-        return;
-    if (E.cx == 0 && E.cy == 0)
-        return;
-    EditorLine *line = &E.row[E.cy];
-    if (E.cx == 0) {
-        EditorLine *prev_line = &E.row[E.cy - 1];
-        int prev_size = prev_line->size;
-        prev_line->chars = realloc(prev_line->chars, prev_size + line->size + 1);
-        if (prev_line->chars == NULL)
-            die("realloc");
-        memcpy(&prev_line->chars[prev_size], line->chars, line->size);
-        prev_line->chars[prev_size + line->size] = '\0';
-        prev_line->size = prev_size + line->size; prev_line->modified = 1;
-        free(line->chars);
-        for (int j = E.cy; j < E.numrows - 1; j++)
-            E.row[j] = E.row[j + 1];
-        E.numrows--; E.cy--;
-        E.cx = editorDisplayWidth(prev_line->chars);
-        E.preferred_cx = E.cx;
-    } else {
-        int index = editorRowCxToByteIndex(line, E.cx);
-        int prev_index = editorRowCxToByteIndex(line, E.cx - 1);
-        memmove(&line->chars[prev_index], &line->chars[index], line->size - index + 1);
-        line->size -= (index - prev_index);
-        E.cx -= 1;
-        E.preferred_cx = E.cx;
-        line->modified = 1;
-    }
-    E.dirty = 1;
-}
-
-/* --- Main --- */
-
+/*** Modified Main ***/
 int main(int argc, char *argv[]) {
     setlocale(LC_CTYPE, "");
     E.cx = 0; E.cy = 0;

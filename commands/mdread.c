@@ -149,6 +149,7 @@ int main(int argc, char *argv[]) {
     char cleaned[MAX_LINE];
     char inline_out[OUT_SIZE];
     char *filename;
+    int last_was_list_item = 0; // Track if the last printed line was a list item.
 
     // Use provided filename or default to "readme.md"
     if (argc > 1) {
@@ -170,14 +171,19 @@ int main(int argc, char *argv[]) {
         // Trim leading whitespace.
         char *trimmed = trim_left(cleaned);
 
-        // If the line is empty, print a newline.
+        // If the line is empty, only print a newline if the previous line wasn't a list item.
         if (*trimmed == '\0') {
-            printf("\n");
+            if (!last_was_list_item)
+                printf("\n");
             continue;
         }
 
         // Check for markdown header (lines starting with '#').
         if (trimmed[0] == '#') {
+            // If the previous block was a list, insert an extra newline.
+            if (last_was_list_item)
+                printf("\n");
+
             int level = 0;
             while (trimmed[level] == '#')
                 level++;
@@ -199,13 +205,19 @@ int main(int argc, char *argv[]) {
             } else {
                 printf("\033[1m%s\033[0m\n", inline_out);
             }
+            last_was_list_item = 0;
         }
         // Check for unordered list items (starting with '-', '*', or '+')
         else if ((trimmed[0] == '-' || trimmed[0] == '*' || trimmed[0] == '+') &&
                  isspace((unsigned char)trimmed[1])) {
             int pos = 2; // Skip marker and following space.
             process_inline(trimmed + pos, inline_out);
+            // Remove trailing newline if present.
+            size_t len = strlen(inline_out);
+            if (len > 0 && inline_out[len-1] == '\n')
+                inline_out[len-1] = '\0';
             printf("  • %s\n", inline_out);
+            last_was_list_item = 1;
         }
         // Check for ordered list items (starting with digits followed by '.' and a space)
         else if (isdigit((unsigned char)trimmed[0])) {
@@ -218,11 +230,16 @@ int main(int argc, char *argv[]) {
                 strncpy(number, trimmed, idx);
                 number[idx] = '\0';
                 process_inline(trimmed + pos, inline_out);
+                // Remove trailing newline if present.
+                size_t len = strlen(inline_out);
+                if (len > 0 && inline_out[len-1] == '\n')
+                    inline_out[len-1] = '\0';
                 printf("  %s. %s\n", number, inline_out);
+                last_was_list_item = 1;
             } else {
-                // Regular paragraph if not a valid ordered list marker.
                 process_inline(trimmed, inline_out);
                 printf("%s", inline_out);
+                last_was_list_item = 0;
             }
         }
         // Check for blockquotes (lines starting with '>')
@@ -232,11 +249,13 @@ int main(int argc, char *argv[]) {
                 pos++;
             process_inline(trimmed + pos, inline_out);
             printf("\033[3m> %s\033[0m\n", inline_out);  // Italicize blockquotes.
+            last_was_list_item = 0;
         }
         // Default: process as a regular paragraph.
         else {
             process_inline(trimmed, inline_out);
             printf("%s", inline_out);
+            last_was_list_item = 0;
         }
     }
 

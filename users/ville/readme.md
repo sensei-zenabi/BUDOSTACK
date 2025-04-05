@@ -8,6 +8,19 @@ This is my development diary for AALTO. Hope you'll enjoy it! Newest post is alw
 3. Separating the server API as a separate library from the node apps.
 4. Code-analysis tools?
 
+### Saturday, 5th of April 2025 ###
+
+Found today, that edit.c had still an issue when pasting content from external source using ctrl+shift+v.
+Needed to iterate quite a lot to figure out what is the correct way to handle pasting from ext. sources.
+Proved to be the "bracketed pasting", as when ctrl+shift+v is used, terminal will inject the clipboard
+to the input stream hence making the editor to think that user is typing normally the content in. This
+caused the auto-indent feature to keep adding indents skewing the whole pasted content. Modern terminals
+however use a certain escape syntax to indicate when content is being pasted from ext. source. When taking
+that approach into use, it finally fixed the issue.
+
+Implemented also a new command called "mdread" that can be used to pretty print .md files to terminal for
+easier readability (similar how github displays them).
+
 ### Wednesday, 2nd of April 2025 ###
 
 **edit.c:**<br>

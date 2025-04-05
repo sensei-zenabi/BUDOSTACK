@@ -17,9 +17,14 @@ to the input stream hence making the editor to think that user is typing normall
 caused the auto-indent feature to keep adding indents skewing the whole pasted content. Modern terminals
 however use a certain escape syntax to indicate when content is being pasted from ext. source. When taking
 that approach into use, it finally fixed the issue.
-
+<br><br>
 Implemented also a new command called "mdread" that can be used to pretty print .md files to terminal for
 easier readability (similar how github displays them).
+<br><br>
+Next step is to check the whole main.c and related command handling. The project has changed since the
+beginning, and I think the original way of having main.c, input.c and commandparser.c handling the input
+is not anymore fit to purpose, as all the apps and commands are stand-alone executables. The aim would
+be to remove the commandparser.c and input.c and have only the main.c.
 
 ### Wednesday, 2nd of April 2025 ###
 

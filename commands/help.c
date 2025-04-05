@@ -38,6 +38,7 @@ int main(int argc, char *argv[]) {
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (type 'list -help').\n");
     printf("  makedir  : Create a new directory.\n");
+	printf("  mdread   : Pretty-prints .md files. Use: mdread readme.md\n");
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");

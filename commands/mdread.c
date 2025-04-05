@@ -113,6 +113,36 @@ char *trim_left(char *str) {
     return str;
 }
 
+// remove_trailing_hashes: Removes trailing spaces and '#' characters from header text
+// if the '#' markers are preceded by at least one whitespace.
+// This ensures that headers like "### MY HEADER ###" are printed as "MY HEADER".
+void remove_trailing_hashes(char *s) {
+    int len = strlen(s);
+    if (len == 0) return;
+
+    // Remove trailing newline if present.
+    if (s[len-1] == '\n') {
+        s[len-1] = '\0';
+        len--;
+    }
+
+    // Trim trailing whitespace.
+    while (len > 0 && isspace((unsigned char)s[len-1]))
+        len--;
+
+    // Identify trailing '#' characters.
+    int hashStart = len;
+    while (hashStart > 0 && s[hashStart-1] == '#')
+        hashStart--;
+
+    // Only remove the trailing '#' markers if they are preceded by a space.
+    if (hashStart < len && hashStart > 0 && isspace((unsigned char)s[hashStart-1])) {
+        s[hashStart-1] = '\0';
+    } else {
+        s[len] = '\0';
+    }
+}
+
 int main(int argc, char *argv[]) {
     FILE *fp;
     char line[MAX_LINE];
@@ -155,7 +185,13 @@ int main(int argc, char *argv[]) {
             int pos = level;
             if (trimmed[pos] == ' ')
                 pos++;
-            process_inline(trimmed + pos, inline_out);
+            // Copy header text into a temporary buffer.
+            char headerText[MAX_LINE];
+            strncpy(headerText, trimmed + pos, MAX_LINE - 1);
+            headerText[MAX_LINE - 1] = '\0';
+            // Remove trailing '#' markers from header text.
+            remove_trailing_hashes(headerText);
+            process_inline(headerText, inline_out);
             // Apply header formatting based on level.
             // Level 1: Bold and Underlined, Level 2 and beyond: Bold.
             if (level == 1) {

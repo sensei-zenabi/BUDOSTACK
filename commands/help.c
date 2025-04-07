@@ -43,6 +43,7 @@ int main(int argc, char *argv[]) {
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
     printf("  restart  : A command to re-compile and restart AALTO. Use with caution!\n");
+    printf("             Use 'restart -f' to clean before building.\n");
     printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");
     printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
     printf("             e.g. 'run git status' or 'run ./myexecutable'\n");

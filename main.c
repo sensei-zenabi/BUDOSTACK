@@ -583,11 +583,31 @@ int main(int argc, char *argv[]) {
         input[strcspn(input, "\n")] = '\0';
         
         /* NEW: "restart" command handling.
-         * When the user types "restart", the shell runs "make" to recompile itself.
-         * If make succeeds, it uses execv() to replace its process image with the new binary.
+         * When the user types "restart" or "restart -f", the shell first changes its working directory to the base directory,
+         * then runs "make" to recompile itself. If "restart -f" is entered, "make clean" is executed before rebuilding.
          */
-        if (strcmp(input, "restart") == 0) {
+        if (strncmp(input, "restart", 7) == 0) {
+            int force = 0;
+            // Tokenize the input to check for additional parameter "-f"
+            char *token = strtok(input, " ");
+            token = strtok(NULL, " ");
+            if (token && strcmp(token, "-f") == 0) {
+                force = 1;
+            }
             free(input);
+            // Change directory to base_directory so that make is run from the correct location.
+            if (chdir(base_directory) != 0) {
+                perror("chdir to base_directory failed");
+                continue;
+            }
+            // If force flag is set, run "make clean" before rebuilding.
+            if (force) {
+                int clean_ret = system("make clean");
+                if (clean_ret != 0) {
+                    fprintf(stderr, "make clean failed, not restarting.\n");
+                    continue;
+                }
+            }
             int ret = system("make");
             if (ret != 0) {
                 fprintf(stderr, "Make failed, not restarting.\n");

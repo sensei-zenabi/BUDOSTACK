@@ -42,8 +42,6 @@ Nodes are being built using the proprietary TASK language. Example
 nodes can be found from the "tasks" -folder and instructions from
 TASK language can be seen by typing "runtask -help" within AALTO.
 <br><br>
-Below is an example how to start a node from linux terminal:
-- ./aalto code
-<br><br>
-Here is an example how to start the same node within AALTO:
-- runtask code.task
+Below is an example how to start a node:
+- ./aalto code      (when starting from linux terminal)
+- runtask code.task (when starting from within AALTO)

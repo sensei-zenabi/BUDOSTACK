@@ -8,6 +8,12 @@ This is my development diary for AALTO. Hope you'll enjoy it! Newest post is alw
 3. Separating the server API as a separate library from the node apps.
 4. Code-analysis tools?
 
+### Monday, 7th of April 2025 ###
+
+Ok, did an inspection to main.c, commandparser.c and input.c and came to a conclusion that to have run
+-like command, it is better to include it into the main.c and delete the separate run.c. Now user should
+be able to run any linux shell like command using run.
+
 ### Saturday, 5th of April 2025 ###
 
 Found today, that edit.c had still an issue when pasting content from external source using ctrl+shift+v.

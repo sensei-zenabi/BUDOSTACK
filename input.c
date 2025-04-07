@@ -14,6 +14,7 @@
 /* List of available commands for autocomplete */
 static const char *commands[] = {
 	"help",
+	"run",   // NEW: Added "run" command for executing arbitrary shell input.
     "exit"
 };
 

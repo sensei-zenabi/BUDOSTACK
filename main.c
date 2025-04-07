@@ -18,6 +18,7 @@
  * - nanosleep is used instead of usleep to avoid implicit declaration warnings under -std=c11.
  * - New behavior: The realtime command list is auto-populated with executables found in the apps/ folder.
  *   Commands that are in that list or invoked with the "-nopaging" flag are executed in realtime mode.
+ * - NEW: A built-in command "run" is introduced that takes the rest of the input as a shell command to execute.
  *
  * Design Principles:
  * - Modularity & Separation of Concerns: Command parsing, execution, and paging are separated.
@@ -301,11 +302,6 @@ void pager(const char **lines, size_t line_count) {
     printf("\n");
 }
 
-/*
- * is_realtime_command()
- *
- * This function checks if the command is among the list of executables loaded from the apps/ folder.
- */
 int is_realtime_command(const char *command) {
     for (int i = 0; i < realtime_command_count; i++) {
         if (strcmp(command, realtime_commands[i]) == 0)
@@ -588,6 +584,7 @@ int main(int argc, char *argv[]) {
             free(input);
             break;
         }
+        /* Built-in "cd" command handling */
         if (strncmp(input, "cd", 2) == 0) {
             parse_input(input, &cmd);
             if (cmd.param_count > 0) {
@@ -600,6 +597,36 @@ int main(int argc, char *argv[]) {
             free_command_struct(&cmd);
             continue;
         }
+        /* NEW: Built-in "run" command handling.
+         * This command allows the user to run any shell input.
+         * Example: run git commit -m "this is my commit"
+         */
+        if (strncmp(input, "run", 3) == 0 && (input[3] == ' ' || input[3] == '\0')) {
+            if (input[3] == '\0') {
+                fprintf(stderr, "run: missing operand\n");
+                free(input);
+                continue;
+            }
+            /* Skip the "run " prefix and trim leading spaces */
+            char *shell_command = input + 4;
+            while (*shell_command == ' ')
+                shell_command++;
+            /* Fork and execute the shell command using /bin/sh */
+            pid_t pid = fork();
+            if (pid == -1) {
+                perror("fork");
+            } else if (pid == 0) {
+                execl("/bin/sh", "sh", "-c", shell_command, (char *)NULL);
+                perror("execl");
+                exit(EXIT_FAILURE);
+            } else {
+                int status;
+                waitpid(pid, &status, 0);
+            }
+            free(input);
+            continue;
+        }
+        /* Default processing for other commands */
         parse_input(input, &cmd);
         execute_command_with_paging(&cmd);
         free(input);

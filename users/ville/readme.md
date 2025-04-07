@@ -19,7 +19,9 @@ started within AALTO can. This makes a bit more authentic OS feeling to AALTO if
 machine bootup automatically.
 <br><br>
 Introduced 'restart' command with 'restart -f' option that re-compiles AALTO and restarts it. It can be
-ran from any folder and the latter option will clean the build before re-compiling it.
+ran from any folder and the latter option will clean the build before re-compiling it. Maybe later on I
+need to do a complete routine from 'restart', that zips the current version to backup/ before building.
+If the build fails, the working version is restored from the backup...
 
 ### Saturday, 5th of April 2025 ###
 

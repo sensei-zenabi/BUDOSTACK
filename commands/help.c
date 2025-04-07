@@ -44,7 +44,7 @@ int main(int argc, char *argv[]) {
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
     printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");
     printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
-    printf("             e.g. 'run git status' or './myexecutable'\n");
+    printf("             e.g. 'run git status' or 'run ./myexecutable'\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");

@@ -17,6 +17,9 @@ be able to run any linux shell like command using run.
 Modified main.c and commandparser.c so that AALTO cannot be anymore killed using CTRL+C, but all the apps
 started within AALTO can. This makes a bit more authentic OS feeling to AALTO if it would be started in
 machine bootup automatically.
+<br><br>
+Introduced 'restart' command with 'restart -f' option that re-compiles AALTO and restarts it. It can be
+ran from any folder and the latter option will clean the build before re-compiling it.
 
 ### Saturday, 5th of April 2025 ###
 

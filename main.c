@@ -19,6 +19,8 @@
  * - New behavior: The realtime command list is auto-populated with executables found in the apps/ folder.
  *   Commands that are in that list or invoked with the "-nopaging" flag are executed in realtime mode.
  * - NEW: A built-in command "run" is introduced that takes the rest of the input as a shell command to execute.
+ * - NEW: A built-in command "restart" is introduced. When invoked, AALTO calls "make" (using the makefile in the same directory)
+ *   to recompile itself. If successful, the shell uses execv() to restart the new binary.
  * - NEW: The shell ignores CTRL+C (SIGINT) so that the user cannot quit AALTO,
  *   but child processes reset SIGINT to default so they can be terminated with CTRL+C.
  *
@@ -70,6 +72,13 @@ char base_directory[PATH_MAX] = {0};
 /* Global dynamic list to store realtime commands loaded from apps/ folder. */
 char **realtime_commands = NULL;
 int realtime_command_count = 0;
+
+/* 
+ * Global copies of the original command-line arguments.
+ * These will be used by the "restart" command when re-executing the new binary.
+ */
+static int g_argc;
+static char **g_argv;
 
 /* load_realtime_commands()
  *
@@ -498,6 +507,10 @@ int main(int argc, char *argv[]) {
      */
     signal(SIGINT, SIG_IGN);
     
+    /* Store original command-line arguments for later use by the "restart" command */
+    g_argc = argc;
+    g_argv = argv;
+    
     /* Determine the base directory of the executable. */
     char exe_path[PATH_MAX] = {0};
     if (argc > 0) {
@@ -568,6 +581,24 @@ int main(int argc, char *argv[]) {
             continue;
         }
         input[strcspn(input, "\n")] = '\0';
+        
+        /* NEW: "restart" command handling.
+         * When the user types "restart", the shell runs "make" to recompile itself.
+         * If make succeeds, it uses execv() to replace its process image with the new binary.
+         */
+        if (strcmp(input, "restart") == 0) {
+            free(input);
+            int ret = system("make");
+            if (ret != 0) {
+                fprintf(stderr, "Make failed, not restarting.\n");
+            } else {
+                execv(g_argv[0], g_argv);
+                perror("execv failed");
+                exit(EXIT_FAILURE);
+            }
+            continue;
+        }
+        
         if (strcmp(input, "exit") == 0) {
             free(input);
             break;

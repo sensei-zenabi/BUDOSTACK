@@ -38,10 +38,11 @@ int main(int argc, char *argv[]) {
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (type 'list -help').\n");
     printf("  makedir  : Create a new directory.\n");
-	printf("  mdread   : Pretty-prints .md files. Use: mdread readme.md\n");
+    printf("  mdread   : Pretty-prints .md files. Use: mdread readme.md\n");
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
+    printf("  restart  : A command to re-compile and restart AALTO. Use with caution!\n");
     printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");
     printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
     printf("             e.g. 'run git status' or 'run ./myexecutable'\n");
@@ -61,14 +62,14 @@ int main(int argc, char *argv[]) {
         printf("\n");
     }
 
-	// Games list
-	printf("List of Games:\n");
-	printf("\n");
-	printf("  invaders : A space invaders clone tailored to terminal.\n");
-	printf("  snake    : A snake clone, reminence from the good old Nokia days.\n");
-	printf("\n");
-	printf("  > Go to games folder, and type \"run ./invaders\"\n");
-	printf("\n");
+    // Games list
+    printf("List of Games:\n");
+    printf("\n");
+    printf("  invaders : A space invaders clone tailored to terminal.\n");
+    printf("  snake    : A snake clone, reminence from the good old Nokia days.\n");
+    printf("\n");
+    printf("  > Go to games folder, and type \"run ./invaders\"\n");
+    printf("\n");
 
     // Print node applications information
     printf("Running Node Applications:\n");

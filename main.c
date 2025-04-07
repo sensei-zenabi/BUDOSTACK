@@ -19,6 +19,8 @@
  * - New behavior: The realtime command list is auto-populated with executables found in the apps/ folder.
  *   Commands that are in that list or invoked with the "-nopaging" flag are executed in realtime mode.
  * - NEW: A built-in command "run" is introduced that takes the rest of the input as a shell command to execute.
+ * - NEW: The shell ignores CTRL+C (SIGINT) so that the user cannot quit AALTO,
+ *   but child processes reset SIGINT to default so they can be terminated with CTRL+C.
  *
  * Design Principles:
  * - Modularity & Separation of Concerns: Command parsing, execution, and paging are separated.
@@ -43,7 +45,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <fcntl.h>
-#include <signal.h>     // For kill()
+#include <signal.h>     // For signal handling
 #include <sys/select.h> // For select()
 #include <dirent.h>     // For directory handling
 #include <sys/stat.h>   // For stat()
@@ -312,18 +314,12 @@ int is_realtime_command(const char *command) {
 
 /*
  * Updated execute_command_with_paging():
- * - For realtime commands (commands found in apps/ folder) or commands with the "-nopaging" attribute, execute directly.
- * - For other commands, fork a child process to execute the command with redirected output.
- * - The parent uses select() to read concurrently from the pipe while waiting for the child.
- * - A timeout (5 seconds) is enforced; if reached, the child is killed.
- * - Both stdout and stderr are captured.
- * - The captured output is split into lines manually, preserving empty lines and all characters.
+ * - For realtime commands (or when the "-nopaging" flag is provided), execute directly.
+ * - Otherwise, fork a child process to execute the command and capture its output.
  */
 void execute_command_with_paging(CommandStruct *cmd) {
     int nopaging = 0;
-    /* Check if the command parameters contain "-nopaging" flag.
-     * If found, set nopaging and remove it from the parameters.
-     */
+    /* Check if the command parameters contain "-nopaging" flag. */
     for (int i = 0; i < cmd->param_count; i++) {
         if (strcmp(cmd->parameters[i], "-nopaging") == 0) {
             nopaging = 1;
@@ -360,7 +356,8 @@ void execute_command_with_paging(CommandStruct *cmd) {
     }
     
     if (pid == 0) {
-        /* Child process: Redirect stdout and stderr to the pipe. */
+        // In child process, reset SIGINT to default so that CTRL+C kills the app.
+        signal(SIGINT, SIG_DFL);
         if (dup2(pipefd[1], STDOUT_FILENO) == -1) {
             perror("dup2");
             exit(EXIT_FAILURE);
@@ -375,10 +372,8 @@ void execute_command_with_paging(CommandStruct *cmd) {
         exit(EXIT_SUCCESS);
     }
     
-    /* Parent process: Close write end. */
+    /* Parent process: Close write end and capture output */
     close(pipefd[1]);
-    
-    /* Set the pipe's read end to non-blocking mode. */
     int flags = fcntl(pipefd[0], F_GETFL, 0);
     fcntl(pipefd[0], F_SETFL, flags | O_NONBLOCK);
     
@@ -444,18 +439,16 @@ void execute_command_with_paging(CommandStruct *cmd) {
     
     /*
      * Manually split output into lines while preserving empty lines.
-     * We count the number of lines by scanning for '\n'. Each newline terminates a line.
      */
     size_t line_count = 0;
     for (size_t i = 0; i < total_size; i++) {
         if (output[i] == '\n')
             line_count++;
     }
-    /* If the output does not end with a newline, count the last line as well */
     if (total_size > 0 && output[total_size-1] != '\n')
         line_count++;
     
-    char **lines = malloc((line_count) * sizeof(char *));
+    char **lines = malloc(line_count * sizeof(char *));
     if (!lines) {
         perror("malloc");
         free(output);
@@ -470,7 +463,6 @@ void execute_command_with_paging(CommandStruct *cmd) {
             start = output + i + 1;
         }
     }
-    /* If the last character is not a newline, capture the remaining text as the last line */
     if (start < output + total_size) {
         lines[current_line++] = start;
     }
@@ -500,21 +492,21 @@ int main(int argc, char *argv[]) {
     char *input;
     CommandStruct cmd;
 
-    /* Determine the base directory of the executable.
-       This design decision ensures that commands are looked up relative to the executable's location,
-       making the command execution independent of the current working directory.
-    */
+    /* 
+     * Ignore SIGINT in the shell so that CTRL+C does not quit AALTO.
+     * Child processes will reset SIGINT to default.
+     */
+    signal(SIGINT, SIG_IGN);
+    
+    /* Determine the base directory of the executable. */
     char exe_path[PATH_MAX] = {0};
     if (argc > 0) {
         if (realpath(argv[0], exe_path) != NULL) {
-            /* Extract the directory part from the full path */
             char *last_slash = strrchr(exe_path, '/');
             if (last_slash != NULL) {
                 *last_slash = '\0'; // Terminate the string at the last '/'
             }
-            /* Set the base directory for command lookup */
             set_base_path(exe_path);
-            /* Store the base directory for use in resolving apps/ commands */
             strncpy(base_directory, exe_path, sizeof(base_directory)-1);
         }
     }
@@ -525,9 +517,7 @@ int main(int argc, char *argv[]) {
     /* Clear the screen */
     system("clear");
 
-    /* Modified: Determine if we need to auto-run a command.
-       If a single argument is provided and it is not "-f", build the auto-run command.
-    */
+    /* Modified: Determine if we need to auto-run a command. */
     char *auto_command = NULL;
     if (argc == 2 && strcmp(argv[1], "-f") != 0) {
         size_t len = strlen("runtask ") + strlen(argv[1]) + strlen(".task") + 1;
@@ -543,7 +533,6 @@ int main(int argc, char *argv[]) {
     if ((argc > 1 && strcmp(argv[1], "-f") == 0) || auto_command != NULL) {
         /* Do not print startup messages and skip login() */
     } else {
-        /* Startup messages. */
         system("clear");
         aaltologo();
         printf("\n");
@@ -558,7 +547,7 @@ int main(int argc, char *argv[]) {
     printf("\nType 'help' for command list.");
     printf("\nType 'exit' to quit.\n\n");
 
-    /* Modified: If an auto_command was built, execute it once before entering the main loop. */
+    /* Execute auto_command if set */
     if (auto_command != NULL) {
         parse_input(auto_command, &cmd);
         execute_command_with_paging(&cmd);
@@ -566,7 +555,7 @@ int main(int argc, char *argv[]) {
         free(auto_command);
     }
 
-    /* Main loop. */
+    /* Main loop */
     while (1) {
         display_prompt();
         input = read_input();
@@ -574,7 +563,6 @@ int main(int argc, char *argv[]) {
             printf("\n");
             break;
         }
-        /* FIX: Check for empty input (i.e. user pressed enter) to prevent segmentation fault */
         if (input[0] == '\0') {
             free(input);
             continue;
@@ -597,10 +585,7 @@ int main(int argc, char *argv[]) {
             free_command_struct(&cmd);
             continue;
         }
-        /* NEW: Built-in "run" command handling.
-         * This command allows the user to run any shell input.
-         * Example: run git commit -m "this is my commit"
-         */
+        /* Built-in "run" command handling */
         if (strncmp(input, "run", 3) == 0 && (input[3] == ' ' || input[3] == '\0')) {
             if (input[3] == '\0') {
                 fprintf(stderr, "run: missing operand\n");
@@ -611,11 +596,12 @@ int main(int argc, char *argv[]) {
             char *shell_command = input + 4;
             while (*shell_command == ' ')
                 shell_command++;
-            /* Fork and execute the shell command using /bin/sh */
             pid_t pid = fork();
             if (pid == -1) {
                 perror("fork");
             } else if (pid == 0) {
+                // Reset SIGINT to default so that CTRL+C can kill the app.
+                signal(SIGINT, SIG_DFL);
                 execl("/bin/sh", "sh", "-c", shell_command, (char *)NULL);
                 perror("execl");
                 exit(EXIT_FAILURE);

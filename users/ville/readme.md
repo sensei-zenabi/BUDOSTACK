@@ -13,6 +13,10 @@ This is my development diary for AALTO. Hope you'll enjoy it! Newest post is alw
 Ok, did an inspection to main.c, commandparser.c and input.c and came to a conclusion that to have run
 -like command, it is better to include it into the main.c and delete the separate run.c. Now user should
 be able to run any linux shell like command using run.
+<br><br>
+Modified main.c and commandparser.c so that AALTO cannot be anymore killed using CTRL+C, but all the apps
+started within AALTO can. This makes a bit more authentic OS feeling to AALTO if it would be started in
+machine bootup automatically.
 
 ### Saturday, 5th of April 2025 ###
 

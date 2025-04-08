@@ -104,9 +104,10 @@ void move_cursor(int row, int col) {
 
 // Print instructions for the user.
 void print_instructions(void) {
+    // Updated delete shortcuts: CTRL+D for delete column, CTRL+E for delete row.
     printf("\rCTRL+R: add row  |  CTRL+N: add column  |  CTRL+S: save  |  CTRL+Q: quit  |  CTRL+F: toggle formula view\n");
     printf("\rHOME: ←5 cols  |  END: →5 cols  |  PGUP: ↑10 rows  |  PGDN: ↓10 rows  |  DEL: clear cell\n");
-    printf("\rCTRL+,: delete column  |  CTRL+.: delete row  |  CTRL+c: copy  |  CTRL+x: cut  |  CTRL+v: paste\n");
+    printf("\rCTRL+D: delete column  |  CTRL+E: delete row  |  CTRL+c: copy  |  CTRL+x: cut  |  CTRL+v: paste\n");
     printf("\rArrow keys: move  (live editing: type to modify cell, backspace to delete)\n\n");
     fflush(stdout);
 }
@@ -146,10 +147,13 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Error creating table.\n");
         return EXIT_FAILURE;
     }
-    if (table_get_rows(g_table) < 2)
-        table_add_row(g_table);
-    if (table_get_cols(g_table) < 2)
-        table_add_col(g_table, "Column 1");
+    // Only auto-add a row and a column when starting a new table.
+    if (argc != 2) {
+        if (table_get_rows(g_table) < 2)
+            table_add_row(g_table);
+        if (table_get_cols(g_table) < 2)
+            table_add_col(g_table, "Column 1");
+    }
 
     cur_row = 0;
     cur_col = 1;
@@ -223,7 +227,7 @@ int main(int argc, char *argv[]) {
             char default_header[MAX_INPUT];
             snprintf(default_header, sizeof(default_header), "Column %d", new_col_number);
             table_add_col(g_table, default_header);
-        } else if (c == CTRL_KEY(',')) {  // Delete column
+        } else if (c == CTRL_KEY('D')) {  // Delete column (remapped from CTRL+,)
             if (cur_col > 0) { // Do not delete index column
                 if (table_delete_column(g_table, cur_col) == 0) {
                     int maxcol = table_get_cols(g_table) - 1;
@@ -231,7 +235,7 @@ int main(int argc, char *argv[]) {
                         cur_col = maxcol;
                 }
             }
-        } else if (c == CTRL_KEY('.')) {  // Delete row
+        } else if (c == CTRL_KEY('E')) {  // Delete row (remapped from CTRL+.)
             if (cur_row > 0) { // Do not delete header row
                 if (table_delete_row(g_table, cur_row) == 0) {
                     int maxrow = table_get_rows(g_table) - 1;

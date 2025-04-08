@@ -257,12 +257,15 @@ int table_save_csv(const Table *t, const char *filename) {
     return 0;
 }
 
-// Helper: Split a CSV line into fields.
+/*
+ * Updated: Split a CSV line into fields.
+ * This version handles trailing commas by adding an empty field.
+ */
 static char **split_csv_line(const char *line, int *count) {
     char **fields = NULL;
     int capacity = 0, num = 0;
     const char *p = line;
-    while (*p) {
+    while (1) {
         if (num >= capacity) {
             capacity = capacity ? capacity * 2 : 4;
             char **temp = realloc(fields, capacity * sizeof(char *));
@@ -293,7 +296,21 @@ static char **split_csv_line(const char *line, int *count) {
         }
         buffer[buf_index] = '\0';
         fields[num++] = strdup(buffer);
-        if (*p == ',') p++;
+        if (*p == ',') {
+            p++;  // Skip the comma.
+            // If the comma is the last character, add an empty field.
+            if (*p == '\0') {
+                if (num >= capacity) {
+                    capacity = capacity ? capacity * 2 : 4;
+                    char **temp = realloc(fields, capacity * sizeof(char *));
+                    if (!temp) break;
+                    fields = temp;
+                }
+                fields[num++] = strdup("");
+            }
+        } else {
+            break;
+        }
     }
     *count = num;
     return fields;
@@ -314,6 +331,8 @@ Table *table_load_csv(const char *filename) {
         int field_count = 0;
         char **fields = split_csv_line(line, &field_count);
         if (rows == 0)
+            cols = field_count;
+        else if (field_count > cols)
             cols = field_count;
         char ***temp = realloc(cells, sizeof(char **) * (rows + 1));
         if (!temp) break;

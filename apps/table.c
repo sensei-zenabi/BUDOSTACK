@@ -1,31 +1,16 @@
 /*
- * main.c
+ * table.c
  *
- * Interactive terminal-based spreadsheet program with live cell editing.
+ * Interactive terminal-based spreadsheet program with live cell editing
+ * and Excel-like capabilities.
  *
- * New capabilities:
- * - Navigation with arrow keys plus extended keys:
- *      HOME: move left 5 columns  
- *      END: move right 5 columns  
- *      PGUP: move up 10 rows  
- *      PGDN: move down 10 rows  
- *      DEL: clear current cell
- * - CTRL+, deletes current column (except index column)
- * - CTRL+. deletes current row (except header row)
- * - Clipboard shortcuts:
- *      CTRL+c: copy cell content  
- *      CTRL+x: cut cell content  
- *      CTRL+v: paste into current cell
+ * New and enhanced capabilities:
+ *  - In-cell formula evaluation: if a cell’s content begins with '=', it is treated
+ *    as a formula supporting basic arithmetic, cell references, SUM() and AVERAGE().
+ *  - Toggling the display: CTRL+F switches between raw formula view and evaluated view.
+ *  - Navigation and editing commands remain as before.
  *
- * Other shortcuts (all in live-edit mode):
- *      CTRL+S: save, CTRL+Q: quit, CTRL+R: add row, CTRL+N: add column (with default header)
- * - Printable keys are directly appended to cell content;
- *   backspace deletes the last character.
- *
- * Uses ANSI escape sequences to clear the screen, reposition the cursor,
- * and hide the blinking cursor.
- *
- * To compile: cc -std=c11 -Wall -Wextra -pedantic -o table_app main.c table.c
+ * To compile: cc -std=c11 -Wall -Wextra -pedantic -o table_app table.c libtable.c
  */
 
 #include <stdio.h>
@@ -36,7 +21,7 @@
 #define CTRL_KEY(k) ((k) & 0x1F)
 #define MAX_INPUT 256
 
-// Extern declarations from table.c
+// Extern declarations from libtable.c
 typedef struct Table Table;
 extern Table *table_create(void);
 extern void table_free(Table *table);
@@ -48,17 +33,23 @@ extern Table *table_load_csv(const char *filename);
 extern int table_get_rows(const Table *table);
 extern int table_get_cols(const Table *table);
 extern void table_print_highlight(const Table *table, int highlight_row, int highlight_col);
+// New function: print table with option for showing raw formulas vs. evaluated values.
+extern void table_print_highlight_ex(const Table *table, int highlight_row, int highlight_col, int show_formulas);
 extern const char *table_get_cell(const Table *table, int row, int col);
 extern int table_delete_column(Table *table, int col);
 extern int table_delete_row(Table *table, int row);
 
 // Global table pointer and current selection.
-// Header row (row 0) and index column (col 0) are protected (not deleted/edited).
+// Header row (row 0) and index column (col 0) are protected.
 Table *g_table = NULL;
 int cur_row = 0;   // start at header row
 int cur_col = 1;   // first editable column (col 0 is index)
 
-static char clipboard[1024] = {0};  // Clipboard for copy/cut/paste
+// Clipboard for copy/cut/paste
+static char clipboard[1024] = {0};
+
+// Global flag: if set, display raw formulas instead of evaluated results.
+int show_formulas = 0;
 
 // Terminal control functions using system("stty ...")
 void enable_raw_mode(void) {
@@ -81,7 +72,7 @@ void show_cursor(void) {
 
 void clear_screen(void) {
     printf("\033[2J");  // Clear screen
-    printf("\033[H");   // Move cursor to home position
+    printf("\033[H");   // Move cursor home
     fflush(stdout);
 }
 
@@ -90,14 +81,16 @@ void move_cursor(int row, int col) {
     fflush(stdout);
 }
 
+// Print instructions for the user.
 void print_instructions(void) {
-    printf("\rCTRL+R: add row  |  CTRL+N: add column  |  CTRL+S: save  |  CTRL+Q: quit\n");
+    printf("\rCTRL+R: add row  |  CTRL+N: add column  |  CTRL+S: save  |  CTRL+Q: quit  |  CTRL+F: toggle formula view\n");
     printf("\rHOME: ←5 cols  |  END: →5 cols  |  PGUP: ↑10 rows  |  PGDN: ↓10 rows  |  DEL: clear cell\n");
-    printf("\rCTRL+,: delete column  |  CTRL+.: delete row | CTRL+c: copy  |  CTRL+x: cut  |  CTRL+v: paste\n");
+    printf("\rCTRL+,: delete column  |  CTRL+.: delete row  |  CTRL+c: copy  |  CTRL+x: cut  |  CTRL+v: paste\n");
     printf("\rArrow keys: move  (live editing: type to modify cell, backspace to delete)\n\n");
     fflush(stdout);
 }
 
+// Save the table as a CSV file.
 void save_table(void) {
     char filename[MAX_INPUT];
     move_cursor(24, 1);
@@ -136,32 +129,30 @@ int main(int argc, char *argv[]) {
         table_add_row(g_table);
     if (table_get_cols(g_table) < 2)
         table_add_col(g_table, "Column 1");
-    
+
     cur_row = 0;
     cur_col = 1;
-    
+
     enable_raw_mode();
     hide_cursor();
-    
+
     int running = 1;
     while (running) {
         clear_screen();
         print_instructions();
-        table_print_highlight(g_table, cur_row, cur_col);
-        
+        // Use the new printing function with our formula flag.
+        table_print_highlight_ex(g_table, cur_row, cur_col, show_formulas);
+
         int c = getchar();
-        if (c == 27) {  // ESC: potential arrow or extended key sequence
+        if (c == 27) {  // ESC sequence for arrows/extended keys
             int second = getchar();
             if (second == '[') {
                 int third = getchar();
                 if (third >= '0' && third <= '9') {
-                    // Extended sequence: accumulate number.
                     int num = third - '0';
                     int ch;
-                    while ((ch = getchar()) >= '0' && ch <= '9') {
+                    while ((ch = getchar()) >= '0' && ch <= '9')
                         num = num * 10 + (ch - '0');
-                    }
-                    // Expect a '~'
                     if (ch == '~') {
                         if (num == 1) { // HOME key
                             cur_col = (cur_col - 5 < 1) ? 1 : cur_col - 5;
@@ -189,7 +180,7 @@ int main(int argc, char *argv[]) {
                 } else if (third == 'D') {       // Left arrow
                     if (cur_col > 1)
                         cur_col--;
-                } else if (third == 'H') {       // Some terminals send ESC [ H for Home
+                } else if (third == 'H') {       // Terminal sends ESC [ H for Home
                     cur_col = (cur_col - 5 < 1) ? 1 : cur_col - 5;
                 } else if (third == 'F') {       // or ESC [ F for End
                     int maxcol = table_get_cols(g_table) - 1;
@@ -206,7 +197,7 @@ int main(int argc, char *argv[]) {
             cur_row = table_get_rows(g_table) - 1;
             if (cur_col >= table_get_cols(g_table))
                 cur_col = table_get_cols(g_table) - 1;
-        } else if (c == CTRL_KEY('N')) {  // Add column with default header
+        } else if (c == CTRL_KEY('N')) {  // Add column (with default header)
             int new_col_number = table_get_cols(g_table);  // includes index column
             char default_header[MAX_INPUT];
             snprintf(default_header, sizeof(default_header), "Column %d", new_col_number);
@@ -238,6 +229,8 @@ int main(int argc, char *argv[]) {
             table_set_cell(g_table, cur_row, cur_col, "");
         } else if (c == CTRL_KEY('v')) {  // Paste
             table_set_cell(g_table, cur_row, cur_col, clipboard);
+        } else if (c == CTRL_KEY('F')) {  // Toggle formula view
+            show_formulas = !show_formulas;
         } else if (c == 127 || c == 8) {  // Backspace
             const char *curr = table_get_cell(g_table, cur_row, cur_col);
             char buffer[1024] = {0};
@@ -254,7 +247,7 @@ int main(int argc, char *argv[]) {
         }
         // Other non-printable keys are ignored.
     }
-    
+
     show_cursor();
     disable_raw_mode();
     clear_screen();

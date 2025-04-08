@@ -50,7 +50,7 @@ int main(int argc, char *argv[]) {
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");
-    printf("  table    : Interactive .csv table editor tool.\n");
+    printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.tbl'.\n");
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  update   : Create an empty file or update its modification time.\n");
     printf("  exit     : Exit AALTO.\n");

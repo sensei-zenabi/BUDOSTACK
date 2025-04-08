@@ -2,20 +2,21 @@
 /*
  * libtable.c
  *
- * Implements a dynamic table for a terminal-based spreadsheet program.
+ * Implements a dynamic table for a terminal‐based spreadsheet program.
  *
  * Design principles:
  *  - The Table structure holds a dynamic 2D array of strings.
  *  - The first row is reserved for headers; the first column is always an "Index" column.
  *  - Provides functions to create/free the table, add rows/columns, edit cells,
- *    load/save CSV files, and now supports Excel-like formulas.
+ *    load/save CSV files, and now supports Excel–like formulas.
  *
  * Enhancements:
  *  - If a cell’s value begins with '=', it is interpreted as a formula.
  *  - The built-in parser supports numeric constants, arithmetic operators (+, -, *, /),
- *    parentheses, cell references (e.g., B2), and the functions SUM() and AVERAGE() over ranges.
- *  - A new printing function (table_print_highlight_ex) lets the caller choose whether to
- *    show raw cell values or to evaluate formulas on the fly.
+ *    parentheses, cell references (e.g., B2 or $A$1), and the functions SUM() and AVERAGE() over ranges.
+ *  - A new printing function (table_print_highlight_ex) now displays Excel–like row numbers and
+ *    column letters outside the table grid.
+ *  - A new function adjust_cell_references() adjusts cell references in a formula when cells are copy-pasted.
  *
  * To compile: cc -std=c11 -Wall -Wextra -pedantic -o table_app table.c libtable.c
  */
@@ -80,28 +81,56 @@ void table_free(Table *t) {
     free(t);
 }
 
-void table_print(const Table *t) {
-    if (!t) return;
-    for (int i = 0; i < t->rows; i++) {
-        printf("\r");
-        for (int j = 0; j < t->cols; j++) {
-            printf("%-15s", t->cells[i][j] ? t->cells[i][j] : "");
-        }
-        printf("\n");
+/*
+ * Helper: Convert a table column index to an Excel–like letter.
+ * Note: table columns are 1–indexed for formulas (column 1 = A).
+ */
+static void get_column_label(int col, char *buf, size_t buf_size) {
+    int n = col;
+    char temp[16];
+    int i = 0;
+    while (n > 0 && i < (int)sizeof(temp)-1) {
+        int rem = (n - 1) % 26;
+        temp[i++] = 'A' + rem;
+        n = (n - 1) / 26;
     }
+    temp[i] = '\0';
+    // Reverse the string
+    int len = i;
+    for (int j = 0; j < len; j++) {
+        if (j < (int)buf_size - 1)
+            buf[j] = temp[len - 1 - j];
+    }
+    buf[(len < (int)buf_size ? len : buf_size - 1)] = '\0';
 }
 
 /*
- * The new printing function that can either display raw cell values
- * or, if a cell value begins with '=', evaluate it as a formula.
- * 'highlight_row' and 'highlight_col' indicate the currently selected cell.
- * 'show_formulas' if nonzero forces raw display.
+ * New printing function: Display the table with an extra header row (column letters)
+ * and an extra first column (row numbers) outside the grid.
+ * highlight_row and highlight_col refer to the actual cell coordinates in the table.
+ * Note: The internal table stores an index column (col 0) and header row (row 0) which are
+ * not printed here.
  */
 void table_print_highlight_ex(const Table *t, int highlight_row, int highlight_col, int show_formulas) {
     if (!t) return;
+    // Print the top header row with column letters.
+    // First cell: blank (upper left corner)
+    printf("\r%-15s", "");
+    for (int j = 1; j < t->cols; j++) {
+        char col_label[16];
+        // j is the table column index corresponding to Excel column j.
+        get_column_label(j, col_label, sizeof(col_label));
+        printf("%-15s", col_label);
+    }
+    printf("\n");
+    // Print each row with its row number on the left.
     for (int i = 0; i < t->rows; i++) {
-        printf("\r");
-        for (int j = 0; j < t->cols; j++) {
+        // Print row number (Excel rows start at 1)
+        char row_label[16];
+        snprintf(row_label, sizeof(row_label), "%d", i + 1);
+        printf("\r%-15s", row_label);
+        // Print cells from column 1 onward.
+        for (int j = 1; j < t->cols; j++) {
             char buffer[64];
             const char *cell_content = t->cells[i][j] ? t->cells[i][j] : "";
             if (!show_formulas && cell_content[0] == '=') {
@@ -111,6 +140,7 @@ void table_print_highlight_ex(const Table *t, int highlight_row, int highlight_c
             } else {
                 snprintf(buffer, sizeof(buffer), "%s", cell_content);
             }
+            // Highlight if this is the selected cell.
             if (i == highlight_row && j == highlight_col)
                 printf("\033[7m");  // Start inverse video.
             printf("%-15s", buffer);
@@ -314,7 +344,7 @@ Table *table_load_csv(const char *filename) {
  *
  * A cell whose content begins with '=' is treated as a formula.
  * The parser supports numbers, basic arithmetic (+, -, *, /), parentheses,
- * cell references (for example "B2"), and functions SUM() and AVERAGE() with ranges.
+ * cell references (for example "B2" or "$A$1"), and functions SUM() and AVERAGE() with ranges.
  *
  * The Excel–style mapping is as follows:
  *   - Column letters: A corresponds to table column 1, B to 2, etc.
@@ -333,12 +363,13 @@ static void skip_whitespace(const char **s) {
         (*s)++;
 }
 
-// Helper: Parse a cell reference from the current position.
-// The cell reference consists of one or more letters (column)
-// followed by one or more digits (row). The pointer *s is updated.
-// On success, returns 1 and sets *row and *col (Excel style: e.g., A2 => row=2, col=1).
+// Modified: Parse a cell reference from the current position.
+// Now skips any leading '$' characters so that "$A$1" is parsed as A1.
 static int parse_cell_reference_pp(const char **s, int *row, int *col) {
     const char *start = *s;
+    // Skip any '$' for column
+    while (**s == '$')
+         (*s)++;
     if (!isalpha(**s))
         return 0;
     int col_value = 0;
@@ -378,7 +409,7 @@ static double parse_factor(const Table *t, const char **s) {
         else
             formula_error = 1;
         return result;
-    } else if (isalpha(**s)) {
+    } else if (isalpha(**s) || **s == '$') {
         // Look ahead to distinguish between a function call and a simple cell reference.
         const char *p = *s;
         char ident[32];
@@ -548,6 +579,117 @@ char *evaluate_formula(const Table *t, const char *formula) {
     else
         snprintf(result_str, 64, "%g", result);
     return result_str;
+}
+
+/*
+ * New Function: Adjust cell references in a formula or cell value.
+ * Scans through the input string 'src' and for every cell reference token
+ * (possibly with optional '$') adjusts its row and/or column if they are not absolute.
+ * delta_row and delta_col are added to the parsed row and column numbers for each
+ * reference that is not marked as absolute.
+ *
+ * Returns a newly allocated string with the adjusted contents.
+ */
+char *adjust_cell_references(const char *src, int delta_row, int delta_col) {
+    size_t len = strlen(src);
+    size_t bufsize = len + 1;
+    char *result = malloc(bufsize);
+    if (!result) return NULL;
+    size_t rpos = 0;
+    const char *p = src;
+    while (*p) {
+        // Look for a token that may be a cell reference.
+        if ((*p == '$') || isalpha(*p)) {
+            const char *start = p;
+            int col_abs = 0, row_abs = 0;
+            // Check for optional '$' before column letters.
+            if (*p == '$') {
+                col_abs = 1;
+                p++;
+            }
+            if (!isalpha(*p)) { // not a valid ref; back up.
+                result[rpos++] = *start;
+                p = start + 1;
+                continue;
+            }
+            // Parse column letters.
+            int col = 0;
+            while (isalpha(*p)) {
+                col = col * 26 + (toupper(*p) - 'A' + 1);
+                p++;
+            }
+            // Check for optional '$' before row digits.
+            if (*p == '$') {
+                row_abs = 1;
+                p++;
+            }
+            if (!isdigit(*p)) {
+                // Not a valid cell reference; copy the characters and continue.
+                p = start;
+                result[rpos++] = *p++;
+                continue;
+            }
+            int row = 0;
+            while (isdigit(*p)) {
+                row = row * 10 + (*p - '0');
+                p++;
+            }
+            // Compute new column and row.
+            int new_col = col;
+            int new_row = row;
+            if (!col_abs)
+                new_col += delta_col;
+            if (!row_abs)
+                new_row += delta_row;
+            if (new_col < 1) new_col = 1;
+            if (new_row < 1) new_row = 1;
+            // Convert new_col to letters.
+            char col_buf[16];
+            int temp = new_col;
+            char temp_buf[16];
+            int temp_index = 0;
+            while (temp > 0) {
+                int rem = (temp - 1) % 26;
+                temp_buf[temp_index++] = 'A' + rem;
+                temp = (temp - 1) / 26;
+            }
+            for (int i = 0; i < temp_index; i++) {
+                col_buf[i] = temp_buf[temp_index - 1 - i];
+            }
+            col_buf[temp_index] = '\0';
+            // Build adjusted token.
+            char new_token[64];
+            char col_part[32];
+            if (col_abs)
+                snprintf(col_part, sizeof(col_part), "$%s", col_buf);
+            else
+                snprintf(col_part, sizeof(col_part), "%s", col_buf);
+            char row_part[32];
+            if (row_abs)
+                snprintf(row_part, sizeof(row_part), "$%d", new_row);
+            else
+                snprintf(row_part, sizeof(row_part), "%d", new_row);
+            snprintf(new_token, sizeof(new_token), "%s%s", col_part, row_part);
+            size_t token_len_new = strlen(new_token);
+            // Ensure buffer has room.
+            while (rpos + token_len_new + 1 > bufsize) {
+                bufsize *= 2;
+                result = realloc(result, bufsize);
+                if (!result) return NULL;
+            }
+            memcpy(result + rpos, new_token, token_len_new);
+            rpos += token_len_new;
+        } else {
+            result[rpos++] = *p++;
+            if (rpos + 1 >= bufsize) {
+                bufsize *= 2;
+                result = realloc(result, bufsize);
+                if (!result) return NULL;
+            }
+        }
+    }
+    result[rpos] = '\0';
+    return result;
 }
 
 /*

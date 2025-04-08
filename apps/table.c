@@ -1,14 +1,17 @@
 /*
  * table.c
  *
- * Interactive terminal-based spreadsheet program with live cell editing
- * and Excel-like capabilities.
+ * Interactive terminal–based spreadsheet program with live cell editing
+ * and Excel–like capabilities.
  *
  * New and enhanced capabilities:
- *  - In-cell formula evaluation: if a cell’s content begins with '=', it is treated
+ *  - In‐cell formula evaluation: if a cell’s content begins with '=', it is treated
  *    as a formula supporting basic arithmetic, cell references, SUM() and AVERAGE().
  *  - Toggling the display: CTRL+F switches between raw formula view and evaluated view.
  *  - Navigation and editing commands remain as before.
+ *  - Displays external row numbers and column letters (Excel–like).
+ *  - Copy–paste now automatically adjusts relative cell references. To prevent adjustment,
+ *    the user may use the '$' character (e.g. "$A$1").
  *
  * To compile: cc -std=c11 -Wall -Wextra -pedantic -o table_app table.c libtable.c
  */
@@ -33,11 +36,12 @@ extern Table *table_load_csv(const char *filename);
 extern int table_get_rows(const Table *table);
 extern int table_get_cols(const Table *table);
 extern void table_print_highlight(const Table *table, int highlight_row, int highlight_col);
-// New function: print table with option for showing raw formulas vs. evaluated values.
 extern void table_print_highlight_ex(const Table *table, int highlight_row, int highlight_col, int show_formulas);
 extern const char *table_get_cell(const Table *table, int row, int col);
 extern int table_delete_column(Table *table, int col);
 extern int table_delete_row(Table *table, int row);
+// Declaration of the new adjustment function.
+extern char *adjust_cell_references(const char *src, int delta_row, int delta_col);
 
 // Global table pointer and current selection.
 // Header row (row 0) and index column (col 0) are protected.
@@ -46,10 +50,27 @@ int cur_row = 0;   // start at header row
 int cur_col = 1;   // first editable column (col 0 is index)
 
 // Clipboard for copy/cut/paste
+// When copying a cell that may need relative adjustment, the clipboard will store a
+// prefix "CELLREF:row:col:" before the cell content.
 static char clipboard[1024] = {0};
 
 // Global flag: if set, display raw formulas instead of evaluated results.
 int show_formulas = 0;
+
+/*
+ * Helper function to decide whether a cell’s content is eligible for automatic
+ * relative adjustment. We check if the text begins with '=' (formula) or
+ * starts with a letter or '$' (possibly a cell reference).
+ */
+static int is_adjustable_cell(const char *str) {
+    if (!str || !*str)
+         return 0;
+    if (str[0] == '=')
+         return 1;
+    if (isalpha(str[0]) || str[0] == '$')
+         return 1;
+    return 0;
+}
 
 // Terminal control functions using system("stty ...")
 void enable_raw_mode(void) {
@@ -220,15 +241,45 @@ int main(int argc, char *argv[]) {
             }
         } else if (c == CTRL_KEY('c')) {  // Copy cell
             const char *content = table_get_cell(g_table, cur_row, cur_col);
-            strncpy(clipboard, content, sizeof(clipboard)-1);
-            clipboard[sizeof(clipboard)-1] = '\0';
+            if (is_adjustable_cell(content)) {
+                // Store the original cell coordinates along with the text.
+                snprintf(clipboard, sizeof(clipboard), "CELLREF:%d:%d:%s", cur_row, cur_col, content);
+            } else {
+                strncpy(clipboard, content, sizeof(clipboard)-1);
+                clipboard[sizeof(clipboard)-1] = '\0';
+            }
         } else if (c == CTRL_KEY('x')) {  // Cut cell
             const char *content = table_get_cell(g_table, cur_row, cur_col);
-            strncpy(clipboard, content, sizeof(clipboard)-1);
-            clipboard[sizeof(clipboard)-1] = '\0';
+            if (is_adjustable_cell(content)) {
+                snprintf(clipboard, sizeof(clipboard), "CELLREF:%d:%d:%s", cur_row, cur_col, content);
+            } else {
+                strncpy(clipboard, content, sizeof(clipboard)-1);
+                clipboard[sizeof(clipboard)-1] = '\0';
+            }
             table_set_cell(g_table, cur_row, cur_col, "");
         } else if (c == CTRL_KEY('v')) {  // Paste
-            table_set_cell(g_table, cur_row, cur_col, clipboard);
+            if (strncmp(clipboard, "CELLREF:", 8) == 0) {
+                int src_row = 0, src_col = 0;
+                const char *p = clipboard + 8;
+                src_row = atoi(p);
+                p = strchr(p, ':');
+                if (p) {
+                    src_col = atoi(p+1);
+                    p = strchr(p+1, ':');
+                }
+                if (p) {
+                    const char *cell_content = p + 1;
+                    int delta_row = cur_row - src_row;
+                    int delta_col = cur_col - src_col;
+                    char *adjusted = adjust_cell_references(cell_content, delta_row, delta_col);
+                    table_set_cell(g_table, cur_row, cur_col, adjusted);
+                    free(adjusted);
+                } else {
+                    table_set_cell(g_table, cur_row, cur_col, clipboard);
+                }
+            } else {
+                table_set_cell(g_table, cur_row, cur_col, clipboard);
+            }
         } else if (c == CTRL_KEY('F')) {  // Toggle formula view
             show_formulas = !show_formulas;
         } else if (c == 127 || c == 8) {  // Backspace
@@ -239,7 +290,7 @@ int main(int argc, char *argv[]) {
             if (blen > 0)
                 buffer[blen-1] = '\0';
             table_set_cell(g_table, cur_row, cur_col, buffer);
-        } else if (c >= 32 && c < 127) {  // Printable characters
+        } else if (c >= 32 && c < 127) {  // Printable characters (live editing)
             const char *curr = table_get_cell(g_table, cur_row, cur_col);
             char buffer[1024] = {0};
             snprintf(buffer, sizeof(buffer), "%s%c", curr, c);

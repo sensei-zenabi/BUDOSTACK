@@ -8,6 +8,12 @@ This is my development diary for AALTO. Hope you'll enjoy it! Newest post is alw
 3. Separating the server API as a separate library from the node apps.
 4. Code-analysis tools?
 
+### Tuesday, 8th of April 2025 ###
+
+Took a task to improve table.c app towards more excel like capabilities. Successfully introduced quite
+functional spreadsheet app with basic math and cell referencing. However, there is one build warning and
+bug that adds an empty column to loaded file that needs to be fixed later on...
+
 ### Monday, 7th of April 2025 ###
 
 Ok, did an inspection to main.c, commandparser.c and input.c and came to a conclusion that to have run

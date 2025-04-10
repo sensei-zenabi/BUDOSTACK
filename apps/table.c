@@ -8,6 +8,7 @@
  *  - In‐cell formula evaluation: if a cell’s content begins with '=', it is treated
  *    as a formula supporting basic arithmetic, cell references, SUM() and AVERAGE().
  *  - Toggling the display: CTRL+F switches between raw formula view and evaluated view.
+ *  - A new help/shortcut bar is provided to display the available key commands.
  *  - Navigation and editing commands remain as before.
  *  - Displays external row numbers and column letters (Excel–like).
  *  - Copy–paste now automatically adjusts relative cell references. To prevent adjustment,
@@ -57,22 +58,12 @@ static char clipboard[1024] = {0};
 // Global flag: if set, display raw formulas instead of evaluated results.
 int show_formulas = 0;
 
-/*
- * Helper function to decide whether a cell’s content is eligible for automatic
- * relative adjustment. We check if the text begins with '=' (formula) or
- * starts with a letter or '$' (possibly a cell reference).
- */
-static int is_adjustable_cell(const char *str) {
-    if (!str || !*str)
-         return 0;
-    if (str[0] == '=')
-         return 1;
-    if (isalpha(str[0]) || str[0] == '$')
-         return 1;
-    return 0;
-}
+// New global flag to control display of the help/shortcut bar.
+static int show_help = 0;
 
-// Terminal control functions using system("stty ...")
+/*
+ * Terminal control functions using system("stty ...")
+ */
 void enable_raw_mode(void) {
     system("stty raw -echo");
 }
@@ -102,17 +93,32 @@ void move_cursor(int row, int col) {
     fflush(stdout);
 }
 
-// Print instructions for the user.
-void print_instructions(void) {
-    // Updated delete shortcuts: CTRL+D for delete column, CTRL+E for delete row.
-    printf("\rCTRL+R: add row  |  CTRL+N: add column  |  CTRL+S: save  |  CTRL+Q: quit  |  CTRL+F: toggle formula view\n");
-    printf("\rHOME: ←5 cols  |  END: →5 cols  |  PGUP: ↑10 rows  |  PGDN: ↓10 rows  |  DEL: clear cell\n");
-    printf("\rCTRL+D: delete column  |  CTRL+E: delete row  |  CTRL+c: copy  |  CTRL+x: cut  |  CTRL+v: paste\n");
-    printf("\rArrow keys: move  (live editing: type to modify cell, backspace to delete)\n\n");
+/*
+ * New function: Print an improved help/shortcut bar below the spreadsheet.
+ * Using a carriage return (\r) at the beginning of each line and the clear-to-end-of-line
+ * sequence (\033[K) forces a consistent alignment even when lines vary in length.
+ */
+void print_help_bar(void) {
+    int table_rows = table_get_rows(g_table);
+    int help_start = table_rows + 3;
+    // Move the cursor to the first line of the help section.
+    printf("\033[%d;1H", help_start);
+    if (show_help) {
+        printf("\rDetailed Shortcuts:\033[K\n");
+        printf("\rNavigation:      HOME: ←5 cols   END: →5 cols   PGUP: ↑10 rows   PGDN: ↓10 rows\033[K\n");
+        printf("\r                 Arrow keys: move (live editing: type to modify cell, backspace to delete)\033[K\n");
+        printf("\rEditing:         CTRL+R: add row   CTRL+N: add column   CTRL+S: save   CTRL+Q: quit   CTRL+F: toggle formula view\033[K\n");
+        printf("\rCell Operations: DEL: clear cell   CTRL+D: delete col   CTRL+E: delete row   CTRL+C: copy   CTRL+X: cut   CTRL+V: paste\033[K\n");
+        printf("\r                 ...Press CTRL+T to hide help.\033[K\n");
+    } else {
+        printf("\rPress CTRL+T for help.\033[K\n");
+    }
     fflush(stdout);
 }
 
-// Save the table as a CSV file.
+/*
+ * Save the table as a CSV file.
+ */
 void save_table(void) {
     char filename[MAX_INPUT];
     move_cursor(24, 1);
@@ -164,9 +170,10 @@ int main(int argc, char *argv[]) {
     int running = 1;
     while (running) {
         clear_screen();
-        print_instructions();
-        // Use the new printing function with our formula flag.
+        // Print the table (this function clears the screen and prints the table grid)
         table_print_highlight_ex(g_table, cur_row, cur_col, show_formulas);
+        // Print the improved help/shortcut bar below the table.
+        print_help_bar();
 
         int c = getchar();
         if (c == 27) {  // ESC sequence for arrows/extended keys
@@ -227,7 +234,7 @@ int main(int argc, char *argv[]) {
             char default_header[MAX_INPUT];
             snprintf(default_header, sizeof(default_header), "Column %d", new_col_number);
             table_add_col(g_table, default_header);
-        } else if (c == CTRL_KEY('D')) {  // Delete column (remapped from CTRL+,)
+        } else if (c == CTRL_KEY('D')) {  // Delete column
             if (cur_col > 0) { // Do not delete index column
                 if (table_delete_column(g_table, cur_col) == 0) {
                     int maxcol = table_get_cols(g_table) - 1;
@@ -235,7 +242,7 @@ int main(int argc, char *argv[]) {
                         cur_col = maxcol;
                 }
             }
-        } else if (c == CTRL_KEY('E')) {  // Delete row (remapped from CTRL+.)
+        } else if (c == CTRL_KEY('E')) {  // Delete row
             if (cur_row > 0) { // Do not delete header row
                 if (table_delete_row(g_table, cur_row) == 0) {
                     int maxrow = table_get_rows(g_table) - 1;
@@ -245,8 +252,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (c == CTRL_KEY('c')) {  // Copy cell
             const char *content = table_get_cell(g_table, cur_row, cur_col);
-            if (is_adjustable_cell(content)) {
-                // Store the original cell coordinates along with the text.
+            if (content && (content[0] == '=' || isalpha(content[0]) || content[0] == '$')) {
                 snprintf(clipboard, sizeof(clipboard), "CELLREF:%d:%d:%s", cur_row, cur_col, content);
             } else {
                 strncpy(clipboard, content, sizeof(clipboard)-1);
@@ -254,7 +260,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (c == CTRL_KEY('x')) {  // Cut cell
             const char *content = table_get_cell(g_table, cur_row, cur_col);
-            if (is_adjustable_cell(content)) {
+            if (content && (content[0] == '=' || isalpha(content[0]) || content[0] == '$')) {
                 snprintf(clipboard, sizeof(clipboard), "CELLREF:%d:%d:%s", cur_row, cur_col, content);
             } else {
                 strncpy(clipboard, content, sizeof(clipboard)-1);
@@ -286,6 +292,9 @@ int main(int argc, char *argv[]) {
             }
         } else if (c == CTRL_KEY('F')) {  // Toggle formula view
             show_formulas = !show_formulas;
+        } else if (c == CTRL_KEY('T')) {  // Toggle help/shortcut bar
+            show_help = !show_help;
+            continue;
         } else if (c == 127 || c == 8) {  // Backspace
             const char *curr = table_get_cell(g_table, cur_row, cur_col);
             char buffer[1024] = {0};

@@ -384,6 +384,7 @@ static void skip_whitespace(const char **s) {
 
 // Modified: Parse a cell reference from the current position.
 // Now skips any leading '$' characters so that "$A$1" is parsed as A1.
+// FIX: After reading the column letters, also skip an optional '$' before row digits.
 static int parse_cell_reference_pp(const char **s, int *row, int *col) {
     const char *start = *s;
     // Skip any '$' for column
@@ -396,6 +397,9 @@ static int parse_cell_reference_pp(const char **s, int *row, int *col) {
         col_value = col_value * 26 + (toupper(**s) - 'A' + 1);
         (*s)++;
     }
+    // Skip any '$' before row number.
+    if (**s == '$')
+         (*s)++;
     if (!isdigit(**s)) {
         *s = start;
         return 0;

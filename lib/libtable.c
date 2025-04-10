@@ -89,49 +89,78 @@ static void get_column_label(int col, char *buf, size_t buf_size) {
     int n = col;
     char temp[16];
     int i = 0;
-    while (n > 0 && i < (int)sizeof(temp)-1) {
+    while (n > 0 && i < (int)sizeof(temp) - 1) {
         int rem = (n - 1) % 26;
         temp[i++] = 'A' + rem;
         n = (n - 1) / 26;
     }
     temp[i] = '\0';
-    // Reverse the string
+    // Reverse the string.
     int len = i;
     for (int j = 0; j < len; j++) {
         if (j < (int)buf_size - 1)
             buf[j] = temp[len - 1 - j];
     }
-    buf[(len < (int)buf_size ? len : buf_size - 1)] = '\0';
+    buf[((size_t)len < buf_size ? (size_t)len : buf_size - 1)] = '\0';
 }
 
 /*
- * New printing function: Display the table with an extra header row (column letters)
- * and an extra first column (row numbers) outside the grid.
- * highlight_row and highlight_col refer to the actual cell coordinates in the table.
- * Note: The internal table stores an index column (col 0) and header row (row 0) which are
- * not printed here.
+ * Updated printing function:
+ *
+ * This function prints the table using absolute cursor positioning so that
+ * each cell has a fixed background region of width 15 characters.
+ *
+ * - The header row and the row labels are printed with fixed width.
+ * - For each data cell, before printing its content we move the cursor to its
+ *   fixed starting position.
+ * - For a non–selected cell, we simply print its full content (which may overflow).
+ * - For the selected cell, we print the first 15 characters (i.e. the cell's
+ *   allocated region) in inverse video (highlight), and then print any overflow
+ *   (if present) normally.
+ *
+ * This way, even if an earlier cell (alphabetically) has long text that overflows,
+ * the highlighting for the selected cell always covers exactly its 15–character region.
  */
 void table_print_highlight_ex(const Table *t, int highlight_row, int highlight_col, int show_formulas) {
     if (!t) return;
-    // Print the top header row with column letters.
-    // First cell: blank (upper left corner)
-    printf("\r%-15s", "");
+
+    // Clear the screen and move cursor to top-left.
+    printf("\033[2J");    // clear screen
+    printf("\033[H");     // home
+
+    // Print header row in fixed positions.
+    // The top-left corner is left blank.
+    printf("%-15s", "");
     for (int j = 1; j < t->cols; j++) {
         char col_label[16];
-        // j is the table column index corresponding to Excel column j.
         get_column_label(j, col_label, sizeof(col_label));
-        printf("%-15s", col_label);
+        // Header cells: use fixed width (clipped).
+        printf("%-15.15s", col_label);
     }
     printf("\n");
-    // Print each row with its row number on the left.
+
+    // Now print each row with absolute positioning.
+    // Assume header is line 1; data rows start at line 2.
     for (int i = 0; i < t->rows; i++) {
-        // Print row number (Excel rows start at 1)
+        // Terminal row for this table row.
+        int term_row = i + 2;
+
+        // Print row label (fixed 15 columns) at column 1.
+        printf("\033[%d;1H", term_row);
         char row_label[16];
         snprintf(row_label, sizeof(row_label), "%d", i + 1);
-        printf("\r%-15s", row_label);
-        // Print cells from column 1 onward.
+        printf("%-15s", row_label);
+
+        // For each cell in the row (from column 1 onward).
         for (int j = 1; j < t->cols; j++) {
-            char buffer[64];
+            // Compute the fixed starting column for cell j.
+            // Row label occupies 15 characters. Each cell has a fixed slot of 15.
+            int term_col = 15 + (j - 1) * 15 + 1;
+            // Move the cursor to the cell's fixed starting position.
+            printf("\033[%d;%dH", term_row, term_col);
+
+            // Prepare the cell content.
+            char buffer[1024];
             const char *cell_content = t->cells[i][j] ? t->cells[i][j] : "";
             if (!show_formulas && cell_content[0] == '=') {
                 char *eval_result = evaluate_formula(t, cell_content);
@@ -140,13 +169,25 @@ void table_print_highlight_ex(const Table *t, int highlight_row, int highlight_c
             } else {
                 snprintf(buffer, sizeof(buffer), "%s", cell_content);
             }
-            // Highlight if this is the selected cell.
-            if (i == highlight_row && j == highlight_col)
-                printf("\033[7m");  // Start inverse video.
-            printf("%-15s", buffer);
-            if (i == highlight_row && j == highlight_col)
-                printf("\033[0m");  // Reset attributes.
+
+            if (i == highlight_row && j == highlight_col) {
+                // For the selected cell, print its allocated cell region (15 characters)
+                // using inverse video (highlight).
+                char cell_fixed[16];
+                strncpy(cell_fixed, buffer, 15);
+                cell_fixed[15] = '\0';
+                printf("\033[7m%-15s\033[0m", cell_fixed);
+                // Then, if the content is longer than 15 characters,
+                // print the overflow normally (it will visually extend beyond the cell region).
+                if (strlen(buffer) > 15) {
+                    printf("%s", buffer + 15);
+                }
+            } else {
+                // For non–selected cells, print the full content.
+                printf("%s", buffer);
+            }
         }
+        // End of row.
         printf("\n");
     }
 }
@@ -387,7 +428,7 @@ static void skip_whitespace(const char **s) {
 // FIX: After reading the column letters, also skip an optional '$' before row digits.
 static int parse_cell_reference_pp(const char **s, int *row, int *col) {
     const char *start = *s;
-    // Skip any '$' for column
+    // Skip any '$' for column.
     while (**s == '$')
          (*s)++;
     if (!isalpha(**s))
@@ -424,7 +465,7 @@ static double parse_factor(const Table *t, const char **s) {
     skip_whitespace(s);
     double result = 0;
     if (**s == '(') {
-        (*s)++;  // Skip '('
+        (*s)++;  // Skip '('.
         result = parse_expression(t, s);
         skip_whitespace(s);
         if (**s == ')')
@@ -445,8 +486,8 @@ static double parse_factor(const Table *t, const char **s) {
         skip_whitespace(&p);
         if (*p == '(') {
             // Function call: support SUM() and AVERAGE().
-            *s = p;  // Advance main pointer to '('
-            (*s)++;  // Skip '('
+            *s = p;  // Advance main pointer to '('.
+            (*s)++;  // Skip '('.
             skip_whitespace(s);
             int start_row, start_col, end_row, end_col;
             if (!parse_cell_reference_pp(s, &start_row, &start_col)) {
@@ -455,7 +496,7 @@ static double parse_factor(const Table *t, const char **s) {
             }
             skip_whitespace(s);
             if (**s == ':') {
-                (*s)++; // Skip ':'
+                (*s)++; // Skip ':'.
                 skip_whitespace(s);
                 if (!parse_cell_reference_pp(s, &end_row, &end_col)) {
                     formula_error = 1;
@@ -468,14 +509,14 @@ static double parse_factor(const Table *t, const char **s) {
             }
             skip_whitespace(s);
             if (**s == ')')
-                (*s)++; // Skip ')'
+                (*s)++; // Skip ')'.
             else {
                 formula_error = 1;
                 return 0;
             }
             // Map Excel row/col to table indices.
-            int tr1 = start_row - 1;  // table row index
-            int tc1 = start_col;      // table column index
+            int tr1 = start_row - 1;  // table row index.
+            int tc1 = start_col;      // table column index.
             int tr2 = end_row - 1;
             int tc2 = end_col;
             if (tr1 > tr2) { int temp = tr1; tr1 = tr2; tr2 = temp; }
@@ -591,7 +632,7 @@ char *evaluate_formula(const Table *t, const char *formula) {
     if (!formula || formula[0] != '=') {
         return strdup(formula);
     }
-    const char *expr = formula + 1; // skip '='
+    const char *expr = formula + 1; // skip '='.
     double result = parse_expression(t, &expr);
     skip_whitespace(&expr);
     if (*expr != '\0')

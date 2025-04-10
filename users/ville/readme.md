@@ -2,11 +2,11 @@
 
 This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
 
-#### WISH LIST ####
-1. Live file editing with "share.c" and "edit.c" - requires implementing auto-refresh to "edit.c".
-2. Working selection with shift to "edit.c", however apparently it is not possible with standard libs.
-3. Separating the server API as a separate library from the node apps.
-4. Code-analysis tools?
+### Thursday, 10th of April 2025 ###
+
+Improved table.c quite much. Modifications include bugfixes to handling references like $B$4 and cell
+higlighting when the content of the cell is wider than the cell. Put the help bar behind CTRL+T toggle.
+Created an example spreadsheet to the default user folder.
 
 ### Tuesday, 8th of April 2025 ###
 

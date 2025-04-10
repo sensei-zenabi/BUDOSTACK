@@ -1,54 +1,76 @@
-#define _POSIX_C_SOURCE 200112L
-#include <stdio.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <time.h>
+/* cls.c - Sweeping terminal clear animation
+ *
+ * This program uses ANSI escape sequences and POSIX functions
+ * to animate the clearing of the terminal contents from top down.
+ *
+ * It first obtains the terminal dimensions using ioctl() on STDOUT,
+ * then sequentially moves the cursor to each line and clears that line.
+ * A delay between each line produces the sweeping clearing effect.
+ *
+ * Note!: There is no portable way to “capture” the current terminal content,
+ * so this program operates directly on what is currently displayed.
+ */
 
-// Main entry point of the animated clear-screen application
-int main(void) {
+#define _POSIX_C_SOURCE 200112L  // Enable POSIX.1-2001 features
+
+#include <stdio.h>
+#include <unistd.h>     // for STDOUT_FILENO
+#include <stdlib.h>
+#include <sys/ioctl.h>  // for ioctl() and winsize
+#include <time.h>       // for nanosleep()
+
+int main(void)
+{
     struct winsize w;
-    
-    // Try to determine the size of the terminal window.
-    // If this fails, default to 24 rows and 80 columns.
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
+
+    /* Hide the cursor during the animation */
+    printf("\033[?25l");
+    fflush(stdout);
+
+    /* Try to get the size of the terminal.
+       If ioctl() fails, default to 24 rows x 80 columns. */
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) < 0) {
         w.ws_row = 24;
         w.ws_col = 80;
     }
-    
-    // Hide the cursor during animation.
-    printf("\033[?25l");
-    fflush(stdout);
-    
-    // The following nested loops clear the screen in an animated way.
-    // The outer loop goes row by row (from top to bottom).
-    // The inner loop clears the current row gradually from left to right.
-	int subtract_time = 25 * 500;
-	int erasetime = 500 * 1000;
-	// Pause for 200 microseconds between each column.
-    struct timespec delay;
-	delay.tv_sec = 0;	
-    delay.tv_nsec = erasetime; // 200 microseconds = 200,000 nanoseconds
 
-    for (int row = 1; row <= w.ws_row; row++) {
-    	if (erasetime > 100) {
-		   	erasetime = erasetime - subtract_time;
-	    }
-    	delay.tv_nsec = erasetime;
-        // For each column in the current row, print a space at that position.
-        for (int col = 1; col <= w.ws_col; col++) {
-            // Move the cursor to the specific row and column, then print a space.
-            printf("\033[%d;%dH ", row, col);
-            fflush(stdout); // Flush to make the change visible immediately.            
-            nanosleep(&delay, NULL);
+    /* Optionally, a short delay can be inserted before starting the animation,
+       for example to let the user see the current terminal content.
+       Uncomment the block below if desired.
+       
+    {
+        struct timespec delay;
+        delay.tv_sec = 0;
+        delay.tv_nsec = 500000000; // 500 milliseconds delay
+        nanosleep(&delay, NULL);
+    }
+    */
+    
+    /* Sweeping clear: For each row from the top to the bottom,
+       move the cursor there and clear the line. */
+    for (unsigned short row = 1; row <= w.ws_row; row++) {
+        /* Move cursor to the beginning of the current row.
+           ANSI escape sequence: ESC [ <row> ; 1 H */
+        printf("\033[%hu;1H", row);
+        /* Clear the entire line: ESC [ 2K */
+        printf("\033[2K");
+        fflush(stdout);
+        /* Delay between clearing lines for the sweeping effect.
+           25,000 microseconds equals 25 milliseconds per line. */
+        {
+            struct timespec req;
+            req.tv_sec = 0;
+            req.tv_nsec = 25000 * 1000;  // 25,000 microseconds = 25ms
+            nanosleep(&req, NULL);
         }
     }
-    
-    // Optionally, reposition the cursor at the bottom of the screen.
-    printf("\033[%d;1H", w.ws_row);
-    
-    // Show the cursor again once the animation is complete.
+
+    /* Restore the cursor visibility */
     printf("\033[?25h");
+
+    /* Optionally, move the cursor to home position */
+    printf("\033[H");
     fflush(stdout);
-    
+
     return 0;
 }

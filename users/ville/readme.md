@@ -6,7 +6,8 @@ This is my development diary for AALTO. Hope you'll enjoy it! Newest post is alw
 
 Improved table.c quite much. Modifications include bugfixes to handling references like $B$4 and cell
 higlighting when the content of the cell is wider than the cell. Put the help bar behind CTRL+T toggle.
-Created an example spreadsheet to the default user folder.
+Created an example spreadsheet to the default user folder. Animated the cls.c and transferred it from
+commands folder to apps folder as it is not a blocking app.
 
 ### Tuesday, 8th of April 2025 ###
 

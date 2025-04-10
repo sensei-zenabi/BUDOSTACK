@@ -12,13 +12,13 @@
 int main(int argc, char *argv[]) {
     // Print header information
     printf("\n");
-    printf("/* All-Around Linux Terminal Operator - AALTO */\n");
+    printf("==== All-Around Linux Terminal Operator - AALTO ====\n");
     printf("Programmed by: Ville Suoranta (and mr. AI)\n");
     printf("License: GPLv2\n");
     printf("\n");
 
     // Print available apps and commands
-    printf("Available Apps & Commands:\n");
+    printf("/* Available Apps & Commands */\n");
     printf("\n");
     printf("  help     : Display this help message.\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
@@ -64,7 +64,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Games list
-    printf("List of Games:\n");
+    printf("\n/* List of Games */\n");
     printf("\n");
     printf("  invaders : A space invaders clone tailored to terminal.\n");
     printf("  snake    : A snake clone, reminence from the good old Nokia days.\n");
@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
 
     // Print node applications information
-    printf("Running Node Applications:\n");
+    printf("\n/* Running Node Applications */\n");
     printf("\n");
     printf("  All node apps are stored in the node/ folder and they can be ran only via TASK scripting.\n");
     printf("\n");

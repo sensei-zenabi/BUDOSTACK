@@ -5,8 +5,7 @@ Usage: slides myslides.sld
 Requirements met:
  - The presentation uses only ASCII.
  - When started with “slides myslides.sld” the file is loaded (or created if not found).
- - The app shows slides in presentation mode with a terminal–sized ASCII border.
- - The slide content area is computed to fill as much as possible of the inner area while preserving a 16:9 aspect ratio.
+ - In both presentation and edit modes, the whole slide (the entire inner region) is displayed.
  - The active slide number is shown at the bottom right as “x/x”.
  - A centralized banner shows whether the app is in PRESENTATION MODE or EDIT MODE.
  - In presentation mode, pressing CTRL+E enters edit mode.
@@ -58,14 +57,12 @@ enum EditorKey {
 /* Global variables for terminal state and dimensions */
 struct termios orig_termios;
 int g_term_rows, g_term_cols;
-/* g_content_width and g_content_height define the size (in characters) of the slide’s content area.
-   The slide will be displayed within the terminal border using a 16:9 aspect ratio.
+/* 
+   g_content_width and g_content_height now define the size (in characters) of the slide’s full area,
+   which is the complete inner region (the terminal minus the border).
+   g_content_offset_x and g_content_offset_y mark where this area begins.
 */
 int g_content_width, g_content_height;
-/* Offsets (column and row) at which the slide content area is drawn.
-   The inner region is the terminal minus the border (which occupies the first and last rows/columns).
-   Here the inner region starts at row 2, col 2.
-*/
 int g_content_offset_x, g_content_offset_y;
 
 /* Global variables for slides */
@@ -130,45 +127,33 @@ int readKey(void) {
 }
 
 /************************************
- * Terminal size and slide content area
+ * Terminal size and dimensions setup
  ************************************/
 
 /* Get terminal window size */
 int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
-    if(ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) return -1;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) return -1;
     *cols = ws.ws_col;
     *rows = ws.ws_row;
     return 0;
 }
 
-/* Compute the inner region (terminal minus border) and then compute the slide content area
-   so that it has a 16:9 aspect ratio and is as large as possible. The content area is then centered
-   inside the inner region.
+/*
+  Compute dimensions for the program.
+  Set the full inner region (editing area) to be the whole terminal minus the border.
 */
-void computeContentArea(void) {
+void computeDimensions(void) {
     if (getWindowSize(&g_term_rows, &g_term_cols) == -1) {
         perror("getWindowSize");
         exit(1);
     }
-    int inner_width = g_term_cols - 2;   // account for left/right borders
-    int inner_height = g_term_rows - 2;    // account for top/bottom borders
-
-    /* First try to use full inner width; then compute the corresponding height.
-       If that height fits inside the inner area, use that.
-       Otherwise, use full inner height and compute the corresponding width.
-    */
-    int calc_height = (inner_width * 9) / 16;
-    if (calc_height <= inner_height) {
-        g_content_width = inner_width;
-        g_content_height = calc_height;
-    } else {
-        g_content_height = inner_height;
-        g_content_width = (inner_height * 16) / 9;
-    }
-    /* The inner region starts at row 2, col 2. Center the content area within the inner region. */
-    g_content_offset_x = 2 + ((inner_width - g_content_width) / 2);
-    g_content_offset_y = 2 + ((inner_height - g_content_height) / 2);
+    int full_width = g_term_cols - 2;   // account for left/right borders
+    int full_height = g_term_rows - 2;    // account for top/bottom borders
+    g_content_width = full_width;
+    g_content_height = full_height;
+    g_content_offset_x = 2;
+    g_content_offset_y = 2;
 }
 
 /************************************
@@ -192,7 +177,7 @@ void drawBorder(void) {
     write(STDOUT_FILENO, "+", 1);
 
     /* Draw the sides for rows 2 .. g_term_rows-1 */
-    char line[g_term_cols+1];
+    char line[g_term_cols + 1];
     for (r = 2; r < g_term_rows; r++) {
         line[0] = '|';
         memset(&line[1], ' ', g_term_cols - 2);
@@ -209,12 +194,17 @@ void drawBorder(void) {
     write(STDOUT_FILENO, "+", 1);
 }
 
-/* Draw the active slide's content into the content area */
-void drawSlideContent(Slide *slide) {
-    int i;
-    for (i = 0; i < g_content_height; i++) {
-        char *line_str = slide->lines[i] ? slide->lines[i] : "";
-        dprintf(STDOUT_FILENO, "\x1b[%d;%dH%-*s", g_content_offset_y + i, g_content_offset_x, g_content_width, line_str);
+/*
+ * Draw the full slide content.
+ * In both presentation and edit modes, the slide buffer now covers the entire inner region.
+ */
+void drawFullSlideContent(Slide *slide) {
+    for (int i = 0; i < g_content_height; i++) {
+        dprintf(STDOUT_FILENO, "\x1b[%d;%dH%-*s", 
+            g_content_offset_y + i, 
+            g_content_offset_x, 
+            g_content_width, 
+            slide->lines[i]);
     }
 }
 
@@ -236,25 +226,24 @@ void drawModeBanner(void) {
     dprintf(STDOUT_FILENO, "\x1b[2;%dH%s", col, banner);
 }
 
-/* Refresh the screen when in presentation mode */
+/* Refresh the screen in presentation mode: draw border, full slide content, slide indicator, and mode banner. */
 void refreshPresentationScreen(void) {
     clearScreen();
     drawBorder();
-    drawSlideContent(g_slides[g_current_slide]);
+    drawFullSlideContent(g_slides[g_current_slide]);
     drawSlideIndicator();
     drawModeBanner();
     /* Move the cursor out of the way */
     dprintf(STDOUT_FILENO, "\x1b[%d;%dH", g_term_rows, g_term_cols);
 }
 
-/* Refresh the screen in edit mode and position the editing cursor */
+/* Refresh the screen in edit mode and position the editing cursor.
+   Here the entire editable area (full inner region) is drawn.
+*/
 void refreshEditScreen(int cur_row, int cur_col) {
     clearScreen();
     drawBorder();
-    int i;
-    for (i = 0; i < g_content_height; i++) {
-        dprintf(STDOUT_FILENO, "\x1b[%d;%dH%-*s", g_content_offset_y + i, g_content_offset_x, g_content_width, g_slides[g_current_slide]->lines[i]);
-    }
+    drawFullSlideContent(g_slides[g_current_slide]);
     drawModeBanner();
     /* Position the cursor in the editing area */
     int term_row = g_content_offset_y + cur_row;
@@ -265,9 +254,9 @@ void refreshEditScreen(int cur_row, int cur_col) {
 /************************************
  * Slide file load/save functions
  *
- * Slides are stored in a file with each slide separated by a line "----".
+ * Slides are stored in a file with each slide separated by a delimiter "----".
  * Each slide is loaded into a fixed–sized buffer of g_content_height rows
- * and g_content_width columns.
+ * and g_content_width columns (the full inner region).
  ************************************/
 
 /* Allocate and initialize a new blank slide */
@@ -417,7 +406,7 @@ void saveSlides(void) {
 /************************************
  * Edit mode functionality.
  *
- * In edit mode, the user can edit the active slide’s fixed text area.
+ * In edit mode, the user can edit the active slide’s full text area (the entire inner region).
  * CTRL+S saves the slides (with a temporary message),
  * CTRL+Z undoes changes,
  * CTRL+E (or ESC) exits edit mode (returning to presentation mode),
@@ -512,13 +501,18 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     g_filename = argv[1];
-    computeContentArea();
+    
+    // Compute dimensions for the full inner region.
+    computeDimensions();
+    
+    // Load slides from file; slides are allocated to the full inner (editable) area.
     loadSlides(g_filename);
     
     enableRawMode();
     
     while (!g_quit) {
-        refreshPresentationScreen();
+        if (!g_edit_mode)
+            refreshPresentationScreen();
         int c = readKey();
         if (c == CTRL_KEY('Q')) {
             g_quit = 1;

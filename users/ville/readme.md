@@ -2,6 +2,11 @@
 
 This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
 
+### Friday, 11th of April 2025 ###
+
+This turned to be quite cool idea; slide.c - a terminal based ASCII powerpoint that let's the user to
+focus only to the content! Released it to the main branch today.
+
 ### Thursday, 10th of April 2025 ###
 
 Improved table.c quite much. Modifications include bugfixes to handling references like $B$4 and cell

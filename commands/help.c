@@ -49,6 +49,8 @@ int main(int argc, char *argv[]) {
     printf("             e.g. 'run git status' or 'run ./myexecutable'\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
+	printf("  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n");
+	printf("             For help CTRL+H when the app is running.\n");
     printf("  stats    : Displays basic hardware stats.\n");
     printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.tbl'.\n");
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");

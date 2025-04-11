@@ -6,6 +6,8 @@ Requirements met:
  - The presentation uses only ASCII.
  - When started with “slides myslides.sld” the file is loaded (or created if not found).
  - In both presentation and edit modes, the whole slide (the entire inner region) is displayed.
+ - When in presentation mode, if CTRL+H is pressed, a help screen is shown with all the shortcuts and instructions.
+   The help screen remains until CTRL+H is pressed again.
  - The active slide number is shown at the bottom right as “x/x”.
  - A centralized banner shows whether the app is in PRESENTATION MODE or EDIT MODE.
  - In presentation mode, pressing CTRL+E enters edit mode.
@@ -58,12 +60,17 @@ enum EditorKey {
 struct termios orig_termios;
 int g_term_rows, g_term_cols;
 /* 
-   g_content_width and g_content_height now define the size (in characters) of the slide’s full area,
-   which is the complete inner region (the terminal minus the border).
+   g_content_width and g_content_height define the size (in characters) of the slide’s full area,
+   i.e. the complete inner region (the terminal minus the border).
    g_content_offset_x and g_content_offset_y mark where this area begins.
 */
 int g_content_width, g_content_height;
 int g_content_offset_x, g_content_offset_y;
+
+/* Global variable for help mode.
+   When g_help_mode is 1, the help screen is being displayed.
+*/
+int g_help_mode = 0;
 
 /* Global variables for slides */
 typedef struct {
@@ -141,7 +148,7 @@ int getWindowSize(int *rows, int *cols) {
 
 /*
   Compute dimensions for the program.
-  Set the full inner region (editing area) to be the whole terminal minus the border.
+  Set the full inner region (editing area and presentation area) to be the whole terminal minus the border.
 */
 void computeDimensions(void) {
     if (getWindowSize(&g_term_rows, &g_term_cols) == -1) {
@@ -196,7 +203,7 @@ void drawBorder(void) {
 
 /*
  * Draw the full slide content.
- * In both presentation and edit modes, the slide buffer now covers the entire inner region.
+ * In both presentation and edit modes, the slide buffer covers the entire inner region.
  */
 void drawFullSlideContent(Slide *slide) {
     for (int i = 0; i < g_content_height; i++) {
@@ -249,6 +256,56 @@ void refreshEditScreen(int cur_row, int cur_col) {
     int term_row = g_content_offset_y + cur_row;
     int term_col = g_content_offset_x + cur_col;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dH", term_row, term_col);
+}
+
+/************************************
+ * Help screen functionality.
+ *
+ * When the user (in presentation mode) presses CTRL+H, the help screen is displayed.
+ * The help screen lists all shortcuts and instructions and remains until CTRL+H is pressed again.
+ ************************************/
+
+/* Display help information on the screen */
+void displayHelp(void) {
+    clearScreen();
+    drawBorder();
+    /* Display help text starting at a fixed position inside the border */
+    int row = 4, col = 4;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHHELP MENU - Shortcuts and Instructions", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dH--------------------------------------", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+E : Toggle between Presentation and Edit mode", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+Q : Quit the app", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+S : Save slides (in Edit mode)", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+Z : Undo changes (in Edit mode)", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHARROW KEYS : Navigate slides (Presentation) or editing cursor (Edit)", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+N : Add a new slide (after current slide)", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+D : Delete the current slide (except first slide)", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+H : Toggle Help Menu", row, col);
+    row += 2;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHPress CTRL+H again to return.", row, col);
+}
+
+/* Enter help mode: display the help screen until CTRL+H is pressed again */
+void enterHelpMode(void) {
+    g_help_mode = 1;
+    while (g_help_mode) {
+        displayHelp();
+        int ch = readKey();
+        if (ch == CTRL_KEY('H')) {
+            g_help_mode = 0;
+        }
+    }
+    /* After exiting help mode, clear the screen to refresh the presentation view */
+    clearScreen();
 }
 
 /************************************
@@ -412,6 +469,7 @@ void saveSlides(void) {
  * CTRL+E (or ESC) exits edit mode (returning to presentation mode),
  * CTRL+Q quits the app,
  * and the arrow keys move the editing cursor.
+ * Note: In edit mode, CTRL+H remains bound to backspace.
  ************************************/
 void enterEditMode(void) {
     g_edit_mode = 1;
@@ -468,7 +526,7 @@ void enterEditMode(void) {
                 cur_row++;
             }
         } else if (ch == 127 || ch == CTRL_KEY('H')) {
-            /* Handle backspace */
+            /* Handle backspace in edit mode */
             if (cur_col > 0) {
                 cur_col--;
                 slide->lines[cur_row][cur_col] = ' ';
@@ -502,10 +560,10 @@ int main(int argc, char *argv[]) {
     }
     g_filename = argv[1];
     
-    // Compute dimensions for the full inner region.
+    /* Compute dimensions for the full inner region */
     computeDimensions();
     
-    // Load slides from file; slides are allocated to the full inner (editable) area.
+    /* Load slides from file; slides are allocated to the full inner (editable) area */
     loadSlides(g_filename);
     
     enableRawMode();
@@ -513,7 +571,15 @@ int main(int argc, char *argv[]) {
     while (!g_quit) {
         if (!g_edit_mode)
             refreshPresentationScreen();
+        
         int c = readKey();
+
+        /* When not in edit mode, if CTRL+H is pressed, toggle help mode */
+        if (!g_edit_mode && c == CTRL_KEY('H')) {
+            enterHelpMode();
+            continue;
+        }
+        
         if (c == CTRL_KEY('Q')) {
             g_quit = 1;
             break;
@@ -528,7 +594,7 @@ int main(int argc, char *argv[]) {
             if (g_current_slide > 0)
                 g_current_slide--;
         }
-        /* NEW: Add new slide with CTRL+N (insert after current slide) */
+        /* Add new slide with CTRL+N (insert after current slide) */
         else if (c == CTRL_KEY('N')) {
             Slide *new_slide = newBlankSlide();
             g_slides = realloc(g_slides, sizeof(Slide*) * (g_slide_count + 1));
@@ -540,7 +606,7 @@ int main(int argc, char *argv[]) {
             g_slide_count++;
             g_current_slide++; // Move to the new slide
         }
-        /* NEW: Delete current slide with CTRL+D (do not allow deleting the first slide) */
+        /* Delete current slide with CTRL+D (do not allow deleting the first slide) */
         else if (c == CTRL_KEY('D')) {
             if (g_current_slide > 0) {
                 freeSlide(g_slides[g_current_slide]);

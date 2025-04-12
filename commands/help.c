@@ -49,6 +49,8 @@ int main(int argc, char *argv[]) {
     printf("             e.g. 'run git status' or 'run ./myexecutable'\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
+	printf("  skydial  : Simple sky-dial to identify and locate celestial objects.\n");
+	printf("             Type 'skydial lat lon' to tell your position.\n");
 	printf("  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n");
 	printf("             For help CTRL+H when the app is running.\n");
 	printf("  solar    : Visualizes the solar system and it's planets. 'solar X', where\n");

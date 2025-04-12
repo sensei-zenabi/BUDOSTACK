@@ -21,7 +21,7 @@ Requirements met:
  - In presentation mode, pressing CTRL+N adds a new (blank) slide after the current slide.
  - In presentation mode, pressing CTRL+D deletes the current slide (except when it is the first slide).
  - Slides are loaded and saved from a file where individual slides are separated by a delimiter line "----".
- 
+
 This implementation uses plain C with –std=c11, standard C libraries, and POSIX–compliant functions.
 */
 
@@ -86,6 +86,10 @@ const char *g_filename = NULL; // slides file name
 /* Global state variables for modes */
 int g_edit_mode = 0;  // 0 = presentation mode; 1 = edit mode
 int g_quit = 0;       // flag to indicate quitting
+
+/* Global variables to store the editing cursor position between pages */
+int g_last_edit_row = 0;
+int g_last_edit_col = 0;
 
 /************************************
  * Terminal raw mode helper functions
@@ -233,6 +237,16 @@ void drawModeBanner(void) {
     dprintf(STDOUT_FILENO, "\x1b[2;%dH%s", col, banner);
 }
 
+/* Draw the cursor position (in edit mode) at the bottom center */
+void drawEditStatus(int cur_row, int cur_col) {
+    char pos[32];
+    snprintf(pos, sizeof(pos), "X:%d Y:%d", cur_col, cur_row);
+    int len = strlen(pos);
+    int pos_col = (g_term_cols - len) / 2 + 1;
+    /* Print the coordinate on the bottom border line, overlaying part of it */
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dH%s", g_term_rows, pos_col, pos);
+}
+
 /* Refresh the screen in presentation mode: draw border, full slide content, slide indicator, and mode banner. */
 void refreshPresentationScreen(void) {
     clearScreen();
@@ -246,12 +260,14 @@ void refreshPresentationScreen(void) {
 
 /* Refresh the screen in edit mode and position the editing cursor.
    Here the entire editable area (full inner region) is drawn.
+   Additionally, the editing cursor coordinates are shown at the bottom center.
 */
 void refreshEditScreen(int cur_row, int cur_col) {
     clearScreen();
     drawBorder();
     drawFullSlideContent(g_slides[g_current_slide]);
     drawModeBanner();
+    drawEditStatus(cur_row, cur_col);
     /* Position the cursor in the editing area */
     int term_row = g_content_offset_y + cur_row;
     int term_col = g_content_offset_x + cur_col;
@@ -474,7 +490,9 @@ void saveSlides(void) {
 void enterEditMode(void) {
     g_edit_mode = 1;
     Slide *slide = g_slides[g_current_slide];
-    int cur_row = 0, cur_col = 0;
+    /* Use the globally stored cursor position */
+    int cur_row = g_last_edit_row;
+    int cur_col = g_last_edit_col;
     int ch, i;
     
     /* Create an undo backup (deep copy of slide content) */
@@ -537,6 +555,10 @@ void enterEditMode(void) {
             }
         }
     }
+    
+    /* Before exiting edit mode, store the current editing cursor position globally */
+    g_last_edit_row = cur_row;
+    g_last_edit_col = cur_col;
     
     /* Clear the undo backup before exiting edit mode */
     for (i = 0; i < g_content_height; i++) {

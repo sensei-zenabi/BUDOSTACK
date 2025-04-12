@@ -20,6 +20,12 @@ Requirements met:
  - In edit mode, pressing CTRL+Z undoes changes (restoring the slide’s state from when edit mode was entered).
  - In presentation mode, pressing CTRL+N adds a new (blank) slide after the current slide.
  - In presentation mode, pressing CTRL+D deletes the current slide (except when it is the first slide).
+ - Additionally, in edit mode:
+    • Press CTRL+T to toggle rectangular selection mode.
+    • In toggle mode, use the arrow keys to adjust the selection.
+    • Press CTRL+C in toggle mode to copy the selected rectangular region.
+    • Press CTRL+T again to exit toggle mode.
+    • In normal edit mode, press CTRL+V to paste the copied region at the current cursor position.
  - Slides are loaded and saved from a file where individual slides are separated by a delimiter line "----".
 
 This implementation uses plain C with –std=c11, standard C libraries, and POSIX–compliant functions.
@@ -90,6 +96,19 @@ int g_quit = 0;       // flag to indicate quitting
 /* Global variables to store the editing cursor position between pages */
 int g_last_edit_row = 0;
 int g_last_edit_col = 0;
+
+/* 
+   Global clipboard structure for rectangular selection copy/paste.
+   When a region is copied (with CTRL+C in toggle mode), its contents (rows and cols)
+   are stored here and can later be pasted (with CTRL+V) into any slide in edit mode.
+*/
+typedef struct {
+    int rows;
+    int cols;
+    char **data;
+} Clipboard;
+
+Clipboard *g_clipboard = NULL;
 
 /************************************
  * Terminal raw mode helper functions
@@ -247,6 +266,20 @@ void drawEditStatus(int cur_row, int cur_col) {
     dprintf(STDOUT_FILENO, "\x1b[%d;%dH%s", g_term_rows, pos_col, pos);
 }
 
+/* Overlay the currently selected rectangular region (in toggle mode) using inverse video */
+void drawToggleOverlay(int start_row, int start_col, int curr_row, int curr_col) {
+    int row1 = (start_row < curr_row ? start_row : curr_row);
+    int row2 = (start_row > curr_row ? start_row : curr_row);
+    int col1 = (start_col < curr_col ? start_col : curr_col);
+    int col2 = (start_col > curr_col ? start_col : curr_col);
+    for (int r = row1; r <= row2; r++) {
+        for (int c = col1; c <= col2; c++) {
+            char ch = g_slides[g_current_slide]->lines[r][c];
+            dprintf(STDOUT_FILENO, "\x1b[%d;%dH\x1b[7m%c\x1b[0m", g_content_offset_y + r, g_content_offset_x + c, ch);
+        }
+    }
+}
+
 /* Refresh the screen in presentation mode: draw border, full slide content, slide indicator, and mode banner. */
 void refreshPresentationScreen(void) {
     clearScreen();
@@ -306,6 +339,12 @@ void displayHelp(void) {
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+D : Delete the current slide (except first slide)", row, col);
     row++;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+H : Toggle Help Menu", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+T : Toggle rectangular selection mode (in Edit mode)", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+C : Copy selected region (in Toggle mode)", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+V : Paste copied region (in Edit mode)", row, col);
     row += 2;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHPress CTRL+H again to return.", row, col);
 }
@@ -485,6 +524,16 @@ void saveSlides(void) {
  * CTRL+E (or ESC) exits edit mode (returning to presentation mode),
  * CTRL+Q quits the app,
  * and the arrow keys move the editing cursor.
+ * 
+ * New functionality in Edit mode:
+ *  - CTRL+T toggles the rectangular selection (toggle mode).
+ *    In toggle mode:
+ *      * The starting cursor position is saved.
+ *      * Using arrow keys the user can adjust the selection.
+ *      * CTRL+C copies the selected rectangular region to a global clipboard.
+ *      * CTRL+T again exits toggle mode.
+ *  - In normal edit mode, CTRL+V pastes the clipboard region at the current cursor position.
+ *
  * Note: In edit mode, CTRL+H remains bound to backspace.
  ************************************/
 void enterEditMode(void) {
@@ -552,6 +601,76 @@ void enterEditMode(void) {
                 cur_row--;
                 cur_col = g_content_width - 1;
                 slide->lines[cur_row][cur_col] = ' ';
+            }
+        } else if (ch == CTRL_KEY('T')) {
+            /* Enter toggle mode for rectangular selection */
+            int toggle_start_row = cur_row, toggle_start_col = cur_col;
+            int toggle_row = cur_row, toggle_col = cur_col;
+            int toggle_ch;
+            while (1) {
+                /* Refresh screen with current editing cursor and overlay selection */
+                refreshEditScreen(toggle_row, toggle_col);
+                drawToggleOverlay(toggle_start_row, toggle_start_col, toggle_row, toggle_col);
+                toggle_ch = readKey();
+                if (toggle_ch == CTRL_KEY('T')) {
+                    /* Exit toggle mode and update main cursor position */
+                    cur_row = toggle_row;
+                    cur_col = toggle_col;
+                    break;
+                } else if (toggle_ch == CTRL_KEY('C')) {
+                    /* Copy selected rectangular region to global clipboard */
+                    int sel_row_start = (toggle_start_row < toggle_row ? toggle_start_row : toggle_row);
+                    int sel_row_end   = (toggle_start_row > toggle_row ? toggle_start_row : toggle_row);
+                    int sel_col_start = (toggle_start_col < toggle_col ? toggle_start_col : toggle_col);
+                    int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
+                    int sel_rows = sel_row_end - sel_row_start + 1;
+                    int sel_cols = sel_col_end - sel_col_start + 1;
+                    /* Free previous clipboard if it exists */
+                    if (g_clipboard) {
+                        for (i = 0; i < g_clipboard->rows; i++) {
+                            free(g_clipboard->data[i]);
+                        }
+                        free(g_clipboard->data);
+                        free(g_clipboard);
+                    }
+                    g_clipboard = malloc(sizeof(Clipboard));
+                    g_clipboard->rows = sel_rows;
+                    g_clipboard->cols = sel_cols;
+                    g_clipboard->data = malloc(sizeof(char*) * sel_rows);
+                    for (i = 0; i < sel_rows; i++) {
+                        g_clipboard->data[i] = malloc(sel_cols + 1);
+                        strncpy(g_clipboard->data[i], g_slides[g_current_slide]->lines[sel_row_start + i] + sel_col_start, sel_cols);
+                        g_clipboard->data[i][sel_cols] = '\0';
+                    }
+                    dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion copied!", g_term_rows - 1);
+                    fsync(STDOUT_FILENO);
+                    sleep(1);
+                } else if (toggle_ch == ARROW_UP) {
+                    if (toggle_row > 0) toggle_row--;
+                } else if (toggle_ch == ARROW_DOWN) {
+                    if (toggle_row < g_content_height - 1) toggle_row++;
+                } else if (toggle_ch == ARROW_LEFT) {
+                    if (toggle_col > 0) toggle_col--;
+                } else if (toggle_ch == ARROW_RIGHT) {
+                    if (toggle_col < g_content_width - 1) toggle_col++;
+                } else if (toggle_ch == CTRL_KEY('Q')) {
+                    g_quit = 1;
+                    return;
+                }
+            }
+        } else if (ch == CTRL_KEY('V')) {
+            /* Paste clipboard region at current cursor position */
+            if (g_clipboard) {
+                int i, j;
+                for (i = 0; i < g_clipboard->rows; i++) {
+                    if (cur_row + i >= g_content_height)
+                        break;
+                    for (j = 0; j < g_clipboard->cols; j++) {
+                        if (cur_col + j >= g_content_width)
+                            break;
+                        slide->lines[cur_row + i][cur_col + j] = g_clipboard->data[i][j];
+                    }
+                }
             }
         }
     }

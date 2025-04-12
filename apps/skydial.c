@@ -13,8 +13,8 @@ Usage:
     ./skydial <lat> <lon>
     
 The program uses simple approximations for the Sun and Moon positions. The sky-dial 
-is rendered as a single ASCII frame with appropriate adjustments for terminal character 
-aspect ratio.
+is rendered as a single ASCII frame with improved details including a refined circle 
+outline and internal cross lines for better orientation.
 */
 
 #include <stdio.h>
@@ -23,7 +23,6 @@ aspect ratio.
 #include <time.h>
 #include <string.h>
 
-// Constants and conversion macros.
 #define PI 3.14159265358979323846
 
 // Canvas dimensions for the sky-dial.
@@ -35,8 +34,8 @@ aspect ratio.
 #define DEFAULT_LON 25.7473   // degrees
 
 // Tolerance for drawing the circle perimeter.
-// Reducing this value makes the circle outline thinner so that markers are clearer.
-#define CIRCLE_TOLERANCE 0.08
+// Smaller tolerance makes the circle outline thinner.
+#define CIRCLE_TOLERANCE 0.04
 
 // Function prototypes.
 double deg2rad(double deg);
@@ -46,7 +45,7 @@ double julian_date(struct tm *t);
 void calc_sun(double jd, double *ra, double *dec);
 void calc_moon(double jd, double *ra, double *dec);
 void equatorial_to_horizontal(double ra, double dec, double lat, double lon, double jd, double *az, double *alt);
-static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, int center_y, 
+static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, int center_y,
                                   int radius_x, int radius_y, double az, double alt, char symbol);
 void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt);
 
@@ -171,10 +170,9 @@ void equatorial_to_horizontal(double ra, double dec, double lat, double lon, dou
 
 /*
 Plot a celestial object (if above horizon) onto the ASCII canvas.
-The marker is placed by converting its azimuth and altitude to a position 
-within the dial. The horizon is represented by the perimeter.
+The marker is placed by converting its azimuth and altitude to a position within the dial.
 */
-static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, int center_y, 
+static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, int center_y,
                                   int radius_x, int radius_y, double az, double alt, char symbol)
 {
     // Only plot objects above the horizon.
@@ -183,7 +181,7 @@ static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, in
     // Map altitude (0 at horizon, 90 at zenith) to a normalized radius (0 at zenith, 1 at horizon).
     double norm_radius = (90.0 - alt) / 90.0;
     double az_rad = deg2rad(az);
-    // Compute offsets based on the terminal aspect ratio.
+    // Compute offsets taking terminal aspect ratio into account.
     double dx = norm_radius * radius_x * sin(az_rad);
     double dy = norm_radius * radius_y * cos(az_rad);
     int plot_x = center_x + (int)round(dx);
@@ -193,9 +191,9 @@ static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, in
 }
 
 /*
-Draw the sky-dial (circle with compass directions) and overlay the celestial 
-object markers (Moon and Sun). A thinner dial outline is used so that the markers 
-are not hidden.
+Draw the sky-dial: a circular dial with an improved outline and internal cross axes.
+The dial edge, cross lines and cardinal directions help the viewer orient the plot.
+Celestial objects (Moon and Sun) are then overlayed.
 */
 void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt) {
     char canvas[HEIGHT][WIDTH+1];
@@ -209,18 +207,38 @@ void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt
     int radius_x = (WIDTH - 2) / 2;
     int radius_y = (HEIGHT - 2) / 2;
 
-    // Draw the circular dial outline.
+    // Draw the circular dial outline using '*' characters.
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
             double dx = (double)(x - center_x) / radius_x;
             double dy = (double)(y - center_y) / radius_y;
             double distance = sqrt(dx * dx + dy * dy);
             if (fabs(distance - 1.0) < CIRCLE_TOLERANCE)
-                canvas[y][x] = 'O';
+                canvas[y][x] = '*';
         }
     }
 
-    // Overlay compass directions (ensuring they override circle segments).
+    // Draw internal cross axes for better orientation.
+    // Vertical axis.
+    for (int y = 0; y < HEIGHT; y++) {
+        double dy = (double)(y - center_y) / radius_y;
+        double dx = 0; // center column
+        double distance = fabs(dy); // since dx == 0, distance = |dy|
+        if (distance < 1.0)
+            canvas[y][center_x] = '|';
+    }
+    // Horizontal axis.
+    for (int x = 0; x < WIDTH; x++) {
+        double dx = (double)(x - center_x) / radius_x;
+        double dy = 0; // center row
+        double distance = fabs(dx);
+        if (distance < 1.0)
+            canvas[center_y][x] = '-';
+    }
+    // Mark the very center with a '+'.
+    canvas[center_y][center_x] = '+';
+
+    // Overlay compass directions to override cross axes.
     if (center_y - radius_y >= 0 && center_x < WIDTH)
         canvas[center_y - radius_y][center_x] = 'N';
     if (center_y + radius_y < HEIGHT && center_x < WIDTH)
@@ -230,8 +248,7 @@ void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt
     if (center_x - radius_x >= 0 && center_y < HEIGHT)
         canvas[center_y][center_x - radius_x] = 'W';
 
-    // Plot the Moon marker ('M') then the Sun marker ('S') so they appear on top.
-    // (Note: The Sun marker will only be visible if above the horizon.)
+    // Plot celestial markers. Moon is plotted first so that the Sun (if visible) appears on top.
     plot_object_on_canvas(canvas, center_x, center_y, radius_x, radius_y, moon_az, moon_alt, 'M');
     plot_object_on_canvas(canvas, center_x, center_y, radius_x, radius_y, sun_az, sun_alt, 'S');
 
@@ -293,7 +310,9 @@ int main(int argc, char **argv) {
 
     printf("\nLegend:\n");
     printf("  N, E, S, W  - Compass directions (dial edge)\n");
-    printf("  O           - Dial perimeter (horizon)\n");
+    printf("  *           - Dial perimeter (horizon)\n");
+    printf("  |, -        - Internal cross axes (azimuth directions)\n");
+    printf("  +           - Zenith (center)\n");
     printf("  S           - Sun (if above horizon)\n");
     printf("  M           - Moon (if above horizon)\n");
     printf("  (Objects below horizon are not displayed.)\n");

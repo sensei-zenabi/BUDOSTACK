@@ -51,6 +51,8 @@ int main(int argc, char *argv[]) {
     printf("             Type: runtask -help for more details.\n");
 	printf("  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n");
 	printf("             For help CTRL+H when the app is running.\n");
+	printf("  solar    : Visualizes the solar system and it's planets. 'solar X', where\n");
+	printf("             X is the number of planets from 2 to 8.\n");
     printf("  stats    : Displays basic hardware stats.\n");
     printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.tbl'.\n");
 	printf("  time     : Display time now in different time-zones. 'time -s' for astro events.\n");

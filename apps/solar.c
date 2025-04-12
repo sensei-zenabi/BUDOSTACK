@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
     int display_planet_count = num_orbits;
     // Set max_au based on the outermost displayed planet plus a little margin.
     double max_au = planets[display_planet_count - 1].a * 1.2;
-
+    
     // Dynamically obtain the terminal size.
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
@@ -163,7 +163,7 @@ int main(int argc, char *argv[]) {
             screen[iy][ix] = planets[p].symbol;
     }
     
-    // --- Print the final frame once, then exit ---
+    // --- Print the final frame (visualization) ---
     for (int i = 0; i < height; i++) {
         for (int j = 0; j < width; j++) {
             putchar(screen[i][j]);
@@ -172,6 +172,34 @@ int main(int argc, char *argv[]) {
     }
     putchar('\n');
     fflush(stdout);
+    
+    // --- Print planetary statistics below the visualization ---
+    // Define the full names of the planets.
+    const char *planet_names[NUM_PLANETS] = {"Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"};
+    printf("Planetary Statistics:\n");
+    printf("%-10s %-6s %-20s %-12s %-20s %-15s %-18s\n", "Name", "Symbol", "Semi-Major Axis (AU)", "Eccentricity", "Orbital Period (days)", "Distance (AU)", "True Anomaly (deg)");
+    printf("---------------------------------------------------------------------------------------------------------------\n");
+    
+    for (int p = 0; p < display_planet_count; p++) {
+        // Recompute the mean anomaly for this planet.
+        double M = planets[p].M0 + (2 * M_PI / planets[p].T) * days_since_J2000;
+        M = fmod(M, 2 * M_PI);
+        if (M < 0)
+            M += 2 * M_PI;
+        // Solve for the eccentric anomaly.
+        double E = solveKepler(M, planets[p].e);
+        // Compute the true anomaly.
+        double f_angle = 2 * atan2(sqrt(1 + planets[p].e) * sin(E / 2),
+                                   sqrt(1 - planets[p].e) * cos(E / 2));
+        // Compute the heliocentric distance.
+        double r = planets[p].a * (1 - planets[p].e * cos(E));
+        // Convert true anomaly to degrees.
+        double f_deg = f_angle * 180 / M_PI;
+        // Print the formatted statistics.
+        printf("%-10s %-6c %-20.3f %-12.4f %-20.3f %-15.3f %-18.1f\n",
+               planet_names[p], planets[p].symbol, planets[p].a,
+               planets[p].e, planets[p].T, r, f_deg);
+    }
     
     return 0;
 }

@@ -1,8 +1,9 @@
 /*
 This improved sky-dial application calculates and displays in the terminal 
 the apparent positions (azimuth and altitude) of several celestial objects 
-including the Sun, Moon, and a selection of bright stars visible to the naked eye. 
-In addition, it calculates the Moon's illuminated percentage.
+including the Sun, Moon, bright stars, and the five naked-eye planets 
+(Mercury, Venus, Mars, Jupiter, Saturn). In addition, it calculates the Moon's 
+illuminated percentage.
 The default observer location is Jyväskylä, Finland (latitude 62.2426° N, longitude 25.7473° E), 
 but a user may provide alternate coordinates via command-line parameters.
 
@@ -13,7 +14,7 @@ Usage:
     ./skydial
     ./skydial <lat> <lon>
     
-The program uses simplified approximations for the Sun and Moon positions, and a 
+The program uses simplified approximations for the Sun, Moon, planets, and a 
 static catalog for bright stars. The sky-dial is rendered as a single ASCII frame with 
 an improved circle outline and internal cross axes for better orientation.
 */
@@ -38,11 +39,13 @@ an improved circle outline and internal cross axes for better orientation.
 // Smaller tolerance makes the circle outline thinner.
 #define CIRCLE_TOLERANCE 0.04
 
-// Structure for bright objects visible with the naked eye.
+/*
+Structure for a bright naked-eye star.
+*/
 struct BrightObject {
-    const char *name;   // Object name (not printed on the dial)
-    double ra;          // Right ascension in degrees
-    double dec;         // Declination in degrees
+    const char *name;   // Object name (for reference)
+    double ra;          // Right ascension in degrees (fixed catalog value)
+    double dec;         // Declination in degrees (fixed catalog value)
     char symbol;        // Symbol used on the dial
 };
 
@@ -50,11 +53,36 @@ struct BrightObject {
 static const struct BrightObject brightObjects[] = {
     {"Sirius",     101.287, -16.716, 's'},  // Sirius
     {"Vega",       279.234,  38.784, 'v'},   // Vega
-    {"Betelgeuse",  88.793,   7.407, 'b'},   // Betelgeuse
+    {"Betelgeuse",  88.793,   7.407,  'b'},   // Betelgeuse
     {"Rigel",      78.635,   -8.202, 'r'},   // Rigel
-    {"Arcturus",  213.915,  19.1825, 'a'}    // Arcturus
+    {"Arcturus",  213.915,  19.1825,'a'}     // Arcturus
 };
 static const int numBrightObjects = sizeof(brightObjects) / sizeof(brightObjects[0]);
+
+/*
+Structure for a planet with crude orbital parameters.
+All values are approximate for the epoch J2000.
+ - L0: mean longitude at J2000 (degrees)
+ - n: daily motion in degrees per day
+ - A: ad-hoc correction amplitude (degrees)
+*/
+struct Planet {
+    const char *name;
+    double L0;
+    double n;
+    double A;
+    char symbol;
+};
+
+// Static catalog for five naked-eye planets.
+static const struct Planet planets[] = {
+    {"Mercury", 252.25084, 4.09233445, 7.0, '1'},
+    {"Venus",   181.97973, 1.60213034, 3.0, '2'},
+    {"Mars",    355.45332, 0.52402068, 1.8, '3'},
+    {"Jupiter", 34.40438,  0.083086,   1.3, '4'},
+    {"Saturn",  49.94432,  0.033459,   0.8, '5'}
+};
+static const int numPlanets = sizeof(planets) / sizeof(planets[0]);
 
 // Function prototypes.
 double deg2rad(double deg);
@@ -64,6 +92,7 @@ double julian_date(struct tm *t);
 void calc_sun(double jd, double *ra, double *dec);
 void calc_moon(double jd, double *ra, double *dec);
 double calc_moon_phase(double jd);
+void calc_planet(double jd, double L0, double n, double A, double *ra, double *dec);
 void equatorial_to_horizontal(double ra, double dec, double lat, double lon, double jd, double *az, double *alt);
 static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, int center_y,
                                   int radius_x, int radius_y, double az, double alt, char symbol);
@@ -125,7 +154,6 @@ void calc_sun(double jd, double *ra, double *dec) {
     double lambda_rad = deg2rad(lambda);
     double epsilon_rad = deg2rad(epsilon);
 
-    // Compute right ascension and declination in radians.
     double ra_rad = atan2(cos(epsilon_rad) * sin(lambda_rad), cos(lambda_rad));
     double dec_rad = asin(sin(epsilon_rad) * sin(lambda_rad));
 
@@ -158,22 +186,17 @@ void calc_moon(double jd, double *ra, double *dec) {
 /*
 Compute the fraction of the Moon's disc that is illuminated based on the difference 
 between the Moon's and Sun's ecliptic longitudes.
-This simplified algorithm calculates the phase angle (difference in degrees) and then 
-computes the fraction as: (1 - cos(phase_angle))/2.
-For example:
-    New moon: phase_angle = 0 => 0% illumination
-    Full moon: phase_angle = 180 => 100% illumination
+This simplified algorithm calculates the phase angle and then computes the fraction 
+as: (1 - cos(phase_angle))/2.
 */
 double calc_moon_phase(double jd) {
     double d = jd - 2451545.0;
     double M = normalize_angle(357.529 + 0.98560028 * d);
     double L = normalize_angle(280.459 + 0.98564736 * d);
-    // Sun's ecliptic longitude.
     double lambda_sun = L + 1.915 * sin(deg2rad(M)) + 0.020 * sin(deg2rad(2 * M));
     
     double L0 = normalize_angle(218.316 + 13.176396 * d);
     double M_moon = normalize_angle(134.963 + 13.064993 * d);
-    // Moon's ecliptic longitude.
     double lambda_moon = L0 + 6.289 * sin(deg2rad(M_moon));
     
     double diff = fabs(normalize_angle(lambda_moon - lambda_sun));
@@ -185,8 +208,29 @@ double calc_moon_phase(double jd) {
 }
 
 /*
-Convert equatorial coordinates (ra, dec in degrees) to horizontal coordinates
-(azimuth and altitude in degrees) for a given observer location and time.
+Calculate approximate equatorial coordinates (RA/Dec) for a planet using a very crude model.
+The algorithm computes a mean longitude adjusted by a small correction term.
+*/
+void calc_planet(double jd, double L0, double n, double A, double *ra, double *dec) {
+    double d = jd - 2451545.0;
+    double L = normalize_angle(L0 + n * d); 
+    // Apply a crude correction; note: for a true calculation, the mean anomaly and eccentricity should be used.
+    double lambda = normalize_angle(L + A * sin(deg2rad(L)));
+    
+    double epsilon = 23.439 - 0.00000036 * d;  // approximate obliquity of the ecliptic
+    double lambda_rad = deg2rad(lambda);
+    double epsilon_rad = deg2rad(epsilon);
+    
+    double ra_rad = atan2(cos(epsilon_rad) * sin(lambda_rad), cos(lambda_rad));
+    double dec_rad = asin(sin(epsilon_rad) * sin(lambda_rad));
+    
+    *ra = normalize_angle(rad2deg(ra_rad));
+    *dec = rad2deg(dec_rad);
+}
+
+/*
+Convert equatorial coordinates (RA and Dec in degrees) to horizontal coordinates 
+(azimuth and altitude in degrees) for a given observer's location and time.
 */
 void equatorial_to_horizontal(double ra, double dec, double lat, double lon, double jd, double *az, double *alt) {
     double ra_rad = deg2rad(ra);
@@ -219,19 +263,16 @@ void equatorial_to_horizontal(double ra, double dec, double lat, double lon, dou
 }
 
 /*
-Plot a celestial object (if above horizon) onto the ASCII canvas.
-The marker is placed by converting its azimuth and altitude to a position within the dial.
+Plot a celestial object (if above the horizon) onto the ASCII canvas.
+The marker is positioned by converting its azimuth and altitude to a location on the dial.
 */
 static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, int center_y,
                                   int radius_x, int radius_y, double az, double alt, char symbol)
 {
-    // Only plot objects above the horizon.
     if (alt < 0)
         return;
-    // Map altitude (0 at horizon, 90 at zenith) to a normalized radius (0 at zenith, 1 at horizon).
     double norm_radius = (90.0 - alt) / 90.0;
     double az_rad = deg2rad(az);
-    // Compute offsets taking terminal aspect ratio into account.
     double dx = norm_radius * radius_x * sin(az_rad);
     double dy = norm_radius * radius_y * cos(az_rad);
     int plot_x = center_x + (int)round(dx);
@@ -242,7 +283,7 @@ static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, in
 
 /*
 Draw the sky-dial: a circular dial with an improved outline and internal cross axes.
-In addition to the Sun and Moon, this function plots a number of bright naked-eye objects.
+This function plots the Sun, Moon, bright stars, and the naked-eye planets.
 */
 void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt,
                   double lat, double lon, double jd)
@@ -258,7 +299,7 @@ void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt
     int radius_x = (WIDTH - 2) / 2;
     int radius_y = (HEIGHT - 2) / 2;
 
-    // Draw the circular dial outline using '*' characters.
+    // Draw the circular dial outline.
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
             double dx = (double)(x - center_x) / radius_x;
@@ -269,20 +310,17 @@ void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt
         }
     }
 
-    // Draw internal cross axes for orientation.
-    // Vertical axis.
+    // Draw internal cross axes.
     for (int y = 0; y < HEIGHT; y++) {
         double dy = (double)(y - center_y) / radius_y;
         if (fabs(dy) < 1.0)
             canvas[y][center_x] = '|';
     }
-    // Horizontal axis.
     for (int x = 0; x < WIDTH; x++) {
         double dx = (double)(x - center_x) / radius_x;
         if (fabs(dx) < 1.0)
             canvas[center_y][x] = '-';
     }
-    // Mark the very center with a '+'.
     canvas[center_y][center_x] = '+';
 
     // Overlay compass directions.
@@ -296,16 +334,25 @@ void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt
         canvas[center_y][center_x - radius_x] = 'W';
 
     // Plot celestial markers.
-    // Moon is plotted first so that the Sun appears on top.
+    // Moon is plotted first so that Sun appears on top.
     plot_object_on_canvas(canvas, center_x, center_y, radius_x, radius_y, moon_az, moon_alt, 'M');
     plot_object_on_canvas(canvas, center_x, center_y, radius_x, radius_y, sun_az, sun_alt, 'S');
 
-    // Plot bright naked-eye objects.
+    // Plot bright naked-eye stars.
     for (int i = 0; i < numBrightObjects; i++) {
         double obj_az, obj_alt;
         equatorial_to_horizontal(brightObjects[i].ra, brightObjects[i].dec,
                                   lat, lon, jd, &obj_az, &obj_alt);
         plot_object_on_canvas(canvas, center_x, center_y, radius_x, radius_y, obj_az, obj_alt, brightObjects[i].symbol);
+    }
+
+    // Plot naked-eye planets.
+    for (int i = 0; i < numPlanets; i++) {
+        double planet_ra, planet_dec;
+        calc_planet(jd, planets[i].L0, planets[i].n, planets[i].A, &planet_ra, &planet_dec);
+        double p_az, p_alt;
+        equatorial_to_horizontal(planet_ra, planet_dec, lat, lon, jd, &p_az, &p_alt);
+        plot_object_on_canvas(canvas, center_x, center_y, radius_x, radius_y, p_az, p_alt, planets[i].symbol);
     }
 
     // Output the dial.
@@ -347,7 +394,6 @@ int main(int argc, char **argv) {
     double moon_az, moon_alt;
     equatorial_to_horizontal(moon_ra, moon_dec, lat, lon, jd, &moon_az, &moon_alt);
 
-    // Compute the illuminated fraction of the Moon.
     double moon_phase = calc_moon_phase(jd);
 
     // Clear the terminal screen.
@@ -367,7 +413,7 @@ int main(int argc, char **argv) {
     printf("Moon Illumination: %.2f%%\n", moon_phase * 100);
     printf("\n");
 
-    // Draw the sky-dial including Sun, Moon, and bright naked-eye objects.
+    // Draw the sky-dial including Sun, Moon, bright stars, and planets.
     draw_skydial(sun_az, sun_alt, moon_az, moon_alt, lat, lon, jd);
 
     // Print a legend.
@@ -378,7 +424,8 @@ int main(int argc, char **argv) {
     printf("  +           - Zenith (center)\n");
     printf("  S           - Sun (if above horizon)\n");
     printf("  M           - Moon (if above horizon)\n");
-    printf("  s,v,b,r,a   - Bright naked-eye objects (Sirius, Vega, Betelgeuse, Rigel, Arcturus)\n");
+    printf("  s,v,b,r,a   - Bright stars (Sirius, Vega, Betelgeuse, Rigel, Arcturus)\n");
+    printf("  1,2,3,4,5   - Planets (Mercury, Venus, Mars, Jupiter, Saturn)\n");
     printf("  (Objects below horizon are not displayed.)\n");
 
     return EXIT_SUCCESS;

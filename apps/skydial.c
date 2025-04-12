@@ -1,9 +1,10 @@
 /*
 This improved sky-dial application calculates and displays in the terminal 
-the apparent positions (azimuth and altitude) of the Sun and Moon along with 
-other metadata including the Moon's illuminated percentage. The default observer 
-location is Jyväskylä, Finland (latitude 62.2426° N, longitude 25.7473° E), but a 
-user may provide alternate coordinates via command-line parameters.
+the apparent positions (azimuth and altitude) of several celestial objects 
+including the Sun, Moon, and a selection of bright stars visible to the naked eye. 
+In addition, it calculates the Moon's illuminated percentage.
+The default observer location is Jyväskylä, Finland (latitude 62.2426° N, longitude 25.7473° E), 
+but a user may provide alternate coordinates via command-line parameters.
 
 Compile with:
     cc -std=c11 -D_POSIX_C_SOURCE=200112L -lm -o skydial skydial.c
@@ -12,9 +13,9 @@ Usage:
     ./skydial
     ./skydial <lat> <lon>
     
-The program uses simple approximations for the Sun and Moon positions. The sky-dial 
-is rendered as a single ASCII frame with improved details including a refined circle 
-outline and internal cross lines for better orientation.
+The program uses simplified approximations for the Sun and Moon positions, and a 
+static catalog for bright stars. The sky-dial is rendered as a single ASCII frame with 
+an improved circle outline and internal cross axes for better orientation.
 */
 
 #include <stdio.h>
@@ -37,6 +38,24 @@ outline and internal cross lines for better orientation.
 // Smaller tolerance makes the circle outline thinner.
 #define CIRCLE_TOLERANCE 0.04
 
+// Structure for bright objects visible with the naked eye.
+struct BrightObject {
+    const char *name;   // Object name (not printed on the dial)
+    double ra;          // Right ascension in degrees
+    double dec;         // Declination in degrees
+    char symbol;        // Symbol used on the dial
+};
+
+// Static catalog of selected bright stars.
+static const struct BrightObject brightObjects[] = {
+    {"Sirius",     101.287, -16.716, 's'},  // Sirius
+    {"Vega",       279.234,  38.784, 'v'},   // Vega
+    {"Betelgeuse",  88.793,   7.407, 'b'},   // Betelgeuse
+    {"Rigel",      78.635,   -8.202, 'r'},   // Rigel
+    {"Arcturus",  213.915,  19.1825, 'a'}    // Arcturus
+};
+static const int numBrightObjects = sizeof(brightObjects) / sizeof(brightObjects[0]);
+
 // Function prototypes.
 double deg2rad(double deg);
 double rad2deg(double rad);
@@ -48,7 +67,8 @@ double calc_moon_phase(double jd);
 void equatorial_to_horizontal(double ra, double dec, double lat, double lon, double jd, double *az, double *alt);
 static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, int center_y,
                                   int radius_x, int radius_y, double az, double alt, char symbol);
-void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt);
+void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt,
+                  double lat, double lon, double jd);
 
 // Convert degrees to radians.
 double deg2rad(double deg) {
@@ -222,10 +242,11 @@ static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, in
 
 /*
 Draw the sky-dial: a circular dial with an improved outline and internal cross axes.
-The dial edge, cross lines and cardinal directions help the viewer orient the plot.
-Celestial objects (Moon and Sun) are then overlayed.
+In addition to the Sun and Moon, this function plots a number of bright naked-eye objects.
 */
-void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt) {
+void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt,
+                  double lat, double lon, double jd)
+{
     char canvas[HEIGHT][WIDTH+1];
     for (int y = 0; y < HEIGHT; y++) {
         memset(canvas[y], ' ', WIDTH);
@@ -248,7 +269,7 @@ void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt
         }
     }
 
-    // Draw internal cross axes for better orientation.
+    // Draw internal cross axes for orientation.
     // Vertical axis.
     for (int y = 0; y < HEIGHT; y++) {
         double dy = (double)(y - center_y) / radius_y;
@@ -264,7 +285,7 @@ void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt
     // Mark the very center with a '+'.
     canvas[center_y][center_x] = '+';
 
-    // Overlay compass directions to override cross axes.
+    // Overlay compass directions.
     if (center_y - radius_y >= 0 && center_x < WIDTH)
         canvas[center_y - radius_y][center_x] = 'N';
     if (center_y + radius_y < HEIGHT && center_x < WIDTH)
@@ -274,9 +295,18 @@ void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt
     if (center_x - radius_x >= 0 && center_y < HEIGHT)
         canvas[center_y][center_x - radius_x] = 'W';
 
-    // Plot celestial markers. Moon is plotted first so that the Sun (if visible) appears on top.
+    // Plot celestial markers.
+    // Moon is plotted first so that the Sun appears on top.
     plot_object_on_canvas(canvas, center_x, center_y, radius_x, radius_y, moon_az, moon_alt, 'M');
     plot_object_on_canvas(canvas, center_x, center_y, radius_x, radius_y, sun_az, sun_alt, 'S');
+
+    // Plot bright naked-eye objects.
+    for (int i = 0; i < numBrightObjects; i++) {
+        double obj_az, obj_alt;
+        equatorial_to_horizontal(brightObjects[i].ra, brightObjects[i].dec,
+                                  lat, lon, jd, &obj_az, &obj_alt);
+        plot_object_on_canvas(canvas, center_x, center_y, radius_x, radius_y, obj_az, obj_alt, brightObjects[i].symbol);
+    }
 
     // Output the dial.
     for (int i = 0; i < HEIGHT; i++) {
@@ -337,8 +367,10 @@ int main(int argc, char **argv) {
     printf("Moon Illumination: %.2f%%\n", moon_phase * 100);
     printf("\n");
 
-    draw_skydial(sun_az, sun_alt, moon_az, moon_alt);
+    // Draw the sky-dial including Sun, Moon, and bright naked-eye objects.
+    draw_skydial(sun_az, sun_alt, moon_az, moon_alt, lat, lon, jd);
 
+    // Print a legend.
     printf("\nLegend:\n");
     printf("  N, E, S, W  - Compass directions (dial edge)\n");
     printf("  *           - Dial perimeter (horizon)\n");
@@ -346,6 +378,7 @@ int main(int argc, char **argv) {
     printf("  +           - Zenith (center)\n");
     printf("  S           - Sun (if above horizon)\n");
     printf("  M           - Moon (if above horizon)\n");
+    printf("  s,v,b,r,a   - Bright naked-eye objects (Sirius, Vega, Betelgeuse, Rigel, Arcturus)\n");
     printf("  (Objects below horizon are not displayed.)\n");
 
     return EXIT_SUCCESS;

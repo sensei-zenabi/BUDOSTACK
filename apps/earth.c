@@ -227,7 +227,7 @@ int main(int argc, char *argv[]) {
     int desc1_x = cx - rx / 2;   // Left section of the ellipse.
     int desc1_y = cy - block1_lines / 2;
     for (int i = 0; i < block1_lines; i++) {
-        write_text(canvas, desc1_x, desc1_y + i, city_info[i]);
+        write_text(canvas, desc1_x-3, desc1_y + i, city_info[i]);
     }
 
     // Block 2: Additional statistics.

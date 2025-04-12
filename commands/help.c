@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
 	printf("             For help CTRL+H when the app is running.\n");
     printf("  stats    : Displays basic hardware stats.\n");
     printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.tbl'.\n");
-	printf("  time     : Display time now in different time-zones.\n");
+	printf("  time     : Display time now in different time-zones. 'time -s' for astro events.\n");
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  update   : Create an empty file or update its modification time.\n");
     printf("  exit     : Exit AALTO.\n");

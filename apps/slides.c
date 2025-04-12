@@ -1,36 +1,3 @@
-/*
-This is a terminal–based ASCII “slides” presentation program.
-Usage: slides myslides.sld
-
-Requirements met:
- - The presentation uses only ASCII.
- - When started with “slides myslides.sld” the file is loaded (or created if not found).
- - In both presentation and edit modes, the whole slide (the entire inner region) is displayed.
- - When in presentation mode, if CTRL+H is pressed, a help screen is shown with all the shortcuts and instructions.
-   The help screen remains until CTRL+H is pressed again.
- - The active slide number is shown at the bottom right as “x/x”.
- - A centralized banner shows whether the app is in PRESENTATION MODE or EDIT MODE.
- - In presentation mode, pressing CTRL+E enters edit mode.
- - In edit mode, pressing CTRL+E (or ESC) exits edit mode returning to presentation mode.
- - In presentation or edit mode, pressing CTRL+Q quits the app.
- - In edit mode, arrow keys allow moving the editing cursor, printable characters modify the slide’s content,
-   and the borders remain intact.
- - In edit mode, pressing CTRL+S saves the slides (writing all slides to disk) and displays a “Slideset saved!”
-   message in the bottom left corner for roughly 3 seconds.
- - In edit mode, pressing CTRL+Z undoes changes (restoring the slide’s state from when edit mode was entered).
- - In presentation mode, pressing CTRL+N adds a new (blank) slide after the current slide.
- - In presentation mode, pressing CTRL+D deletes the current slide (except when it is the first slide).
- - Additionally, in edit mode:
-    • Press CTRL+T to toggle rectangular selection mode.
-    • In toggle mode, use the arrow keys to adjust the selection.
-    • Press CTRL+C in toggle mode to copy the selected rectangular region.
-    • Press CTRL+T again to exit toggle mode.
-    • In normal edit mode, press CTRL+V to paste the copied region at the current cursor position.
- - Slides are loaded and saved from a file where individual slides are separated by a delimiter line "----".
-
-This implementation uses plain C with –std=c11, standard C libraries, and POSIX–compliant functions.
-*/
-
 #define _POSIX_C_SOURCE 200112L
 
 #include <termios.h>
@@ -99,7 +66,7 @@ int g_last_edit_col = 0;
 
 /* 
    Global clipboard structure for rectangular selection copy/paste.
-   When a region is copied (with CTRL+C in toggle mode), its contents (rows and cols)
+   When a region is copied (or cut), its contents (rows and cols)
    are stored here and can later be pasted (with CTRL+V) into any slide in edit mode.
 */
 typedef struct {
@@ -344,6 +311,8 @@ void displayHelp(void) {
     row++;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+C : Copy selected region (in Toggle mode)", row, col);
     row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+X : Cut selected region (in Toggle mode)", row, col);
+    row++;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+V : Paste copied region (in Edit mode)", row, col);
     row += 2;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHPress CTRL+H again to return.", row, col);
@@ -531,6 +500,7 @@ void saveSlides(void) {
  *      * The starting cursor position is saved.
  *      * Using arrow keys the user can adjust the selection.
  *      * CTRL+C copies the selected rectangular region to a global clipboard.
+ *      * CTRL+X cuts (copies then removes) the selected region.
  *      * CTRL+T again exits toggle mode.
  *  - In normal edit mode, CTRL+V pastes the clipboard region at the current cursor position.
  *
@@ -608,11 +578,48 @@ void enterEditMode(void) {
             int toggle_row = cur_row, toggle_col = cur_col;
             int toggle_ch;
             while (1) {
-                /* Refresh screen with current editing cursor and overlay selection */
                 refreshEditScreen(toggle_row, toggle_col);
                 drawToggleOverlay(toggle_start_row, toggle_start_col, toggle_row, toggle_col);
                 toggle_ch = readKey();
                 if (toggle_ch == CTRL_KEY('T')) {
+                    /* Exit toggle mode and update main cursor position */
+                    cur_row = toggle_row;
+                    cur_col = toggle_col;
+                    break;
+                } else if (toggle_ch == CTRL_KEY('X')) {
+                    /* Cut: Copy selected rectangular region to global clipboard and remove it from slide */
+                    int sel_row_start = (toggle_start_row < toggle_row ? toggle_start_row : toggle_row);
+                    int sel_row_end   = (toggle_start_row > toggle_row ? toggle_start_row : toggle_row);
+                    int sel_col_start = (toggle_start_col < toggle_col ? toggle_start_col : toggle_col);
+                    int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
+                    int sel_rows = sel_row_end - sel_row_start + 1;
+                    int sel_cols = sel_col_end - sel_col_start + 1;
+                    /* Free previous clipboard if it exists */
+                    if (g_clipboard) {
+                        for (i = 0; i < g_clipboard->rows; i++) {
+                            free(g_clipboard->data[i]);
+                        }
+                        free(g_clipboard->data);
+                        free(g_clipboard);
+                    }
+                    g_clipboard = malloc(sizeof(Clipboard));
+                    g_clipboard->rows = sel_rows;
+                    g_clipboard->cols = sel_cols;
+                    g_clipboard->data = malloc(sizeof(char*) * sel_rows);
+                    for (i = 0; i < sel_rows; i++) {
+                        g_clipboard->data[i] = malloc(sel_cols + 1);
+                        strncpy(g_clipboard->data[i], g_slides[g_current_slide]->lines[sel_row_start + i] + sel_col_start, sel_cols);
+                        g_clipboard->data[i][sel_cols] = '\0';
+                    }
+                    /* Remove the selected text from the slide (cut operation) */
+                    for (i = 0; i < sel_rows; i++) {
+                        for (int j = 0; j < sel_cols; j++) {
+                            g_slides[g_current_slide]->lines[sel_row_start + i][sel_col_start + j] = ' ';
+                        }
+                    }
+                    dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion cut!", g_term_rows - 1);
+                    fsync(STDOUT_FILENO);
+                    sleep(1);
                     /* Exit toggle mode and update main cursor position */
                     cur_row = toggle_row;
                     cur_col = toggle_col;

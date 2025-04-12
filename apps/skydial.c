@@ -1,9 +1,9 @@
 /*
 This improved sky-dial application calculates and displays in the terminal 
 the apparent positions (azimuth and altitude) of the Sun and Moon along with 
-other metadata. The default observer location is Jyväskylä, Finland 
-(latitude 62.2426° N, longitude 25.7473° E), but a user may provide alternate 
-coordinates via command-line parameters.
+other metadata including the Moon's illuminated percentage. The default observer 
+location is Jyväskylä, Finland (latitude 62.2426° N, longitude 25.7473° E), but a 
+user may provide alternate coordinates via command-line parameters.
 
 Compile with:
     cc -std=c11 -D_POSIX_C_SOURCE=200112L -lm -o skydial skydial.c
@@ -44,6 +44,7 @@ double normalize_angle(double angle);
 double julian_date(struct tm *t);
 void calc_sun(double jd, double *ra, double *dec);
 void calc_moon(double jd, double *ra, double *dec);
+double calc_moon_phase(double jd);
 void equatorial_to_horizontal(double ra, double dec, double lat, double lon, double jd, double *az, double *alt);
 static void plot_object_on_canvas(char canvas[HEIGHT][WIDTH+1], int center_x, int center_y,
                                   int radius_x, int radius_y, double az, double alt, char symbol);
@@ -135,6 +136,35 @@ void calc_moon(double jd, double *ra, double *dec) {
 }
 
 /*
+Compute the fraction of the Moon's disc that is illuminated based on the difference 
+between the Moon's and Sun's ecliptic longitudes.
+This simplified algorithm calculates the phase angle (difference in degrees) and then 
+computes the fraction as: (1 - cos(phase_angle))/2.
+For example:
+    New moon: phase_angle = 0 => 0% illumination
+    Full moon: phase_angle = 180 => 100% illumination
+*/
+double calc_moon_phase(double jd) {
+    double d = jd - 2451545.0;
+    double M = normalize_angle(357.529 + 0.98560028 * d);
+    double L = normalize_angle(280.459 + 0.98564736 * d);
+    // Sun's ecliptic longitude.
+    double lambda_sun = L + 1.915 * sin(deg2rad(M)) + 0.020 * sin(deg2rad(2 * M));
+    
+    double L0 = normalize_angle(218.316 + 13.176396 * d);
+    double M_moon = normalize_angle(134.963 + 13.064993 * d);
+    // Moon's ecliptic longitude.
+    double lambda_moon = L0 + 6.289 * sin(deg2rad(M_moon));
+    
+    double diff = fabs(normalize_angle(lambda_moon - lambda_sun));
+    if (diff > 180.0)
+        diff = 360.0 - diff;
+    
+    double phase = (1 - cos(deg2rad(diff))) / 2.0;
+    return phase;
+}
+
+/*
 Convert equatorial coordinates (ra, dec in degrees) to horizontal coordinates
 (azimuth and altitude in degrees) for a given observer location and time.
 */
@@ -222,17 +252,13 @@ void draw_skydial(double sun_az, double sun_alt, double moon_az, double moon_alt
     // Vertical axis.
     for (int y = 0; y < HEIGHT; y++) {
         double dy = (double)(y - center_y) / radius_y;
-        double dx = 0; // center column
-        double distance = fabs(dy); // since dx == 0, distance = |dy|
-        if (distance < 1.0)
+        if (fabs(dy) < 1.0)
             canvas[y][center_x] = '|';
     }
     // Horizontal axis.
     for (int x = 0; x < WIDTH; x++) {
         double dx = (double)(x - center_x) / radius_x;
-        double dy = 0; // center row
-        double distance = fabs(dx);
-        if (distance < 1.0)
+        if (fabs(dx) < 1.0)
             canvas[center_y][x] = '-';
     }
     // Mark the very center with a '+'.
@@ -291,6 +317,9 @@ int main(int argc, char **argv) {
     double moon_az, moon_alt;
     equatorial_to_horizontal(moon_ra, moon_dec, lat, lon, jd, &moon_az, &moon_alt);
 
+    // Compute the illuminated fraction of the Moon.
+    double moon_phase = calc_moon_phase(jd);
+
     // Clear the terminal screen.
     printf("\033[2J\033[H");
 
@@ -304,6 +333,8 @@ int main(int argc, char **argv) {
     printf("Computed Positions (Horizontal Coordinates):\n");
     printf(" Sun:  Azimuth = %.2f°, Altitude = %.2f°\n", sun_az, sun_alt);
     printf(" Moon: Azimuth = %.2f°, Altitude = %.2f°\n", moon_az, moon_alt);
+    printf("\n");
+    printf("Moon Illumination: %.2f%%\n", moon_phase * 100);
     printf("\n");
 
     draw_skydial(sun_az, sun_alt, moon_az, moon_alt);

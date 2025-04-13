@@ -18,7 +18,7 @@ int main(int argc, char *argv[]) {
     printf("Contact email:   budostack@gmail.com\n");
     printf("License:         GPLv2\n");
     printf("\n");
-    printf("Note! AI has been used to develope this application.\n");
+    printf("Note! AI has been used in the development of this application.\n");
     printf("\n");
 
     // Print available apps and commands

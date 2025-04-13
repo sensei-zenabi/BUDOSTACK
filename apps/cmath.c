@@ -1128,6 +1128,49 @@ int main(int argc, char *argv[]) {
         
         if (strlen(input) == 0)
             continue;
+        
+        /* --- Change 1: Check for trailing semicolon --- */
+        int suppress_output = 0;
+        {
+            int len = strlen(input);
+            int i = len - 1;
+            while (i >= 0 && isspace((unsigned char)input[i]))
+                i--;
+            if (i >= 0 && input[i] == ';') {
+                suppress_output = 1;
+                input[i] = '\0';  // Remove the trailing semicolon.
+            }
+        }
+        
+        /* --- Change 2: Handle "print" command --- */
+        // ~Line 645: Insert the print command handling block
+        if (strncmp(input, "print", 5) == 0 && (input[5] == ' ' || input[5] == '\t' || input[5] == '\0')) {
+            const char *str_ptr = input + 5;
+            while (*str_ptr && isspace((unsigned char)*str_ptr))
+                str_ptr++;
+            if (*str_ptr == '"') {
+                str_ptr++; // Skip the opening quote.
+                char *end_quote = strchr(str_ptr, '"');
+                if (end_quote == NULL) {
+                    printf("Error: Unterminated string literal in print command\n");
+                } else {
+                    int len_str = end_quote - str_ptr;
+                    char *msg = malloc(len_str + 1);
+                    if (msg) {
+                        strncpy(msg, str_ptr, len_str);
+                        msg[len_str] = '\0';
+                        if (!suppress_output)
+                            printf("%s\n", msg);
+                        free(msg);
+                    }
+                }
+            } else {
+                printf("Error: Expected string literal after print command\n");
+            }
+            /* (Optionally, insert your history-saving code here if needed.) */
+            continue;
+        }
+        
         if (strcmp(input, "exit") == 0 || strcmp(input, "quit") == 0)
             break;
         if (strcmp(input, "help") == 0) {
@@ -1186,8 +1229,11 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
                 set_variable(ident, result);
-                printf("%s = ", ident);
-                print_value(result);
+                /* --- Change 3: Wrap assignment result printing --- */
+                if (!suppress_output) {
+                    printf("%s = ", ident);
+                    print_value(result);
+                }
                 if (result.type == VAL_MATRIX)
                     free_value(&result);
                 if (interactive) {
@@ -1208,12 +1254,17 @@ int main(int argc, char *argv[]) {
                 p = start;
             }
         }
+        
+        /* --- Change 4: Wrap expression evaluation printing --- */
+        // ~Line 710: Expression evaluation branch
         Value result = parse_expression();
         if (error_flag) {
             error_flag = 0;
             continue;
         }
-        print_value(result);
+        if (!suppress_output) {
+            print_value(result);
+        }
         if (result.type == VAL_MATRIX)
             free_value(&result);
         

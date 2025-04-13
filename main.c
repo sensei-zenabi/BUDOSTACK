@@ -1,40 +1,5 @@
-/*
- * main.c
- *
- * This file implements a simple Linux-like terminal.
- *
- * Original functionality:
- * - Integrated paging for output when needed.
- * - Captures external command output via a pipe and pages it if it exceeds one screen.
- *
- * Modifications in this version:
- * - For non-realtime commands, a child process is forked to run the command with concurrent reading via select().
- * - A timeout (5 seconds) is enforced; if reached, the child is killed.
- * - Both stdout and stderr are captured.
- * - The captured output is split into lines manually so that all content (including empty lines or ANSI escape sequences)
- *   is preserved exactly as provided.
- * - The login() function is now skipped if a task is auto-run (e.g. "./aalto node_perception"), so that it does not disturb
- *   the task's output.
- * - nanosleep is used instead of usleep to avoid implicit declaration warnings under -std=c11.
- * - New behavior: The realtime command list is auto-populated with executables found in the apps/ folder.
- *   Commands that are in that list or invoked with the "-nopaging" flag are executed in realtime mode.
- * - NEW: A built-in command "run" is introduced that takes the rest of the input as a shell command to execute.
- * - NEW: A built-in command "restart" is introduced. When invoked, AALTO calls "make" (using the makefile in the same directory)
- *   to recompile itself. If successful, the shell uses execv() to restart the new binary.
- * - NEW: The shell ignores CTRL+C (SIGINT) so that the user cannot quit AALTO,
- *   but child processes reset SIGINT to default so they can be terminated with CTRL+C.
- *
- * Design Principles:
- * - Modularity & Separation of Concerns: Command parsing, execution, and paging are separated.
- * - Real-Time Feedback: Realtime commands are executed directly.
- * - Safety: The parent reads concurrently so that the pipe never fills up, and the child is killed if it exceeds a timeout.
- * - Robustness: The pager now preserves all output—including empty lines and any escape sequences—in order to faithfully
- *   display the command’s output.
- * - Minimal Dependencies: Uses only standard C libraries and POSIX APIs.
- */
-
 #define _XOPEN_SOURCE 700
-#define _POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE 200112L   /* Changed per instructions to POSIX.1-200112L */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -585,6 +550,7 @@ int main(int argc, char *argv[]) {
         /* NEW: "restart" command handling.
          * When the user types "restart" or "restart -f", the shell first changes its working directory to the base directory,
          * then runs "make" to recompile itself. If "restart -f" is entered, "make clean" is executed before rebuilding.
+         * After running make (or make clean failure), a pause is introduced so that build warnings/errors can be read.
          */
         if (strncmp(input, "restart", 7) == 0) {
             int force = 0;
@@ -605,12 +571,19 @@ int main(int argc, char *argv[]) {
                 int clean_ret = system("make clean");
                 if (clean_ret != 0) {
                     fprintf(stderr, "make clean failed, not restarting.\n");
+                    printf("Press ENTER to continue...");
+                    fflush(stdout);
+                    while(getchar() != '\n');
                     continue;
                 }
             }
             int ret = system("make");
+            printf("Press ENTER to continue...");
+            fflush(stdout);
+            while(getchar() != '\n');
             if (ret != 0) {
                 fprintf(stderr, "Make failed, not restarting.\n");
+                continue;
             } else {
                 execv(g_argv[0], g_argv);
                 perror("execv failed");

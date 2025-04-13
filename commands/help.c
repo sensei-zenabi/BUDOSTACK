@@ -13,8 +13,12 @@ int main(int argc, char *argv[]) {
     // Print header information
     printf("\n");
     printf("================= All-Around Linux Terminal Operator - AALTO =================\n");
-    printf("Programmed by: Ville Suoranta (and mr. AI)\n");
-    printf("License: GPLv2\n");
+    printf("\n");
+    printf("Programmed by:   Ville Suoranta\n");
+    printf("Contact email:   budostack@gmail.com\n");
+    printf("License:         GPLv2\n");
+    printf("\n");
+    printf("Note! AI has been used to develope this application.\n");
     printf("\n");
 
     // Print available apps and commands
@@ -26,7 +30,6 @@ int main(int argc, char *argv[]) {
     printf("  cls      : Clear terminal screen.\n");
     printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
-    printf("  csv_print: Pretty prints a .csv file.\n");
     printf("  ctalk    : Simple UDP based LAN chat. Start with 'ctalk myname'.\n");
     printf("  display  : Display the contents of a file.\n");
     printf("  drives   : Lists all found drives.\n");
@@ -37,7 +40,6 @@ int main(int argc, char *argv[]) {
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (type 'list -help').\n");
     printf("  makedir  : Create a new directory.\n");
-    printf("  mdread   : Pretty-prints .md files. Use: mdread readme.md\n");
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
@@ -47,34 +49,34 @@ int main(int argc, char *argv[]) {
     printf("             e.g. 'run git status' or 'run ./myexecutable'\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
-    printf("  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n");
-    printf("             For help CTRL+H when the app is running.\n");
     printf("  stats    : Displays basic hardware stats.\n");
-    printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.tbl'.\n");
     printf("  time     : Display time now in different time-zones. 'time -s' for astro\n"); 
     printf("             events.\n");
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  update   : Create an empty file or update its modification time.\n");
     printf("  exit     : Exit AALTO.\n");
-    
-    printf("\n/* Engineering and Science */\n\n");
+    printf("\n");    
+    printf("/* Engineering and Science */\n");
+    printf("\n");
     printf("  cmath    : Opens a math editor.\n");
     printf("  skydial  : Simple sky-dial to identify and locate celestial objects.\n");
     printf("             Type 'skydial lat lon' to tell your position.\n");
     printf("  solar    : Visualizes the solar system and it's planets. 'solar X', where\n");
     printf("             X is the number of planets from 2 to 8.\n");
-
-    printf("\n/* News and World */\n\n");
+    printf("\n");
+    printf("/* News and World */\n");
+    printf("\n");
     printf("  exchange : Retrieves exchange rates of common currencies to euro.\n");
     printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");
-   
-    // Check for the "-a" argument to display the reserved section
-    if (argc > 1 && strcmp(argv[1], "-a") == 0) {
-        printf("All commands:\n");
-        printf("  cmath    : Opens a math editor.\n");
-        printf("\n");
-    }
-
+    printf("\n");
+    printf("/* Office Tools */\n");
+    printf("\n");
+    printf("  csv_print: Pretty prints a .csv file.\n");
+    printf("  mdread   : Pretty-prints .md files. Use: mdread readme.md\n");
+    printf("  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n");
+    printf("             For help CTRL+H when the app is running.\n");
+    printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.tbl'.\n");
+       
     // Games list
     printf("\n");
     printf("-----------------------------------------------------------------------------\n"); 
@@ -105,6 +107,12 @@ int main(int argc, char *argv[]) {
     printf("  Tips:\n");
     printf("  Start AALTO faster: ./aalto -f | Start TASK: ./aalto mytask.task\n");
     printf("\n");
+
+    // Check for the "-a" argument to display the reserved section
+    if (argc > 1 && strcmp(argv[1], "-a") == 0) {
+        printf("This is reserved for something.\n");
+        printf("\n");
+    }
 
     return 0;
 }

@@ -7,7 +7,8 @@ This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is
 Today I rebranded my software from AALTO to BUDOSTACK, as latter was not reserved trademark. Since my
 last diary entry I have implemented categorization of apps and commands to help, and few cool science
 apps like skydial and solar. Also, I made the cmath more usable so, that it supports ";" for non-echoing
-commands and "print".
+commands and "print". I did the conversion using my own commands and tools, and it proved to be easy and
+fast!
 
 ### Friday, 11th of April 2025 ###
 

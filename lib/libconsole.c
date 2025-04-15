@@ -53,13 +53,18 @@ void prettyprint(const char *message, unsigned int delay_ms) {
     putchar('\n');
 }
 
-void printlogo() {
-    // AALTO LOGO
-    printf(" █████   █████  ██      ████████  ██████ \n");
-    printf("██   ██ ██   ██ ██         ██    ██    ██\n"); 
-    printf("███████ ███████ ██         ██    ██    ██\n"); 
-    printf("██   ██ ██   ██ ██         ██    ██    ██\n"); 
-    printf("██   ██ ██   ██ ███████    ██     ██████ \n");                          
+// Function to print the BUDOSTACK logo
+void printlogo(void) {
+    // Each line ends with '\n' to ensure proper line breaks in the terminal.
+    // Backslashes are escaped as '\\' so they are printed correctly.
+    printf(" ______  _     _ ______   _____  _______ _______ _______ _______ _     _\n");
+    printf(" |_____] |     | |     \\ |     | |______    |    |_____| |       |____/ \n");
+    printf(" |_____] |_____| |_____/ |_____| ______|    |    |     | |_____  |    \\_\n");
+    prettyprint("           ===== BUDOSTACK - The Martial Art of Software =====         ", 20);
+    //prettyprint("", 1000);
+    prettyprint("                      ...for those about to zen...", 50);
+    prettyprint("\r", 1000);
+
 }
 
 // login prompts the user for a username and password,

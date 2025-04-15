@@ -513,15 +513,11 @@ int main(int argc, char *argv[]) {
     } else {
         system("clear");
         printlogo();
-        printf("\n");
-        delayPrint("BUDOSTACK - The Martial Art of Software\n", 0.02);
-        delayPrint(" ", 1);
-        delayPrint("...for those who enjoy simple things...", 0.05);
-        delayPrint(" ", 1);
         login();
+        printf("========================================================================\n");
     }
 
-    printf("\n\nSYSTEM READY");
+    printf("\nSYSTEM READY");
     printf("\nType 'help' for command list.");
     printf("\nType 'exit' to quit.\n\n");
 

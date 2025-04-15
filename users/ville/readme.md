@@ -1,6 +1,13 @@
-# NOTEBOOK - AALTO Development Diary #
+# NOTEBOOK - BUDOSTACK Development Diary #
 
-This is my development diary for AALTO. Hope you'll enjoy it! Newest post is always on top.
+This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
+
+### Tuesday, 15th of April 2025 ###
+
+Today I rebranded my software from AALTO to BUDOSTACK, as latter was not reserved trademark. Since my
+last diary entry I have implemented categorization of apps and commands to help, and few cool science
+apps like skydial and solar. Also, I made the cmath more usable so, that it supports ";" for non-echoing
+commands and "print".
 
 ### Friday, 11th of April 2025 ###
 

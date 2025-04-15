@@ -53,13 +53,13 @@ void prettyprint(const char *message, unsigned int delay_ms) {
     putchar('\n');
 }
 
-void aaltologo() {
-	// AALTO LOGO
-	printf(" █████   █████  ██      ████████  ██████ \n");
-	printf("██   ██ ██   ██ ██         ██    ██    ██\n"); 
-	printf("███████ ███████ ██         ██    ██    ██\n"); 
-	printf("██   ██ ██   ██ ██         ██    ██    ██\n"); 
-	printf("██   ██ ██   ██ ███████    ██     ██████ \n");                          
+void printlogo() {
+    // AALTO LOGO
+    printf(" █████   █████  ██      ████████  ██████ \n");
+    printf("██   ██ ██   ██ ██         ██    ██    ██\n"); 
+    printf("███████ ███████ ██         ██    ██    ██\n"); 
+    printf("██   ██ ██   ██ ██         ██    ██    ██\n"); 
+    printf("██   ██ ██   ██ ███████    ██     ██████ \n");                          
 }
 
 // login prompts the user for a username and password,
@@ -90,7 +90,7 @@ void login() {
         snprintf(username, sizeof(username), "default");
     }
 
-	/*
+    /*
     // Prompt for password (mock-up; input is not hidden).
     printf("Enter password: ");
     if (fgets(password, sizeof(password), stdin) != NULL) {
@@ -103,8 +103,8 @@ void login() {
             i++;
         }
     }
-	*/ 
-	
+    */ 
+    
     // For demonstration, assume password verification is successful.
     printf("Login successful. Welcome, %s!\n", username);
 

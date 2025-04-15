@@ -12,7 +12,7 @@
 int main(int argc, char *argv[]) {
     // Print header information
     printf("\n");
-    printf("================= All-Around Linux Terminal Operator - AALTO =================\n");
+    printf("================== BUDOSTACK - The Martial Arts of Software  ================\n");
     printf("\n");
     printf("Programmed by:   Ville Suoranta\n");
     printf("Contact email:   budostack@gmail.com\n");
@@ -43,7 +43,7 @@ int main(int argc, char *argv[]) {
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
-    printf("  restart  : A command to re-compile and restart AALTO. Use with caution!\n");
+    printf("  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n");
     printf("             Use 'restart -f' to clean before building.\n");
     printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
     printf("             e.g. 'run git status' or 'run ./myexecutable'\n");
@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
     printf("             events.\n");
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  update   : Create an empty file or update its modification time.\n");
-    printf("  exit     : Exit AALTO.\n");
+    printf("  exit     : Exit BUDOSTACK.\n");
     printf("\n");    
     printf("/* Engineering and Science */\n");
     printf("\n");
@@ -106,7 +106,7 @@ int main(int argc, char *argv[]) {
     printf("  client.c : Client application template.\n");
     printf("\n");
     printf("  Tips:\n");
-    printf("  Start AALTO faster: ./aalto -f | Start TASK: ./aalto mytask.task\n");
+    printf("  Start BUDOSTACK faster: ./budostack -f | Start TASK: ./budostack mytask.task\n");
     printf("\n");
     printf("=============================================================================\n");
 

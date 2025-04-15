@@ -2,7 +2,7 @@
 *.o
 
 # Main compiled binary
-aalto
+budostack
 
 # In the commands directory, ignore everything except source files
 commands/*

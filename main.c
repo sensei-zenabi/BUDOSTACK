@@ -20,7 +20,7 @@
 #include "commandparser.h"
 #include "input.h"      // Include the input handling header
 
-extern void aaltologo();
+extern void printlogo();
 extern void login();
 
 /* Global variable to control paging.
@@ -467,7 +467,7 @@ int main(int argc, char *argv[]) {
     CommandStruct cmd;
 
     /* 
-     * Ignore SIGINT in the shell so that CTRL+C does not quit AALTO.
+     * Ignore SIGINT in the shell so that CTRL+C does not quit BUDOSTACK.
      * Child processes will reset SIGINT to default.
      */
     signal(SIGINT, SIG_IGN);
@@ -512,9 +512,9 @@ int main(int argc, char *argv[]) {
         /* Do not print startup messages and skip login() */
     } else {
         system("clear");
-        aaltologo();
+        printlogo();
         printf("\n");
-        delayPrint("AALTO - All Around Linux Terminal Operator\n", 0.02);
+        delayPrint("BUDOSTACK - The Martial Art of Software\n", 0.02);
         delayPrint(" ", 1);
         delayPrint("...for those who enjoy simple things...", 0.05);
         delayPrint(" ", 1);

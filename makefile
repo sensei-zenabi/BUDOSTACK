@@ -17,7 +17,7 @@ ALL_SOURCES = $(shell find . -type f -name '*.c' -not -path "./users/*")
 # Exclude command, app, and lib sources from the main executable sources.
 NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./games/% ./lib/% ./node/% ./utilities/%, $(ALL_SOURCES))
 NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)
-TARGET = aalto
+TARGET = budostack
 
 # Find all .c files in the commands folder
 COMMANDS_SRCS = $(shell find ./commands -type f -name '*.c')

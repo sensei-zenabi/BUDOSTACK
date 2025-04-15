@@ -2,8 +2,8 @@
  * commandparser.c
  *
  * Updated to include wildcard expansion for parameters.
- * This ensures that when a command is entered in the shell, any wildcard patterns in parameters
- * are expanded using POSIX glob() and the resulting list is passed to the command.
+ * For commands listed in the bypass_expansion_commands array, wildcard expansion is
+ * bypassed so that the token is passed as-is to the command.
  *
  * Design principles:
  * - Separation of concerns: Wildcard expansion is handled at the shell level, not by individual commands.
@@ -15,15 +15,15 @@
 #define _XOPEN_SOURCE 700  /* Ensures declaration of realpath() on some systems */
 
 #include "commandparser.h"
-#include <limits.h>   /* For PATH_MAX */
-#include <stdlib.h>   /* For malloc, free, realpath, exit */
-#include <unistd.h>   /* For access, fork, chdir */
-#include <string.h>   /* For strlen, strncpy, strtok, memcpy */
-#include <stdio.h>    /* For fprintf, perror */
-#include <sys/wait.h> /* For waitpid */
-#include <errno.h>    /* For errno */
-#include <glob.h>     /* For glob() */
-#include <signal.h>   /* For signal() */
+#include <limits.h>    /* For PATH_MAX */
+#include <stdlib.h>    /* For malloc, free, realpath, exit */
+#include <unistd.h>    /* For access, fork, chdir */
+#include <string.h>    /* For strlen, strncpy, strtok, memcpy, strcmp */
+#include <stdio.h>     /* For fprintf, perror */
+#include <sys/wait.h>  /* For waitpid */
+#include <errno.h>     /* For errno */
+#include <glob.h>      /* For glob() */
+#include <signal.h>    /* For signal() */
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -56,6 +56,29 @@ void set_base_path(const char *path) {
         strncpy(base_path, path, PATH_MAX - 1);
         base_path[PATH_MAX - 1] = '\0';
     }
+}
+
+/*
+ * List of commands that should bypass wildcard expansion.
+ * Any command listed here will have its parameters passed as-is without globbing.
+ * Add command names to this list as needed.
+ */
+static const char *bypass_expansion_commands[] = {
+    "list",
+    /* Add additional command names here if necessary */
+    NULL
+};
+
+/*
+ * Helper function to determine if wildcard expansion should be bypassed
+ * for a given command.
+ */
+static int should_bypass_expansion(const char *command) {
+    for (int i = 0; bypass_expansion_commands[i] != NULL; i++) {
+        if (strcmp(command, bypass_expansion_commands[i]) == 0)
+            return 1;
+    }
+    return 0;
 }
 
 /*
@@ -93,15 +116,37 @@ void parse_input(const char *input, CommandStruct *cmd) {
                 cmd->options[cmd->opt_count++] = dup;
             }
         } else {
-            /* Check if token contains wildcards */
-            if (contains_wildcard(token)) {
-                glob_t glob_result;
-                /* Use glob() to expand the token */
-                int ret = glob(token, GLOB_NOCHECK, NULL, &glob_result);
-                if (ret == 0 || ret == GLOB_NOMATCH) {
-                    for (size_t i = 0; i < glob_result.gl_pathc; i++) {
+            /* If this command should bypass wildcard expansion, simply duplicate the token */
+            if (should_bypass_expansion(cmd->command)) {
+                if (cmd->param_count < MAX_PARAMETERS) {
+                    char *dup = strdup(token);
+                    if (dup == NULL) {
+                        perror("strdup failed");
+                        exit(EXIT_FAILURE);
+                    }
+                    cmd->parameters[cmd->param_count++] = dup;
+                }
+            } else {
+                /* For other commands, check if token contains wildcards */
+                if (contains_wildcard(token)) {
+                    glob_t glob_result;
+                    /* Use glob() to expand the token */
+                    int ret = glob(token, GLOB_NOCHECK, NULL, &glob_result);
+                    if (ret == 0 || ret == GLOB_NOMATCH) {
+                        for (size_t i = 0; i < glob_result.gl_pathc; i++) {
+                            if (cmd->param_count < MAX_PARAMETERS) {
+                                char *dup = strdup(glob_result.gl_pathv[i]);
+                                if (dup == NULL) {
+                                    perror("strdup failed");
+                                    exit(EXIT_FAILURE);
+                                }
+                                cmd->parameters[cmd->param_count++] = dup;
+                            }
+                        }
+                    } else {
+                        /* On glob error, add the original token */
                         if (cmd->param_count < MAX_PARAMETERS) {
-                            char *dup = strdup(glob_result.gl_pathv[i]);
+                            char *dup = strdup(token);
                             if (dup == NULL) {
                                 perror("strdup failed");
                                 exit(EXIT_FAILURE);
@@ -109,8 +154,8 @@ void parse_input(const char *input, CommandStruct *cmd) {
                             cmd->parameters[cmd->param_count++] = dup;
                         }
                     }
+                    globfree(&glob_result);
                 } else {
-                    /* On glob error, add the original token */
                     if (cmd->param_count < MAX_PARAMETERS) {
                         char *dup = strdup(token);
                         if (dup == NULL) {
@@ -119,16 +164,6 @@ void parse_input(const char *input, CommandStruct *cmd) {
                         }
                         cmd->parameters[cmd->param_count++] = dup;
                     }
-                }
-                globfree(&glob_result);
-            } else {
-                if (cmd->param_count < MAX_PARAMETERS) {
-                    char *dup = strdup(token);
-                    if (dup == NULL) {
-                        perror("strdup failed");
-                        exit(EXIT_FAILURE);
-                    }
-                    cmd->parameters[cmd->param_count++] = dup;
                 }
             }
         }
@@ -144,9 +179,9 @@ void execute_command(const CommandStruct *cmd) {
 
     /* Define an array of relative directories to search for executables */
     static const char *relative_commands_dirs[] = {
-        "commands",   // Primary commands directory.
-        "apps",       // Additional folder for executables.
-        "utilities"   // Another folder.
+        "commands",   /* Primary commands directory. */
+        "apps",       /* Additional folder for executables. */
+        "utilities"   /* Another folder. */
     };
     int num_dirs = sizeof(relative_commands_dirs) / sizeof(relative_commands_dirs[0]);
 
@@ -177,7 +212,7 @@ void execute_command(const CommandStruct *cmd) {
 
     /* Prepare the arguments array for execv. */
     int total_args = 1 + cmd->param_count + cmd->opt_count;
-    char *args[total_args + 1]; // +1 for the NULL terminator
+    char *args[total_args + 1]; /* +1 for the NULL terminator */
     args[0] = abs_path;
     int index = 1;
     for (int i = 0; i < cmd->param_count; i++) {
@@ -193,7 +228,7 @@ void execute_command(const CommandStruct *cmd) {
         perror("fork failed");
         return;
     } else if (pid == 0) {
-        // In child process, reset SIGINT to default so that CTRL+C kills the app.
+        /* In child process, reset SIGINT to default so that CTRL+C kills the app. */
         signal(SIGINT, SIG_DFL);
         execv(abs_path, args);
         perror("execv failed");

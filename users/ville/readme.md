@@ -9,6 +9,10 @@ last diary entry I have implemented categorization of apps and commands to help,
 apps like skydial and solar. Also, I made the cmath more usable so, that it supports ";" for non-echoing
 commands and "print". I did the conversion using my own commands and tools, and it proved to be easy and
 fast!
+<br><br>
+Modified commandparser.c to exclude the wildcard expansion from pre-defined commands. Do not know whether
+this is the best approach, need to find out by using the software more to different purposes. But now at
+least the list.c is able to find files from subdirectories.
 
 ### Friday, 11th of April 2025 ###
 

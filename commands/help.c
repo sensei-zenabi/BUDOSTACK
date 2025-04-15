@@ -18,7 +18,7 @@ int main(int argc, char *argv[]) {
     printf("Contact email:   budostack@gmail.com\n");
     printf("License:         GPLv2\n");
     printf("\n");
-    printf("Note! AI has been used in the development of this application.\n");
+    printf("Note! AI has been used in the development of this software.\n");
     printf("\n");
 
     // Print available apps and commands
@@ -108,6 +108,7 @@ int main(int argc, char *argv[]) {
     printf("  Tips:\n");
     printf("  Start AALTO faster: ./aalto -f | Start TASK: ./aalto mytask.task\n");
     printf("\n");
+    printf("=============================================================================\n");
 
     // Check for the "-a" argument to display the reserved section
     if (argc > 1 && strcmp(argv[1], "-a") == 0) {

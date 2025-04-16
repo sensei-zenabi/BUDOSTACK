@@ -209,20 +209,17 @@ void list_recursive_search(const char *pattern) {
 }
 
 // Help message
+// Help message
 void print_help() {
-    printf("Usage: list [options] [file/directory or search pattern]\n");
-    printf("Options:\n");
-    printf("  -a      Show all files (override exclusion of certain file extensions)\n");
-    printf("  -help   Display this help message\n\n");
-    printf("Capabilities:\n");
-    printf("  - If no arguments are provided, the current directory is listed.\n");
-    printf("  - If a valid file or directory is provided (and does not contain wildcard characters),\n");
-    printf("    it is listed with details.\n");
-    printf("  - Wildcard patterns (e.g., \"*ab*\") are supported and will recursively search\n");
-    printf("    the current directory and all subfolders for matching files.\n");
-    printf("  - If a non-existent filename is provided (e.g., \"a\" or \"ab\"), it is treated as\n");
-    printf("    a search pattern.\n\n");
-    printf("Existing functionality is preserved for backward compatibility.\n");
+    printf("Usage examples for the 'list' command:\n");
+    printf("  list                 List contents of the current directory\n");
+    printf("  list -a              List all files, including excluded extensions\n");
+    printf("  list <file>          Show details for a specific file\n");
+    printf("  list <directory>     List contents of a specific directory\n");
+    printf("  list <pattern>*      Recursively list files matching a wildcard pattern\n");
+    printf("  list -a <pattern>*   Recursive wildcard search including all files\n");
+    printf("  list <file1> <file2> Show details for multiple files\n");
+    printf("\n");
 }
 
 int main(int argc, char *argv[]) {

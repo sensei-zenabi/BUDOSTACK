@@ -979,25 +979,64 @@ void editorDelCharAtCursor(void) {
     }
 }
 
-/*** New Function for Search ***/
+/*** Modified Search Function ***/
 void editorSearch(void) {
-    char query[256];
+    char query[256] = "";
+    int from_selection = E.selecting;
+    if (from_selection) {
+        int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
+        int end_line   = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
+        int anchor_x   = (E.sel_anchor_y <= E.cy ? E.sel_anchor_x : E.cx);
+        int current_x  = (E.sel_anchor_y <= E.cy ? E.cx : E.sel_anchor_x);
+        int pos = 0;
+        for (int i = start_line; i <= end_line && pos < (int)sizeof(query) - 1; i++) {
+            EditorLine *row = &E.row[i];
+            int line_width = editorDisplayWidth(row->chars);
+            int sel_start, sel_end;
+            if (start_line == end_line) {
+                sel_start = (anchor_x < current_x ? anchor_x : current_x);
+                sel_end   = (anchor_x < current_x ? current_x  : anchor_x);
+            } else if (i == start_line) {
+                sel_start = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : 0);
+                sel_end   = line_width;
+            } else if (i == end_line) {
+                sel_start = 0;
+                sel_end   = (E.sel_anchor_y < E.cy ? E.cx : E.sel_anchor_x);
+            } else {
+                sel_start = 0;
+                sel_end   = line_width;
+            }
+            int start_byte = editorRowCxToByteIndex(row, sel_start);
+            int end_byte   = editorRowCxToByteIndex(row, sel_end);
+            int chunk = end_byte - start_byte;
+            if (pos + chunk >= (int)sizeof(query) - 1) 
+                chunk = sizeof(query) - 1 - pos;
+            memcpy(query + pos, row->chars + start_byte, chunk);
+            pos += chunk;
+            if (i != end_line && pos < (int)sizeof(query) - 1)
+                query[pos++] = '\n';
+        }
+        query[pos] = '\0';
+        E.selecting = 0;
+    }
+
     /* Switch to the alternate screen buffer so the search UI doesn't overlay the editor */
     printf("\033[?1049h");
     fflush(stdout);
 
-    /* Temporarily disable raw mode to get query input */
+    /* Temporarily disable raw mode to get query input if not from selection */
     disableRawMode();
-    printf("\rSearch: ");
-    fflush(stdout);
-    if (fgets(query, sizeof(query), stdin) == NULL) {
-        enableRawMode();
-        /* Restore main screen */
-        printf("\033[?1049l");
+    if (!from_selection) {
+        printf("\rSearch: ");
         fflush(stdout);
-        return;
+        if (fgets(query, sizeof(query), stdin) == NULL) {
+            enableRawMode();
+            printf("\033[?1049l");
+            fflush(stdout);
+            return;
+        }
+        query[strcspn(query, "\n")] = '\0';
     }
-    query[strcspn(query, "\n")] = '\0';
     enableRawMode();
 
     /* Get terminal size */
@@ -1027,7 +1066,7 @@ void editorSearch(void) {
         return;
     }
 
-    /* Improved full-screen menu UI */
+    /* Full-screen menu UI unchanged */
     int active = 0;
     int menu_start = 0;
     int menu_height = rows - 4;
@@ -1051,12 +1090,9 @@ void editorSearch(void) {
         fflush(stdout);
 
         int c = editorReadKey();
-        if (c == 'q') {
-            active = -1;
-            break;
-        } else if (c == '\r') {
-            break;
-        } else if (c == ARROW_UP) {
+        if (c == 'q') { active = -1; break; }
+        else if (c == '\r') { break; }
+        else if (c == ARROW_UP) {
             if (active > 0) {
                 active--;
                 if (active < menu_start)
@@ -1080,11 +1116,10 @@ void editorSearch(void) {
 
     if (result != -1) {
         E.cy = result;
-        char *pos = strcasestr_custom(E.row[result].chars, query);
-        if (pos != NULL) {
+        char *posp = strcasestr_custom(E.row[result].chars, query);
+        if (posp) {
             int col = 0;
-            for (char *p = E.row[result].chars; p < pos; p++)
-                col++;
+            for (char *p = E.row[result].chars; p < posp; p++) col++;
             E.cx = col;
         } else {
             E.cx = 0;

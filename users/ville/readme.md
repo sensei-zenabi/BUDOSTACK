@@ -2,6 +2,10 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Thursday, 17th of April 2025 ###
+
+Introduced three new commands: crc32, csvstat, csvclean. All have -help and are self explanatory.
+
 ### Tuesday, 15th of April 2025 ###
 
 Today I rebranded my software from AALTO to BUDOSTACK, as latter was not reserved trademark. Since my

@@ -30,6 +30,7 @@ int main(int argc, char *argv[]) {
     printf("  cls      : Clear terminal screen.\n");
     printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
+	printf("  crc32    : Calculate and/or verify CRC32 checksum of a file.\n");
     printf("  ctalk    : Simple UDP based LAN chat. Start with 'ctalk myname'.\n");
     printf("  display  : Display the contents of a file.\n");
     printf("  drives   : Lists all found drives.\n");

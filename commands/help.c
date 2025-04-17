@@ -61,7 +61,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  cmath    : Math interpreter that has interactive mode and macro execution.\n");
     printf("             To run existing macro, type 'cmath mymacro.m'.\n");
-	printf("  csvclean : Basic .csv data cleaning method, type 'csvclean -help' to learn more.\n");
+	printf("  csvclean : Basic .csv data cleaning method, type 'csvclean -help'.\n");
 	printf("  csvstat  : Calculate statistics from .csv file columns.\n");
     printf("  skydial  : Simple sky-dial to identify and locate celestial objects.\n");
     printf("             Type 'skydial lat lon' to tell your position.\n");

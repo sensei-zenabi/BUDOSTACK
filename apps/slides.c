@@ -146,7 +146,7 @@ void computeDimensions(void) {
         exit(1);
     }
     int full_width = g_term_cols - 2;   // account for left/right borders
-    int full_height = g_term_rows - 2;    // account for top/bottom borders
+    int full_height = g_term_rows - 2;  // account for top/bottom borders
     g_content_width = full_width;
     g_content_height = full_height;
     g_content_offset_x = 2;
@@ -276,16 +276,12 @@ void refreshEditScreen(int cur_row, int cur_col) {
 
 /************************************
  * Help screen functionality.
- *
- * When the user (in presentation mode) presses CTRL+H, the help screen is displayed.
- * The help screen lists all shortcuts and instructions and remains until CTRL+H is pressed again.
  ************************************/
 
 /* Display help information on the screen */
 void displayHelp(void) {
     clearScreen();
     drawBorder();
-    /* Display help text starting at a fixed position inside the border */
     int row = 4, col = 4;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHHELP MENU - Shortcuts and Instructions", row, col);
     row++;
@@ -328,16 +324,11 @@ void enterHelpMode(void) {
             g_help_mode = 0;
         }
     }
-    /* After exiting help mode, clear the screen to refresh the presentation view */
     clearScreen();
 }
 
 /************************************
  * Slide file load/save functions
- *
- * Slides are stored in a file with each slide separated by a delimiter "----".
- * Each slide is loaded into a fixed–sized buffer of g_content_height rows
- * and g_content_width columns (the full inner region).
  ************************************/
 
 /* Allocate and initialize a new blank slide */
@@ -370,16 +361,12 @@ void freeSlide(Slide *s) {
     free(s);
 }
 
-/* Load slides from file.
-   If the file does not exist or is empty, create one blank slide.
-   Slides are separated by a delimiter line "----".
- */
+/* Load slides from file */
 void loadSlides(const char *filename) {
     FILE *fp = fopen(filename, "r");
     Slide **slides = NULL;
     int slideCount = 0;
     if (!fp) {
-        /* File not found; create a blank slide */
         g_slide_count = 1;
         g_slides = malloc(sizeof(Slide *));
         g_slides[0] = newBlankSlide();
@@ -391,17 +378,13 @@ void loadSlides(const char *filename) {
     char *buffer[g_content_height];
     int bufCount = 0;
     while (getline(&line, &len, fp) != -1) {
-        /* Remove newline if present */
         char *nl = strchr(line, '\n');
         if (nl) *nl = '\0';
-        
-        /* If delimiter is encountered, finish the current slide */
         if (strcmp(line, "----") == 0) {
             Slide *s = malloc(sizeof(Slide));
             s->lines = malloc(sizeof(char*) * g_content_height);
             s->undo_lines = NULL;
-            int i;
-            for (i = 0; i < g_content_height; i++) {
+            for (int i = 0; i < g_content_height; i++) {
                 s->lines[i] = malloc(g_content_width + 1);
                 if (i < bufCount) {
                     int copyLen = strlen(buffer[i]);
@@ -415,24 +398,18 @@ void loadSlides(const char *filename) {
                 }
                 s->lines[i][g_content_width] = '\0';
             }
-            for (int i = 0; i < bufCount; i++) {
-                free(buffer[i]);
-            }
+            for (int i = 0; i < bufCount; i++) free(buffer[i]);
             bufCount = 0;
             slides = realloc(slides, sizeof(Slide*) * (slideCount + 1));
-            slides[slideCount] = s;
-            slideCount++;
+            slides[slideCount++] = s;
         } else {
-            if (bufCount < g_content_height) {
-                buffer[bufCount] = strdup(line);
-                bufCount++;
-            }
+            if (bufCount < g_content_height)
+                buffer[bufCount++] = strdup(line);
         }
     }
     free(line);
     fclose(fp);
     
-    /* If there is leftover content, create a slide from it */
     if (bufCount > 0) {
         Slide *s = malloc(sizeof(Slide));
         s->lines = malloc(sizeof(char*) * g_content_height);
@@ -451,12 +428,9 @@ void loadSlides(const char *filename) {
             }
             s->lines[i][g_content_width] = '\0';
         }
-        for (int i = 0; i < bufCount; i++) {
-            free(buffer[i]);
-        }
+        for (int i = 0; i < bufCount; i++) free(buffer[i]);
         slides = realloc(slides, sizeof(Slide*) * (slideCount + 1));
-        slides[slideCount] = s;
-        slideCount++;
+        slides[slideCount++] = s;
     }
     if (slideCount == 0) {
         slideCount = 1;
@@ -467,10 +441,7 @@ void loadSlides(const char *filename) {
     g_slide_count = slideCount;
 }
 
-/* Save all slides to the file.
-   Each slide is written as g_content_height lines followed by a delimiter "----"
-   (except after the last slide).
- */
+/* Save all slides to the file */
 void saveSlides(void) {
     FILE *fp = fopen(g_filename, "w");
     if (!fp) return;
@@ -486,62 +457,36 @@ void saveSlides(void) {
 
 /************************************
  * Edit mode functionality.
- *
- * In edit mode, the user can edit the active slide’s full text area (the entire inner region).
- * CTRL+S saves the slides (with a temporary message),
- * CTRL+Z undoes changes,
- * CTRL+E (or ESC) exits edit mode (returning to presentation mode),
- * CTRL+Q quits the app,
- * and the arrow keys move the editing cursor.
- * 
- * New functionality in Edit mode:
- *  - CTRL+T toggles the rectangular selection (toggle mode).
- *    In toggle mode:
- *      * The starting cursor position is saved.
- *      * Using arrow keys the user can adjust the selection.
- *      * CTRL+C copies the selected rectangular region to a global clipboard.
- *      * CTRL+X cuts (copies then removes) the selected region.
- *      * CTRL+T again exits toggle mode.
- *  - In normal edit mode, CTRL+V pastes the clipboard region at the current cursor position.
- *
- * Note: In edit mode, CTRL+H remains bound to backspace.
  ************************************/
 void enterEditMode(void) {
     g_edit_mode = 1;
     Slide *slide = g_slides[g_current_slide];
-    /* Use the globally stored cursor position */
     int cur_row = g_last_edit_row;
     int cur_col = g_last_edit_col;
     int ch, i;
     
-    /* Create an undo backup (deep copy of slide content) */
+    /* Backup for undo */
     if (slide->undo_lines) {
-        for (i = 0; i < g_content_height; i++) {
+        for (i = 0; i < g_content_height; i++)
             free(slide->undo_lines[i]);
-        }
         free(slide->undo_lines);
     }
     slide->undo_lines = malloc(sizeof(char*) * g_content_height);
-    for (i = 0; i < g_content_height; i++) {
+    for (i = 0; i < g_content_height; i++)
         slide->undo_lines[i] = strdup(slide->lines[i]);
-    }
     
     while (1) {
         refreshEditScreen(cur_row, cur_col);
         ch = readKey();
         if (ch == CTRL_KEY('S')) {
-            /* Save the slides and display a message at bottom left */
             saveSlides();
             dprintf(STDOUT_FILENO, "\x1b[%d;2HSlideset saved!", g_term_rows - 1);
             fsync(STDOUT_FILENO);
-            sleep(3);  /* Display the message for roughly 3 seconds */
+            sleep(3);
         } else if (ch == CTRL_KEY('Z')) {
-            /* Undo: restore from backup */
-            for (i = 0; i < g_content_height; i++) {
+            for (i = 0; i < g_content_height; i++)
                 strncpy(slide->lines[i], slide->undo_lines[i], g_content_width);
-            }
         } else if (ch == CTRL_KEY('E') || ch == 27) {
-            /* CTRL+E or ESC: exit edit mode */
             break;
         } else if (ch == CTRL_KEY('Q')) {
             g_quit = 1;
@@ -554,6 +499,34 @@ void enterEditMode(void) {
             if (cur_col > 0) cur_col--;
         } else if (ch == ARROW_RIGHT) {
             if (cur_col < g_content_width - 1) cur_col++;
+        } else if (ch == ' ') {
+            // Insert space at cursor: shift rest of line right
+            char *line = slide->lines[cur_row];
+            if (cur_col < g_content_width - 1) {
+                for (i = g_content_width - 1; i > cur_col; i--) {
+                    line[i] = line[i - 1];
+                }
+                line[cur_col] = ' ';
+                cur_col++;
+            }
+        } else if (ch == 127 || ch == CTRL_KEY('H')) {
+            // Backspace: delete preceding char (shift rest of line left)
+            char *line = slide->lines[cur_row];
+            if (cur_col > 0) {
+                cur_col--;
+                for (i = cur_col; i < g_content_width - 1; i++) {
+                    line[i] = line[i + 1];
+                }
+                line[g_content_width - 1] = ' ';
+            } else if (cur_row > 0) {
+                cur_row--;
+                cur_col = g_content_width - 1;
+                line = slide->lines[cur_row];
+                for (i = cur_col; i < g_content_width - 1; i++) {
+                    line[i] = line[i + 1];
+                }
+                line[g_content_width - 1] = ' ';
+            }
         } else if (isprint(ch)) {
             slide->lines[cur_row][cur_col] = ch;
             if (cur_col < g_content_width - 1)
@@ -562,18 +535,7 @@ void enterEditMode(void) {
                 cur_col = 0;
                 cur_row++;
             }
-        } else if (ch == 127 || ch == CTRL_KEY('H')) {
-            /* Handle backspace in edit mode */
-            if (cur_col > 0) {
-                cur_col--;
-                slide->lines[cur_row][cur_col] = ' ';
-            } else if (cur_row > 0) {
-                cur_row--;
-                cur_col = g_content_width - 1;
-                slide->lines[cur_row][cur_col] = ' ';
-            }
         } else if (ch == CTRL_KEY('T')) {
-            /* Enter toggle mode for rectangular selection */
             int toggle_start_row = cur_row, toggle_start_col = cur_col;
             int toggle_row = cur_row, toggle_col = cur_col;
             int toggle_ch;
@@ -582,23 +544,19 @@ void enterEditMode(void) {
                 drawToggleOverlay(toggle_start_row, toggle_start_col, toggle_row, toggle_col);
                 toggle_ch = readKey();
                 if (toggle_ch == CTRL_KEY('T')) {
-                    /* Exit toggle mode and update main cursor position */
                     cur_row = toggle_row;
                     cur_col = toggle_col;
                     break;
                 } else if (toggle_ch == CTRL_KEY('X')) {
-                    /* Cut: Copy selected rectangular region to global clipboard and remove it from slide */
                     int sel_row_start = (toggle_start_row < toggle_row ? toggle_start_row : toggle_row);
                     int sel_row_end   = (toggle_start_row > toggle_row ? toggle_start_row : toggle_row);
                     int sel_col_start = (toggle_start_col < toggle_col ? toggle_start_col : toggle_col);
                     int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
                     int sel_rows = sel_row_end - sel_row_start + 1;
                     int sel_cols = sel_col_end - sel_col_start + 1;
-                    /* Free previous clipboard if it exists */
                     if (g_clipboard) {
-                        for (i = 0; i < g_clipboard->rows; i++) {
+                        for (i = 0; i < g_clipboard->rows; i++)
                             free(g_clipboard->data[i]);
-                        }
                         free(g_clipboard->data);
                         free(g_clipboard);
                     }
@@ -608,10 +566,11 @@ void enterEditMode(void) {
                     g_clipboard->data = malloc(sizeof(char*) * sel_rows);
                     for (i = 0; i < sel_rows; i++) {
                         g_clipboard->data[i] = malloc(sel_cols + 1);
-                        strncpy(g_clipboard->data[i], g_slides[g_current_slide]->lines[sel_row_start + i] + sel_col_start, sel_cols);
+                        strncpy(g_clipboard->data[i],
+                                g_slides[g_current_slide]->lines[sel_row_start + i] + sel_col_start,
+                                sel_cols);
                         g_clipboard->data[i][sel_cols] = '\0';
                     }
-                    /* Remove the selected text from the slide (cut operation) */
                     for (i = 0; i < sel_rows; i++) {
                         for (int j = 0; j < sel_cols; j++) {
                             g_slides[g_current_slide]->lines[sel_row_start + i][sel_col_start + j] = ' ';
@@ -620,23 +579,19 @@ void enterEditMode(void) {
                     dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion cut!", g_term_rows - 1);
                     fsync(STDOUT_FILENO);
                     sleep(1);
-                    /* Exit toggle mode and update main cursor position */
                     cur_row = toggle_row;
                     cur_col = toggle_col;
                     break;
                 } else if (toggle_ch == CTRL_KEY('C')) {
-                    /* Copy selected rectangular region to global clipboard */
                     int sel_row_start = (toggle_start_row < toggle_row ? toggle_start_row : toggle_row);
                     int sel_row_end   = (toggle_start_row > toggle_row ? toggle_start_row : toggle_row);
                     int sel_col_start = (toggle_start_col < toggle_col ? toggle_start_col : toggle_col);
                     int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
                     int sel_rows = sel_row_end - sel_row_start + 1;
                     int sel_cols = sel_col_end - sel_col_start + 1;
-                    /* Free previous clipboard if it exists */
                     if (g_clipboard) {
-                        for (i = 0; i < g_clipboard->rows; i++) {
+                        for (i = 0; i < g_clipboard->rows; i++)
                             free(g_clipboard->data[i]);
-                        }
                         free(g_clipboard->data);
                         free(g_clipboard);
                     }
@@ -646,7 +601,9 @@ void enterEditMode(void) {
                     g_clipboard->data = malloc(sizeof(char*) * sel_rows);
                     for (i = 0; i < sel_rows; i++) {
                         g_clipboard->data[i] = malloc(sel_cols + 1);
-                        strncpy(g_clipboard->data[i], g_slides[g_current_slide]->lines[sel_row_start + i] + sel_col_start, sel_cols);
+                        strncpy(g_clipboard->data[i],
+                                g_slides[g_current_slide]->lines[sel_row_start + i] + sel_col_start,
+                                sel_cols);
                         g_clipboard->data[i][sel_cols] = '\0';
                     }
                     dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion copied!", g_term_rows - 1);
@@ -666,34 +623,25 @@ void enterEditMode(void) {
                 }
             }
         } else if (ch == CTRL_KEY('V')) {
-            /* Paste clipboard region at current cursor position */
             if (g_clipboard) {
-                int i, j;
-                for (i = 0; i < g_clipboard->rows; i++) {
-                    if (cur_row + i >= g_content_height)
-                        break;
-                    for (j = 0; j < g_clipboard->cols; j++) {
-                        if (cur_col + j >= g_content_width)
-                            break;
-                        slide->lines[cur_row + i][cur_col + j] = g_clipboard->data[i][j];
+                int r, c;
+                for (r = 0; r < g_clipboard->rows; r++) {
+                    if (cur_row + r >= g_content_height) break;
+                    for (c = 0; c < g_clipboard->cols; c++) {
+                        if (cur_col + c >= g_content_width) break;
+                        slide->lines[cur_row + r][cur_col + c] = g_clipboard->data[r][c];
                     }
                 }
             }
         }
     }
     
-    /* Before exiting edit mode, store the current editing cursor position globally */
     g_last_edit_row = cur_row;
     g_last_edit_col = cur_col;
-    
-    /* Clear the undo backup before exiting edit mode */
-    for (i = 0; i < g_content_height; i++) {
+    for (i = 0; i < g_content_height; i++)
         free(slide->undo_lines[i]);
-    }
     free(slide->undo_lines);
     slide->undo_lines = NULL;
-    
-    /* Clear the screen before returning to presentation mode */
     clearScreen();
     g_edit_mode = 0;
 }
@@ -707,13 +655,8 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     g_filename = argv[1];
-    
-    /* Compute dimensions for the full inner region */
     computeDimensions();
-    
-    /* Load slides from file; slides are allocated to the full inner (editable) area */
     loadSlides(g_filename);
-    
     enableRawMode();
     
     while (!g_quit) {
@@ -721,18 +664,14 @@ int main(int argc, char *argv[]) {
             refreshPresentationScreen();
         
         int c = readKey();
-
-        /* When not in edit mode, if CTRL+H is pressed, toggle help mode */
         if (!g_edit_mode && c == CTRL_KEY('H')) {
             enterHelpMode();
             continue;
         }
-        
         if (c == CTRL_KEY('Q')) {
             g_quit = 1;
             break;
         } else if (c == CTRL_KEY('E')) {
-            /* Enter edit mode for the current slide */
             enterEditMode();
             if (g_quit) break;
         } else if (c == ARROW_RIGHT) {
@@ -741,21 +680,16 @@ int main(int argc, char *argv[]) {
         } else if (c == ARROW_LEFT) {
             if (g_current_slide > 0)
                 g_current_slide--;
-        }
-        /* Add new slide with CTRL+N (insert after current slide) */
-        else if (c == CTRL_KEY('N')) {
+        } else if (c == CTRL_KEY('N')) {
             Slide *new_slide = newBlankSlide();
             g_slides = realloc(g_slides, sizeof(Slide*) * (g_slide_count + 1));
-            /* Shift slides after the current one to make room */
             for (int i = g_slide_count; i > g_current_slide + 1; i--) {
                 g_slides[i] = g_slides[i - 1];
             }
             g_slides[g_current_slide + 1] = new_slide;
             g_slide_count++;
-            g_current_slide++; // Move to the new slide
-        }
-        /* Delete current slide with CTRL+D (do not allow deleting the first slide) */
-        else if (c == CTRL_KEY('D')) {
+            g_current_slide++;
+        } else if (c == CTRL_KEY('D')) {
             if (g_current_slide > 0) {
                 freeSlide(g_slides[g_current_slide]);
                 for (int i = g_current_slide; i < g_slide_count - 1; i++) {
@@ -771,11 +705,8 @@ int main(int argc, char *argv[]) {
     
     clearScreen();
     disableRawMode();
-    
-    /* Free all allocated slides */
-    for (int i = 0; i < g_slide_count; i++) {
+    for (int i = 0; i < g_slide_count; i++)
         freeSlide(g_slides[i]);
-    }
     free(g_slides);
     return 0;
 }

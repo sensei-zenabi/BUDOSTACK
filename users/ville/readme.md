@@ -2,6 +2,13 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Wednesday, 30th of April 2025 ###
+
+Did a minor change to slides.c; where if the user presses SPACE or BACKSPACE, the editing behavior
+is intuitive and similar to traditional text editors. However, there still is room for improvement,
+e.g. when user types it automatically replaces characters instead of appending the to the line.
+A future development effort required to fix that.
+
 ### Thursday, 17th of April 2025 ###
 
 Introduced three new commands: crc32, csvstat, csvclean. All have -help and are self explanatory.

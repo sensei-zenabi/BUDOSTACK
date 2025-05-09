@@ -1,88 +1,118 @@
-/* 
- * File: compile.c
- * Description: A simple command-line tool that wraps gcc to compile one or more C source files.
- *              The first argument is used to determine the output executable name by removing the ".c" suffix.
- *              All provided files are passed to gcc for compilation using the C11 standard.
- *
- * Design principles:
- *  - Use only standard libraries (stdio.h, stdlib.h, string.h).
- *  - Create a simple command wrapper to generate a gcc command.
- *  - Strip the ".c" extension from the first argument for naming the output executable.
- *  - Support a "-help" flag to display usage information.
- *  - Use system() to invoke gcc.
- */
-
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-/* Function to remove the ".c" extension from a filename if present */
-void strip_extension(const char *filename, char *output, size_t maxlen) {
+/*
+    compile.c
+
+    A simple wrapper around gcc that:
+      - Uses -std=c11 always
+      - Accepts arbitrary gcc flags (e.g. -lm, -O2, -Wall, etc.)
+      - Accepts one or more C source files (*.c)
+      - Derives the output executable name from the first source file
+
+    Usage:
+      compile [gcc-flags] file1.c [file2.c ...]
+    Example:
+      compile -lm -O2 main.c util.c
+    This invokes:
+      gcc -std=c11 main.c util.c -lm -O2 -o main
+*/
+
+/* Strip the ".c" extension from filename if present */
+static void strip_extension(const char *filename, char *output, size_t maxlen) {
     size_t len = strlen(filename);
-    if (len >= 2 && strcmp(filename + len - 2, ".c") == 0) {
-        /* Copy all except the last two characters */
-        if (len - 2 < maxlen) {
-            strncpy(output, filename, len - 2);
-            output[len - 2] = '\0';
+    if (len > 2 && strcmp(filename + len - 2, ".c") == 0) {
+        size_t outlen = len - 2;
+        if (outlen < maxlen) {
+            memcpy(output, filename, outlen);
+            output[outlen] = '\0';
         } else {
-            /* Fallback: if output buffer too small, copy entire filename */
             strncpy(output, filename, maxlen - 1);
             output[maxlen - 1] = '\0';
         }
     } else {
-        /* If not ending with ".c", just copy the filename */
         strncpy(output, filename, maxlen - 1);
         output[maxlen - 1] = '\0';
     }
 }
 
-/* Function to display usage information */
-void print_help() {
-    printf("Example:\n");
-    printf("> compile main.c mylib1.c mylib2.c\n");
-    printf("This will compile main.c (and link mylib1.c and mylib2.c) into an executable named 'main'.\n");
+/* Print usage information */
+static void print_help(const char *progname) {
+    printf("Usage:\n");
+    printf("  %s [gcc-flags] file1.c [file2.c ...]\n", progname);
+    printf("\nExample:\n");
+    printf("  %s -lm -O2 main.c util.c\n", progname);
+    printf("  # compiles main.c and util.c into executable 'main'\n");
+}
+
+/* Check if a string ends with ".c" */
+static int is_c_file(const char *arg) {
+    size_t len = strlen(arg);
+    return (len > 2 && strcmp(arg + len - 2, ".c") == 0);
 }
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Error: No input files provided.\n");
-        print_help();
+        fprintf(stderr, "Error: No arguments provided.\n");
+        print_help(argv[0]);
         return EXIT_FAILURE;
     }
 
-    /* Check if the first argument is a help flag */
-    if (strcmp(argv[1], "-help") == 0) {
+    /* Help */
+    if (strcmp(argv[1], "-help") == 0 || strcmp(argv[1], "--help") == 0) {
         print_help(argv[0]);
         return EXIT_SUCCESS;
     }
 
-    /* Determine output executable name based on the first file */
-    char output_name[256];
-    strip_extension(argv[1], output_name, sizeof(output_name));
+    /* Collect flags and sources */
+    char *flags[argc];
+    int  flag_count = 0;
+    char *sources[argc];
+    int  src_count  = 0;
 
-    /* Construct the gcc command */
-    char command[2048];
-    int pos = 0;
-    pos += snprintf(command + pos, sizeof(command) - pos, "gcc -std=c11 ");
-
-    /* Append each provided source file */
     for (int i = 1; i < argc; i++) {
-        pos += snprintf(command + pos, sizeof(command) - pos, "%s ", argv[i]);
+        if (is_c_file(argv[i])) {
+            sources[src_count++] = argv[i];
+        } else if (argv[i][0] == '-') {
+            flags[flag_count++] = argv[i];
+        } else {
+            fprintf(stderr, "Warning: treating \"%s\" as gcc flag\n", argv[i]);
+            flags[flag_count++] = argv[i];
+        }
     }
 
-    /* Append the output flag and executable name */
-    pos += snprintf(command + pos, sizeof(command) - pos, "-o %s", output_name);
-
-    /* Print the command for debugging purposes (can be removed) */
-    printf("Running command: %s\n", command);
-
-    /* Execute the command */
-    int ret = system(command);
-    if (ret != 0) {
-        fprintf(stderr, "Compilation failed with error code %d.\n", ret);
+    if (src_count == 0) {
+        fprintf(stderr, "Error: No C source files provided.\n");
+        print_help(argv[0]);
         return EXIT_FAILURE;
     }
 
-    printf("Compilation succeeded. Executable: %s\n", output_name);
+    /* Determine output name from first source */
+    char output_name[256];
+    strip_extension(sources[0], output_name, sizeof(output_name));
+
+    /* Build gcc command: sources first, then flags, then -o */
+    char cmd[4096];
+    int  pos = snprintf(cmd, sizeof(cmd), "gcc -std=c11 ");
+
+    for (int i = 0; i < src_count; i++) {
+        pos += snprintf(cmd + pos, sizeof(cmd) - pos, "%s ", sources[i]);
+    }
+    for (int i = 0; i < flag_count; i++) {
+        pos += snprintf(cmd + pos, sizeof(cmd) - pos, "%s ", flags[i]);
+    }
+    pos += snprintf(cmd + pos, sizeof(cmd) - pos, "-o %s", output_name);
+
+    /* Execute */
+    printf("Running: %s\n", cmd);
+    int ret = system(cmd);
+    if (ret != 0) {
+        fprintf(stderr, "Compilation failed (exit %d).\n", ret);
+        return EXIT_FAILURE;
+    }
+
+    printf("Success: ./ %s\n", output_name);
     return EXIT_SUCCESS;
 }

@@ -2,6 +2,15 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Friday, 9th of May 2025 ###
+
+It has been a while since last diary entry. However, today I felt enough inspired to continue this
+project. I started the dev. by improving the 'compile' command so that it accepts compile flags
+such as '-lm' etc.. Then I continued by creating a MVP csvplot app that allows user to visualize
+in ASCII format csv columns in x-y format. Found a bug from cmath when assigning arrays and printing
+them, fixed that. Found an issue with main.c paging, depending on the page breaks it can lose rows,
+or not display them. Fixed that as well.
+
 ### Wednesday, 30th of April 2025 ###
 
 Did a minor change to slides.c; where if the user presses SPACE or BACKSPACE, the editing behavior

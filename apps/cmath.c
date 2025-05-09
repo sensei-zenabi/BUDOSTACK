@@ -1,6 +1,3 @@
-/*
- * Define _POSIX_C_SOURCE to 200809L to ensure POSIX functions like strdup are declared.
- */
 #define _POSIX_C_SOURCE 200809L
 
 /*
@@ -197,7 +194,6 @@ Value parse_primary(void);
 Value parse_matrix_literal(void);
 Value call_function(const char *func, Value arg);
 
-/* Deep copy for matrix values */
 Value deep_copy_value(Value v);
 
 void set_variable(const char *name, Value val);
@@ -207,14 +203,12 @@ void print_help(void);
 void print_value(Value val);
 void free_value(Value *val);
 
-/* Standard arithmetic operations */
 Value add_values(Value a, Value b);
 Value subtract_values(Value a, Value b);
 Value multiply_values(Value a, Value b);
 Value divide_values(Value a, Value b);
 Value power_values(Value a, Value b);
 
-/* Element-wise operations */
 Value elementwise_multiply_values(Value a, Value b);
 Value elementwise_divide_values(Value a, Value b);
 Value elementwise_pow_values(Value a, Value b);
@@ -292,7 +286,7 @@ void print_value(Value val) {
         int cols = val.matrix.cols;
         printf("[");
         for (int i = 0; i < rows; i++) {
-            for (int j = 0; j < cols; j++) {
+            for (int j = 0; j < cols; j++){
                 printf("%g", val.matrix.data[i * cols + j]);
                 if (j < cols - 1)
                     printf(" ");
@@ -345,7 +339,6 @@ void print_help(void) {
     printf("  2 + 3 * 4            -> Evaluates to 14\n");
     printf("  x = 3.14             -> Assigns 3.14 to variable x\n");
     printf("  A = [1, 2, 3; 4, 5, 6] -> Creates a 2x3 matrix A\n");
-    printf("  A * A'               -> (if transpose were implemented) Matrix multiplication\n");
     printf("  A .* 10              -> Element-wise multiplication (each element multiplied by 10)\n");
     printf("  sin(A)               -> Applies sine element-wise to matrix A\n");
 }
@@ -391,12 +384,12 @@ Value parse_term(void) {
             skip_whitespace();
             Value factor = parse_factor();
             value = elementwise_divide_values(value, factor);
-        } else if (strncmp(p, "*", 1) == 0) {
+        } else if (*p == '*') {
             p++;
             skip_whitespace();
             Value factor = parse_factor();
             value = multiply_values(value, factor);
-        } else if (strncmp(p, "/", 1) == 0) {
+        } else if (*p == '/') {
             p++;
             skip_whitespace();
             Value factor = parse_factor();
@@ -423,7 +416,7 @@ Value parse_factor(void) {
             Value exponent = parse_factor();
             value = elementwise_pow_values(value, exponent);
         } else if (*p == '^') {
-            p++; // skip '^'
+            p++;
             skip_whitespace();
             Value exponent = parse_factor();
             value = power_values(value, exponent);
@@ -442,11 +435,11 @@ Value parse_factor(void) {
 Value parse_primary(void) {
     skip_whitespace();
     if (*p == '(') {
-        p++; // skip '('
+        p++;
         Value value = parse_expression();
         skip_whitespace();
         if (*p == ')') {
-            p++; // skip ')'
+            p++;
         } else {
             printf("Error: Expected ')'\n");
             error_flag = 1;
@@ -467,7 +460,6 @@ Value parse_primary(void) {
         ret.scalar = num;
         return ret;
     } else if (isalpha(*p)) {
-        /* Parse an identifier (variable or function name) */
         char ident[32];
         int i = 0;
         while ((isalnum(*p) || *p == '_') && i < (int)(sizeof(ident) - 1)) {
@@ -477,31 +469,25 @@ Value parse_primary(void) {
         ident[i] = '\0';
         skip_whitespace();
         if (*p == '(') {
-            /* Function call */
-            p++;  // skip '('
+            p++;
             skip_whitespace();
             Value arg = parse_expression();
             skip_whitespace();
             if (*p == ')') {
-                p++; // skip ')'
+                p++;
             } else {
                 printf("Error: Expected ')' after function argument\n");
                 error_flag = 1;
-                Value err;
-                err.type = VAL_SCALAR;
-                err.scalar = 0;
+                Value err = { .type = VAL_SCALAR, .scalar = 0 };
                 return err;
             }
             return call_function(ident, arg);
         } else {
-            /* Variable usage: perform a deep copy for matrices */
             struct Variable *var = get_variable_by_name(ident);
             if (var == NULL) {
                 printf("Error: Unknown variable '%s'\n", ident);
                 error_flag = 1;
-                Value err;
-                err.type = VAL_SCALAR;
-                err.scalar = 0;
+                Value err = { .type = VAL_SCALAR, .scalar = 0 };
                 return err;
             }
             if (var->value.type == VAL_MATRIX)
@@ -512,9 +498,7 @@ Value parse_primary(void) {
     } else if (*p == '-') {
         p++;
         Value v = parse_primary();
-        Value zero;
-        zero.type = VAL_SCALAR;
-        zero.scalar = 0;
+        Value zero = { .type = VAL_SCALAR, .scalar = 0 };
         return subtract_values(zero, v);
     } else if (*p == '+') {
         p++;
@@ -522,9 +506,7 @@ Value parse_primary(void) {
     } else {
         printf("Error: Unexpected character '%c'\n", *p);
         error_flag = 1;
-        Value err;
-        err.type = VAL_SCALAR;
-        err.scalar = 0;
+        Value err = { .type = VAL_SCALAR, .scalar = 0 };
         return err;
     }
 }
@@ -534,15 +516,15 @@ Value parse_primary(void) {
  *   Parses a matrix literal of the form: [num, num, ...; num, num, ...]
  */
 Value parse_matrix_literal(void) {
-    p++; // Skip '['
+    p++;
     double temp[MAX_MATRIX_ROWS][MAX_MATRIX_COLS];
     int row_count = 0;
     int col_count = -1;
-    
+
     while (1) {
         skip_whitespace();
         if (*p == ']') {
-            p++; // Skip ']'
+            p++;
             break;
         }
         int col = 0;
@@ -551,9 +533,7 @@ Value parse_matrix_literal(void) {
             if (!isdigit(*p) && *p != '.' && *p != '-' && *p != '+') {
                 printf("Error: Expected number in matrix literal\n");
                 error_flag = 1;
-                Value err;
-                err.type = VAL_SCALAR;
-                err.scalar = 0;
+                Value err = { .type = VAL_SCALAR, .scalar = 0 };
                 return err;
             }
             char *endptr;
@@ -561,9 +541,13 @@ Value parse_matrix_literal(void) {
             if (p == endptr) {
                 printf("Error: Invalid number in matrix literal\n");
                 error_flag = 1;
-                Value err;
-                err.type = VAL_SCALAR;
-                err.scalar = 0;
+                Value err = { .type = VAL_SCALAR, .scalar = 0 };
+                return err;
+            }
+            if (row_count >= MAX_MATRIX_ROWS || col >= MAX_MATRIX_COLS) {
+                printf("Error: Matrix literal exceeds maximum dimensions\n");
+                error_flag = 1;
+                Value err = { .type = VAL_SCALAR, .scalar = 0 };
                 return err;
             }
             temp[row_count][col] = num;
@@ -571,7 +555,7 @@ Value parse_matrix_literal(void) {
             p = endptr;
             skip_whitespace();
             if (*p == ',') {
-                p++; // Skip comma
+                p++;
                 continue;
             } else {
                 break;
@@ -586,10 +570,10 @@ Value parse_matrix_literal(void) {
         row_count++;
         skip_whitespace();
         if (*p == ';') {
-            p++; // Next row
+            p++;
             continue;
         } else if (*p == ']') {
-            p++; // End of matrix
+            p++;
             break;
         } else {
             printf("Error: Expected ';' or ']' in matrix literal\n");
@@ -597,12 +581,23 @@ Value parse_matrix_literal(void) {
             break;
         }
     }
-    
+
+    if (row_count == 0 || col_count <= 0) {
+        /* Return an empty 0×0 matrix */
+        Value val;
+        val.type = VAL_MATRIX;
+        val.matrix.rows = 0;
+        val.matrix.cols = 0;
+        val.matrix.data = NULL;
+        return val;
+    }
+
     Value val;
     val.type = VAL_MATRIX;
     val.matrix.rows = row_count;
     val.matrix.cols = col_count;
-    val.matrix.data = malloc(row_count * col_count * sizeof(double));
+    int size = row_count * col_count;
+    val.matrix.data = malloc(size * sizeof(double));
     if (!val.matrix.data) {
         printf("Error: Memory allocation failed for matrix\n");
         exit(1);
@@ -654,20 +649,22 @@ Value call_function(const char *func, Value arg) {
         else {
             printf("Error: Unknown function '%s'\n", func);
             error_flag = 1;
-            Value err; err.type = VAL_SCALAR; err.scalar = 0;
+            Value err = { .type = VAL_SCALAR, .scalar = 0 };
             return err;
         }
-        Value ret; ret.type = VAL_SCALAR; ret.scalar = res;
+        Value ret = { .type = VAL_SCALAR, .scalar = res };
         return ret;
-    } else if (arg.type == VAL_MATRIX) {
+    } else {
+        /* Matrix argument: apply element-wise */
         int rows = arg.matrix.rows, cols = arg.matrix.cols;
-        Value ret;
-        ret.type = VAL_MATRIX;
-        ret.matrix.rows = rows;
-        ret.matrix.cols = cols;
-        ret.matrix.data = malloc(rows * cols * sizeof(double));
-        if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
-        for (int i = 0; i < rows * cols; i++) {
+        Value ret = { .type = VAL_MATRIX, .matrix = { rows, cols, NULL } };
+        int size = rows * cols;
+        ret.matrix.data = malloc(size * sizeof(double));
+        if (!ret.matrix.data) {
+            printf("Error: Memory allocation failed\n");
+            exit(1);
+        }
+        for (int i = 0; i < size; i++) {
             double a = arg.matrix.data[i], res;
             if (strcmp(func, "sin") == 0)
                 res = sin(a);
@@ -705,16 +702,13 @@ Value call_function(const char *func, Value arg) {
                 printf("Error: Unknown function '%s'\n", func);
                 error_flag = 1;
                 free(ret.matrix.data);
-                ret.type = VAL_SCALAR;
-                ret.scalar = 0;
-                return ret;
+                Value err = { .type = VAL_SCALAR, .scalar = 0 };
+                return err;
             }
             ret.matrix.data[i] = res;
         }
         return ret;
     }
-    Value err; err.type = VAL_SCALAR; err.scalar = 0;
-    return err;
 }
 
 /* --- Arithmetic Operation Implementations --- */
@@ -730,41 +724,39 @@ Value add_values(Value a, Value b) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in addition\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
+        int size = a.matrix.rows * a.matrix.cols;
         ret.type = VAL_MATRIX;
         ret.matrix.rows = a.matrix.rows;
         ret.matrix.cols = a.matrix.cols;
-        int size = ret.matrix.rows * ret.matrix.cols;
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = a.matrix.data[i] + b.matrix.data[i];
         return ret;
     } else if (a.type == VAL_SCALAR && b.type == VAL_MATRIX) {
+        int size = b.matrix.rows * b.matrix.cols;
         ret.type = VAL_MATRIX;
         ret.matrix.rows = b.matrix.rows;
         ret.matrix.cols = b.matrix.cols;
-        int size = b.matrix.rows * b.matrix.cols;
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = a.scalar + b.matrix.data[i];
         return ret;
     } else if (a.type == VAL_MATRIX && b.type == VAL_SCALAR) {
+        int size = a.matrix.rows * a.matrix.cols;
         ret.type = VAL_MATRIX;
         ret.matrix.rows = a.matrix.rows;
         ret.matrix.cols = a.matrix.cols;
-        int size = a.matrix.rows * a.matrix.cols;
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = a.matrix.data[i] + b.scalar;
         return ret;
     }
-    ret.type = VAL_SCALAR; ret.scalar = 0;
-    return ret;
+    return (Value){ .type = VAL_SCALAR, .scalar = 0 };
 }
 
 Value subtract_values(Value a, Value b) {
@@ -777,41 +769,39 @@ Value subtract_values(Value a, Value b) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in subtraction\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
+        int size = a.matrix.rows * a.matrix.cols;
         ret.type = VAL_MATRIX;
         ret.matrix.rows = a.matrix.rows;
         ret.matrix.cols = a.matrix.cols;
-        int size = ret.matrix.rows * ret.matrix.cols;
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = a.matrix.data[i] - b.matrix.data[i];
         return ret;
     } else if (a.type == VAL_SCALAR && b.type == VAL_MATRIX) {
+        int size = b.matrix.rows * b.matrix.cols;
         ret.type = VAL_MATRIX;
         ret.matrix.rows = b.matrix.rows;
         ret.matrix.cols = b.matrix.cols;
-        int size = b.matrix.rows * b.matrix.cols;
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = a.scalar - b.matrix.data[i];
         return ret;
     } else if (a.type == VAL_MATRIX && b.type == VAL_SCALAR) {
+        int size = a.matrix.rows * a.matrix.cols;
         ret.type = VAL_MATRIX;
         ret.matrix.rows = a.matrix.rows;
         ret.matrix.cols = a.matrix.cols;
-        int size = a.matrix.rows * a.matrix.cols;
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = a.matrix.data[i] - b.scalar;
         return ret;
     }
-    ret.type = VAL_SCALAR; ret.scalar = 0;
-    return ret;
+    return (Value){ .type = VAL_SCALAR, .scalar = 0 };
 }
 
 Value multiply_values(Value a, Value b) {
@@ -821,53 +811,48 @@ Value multiply_values(Value a, Value b) {
         ret.scalar = a.scalar * b.scalar;
         return ret;
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
-        /* Standard matrix multiplication:
-           (a.rows x a.cols) * (b.rows x b.cols) */
         if (a.matrix.cols != b.matrix.rows) {
             printf("Error: Matrix dimensions do not match for multiplication\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
-        ret.type = VAL_MATRIX;
-        ret.matrix.rows = a.matrix.rows;
-        ret.matrix.cols = b.matrix.cols;
         int m = a.matrix.rows, n = a.matrix.cols, p_ = b.matrix.cols;
+        ret.type = VAL_MATRIX;
+        ret.matrix.rows = m;
+        ret.matrix.cols = p_;
         ret.matrix.data = malloc(m * p_ * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < m; i++) {
             for (int j = 0; j < p_; j++) {
                 double sum = 0;
-                for (int k = 0; k < n; k++) {
+                for (int k = 0; k < n; k++)
                     sum += a.matrix.data[i * n + k] * b.matrix.data[k * p_ + j];
-                }
                 ret.matrix.data[i * p_ + j] = sum;
             }
         }
         return ret;
     } else if (a.type == VAL_SCALAR && b.type == VAL_MATRIX) {
+        int size = b.matrix.rows * b.matrix.cols;
         ret.type = VAL_MATRIX;
         ret.matrix.rows = b.matrix.rows;
         ret.matrix.cols = b.matrix.cols;
-        int size = b.matrix.rows * b.matrix.cols;
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = a.scalar * b.matrix.data[i];
         return ret;
     } else if (a.type == VAL_MATRIX && b.type == VAL_SCALAR) {
+        int size = a.matrix.rows * a.matrix.cols;
         ret.type = VAL_MATRIX;
         ret.matrix.rows = a.matrix.rows;
         ret.matrix.cols = a.matrix.cols;
-        int size = a.matrix.rows * a.matrix.cols;
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = a.matrix.data[i] * b.scalar;
         return ret;
     }
-    ret.type = VAL_SCALAR; ret.scalar = 0;
-    return ret;
+    return (Value){ .type = VAL_SCALAR, .scalar = 0 };
 }
 
 Value divide_values(Value a, Value b) {
@@ -876,8 +861,7 @@ Value divide_values(Value a, Value b) {
         if (b.scalar == 0) {
             printf("Error: Division by zero\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
         ret.type = VAL_SCALAR;
         ret.scalar = a.scalar / b.scalar;
@@ -886,44 +870,31 @@ Value divide_values(Value a, Value b) {
         if (b.scalar == 0) {
             printf("Error: Division by zero (matrix divided by scalar)\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
+        int size = a.matrix.rows * a.matrix.cols;
         ret.type = VAL_MATRIX;
         ret.matrix.rows = a.matrix.rows;
         ret.matrix.cols = a.matrix.cols;
-        int size = a.matrix.rows * a.matrix.cols;
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = a.matrix.data[i] / b.scalar;
         return ret;
-    } else if (a.type == VAL_SCALAR && b.type == VAL_MATRIX) {
-        printf("Error: Division of scalar by matrix is not supported\n");
+    } else {
+        printf("Error: Division is only supported scalar/scalar or matrix/scalar\n");
         error_flag = 1;
-        ret.type = VAL_SCALAR; ret.scalar = 0;
-        return ret;
-    } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
-        printf("Error: Element-wise matrix division is not supported with '/'\n");
-        error_flag = 1;
-        ret.type = VAL_SCALAR; ret.scalar = 0;
-        return ret;
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
     }
-    ret.type = VAL_SCALAR; ret.scalar = 0;
-    return ret;
 }
 
 Value power_values(Value a, Value b) {
-    Value ret;
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        ret.type = VAL_SCALAR;
-        ret.scalar = pow(a.scalar, b.scalar);
-        return ret;
+        return (Value){ .type = VAL_SCALAR, .scalar = pow(a.scalar, b.scalar) };
     } else {
         printf("Error: Exponentiation (^) is only supported for scalars\n");
         error_flag = 1;
-        ret.type = VAL_SCALAR; ret.scalar = 0;
-        return ret;
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
     }
 }
 
@@ -932,15 +903,12 @@ Value power_values(Value a, Value b) {
 Value elementwise_multiply_values(Value a, Value b) {
     Value ret;
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        ret.type = VAL_SCALAR;
-        ret.scalar = a.scalar * b.scalar;
-        return ret;
+        return (Value){ .type = VAL_SCALAR, .scalar = a.scalar * b.scalar };
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in element-wise multiplication\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
         int size = a.matrix.rows * a.matrix.cols;
         ret.type = VAL_MATRIX;
@@ -972,8 +940,7 @@ Value elementwise_multiply_values(Value a, Value b) {
             ret.matrix.data[i] = a.matrix.data[i] * b.scalar;
         return ret;
     }
-    ret.type = VAL_SCALAR; ret.scalar = 0;
-    return ret;
+    return (Value){ .type = VAL_SCALAR, .scalar = 0 };
 }
 
 Value elementwise_divide_values(Value a, Value b) {
@@ -982,18 +949,14 @@ Value elementwise_divide_values(Value a, Value b) {
         if (b.scalar == 0) {
             printf("Error: Division by zero\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
-        ret.type = VAL_SCALAR;
-        ret.scalar = a.scalar / b.scalar;
-        return ret;
+        return (Value){ .type = VAL_SCALAR, .scalar = a.scalar / b.scalar };
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in element-wise division\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
         int size = a.matrix.rows * a.matrix.cols;
         ret.type = VAL_MATRIX;
@@ -1002,11 +965,11 @@ Value elementwise_divide_values(Value a, Value b) {
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++) {
-            if(b.matrix.data[i] == 0) {
-                printf("Error: Division by zero\n");
+            if (b.matrix.data[i] == 0) {
+                printf("Error: Division by zero in element-wise division\n");
                 error_flag = 1;
-                ret.type = VAL_SCALAR; ret.scalar = 0;
-                return ret;
+                free(ret.matrix.data);
+                return (Value){ .type = VAL_SCALAR, .scalar = 0 };
             }
             ret.matrix.data[i] = a.matrix.data[i] / b.matrix.data[i];
         }
@@ -1019,11 +982,11 @@ Value elementwise_divide_values(Value a, Value b) {
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++) {
-            if(b.matrix.data[i] == 0) {
-                printf("Error: Division by zero\n");
+            if (b.matrix.data[i] == 0) {
+                printf("Error: Division by zero in element-wise division\n");
                 error_flag = 1;
-                ret.type = VAL_SCALAR; ret.scalar = 0;
-                return ret;
+                free(ret.matrix.data);
+                return (Value){ .type = VAL_SCALAR, .scalar = 0 };
             }
             ret.matrix.data[i] = a.scalar / b.matrix.data[i];
         }
@@ -1032,8 +995,7 @@ Value elementwise_divide_values(Value a, Value b) {
         if (b.scalar == 0) {
             printf("Error: Division by zero\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
         int size = a.matrix.rows * a.matrix.cols;
         ret.type = VAL_MATRIX;
@@ -1045,27 +1007,20 @@ Value elementwise_divide_values(Value a, Value b) {
             ret.matrix.data[i] = a.matrix.data[i] / b.scalar;
         return ret;
     }
-    ret.type = VAL_SCALAR; ret.scalar = 0;
-    return ret;
+    return (Value){ .type = VAL_SCALAR, .scalar = 0 };
 }
 
 Value elementwise_pow_values(Value a, Value b) {
-    Value ret;
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        ret.type = VAL_SCALAR;
-        ret.scalar = pow(a.scalar, b.scalar);
-        return ret;
+        return (Value){ .type = VAL_SCALAR, .scalar = pow(a.scalar, b.scalar) };
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in element-wise exponentiation\n");
             error_flag = 1;
-            ret.type = VAL_SCALAR; ret.scalar = 0;
-            return ret;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
         int size = a.matrix.rows * a.matrix.cols;
-        ret.type = VAL_MATRIX;
-        ret.matrix.rows = a.matrix.rows;
-        ret.matrix.cols = a.matrix.cols;
+        Value ret = { .type = VAL_MATRIX, .matrix = { a.matrix.rows, a.matrix.cols, NULL } };
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
@@ -1073,9 +1028,7 @@ Value elementwise_pow_values(Value a, Value b) {
         return ret;
     } else if (a.type == VAL_SCALAR && b.type == VAL_MATRIX) {
         int size = b.matrix.rows * b.matrix.cols;
-        ret.type = VAL_MATRIX;
-        ret.matrix.rows = b.matrix.rows;
-        ret.matrix.cols = b.matrix.cols;
+        Value ret = { .type = VAL_MATRIX, .matrix = { b.matrix.rows, b.matrix.cols, NULL } };
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
@@ -1083,17 +1036,14 @@ Value elementwise_pow_values(Value a, Value b) {
         return ret;
     } else if (a.type == VAL_MATRIX && b.type == VAL_SCALAR) {
         int size = a.matrix.rows * a.matrix.cols;
-        ret.type = VAL_MATRIX;
-        ret.matrix.rows = a.matrix.rows;
-        ret.matrix.cols = a.matrix.cols;
+        Value ret = { .type = VAL_MATRIX, .matrix = { a.matrix.rows, a.matrix.cols, NULL } };
         ret.matrix.data = malloc(size * sizeof(double));
         if (!ret.matrix.data) { printf("Error: Memory allocation failed\n"); exit(1); }
         for (int i = 0; i < size; i++)
             ret.matrix.data[i] = pow(a.matrix.data[i], b.scalar);
         return ret;
     }
-    ret.type = VAL_SCALAR; ret.scalar = 0;
-    return ret;
+    return (Value){ .type = VAL_SCALAR, .scalar = 0 };
 }
 
 /* --- Main REPL Loop --- */
@@ -1129,7 +1079,7 @@ int main(int argc, char *argv[]) {
         if (strlen(input) == 0)
             continue;
         
-        /* --- Change 1: Check for trailing semicolon --- */
+        /* --- Check for trailing semicolon --- */
         int suppress_output = 0;
         {
             int len = strlen(input);
@@ -1142,14 +1092,13 @@ int main(int argc, char *argv[]) {
             }
         }
         
-        /* --- Change 2: Handle "print" command --- */
-        // ~Line 645: Insert the print command handling block
+        /* --- Handle "print" command --- */
         if (strncmp(input, "print", 5) == 0 && (input[5] == ' ' || input[5] == '\t' || input[5] == '\0')) {
             const char *str_ptr = input + 5;
             while (*str_ptr && isspace((unsigned char)*str_ptr))
                 str_ptr++;
             if (*str_ptr == '"') {
-                str_ptr++; // Skip the opening quote.
+                str_ptr++;
                 char *end_quote = strchr(str_ptr, '"');
                 if (end_quote == NULL) {
                     printf("Error: Unterminated string literal in print command\n");
@@ -1167,7 +1116,6 @@ int main(int argc, char *argv[]) {
             } else {
                 printf("Error: Expected string literal after print command\n");
             }
-            /* (Optionally, insert your history-saving code here if needed.) */
             continue;
         }
         
@@ -1175,33 +1123,26 @@ int main(int argc, char *argv[]) {
             break;
         if (strcmp(input, "help") == 0) {
             print_help();
-            if (interactive) {
-                /* Save non-empty commands in history */
-                if (strlen(input) > 0) {
-                    if (history_count < MAX_HISTORY) {
-                        history[history_count++] = strdup(input);
-                    } else {
-                        free(history[0]);
-                        for (int i = 1; i < MAX_HISTORY; i++)
-                            history[i - 1] = history[i];
-                        history[MAX_HISTORY - 1] = strdup(input);
-                    }
+            if (interactive && strlen(input) > 0) {
+                if (history_count < MAX_HISTORY) {
+                    history[history_count++] = strdup(input);
+                } else {
+                    free(history[0]);
+                    memmove(history, history+1, sizeof(char*)*(MAX_HISTORY-1));
+                    history[MAX_HISTORY-1] = strdup(input);
                 }
             }
             continue;
         }
         if (strcmp(input, "list") == 0) {
             list_variables();
-            if (interactive) {
-                if (strlen(input) > 0) {
-                    if (history_count < MAX_HISTORY) {
-                        history[history_count++] = strdup(input);
-                    } else {
-                        free(history[0]);
-                        for (int i = 1; i < MAX_HISTORY; i++)
-                            history[i - 1] = history[i];
-                        history[MAX_HISTORY - 1] = strdup(input);
-                    }
+            if (interactive && strlen(input) > 0) {
+                if (history_count < MAX_HISTORY) {
+                    history[history_count++] = strdup(input);
+                } else {
+                    free(history[0]);
+                    memmove(history, history+1, sizeof(char*)*(MAX_HISTORY-1));
+                    history[MAX_HISTORY-1] = strdup(input);
                 }
             }
             continue;
@@ -1228,35 +1169,28 @@ int main(int argc, char *argv[]) {
                     error_flag = 0;
                     continue;
                 }
+                /* Store variable (ownership of result.data transfers here) */
                 set_variable(ident, result);
-                /* --- Change 3: Wrap assignment result printing --- */
                 if (!suppress_output) {
                     printf("%s = ", ident);
                     print_value(result);
                 }
-                if (result.type == VAL_MATRIX)
-                    free_value(&result);
-                if (interactive) {
-                    if (strlen(input) > 0) {
-                        if (history_count < MAX_HISTORY) {
-                            history[history_count++] = strdup(input);
-                        } else {
-                            free(history[0]);
-                            for (int i = 1; i < MAX_HISTORY; i++)
-                                history[i - 1] = history[i];
-                            history[MAX_HISTORY - 1] = strdup(input);
-                        }
+                if (interactive && strlen(input) > 0) {
+                    if (history_count < MAX_HISTORY) {
+                        history[history_count++] = strdup(input);
+                    } else {
+                        free(history[0]);
+                        memmove(history, history+1, sizeof(char*)*(MAX_HISTORY-1));
+                        history[MAX_HISTORY-1] = strdup(input);
                     }
                 }
                 continue;
             } else {
-                /* Not an assignment; reset pointer to start */
                 p = start;
             }
         }
         
-        /* --- Change 4: Wrap expression evaluation printing --- */
-        // ~Line 710: Expression evaluation branch
+        /* Expression evaluation */
         Value result = parse_expression();
         if (error_flag) {
             error_flag = 0;
@@ -1268,17 +1202,13 @@ int main(int argc, char *argv[]) {
         if (result.type == VAL_MATRIX)
             free_value(&result);
         
-        /* Save command in history (only in interactive mode) */
-        if (interactive) {
-            if (strlen(input) > 0) {
-                if (history_count < MAX_HISTORY) {
-                    history[history_count++] = strdup(input);
-                } else {
-                    free(history[0]);
-                    for (int i = 1; i < MAX_HISTORY; i++)
-                        history[i - 1] = history[i];
-                    history[MAX_HISTORY - 1] = strdup(input);
-                }
+        if (interactive && strlen(input) > 0) {
+            if (history_count < MAX_HISTORY) {
+                history[history_count++] = strdup(input);
+            } else {
+                free(history[0]);
+                memmove(history, history+1, sizeof(char*)*(MAX_HISTORY-1));
+                history[MAX_HISTORY-1] = strdup(input);
             }
         }
     }

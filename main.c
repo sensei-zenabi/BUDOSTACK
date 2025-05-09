@@ -227,7 +227,7 @@ void pager(const char **lines, size_t line_count) {
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
         w.ws_row = 24;
     }
-    int page_height = w.ws_row - 1;
+    int page_height = w.ws_row - 2;
     if (page_height < 1)
         page_height = 10;
     int start = 0;

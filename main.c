@@ -29,6 +29,7 @@ extern void say();
  * 0: paging disabled (used for realtime commands)
  */
 int paging_enabled = 1;
+int espeak_enable = 1;
 
 /* Global variable to store the base directory (extracted from the executable path)
  * so that relative paths like apps/ can be resolved.
@@ -544,7 +545,8 @@ int main(int argc, char *argv[]) {
             continue;
         }
         input[strcspn(input, "\n")] = '\0';
-        
+		if (espeak_enable) { say(input); };
+		        
         /* NEW: "restart" command handling.
          * When the user types "restart" or "restart -f", the shell first changes its working directory to the base directory,
          * then runs "make" to recompile itself. If "restart -f" is entered, "make clean" is executed before rebuilding.
@@ -588,6 +590,19 @@ int main(int argc, char *argv[]) {
                 exit(EXIT_FAILURE);
             }
             continue;
+        }
+
+        if (strcmp(input, "mute") == 0) {
+        	// set say() off / on
+			espeak_enable = !espeak_enable;
+			if (espeak_enable) {
+				printf("Voice assist disabled\n");
+			}
+			else {
+				printf("Voice assist enabled\n");
+			}
+        	free(input);
+        	continue;
         }
         
         if (strcmp(input, "exit") == 0) {
@@ -636,7 +651,6 @@ int main(int argc, char *argv[]) {
         }
         /* Default processing for other commands */
         parse_input(input, &cmd);
-        say(&cmd);
         execute_command_with_paging(&cmd);
         free(input);
         free_command_struct(&cmd);

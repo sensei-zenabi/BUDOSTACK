@@ -42,6 +42,7 @@ int main(int argc, char *argv[]) {
     printf("  list     : List contents of a directory (type 'list -help').\n");
     printf("  makedir  : Create a new directory.\n");
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
+	printf("  mute     : Enable/Disable Voice Assistant.\n");
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
     printf("  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n");

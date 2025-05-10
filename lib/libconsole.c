@@ -138,12 +138,11 @@ void login() {
 
 /* say: speak the given text via espeak if available.
    If espeak is not installed or fails, do nothing.
-   fflush(stdout) ensures any pending printf output appears
-   before we fork, and setting SIGCHLD=SIG_IGN prevents zombies
-   while we return immediately from the parent. */
+   Uses a double-fork so the parent never waits and no SIGCHLD
+   handling is needed (avoids interfering with other waitpid calls). */
 void say(const char *text)
 {
-    /* flush any pending stdout so printf without newline shows up */
+    /* flush stdout so any pending prints appear before we fork */
     fflush(stdout);
 
     /* check common locations for an executable espeak */
@@ -152,23 +151,36 @@ void say(const char *text)
         return;
     }
 
-    /* avoid zombie children by ignoring SIGCHLD */
-    signal(SIGCHLD, SIG_IGN);
-
+    /* first fork: parent returns immediately */
     pid_t pid = fork();
     if (pid < 0) {
-        /* fork failed; silently give up */
+        /* fork failed; give up */
         return;
     }
-    if (pid == 0) {
-        /* child: run espeak and exit */
-        execlp("espeak", "espeak",
-               "-p", "25",
-               "-g", "1",
-               text,
-               (char *)NULL);
-        /* if exec fails, just exit child silently */
+    if (pid > 0) {
+        /* parent: don't wait, just return */
+        return;
+    }
+
+    /* first child: fork again to detach */
+    pid_t pid2 = fork();
+    if (pid2 < 0) {
+        /* second fork failed; exit child */
         _exit(EXIT_FAILURE);
     }
-    /* parent returns immediately without waiting */
+    if (pid2 > 0) {
+        /* first child exits immediately */
+        _exit(EXIT_SUCCESS);
+    }
+
+    /* grandchild: replace with espeak */
+    execlp("espeak", "espeak",
+           "-p", "25",
+           "-g", "1",
+           text,
+           (char *)NULL);
+
+    /* if exec fails, just exit */
+    _exit(EXIT_FAILURE);
 }
+

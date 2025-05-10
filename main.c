@@ -22,6 +22,7 @@
 
 extern void printlogo();
 extern void login();
+extern void say();
 
 /* Global variable to control paging.
  * 1: paging enabled (default)
@@ -518,6 +519,7 @@ int main(int argc, char *argv[]) {
     }
 
     printf("\nSYSTEM READY");
+    say("system ready");
     printf("\nType 'help' for command list.");
     printf("\nType 'exit' to quit.\n\n");
 

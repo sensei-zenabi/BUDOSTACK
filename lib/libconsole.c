@@ -22,6 +22,8 @@
 #include <string.h>
 #include <limits.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <sys/wait.h>   /* for waitpid */
 
 // If PATH_MAX is not defined, define it.
 #ifndef PATH_MAX
@@ -132,4 +134,41 @@ void login() {
     } else {
         //printf("Current directory changed to %s\n", new_path);
     }
+}
+
+/* say: speak the given text via espeak if available.
+   If espeak is not installed or fails, do nothing.
+   fflush(stdout) ensures any pending printf output appears
+   before we fork, and setting SIGCHLD=SIG_IGN prevents zombies
+   while we return immediately from the parent. */
+void say(const char *text)
+{
+    /* flush any pending stdout so printf without newline shows up */
+    fflush(stdout);
+
+    /* check common locations for an executable espeak */
+    if (access("/usr/bin/espeak", X_OK) != 0 &&
+        access("/usr/local/bin/espeak", X_OK) != 0) {
+        return;
+    }
+
+    /* avoid zombie children by ignoring SIGCHLD */
+    signal(SIGCHLD, SIG_IGN);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        /* fork failed; silently give up */
+        return;
+    }
+    if (pid == 0) {
+        /* child: run espeak and exit */
+        execlp("espeak", "espeak",
+               "-p", "25",
+               "-g", "1",
+               text,
+               (char *)NULL);
+        /* if exec fails, just exit child silently */
+        _exit(EXIT_FAILURE);
+    }
+    /* parent returns immediately without waiting */
 }

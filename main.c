@@ -636,6 +636,7 @@ int main(int argc, char *argv[]) {
         }
         /* Default processing for other commands */
         parse_input(input, &cmd);
+        say(&cmd);
         execute_command_with_paging(&cmd);
         free(input);
         free_command_struct(&cmd);

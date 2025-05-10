@@ -34,6 +34,7 @@ PACKAGES=(
     "git"
     "tmux"
     "zip"
+    "espeak"
 )
 
 # Function: prompt_user
@@ -89,10 +90,10 @@ main() {
 
     echo "All requested packages have been processed."
 	echo ""
-	echo "Building AALTO..."
+	echo "Building BUDOSTACK..."
 	make clean
 	make
-	echo "AALTO setup finished successfully!"
+	echo "BUDOSTACK setup finished successfully!"
 }
 
 # Execute main if the script is run directly.

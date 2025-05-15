@@ -65,6 +65,7 @@ int main(int argc, char *argv[]) {
 	printf("  csvclean : Basic .csv data cleaning method, type 'csvclean -help'.\n");
 	printf("  csvplot  : ASCII x-y plotter for .csv files.\n");
 	printf("  csvstat  : Calculate statistics from .csv file columns.\n");
+	printf("  signal   : Signal generator. Type 'signal' for help.\n");
     printf("  skydial  : Simple sky-dial to identify and locate celestial objects.\n");
     printf("             Type 'skydial lat lon' to tell your position.\n");
     printf("  solar    : Visualizes the solar system and it's planets. 'solar X', where\n");

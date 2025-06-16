@@ -10,9 +10,11 @@
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
 #include <string.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <time.h>
 
 /*
  * Design principles and notes:
@@ -100,7 +102,7 @@ struct EditorConfig {
     struct termios orig_termios; // original terminal settings
 
     char status_message[80];
-    int textrows;         // text area rows (will be screenrows - 2)
+    int textrows;         // text area rows (screenrows - 3 for three bars)
 
     /* Selection fields:
        CTRL+T toggles selection mode.
@@ -211,6 +213,7 @@ int editorRowCxToByteIndex(EditorLine *row, int cx);
 void editorRenderRow(EditorLine *row, int avail, struct abuf *ab);
 void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab);
 void editorDrawRows(struct abuf *ab, int rn_width);
+void editorDrawTopBar(struct abuf *ab);
 void editorDrawStatusBar(struct abuf *ab);
 void editorDrawShortcutBar(struct abuf *ab);
 void editorProcessKeypress(void);
@@ -448,6 +451,23 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
     }
 }
 
+void editorDrawTopBar(struct abuf *ab) {
+    time_t now = time(NULL);
+    struct tm *tm = localtime(&now);
+    char buf[64];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
+    abAppend(ab, "\x1b[2m", 4);
+    int len = strlen(buf);
+    if (len > E.screencols) len = E.screencols;
+    int padding = (E.screencols - len) / 2;
+    for (int i = 0; i < padding; i++)
+        abAppend(ab, " ", 1);
+    abAppend(ab, buf, len);
+    for (int i = padding + len; i < E.screencols; i++)
+        abAppend(ab, " ", 1);
+    abAppend(ab, "\x1b[0m", 4);
+}
+
 void editorDrawStatusBar(struct abuf *ab) {
     char status[80];
     char rstatus[32];
@@ -485,12 +505,16 @@ void editorRefreshScreen(void) {
     update_syntax();  // update multi-line comment state before drawing
     struct abuf ab = ABUF_INIT;
     int rn_width = getRowNumWidth();
-    E.textrows = E.screenrows - 2;
+    E.textrows = E.screenrows - 3;
     abAppend(&ab, "\x1b[?25l", 6);
     abAppend(&ab, "\x1b[H", 3);
+    editorDrawTopBar(&ab);
+    char posbuf[32];
+    int poslen = snprintf(posbuf, sizeof(posbuf), "\x1b[2;1H");
+    abAppend(&ab, posbuf, poslen);
     editorDrawRows(&ab, rn_width);
     char buf[32];
-    int len = snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.textrows + 1);
+    int len = snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.textrows + 2);
     abAppend(&ab, buf, len);
     abAppend(&ab, "\x1b[2m", 4);
     editorDrawStatusBar(&ab);
@@ -498,9 +522,9 @@ void editorRefreshScreen(void) {
     len = snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.screenrows);
     abAppend(&ab, buf, len);
     editorDrawShortcutBar(&ab);
-    int cursor_y = (E.cy - E.rowoff) + 1;
+    int cursor_y = (E.cy - E.rowoff) + 2;
     int cursor_x = rn_width + E.cx + 1;
-    if (cursor_y < 1) cursor_y = 1;
+    if (cursor_y < 2) cursor_y = 2;
     if (cursor_x < 1) cursor_x = 1;
     len = snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cursor_y, cursor_x);
     abAppend(&ab, buf, len);
@@ -1473,7 +1497,7 @@ int main(int argc, char *argv[]) {
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1)
         die("getWindowSize");
-    E.textrows = E.screenrows - 2;
+    E.textrows = E.screenrows - 3;
 
     if (argc >= 2)
         editorOpen(argv[1]);
@@ -1485,7 +1509,17 @@ int main(int argc, char *argv[]) {
     enableRawMode();
     while (1) {
         editorRefreshScreen();
-        editorProcessKeypress();
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
+        if (ret == -1)
+            die("select");
+        if (ret > 0)
+            editorProcessKeypress();
     }
     return 0;
 }

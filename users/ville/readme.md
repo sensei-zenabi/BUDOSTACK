@@ -2,6 +2,14 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Monday, 16th of May 2025 ###
+
+It has been a while since my last update. However, just recently OpenAI launched their new feature
+called "CODEX", which enables one connecting github account and selected repositories to chatgpt.
+I had to test it out, and as a result I created two capabilities to BUDOSTACK edit app: fist one
+being the time/date top bar, and second being the capability to copy -> paste stuff from editor
+to 3rd part apps, such as web browser etc.
+
 ### Friday, 9th of May 2025 ###
 
 It has been a while since last diary entry. However, today I felt enough inspired to continue this

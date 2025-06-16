@@ -231,6 +231,8 @@ void editorCopySelection(void);
 void editorCutSelection(void);
 void editorPasteClipboard(void);
 void editorInsertString(const char *s);
+void systemClipboardWrite(const char *s);
+char *systemClipboardRead(void);
 
 /* New function prototypes */
 void editorDeleteSelection(void);
@@ -1200,6 +1202,7 @@ void editorCopySelection(void) {
     free(clipboard);
     clipboard = buf;
     clipboard_len = len;
+	systemClipboardWrite(clipboard);
     snprintf(E.status_message, sizeof(E.status_message),
              "Copied selection (%zu bytes)", clipboard_len);
 }
@@ -1254,6 +1257,12 @@ void editorCutSelection(void) {
 }
 
 void editorPasteClipboard(void) {
+    char *sys = systemClipboardRead();
+    if (sys) {
+        free(clipboard);
+        clipboard = sys;
+        clipboard_len = strlen(clipboard);
+    }
     if (!clipboard)
         return;
     push_undo_state();
@@ -1270,6 +1279,46 @@ void editorInsertString(const char *s) {
             editorInsertChar(*s);
         s++;
     }
+}
+
+void systemClipboardWrite(const char *s) {
+    if (!s)
+        return;
+    FILE *fp = popen("xclip -selection clipboard", "w");
+    if (!fp)
+        return;
+    fwrite(s, 1, strlen(s), fp);
+    pclose(fp);
+}
+
+char *systemClipboardRead(void) {
+    FILE *fp = popen("xclip -selection clipboard -o 2>/dev/null", "r");
+    if (!fp)
+        return NULL;
+    size_t cap = 256;
+    char *buf = malloc(cap);
+    if (!buf) {
+        pclose(fp);
+        return NULL;
+    }
+    size_t len = 0;
+    int c;
+    while ((c = fgetc(fp)) != EOF) {
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *tmp = realloc(buf, cap);
+            if (!tmp) {
+                free(buf);
+                pclose(fp);
+                return NULL;
+            }
+            buf = tmp;
+        }
+        buf[len++] = c;
+    }
+    buf[len] = '\0';
+    pclose(fp);
+    return buf;
 }
 
 /*** Modified editorInsertNewline with auto-indent ***

@@ -22,9 +22,13 @@ int main(int argc, char *argv[]) {
     printf("\n");
 
     printf("-----------------------------------------------------------------------------\n");
-    printf("/* Apps I am proud of: */\n\n");
+    printf("/* TOP Apps */\n\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");
     printf("             Supported languages: C/C++, Markup\n");
+    printf("  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n");
+    printf("             Use 'restart -f' to clean before building.\n");
+    printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
+    printf("             e.g. 'run git status' or 'run ./myexecutable'\n");
     printf("\n");
 
     // Print available apps and commands
@@ -49,10 +53,6 @@ int main(int argc, char *argv[]) {
     printf("  mute     : Enable/Disable Voice Assistant.\n");
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
-    printf("  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n");
-    printf("             Use 'restart -f' to clean before building.\n");
-    printf("  run      : Run any executable/shell script or execute linux terminal cmd.\n");
-    printf("             e.g. 'run git status' or 'run ./myexecutable'\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");

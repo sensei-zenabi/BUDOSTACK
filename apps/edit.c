@@ -504,7 +504,7 @@ void editorDrawShortcutBar(struct abuf *ab) {
 
 /*** Modified Screen Refresh Routine ***/
 void editorRefreshScreen(void) {
-   	update_syntax();
+    update_syntax();
     struct abuf ab = ABUF_INIT;
     int rn_width = getRowNumWidth();
     E.textrows = E.screenrows - 3;                // space for top bar + two bottom bars
@@ -1047,6 +1047,7 @@ void editorSearch(void) {
 
     /* Switch to the alternate screen buffer so the search UI doesn't overlay the editor */
     printf("\033[?1049h");
+    printf("\033[H"); /* ensure prompt starts at the top */
     fflush(stdout);
 
     /* Temporarily disable raw mode to get query input if not from selection */
@@ -1141,6 +1142,7 @@ void editorSearch(void) {
 
     if (result != -1) {
         E.cy = result;
+        E.rowoff = E.cy; /* place found line at the top of the screen */
         char *posp = strcasestr_custom(E.row[result].chars, query);
         if (posp) {
             int col = 0;
@@ -1202,7 +1204,7 @@ void editorCopySelection(void) {
     free(clipboard);
     clipboard = buf;
     clipboard_len = len;
-	systemClipboardWrite(clipboard);
+    systemClipboardWrite(clipboard);
     snprintf(E.status_message, sizeof(E.status_message),
              "Copied selection (%zu bytes)", clipboard_len);
 }

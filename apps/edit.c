@@ -456,11 +456,14 @@ void editorDrawTopBar(struct abuf *ab) {
     struct tm *tm = localtime(&now);
     char buf[64];
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
-    abAppend(ab, "\x1b[2m", 4);      // dim color like the bottom bars
+    abAppend(ab, "\x1b[2m", 4);
     int len = strlen(buf);
     if (len > E.screencols) len = E.screencols;
+    int padding = (E.screencols - len) / 2;
+    for (int i = 0; i < padding; i++)
+        abAppend(ab, " ", 1);
     abAppend(ab, buf, len);
-    for (int i = len; i < E.screencols; i++)
+    for (int i = padding + len; i < E.screencols; i++)
         abAppend(ab, " ", 1);
     abAppend(ab, "\x1b[0m", 4);
 }

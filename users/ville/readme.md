@@ -8,7 +8,8 @@ It has been a while since my last update. However, just recently OpenAI launched
 called "CODEX", which enables one connecting github account and selected repositories to chatgpt.
 I had to test it out, and as a result I created two capabilities to BUDOSTACK edit app: fist one
 being the time/date top bar, and second being the capability to copy -> paste stuff from editor
-to 3rd part apps, such as web browser etc.
+to 3rd part apps, such as web browser etc. Also, fixed the CTRL+F search mode so that the search
+prompt is always displayed on top of screen.
 
 ### Friday, 9th of May 2025 ###
 

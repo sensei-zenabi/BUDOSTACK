@@ -21,6 +21,12 @@ int main(int argc, char *argv[]) {
     printf("Note! AI has been used in the development of this software.\n");
     printf("\n");
 
+    printf("-----------------------------------------------------------------------------\n");
+    printf("/* Apps I am proud of: */\n\n");
+    printf("  edit     : Opens a basic file editor: edit <filename>.\n");
+    printf("             Supported languages: C/C++, Markup\n");
+    printf("\n");
+
     // Print available apps and commands
     printf("-----------------------------------------------------------------------------\n");
     printf("/* Generic Commands */\n");
@@ -30,19 +36,17 @@ int main(int argc, char *argv[]) {
     printf("  cls      : Clear terminal screen.\n");
     printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
-	printf("  crc32    : Calculate and/or verify CRC32 checksum of a file.\n");
+    printf("  crc32    : Calculate and/or verify CRC32 checksum of a file.\n");
     printf("  ctalk    : Simple UDP based LAN chat. Start with 'ctalk myname'.\n");
     printf("  display  : Display the contents of a file.\n");
     printf("  drives   : Lists all found drives.\n");
-    printf("  edit     : Opens a basic file editor: edit <filename>.\n");
-    printf("             Supported languages: C/C++, Markup\n");
     printf("  find     : Find anything.\n");
     printf("  git      : Git helper, type git -help.\n");
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (type 'list -help').\n");
     printf("  makedir  : Create a new directory.\n");
     printf("  move     : Moves anything. Can be used for renaming as well.\n");
-	printf("  mute     : Enable/Disable Voice Assistant.\n");
+    printf("  mute     : Enable/Disable Voice Assistant.\n");
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");
     printf("  remove   : Remove anything, whether it is a file or folder.\n");
     printf("  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n");
@@ -62,10 +66,10 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  cmath    : Math interpreter that has interactive mode and macro execution.\n");
     printf("             To run existing macro, type 'cmath mymacro.m'.\n");
-	printf("  csvclean : Basic .csv data cleaning method, type 'csvclean -help'.\n");
-	printf("  csvplot  : ASCII x-y plotter for .csv files.\n");
-	printf("  csvstat  : Calculate statistics from .csv file columns.\n");
-	printf("  signal   : Signal generator. Type 'signal' for help.\n");
+    printf("  csvclean : Basic .csv data cleaning method, type 'csvclean -help'.\n");
+    printf("  csvplot  : ASCII x-y plotter for .csv files.\n");
+    printf("  csvstat  : Calculate statistics from .csv file columns.\n");
+    printf("  signal   : Signal generator. Type 'signal' for help.\n");
     printf("  skydial  : Simple sky-dial to identify and locate celestial objects.\n");
     printf("             Type 'skydial lat lon' to tell your position.\n");
     printf("  solar    : Visualizes the solar system and it's planets. 'solar X', where\n");

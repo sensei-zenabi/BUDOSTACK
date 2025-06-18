@@ -1246,7 +1246,16 @@ void editorReplace(void) {
             E.sel_anchor_y = i;
             E.cx = cx_end;
             E.cy = i;
-            E.rowoff = E.cy;
+            if (i < E.rowoff || i >= E.rowoff + E.textrows) {
+                int offset = E.textrows / 2 - 1;
+                if (offset < 0) offset = 0;
+                int new_rowoff = i - offset;
+                if (new_rowoff < 0) new_rowoff = 0;
+                if (new_rowoff > E.numrows - E.textrows)
+                    new_rowoff = E.numrows - E.textrows;
+                if (new_rowoff < 0) new_rowoff = 0;
+                E.rowoff = new_rowoff;
+            }
             E.selecting = 1;
             editorRefreshScreen();
             snprintf(E.status_message, sizeof(E.status_message),

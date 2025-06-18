@@ -515,7 +515,7 @@ void editorDrawShortcutBar(struct abuf *ab) {
     abAppend(ab, "\x1b[2m", 4);
     char menu[256];
     int menu_len = snprintf(menu, sizeof(menu),
-             "Ctrl+Q Quit | Ctrl+S Save | Ctrl+Z Undo | Ctrl+X Cut | Ctrl+C Copy | Ctrl+V Paste | Ctrl+T Select | Ctrl+A Select All | Ctrl+F Search");
+             "| ^Q Quit | ^S Save | ^Z Undo | ^X Cut | ^C Copy | ^V Paste | ^T Select | ^A Select All | ^F Search | ^R Replace  |");
     if (menu_len > E.screencols) menu_len = E.screencols;
     abAppend(ab, menu, menu_len);
     for (int i = menu_len; i < E.screencols; i++)
@@ -832,11 +832,11 @@ void editorProcessKeypress(void) {
             editorSearch();
             last_key_was_vertical = 0;
             break;
-		case CTRL_KEY('r'):
-		            push_undo_state();
-		            editorReplace();
-		            last_key_was_vertical = 0;
-		            break;
+        case CTRL_KEY('r'):
+                    push_undo_state();
+                    editorReplace();
+                    last_key_was_vertical = 0;
+                    break;
         case '\r':
             push_undo_state();
             editorInsertNewline();

@@ -210,6 +210,7 @@ void editorRefreshScreen(void);
 int getRowNumWidth(void);
 int editorDisplayWidth(const char *s);
 int editorRowCxToByteIndex(EditorLine *row, int cx);
+int editorRowByteIndexToCx(EditorLine *row, int byte_index);
 void editorRenderRow(EditorLine *row, int avail, struct abuf *ab);
 void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab);
 void editorDrawRows(struct abuf *ab, int rn_width);
@@ -238,6 +239,7 @@ char *systemClipboardRead(void);
 void editorDeleteSelection(void);
 void editorDelCharAtCursor(void);
 void editorSearch(void);
+void editorReplace(void);
 
 /* --- New Function: update_syntax ---
    Updates each line’s multi-line comment state.
@@ -314,6 +316,25 @@ int editorRowCxToByteIndex(EditorLine *row, int cx) {
         cur_width += w; index += bytes;
     }
     return index;
+}
+
+int editorRowByteIndexToCx(EditorLine *row, int byte_index) {
+    int cx = 0;
+    int index = 0;
+    size_t bytes;
+    wchar_t wc;
+    while (index < row->size && index < byte_index) {
+        bytes = mbrtowc(&wc, row->chars + index, MB_CUR_MAX, NULL);
+        if (bytes == (size_t)-1 || bytes == (size_t)-2) {
+            bytes = 1;
+            wc = row->chars[index];
+        }
+        int w = wcwidth(wc);
+        if (w < 0) w = 0;
+        cx += w;
+        index += bytes;
+    }
+    return cx;
 }
 
 /*** Modified Drawing Functions Using Append Buffer ***/
@@ -811,6 +832,11 @@ void editorProcessKeypress(void) {
             editorSearch();
             last_key_was_vertical = 0;
             break;
+		case CTRL_KEY('r'):
+		            push_undo_state();
+		            editorReplace();
+		            last_key_was_vertical = 0;
+		            break;
         case '\r':
             push_undo_state();
             editorInsertNewline();
@@ -1156,6 +1182,109 @@ void editorSearch(void) {
     } else {
         snprintf(E.status_message, sizeof(E.status_message), "Search canceled");
     }
+}
+
+void editorReplace(void) {
+    char search[256] = "";
+    char replace[256] = "";
+
+    printf("\033[?1049h");
+    printf("\033[H");
+    fflush(stdout);
+
+    disableRawMode();
+    printf("\rSearch string: ");
+    fflush(stdout);
+    if (fgets(search, sizeof(search), stdin) == NULL) {
+        enableRawMode();
+        printf("\033[?1049l");
+        fflush(stdout);
+        return;
+    }
+    search[strcspn(search, "\n")] = '\0';
+
+    printf("Replace with: ");
+    fflush(stdout);
+    if (fgets(replace, sizeof(replace), stdin) == NULL) {
+        enableRawMode();
+        printf("\033[?1049l");
+        fflush(stdout);
+        return;
+    }
+    replace[strcspn(replace, "\n")] = '\0';
+    enableRawMode();
+
+    printf("\033[?1049l");
+    fflush(stdout);
+
+    int search_len = strlen(search);
+    if (search_len == 0) {
+        snprintf(E.status_message, sizeof(E.status_message), "Empty search string");
+        return;
+    }
+
+    int replace_len = strlen(replace);
+    int replace_count = 0;
+
+    int saved_selecting = E.selecting;
+    int saved_anchor_x = E.sel_anchor_x;
+    int saved_anchor_y = E.sel_anchor_y;
+    E.selecting = 0;
+
+    for (int i = 0; i < E.numrows; i++) {
+        EditorLine *row = &E.row[i];
+        int start_byte = 0;
+        while (1) {
+            char *match = strcasestr_custom(row->chars + start_byte, search);
+            if (!match)
+                break;
+            int index = match - row->chars;
+            int cx_start = editorRowByteIndexToCx(row, index);
+            int cx_end = cx_start + editorDisplayWidth(search);
+
+            E.sel_anchor_x = cx_start;
+            E.sel_anchor_y = i;
+            E.cx = cx_end;
+            E.cy = i;
+            E.rowoff = E.cy;
+            E.selecting = 1;
+            editorRefreshScreen();
+            snprintf(E.status_message, sizeof(E.status_message),
+                     "Replace? Enter=Yes, ESC=Quit");
+
+            int c = editorReadKey();
+            E.selecting = 0;
+            if (c == 27) { /* ESC */
+                E.selecting = saved_selecting;
+                E.sel_anchor_x = saved_anchor_x;
+                E.sel_anchor_y = saved_anchor_y;
+                snprintf(E.status_message, sizeof(E.status_message), "Replace canceled");
+                return;
+            }
+            if (c == '\r') {
+                char *new_chars = malloc(row->size - search_len + replace_len + 1);
+                if (!new_chars)
+                    return;
+                memcpy(new_chars, row->chars, index);
+                memcpy(new_chars + index, replace, replace_len);
+                strcpy(new_chars + index + replace_len, row->chars + index + search_len);
+                free(row->chars);
+                row->chars = new_chars;
+                row->size = strlen(new_chars);
+                row->modified = 1;
+                E.dirty = 1;
+                replace_count++;
+                start_byte = index + replace_len;
+            } else {
+                start_byte = index + search_len;
+            }
+        }
+    }
+
+    E.selecting = saved_selecting;
+    E.sel_anchor_x = saved_anchor_x;
+    E.sel_anchor_y = saved_anchor_y;
+    snprintf(E.status_message, sizeof(E.status_message), "Replaced %d occurrence(s)", replace_count);
 }
 
 /*** Clipboard and Selection Functions ***/

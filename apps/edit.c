@@ -213,6 +213,7 @@ int editorRowCxToByteIndex(EditorLine *row, int cx);
 int editorRowByteIndexToCx(EditorLine *row, int byte_index);
 void editorRenderRow(EditorLine *row, int avail, struct abuf *ab);
 void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab);
+void abAppendHighlighted(struct abuf *ab, const char *s, int avail);
 void editorDrawRows(struct abuf *ab, int rn_width);
 void editorDrawTopBar(struct abuf *ab); 
 void editorDrawStatusBar(struct abuf *ab);
@@ -337,9 +338,37 @@ int editorRowByteIndexToCx(EditorLine *row, int byte_index) {
     return cx;
 }
 
+/* Append a highlighted line to the buffer, respecting the available width.
+   Escape sequences (starting with '\x1b') do not consume display width. */
+void abAppendHighlighted(struct abuf *ab, const char *s, int avail) {
+    int width = 0;
+    const char *p = s;
+    while (*p && width < avail) {
+        if (*p == '\x1b') {
+            const char *start = p++;
+            /* Consume the rest of the escape sequence */
+            while (*p && (*p < '@' || *p > '~'))
+                p++;
+            if (*p) p++;
+            abAppend(ab, start, p - start);
+        } else {
+            wchar_t wc;
+            size_t bytes = mbrtowc(&wc, p, MB_CUR_MAX, NULL);
+            if (bytes == (size_t)-1 || bytes == (size_t)-2) bytes = 1;
+            int w = wcwidth(wc);
+            if (w < 0) w = 0;
+            if (width + w > avail) break;
+            abAppend(ab, p, bytes);
+            width += w;
+            p += bytes;
+        }
+    }
+}
+
 /*** Modified Drawing Functions Using Append Buffer ***/
 void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
-    int logical_width = 0, byte_index = 0;
+    int logical_width = 0;
+    int byte_index = editorRowCxToByteIndex(row, E.coloff);
     char buffer[1024];
     int buf_index = 0;
     size_t bytes;
@@ -362,7 +391,8 @@ void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
 }
 
 void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab) {
-    int logical_width = 0, byte_index = 0;
+    int logical_width = 0;
+    int byte_index = editorRowCxToByteIndex(row, E.coloff);
     size_t bytes;
     wchar_t wc;
     int current_disp = 0;
@@ -438,20 +468,24 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
             
             if (E.selecting) {
                 editorRenderRowWithSelection(&E.row[file_row], file_row, text_width, ab);
-            } else if (is_c_source()) {
-                /* Pass the current multi-line comment state for this line */
-                char *highlighted = highlight_c_line(E.row[file_row].chars, E.row[file_row].hl_in_comment);
-                if (highlighted) {
-                    abAppend(ab, highlighted, strlen(highlighted));
-                    free(highlighted);
-                } 
-            } else {
-                // Use this for all other files
-                char *highlighted = highlight_other_line(E.row[file_row].chars);
-                if (highlighted) {
-                    abAppend(ab, highlighted, strlen(highlighted));
-                    free(highlighted);
+            } else if (E.coloff == 0) {
+                if (is_c_source()) {
+                    /* Pass the current multi-line comment state for this line */
+                    char *highlighted = highlight_c_line(E.row[file_row].chars, E.row[file_row].hl_in_comment);
+                    if (highlighted) {
+                        abAppendHighlighted(ab, highlighted, text_width);
+                        free(highlighted);
+                    }
+                } else {
+                    // Use this for all other files
+                    char *highlighted = highlight_other_line(E.row[file_row].chars);
+                    if (highlighted) {
+                        abAppendHighlighted(ab, highlighted, text_width);
+                        free(highlighted);
+                    }
                 }
+            } else {
+                editorRenderRow(&E.row[file_row], text_width, ab);
             }
             
             int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;
@@ -545,7 +579,7 @@ void editorRefreshScreen(void) {
     abAppend(&ab, buf, len);
     editorDrawShortcutBar(&ab);
     int cursor_y = (E.cy - E.rowoff) + 2;         // cursor is below top bar
-    int cursor_x = rn_width + E.cx + 1;
+    int cursor_x = rn_width + (E.cx - E.coloff) + 1;
     if (cursor_y < 2) cursor_y = 2;
     if (cursor_x < 1) cursor_x = 1;
     len = snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cursor_y, cursor_x);
@@ -933,6 +967,13 @@ void editorProcessKeypress(void) {
         E.rowoff = E.cy;
     if (E.cy >= E.rowoff + E.textrows)
         E.rowoff = E.cy - E.textrows + 1;
+
+    int rn_width = getRowNumWidth();
+    int text_width = E.screencols - rn_width - 1;
+    if (E.cx < E.coloff)
+        E.coloff = E.cx;
+    if (E.cx >= E.coloff + text_width)
+        E.coloff = E.cx - text_width + 1;
 }
 
 /*** New Functions for Selection Deletion and Delete Key ***/

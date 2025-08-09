@@ -2,6 +2,13 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Saturday, 9th of August 2025 ###
+
+Ok, GPT 5 by OpenAI was release few days ago. My long time trouble app edit.c was the chosen 
+benchmark to test whether it really is worth of the hype. It seems, that with first try it was
+able to fix some long term bugs that none of the earlier models were able to fix. The future is
+in creativity and prompts.
+
 ### Monday, 16th of May 2025 ###
 
 It has been a while since my last update. However, just recently OpenAI launched their new feature

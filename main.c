@@ -596,10 +596,10 @@ int main(int argc, char *argv[]) {
         	// set say() off / on
 			espeak_enable = !espeak_enable;
 			if (espeak_enable) {
-				printf("Voice assist disabled\n");
+				printf("Voice assist enabled\n");
 			}
 			else {
-				printf("Voice assist enabled\n");
+				printf("Voice assist disabled\n");
 			}
         	free(input);
         	continue;

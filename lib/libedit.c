@@ -4,10 +4,11 @@
  * This version extends the syntax highlighter to provide industry standard
  * highlighting for C source code. It highlights:
  *   - C keywords: control keywords in blue and data type keywords in cyan.
- *   - Numeric literals in yellow.
+ *   - Numeric literals in yellow (supports decimal, hex, binary and exponents).
  *   - String and character literals in green.
  *   - Single-line comments (dashdash) and multi-line comments (dashstar ... stardash) in gray.
- *   - Parentheses in magenta.
+ *   - Parentheses, braces and brackets in magenta.
+ *   - Function names in bright cyan.
  *
  * Design principles:
  *  - Plain C using -std=c11 and only standard libraries.
@@ -213,6 +214,25 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                     ri += rl;
                     i = j;
                     continue;
+                } else {
+                    size_t k2 = j;
+                    while (k2 < len && isspace((unsigned char)line[k2]))
+                        k2++;
+                    if (k2 < len && line[k2] == '(') {
+                        const char *fn_color = "\x1b[96m";  // bright cyan for function names
+                        size_t cl2 = strlen(fn_color);
+                        memcpy(result + ri, fn_color, cl2);
+                        ri += cl2;
+                        for (size_t k = i; k < j; k++) {
+                            result[ri++] = line[k];
+                        }
+                        const char *reset = "\x1b[0m";
+                        size_t rl2 = strlen(reset);
+                        memcpy(result + ri, reset, rl2);
+                        ri += rl2;
+                        i = j;
+                        continue;
+                    }
                 }
             }
             /* Check for numeric literals */
@@ -221,11 +241,40 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                 size_t cl = strlen(num_color);
                 memcpy(result + ri, num_color, cl);
                 ri += cl;
-                while (i < len && isdigit((unsigned char)line[i])) {
-                    result[ri++] = line[i++];
+                if (line[i] == '0' && i + 1 < len) {
+                    if (line[i + 1] == 'x' || line[i + 1] == 'X') {
+                        result[ri++] = line[i++];
+                        result[ri++] = line[i++];
+                        while (i < len && isxdigit((unsigned char)line[i])) {
+                            result[ri++] = line[i++];
+                        }
+                    } else if (line[i + 1] == 'b' || line[i + 1] == 'B') {
+                        result[ri++] = line[i++];
+                        result[ri++] = line[i++];
+                        while (i < len && (line[i] == '0' || line[i] == '1')) {
+                            result[ri++] = line[i++];
+                        }
+                    } else {
+                        while (i < len && isdigit((unsigned char)line[i])) {
+                            result[ri++] = line[i++];
+                        }
+                    }
+                } else {
+                    while (i < len && isdigit((unsigned char)line[i])) {
+                        result[ri++] = line[i++];
+                    }
                 }
                 if (i < len && line[i] == '.') {
                     result[ri++] = line[i++];
+                    while (i < len && isdigit((unsigned char)line[i])) {
+                        result[ri++] = line[i++];
+                    }
+                }
+                if (i < len && (line[i] == 'e' || line[i] == 'E')) {
+                    result[ri++] = line[i++];
+                    if (i < len && (line[i] == '+' || line[i] == '-')) {
+                        result[ri++] = line[i++];
+                    }
                     while (i < len && isdigit((unsigned char)line[i])) {
                         result[ri++] = line[i++];
                     }
@@ -236,8 +285,8 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                 ri += rl;
                 continue;
             }
-            /* Check for parentheses */
-            if (line[i] == '(' || line[i] == ')') {
+            /* Check for parentheses and brackets */
+            if (strchr("(){}[]", line[i])) {
                 const char *paren_color = "\x1b[35m";  // magenta
                 size_t cl = strlen(paren_color);
                 memcpy(result + ri, paren_color, cl);
@@ -271,10 +320,11 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
  *
  * This updated version provides syntax highlighting for:
  *   - Markdown headers: if the first non-space character is '#' the entire line is colored red.
+ *   - List bullets (-, * or + followed by space) in green.
  *   - Markup tags: any content between '<' and '>' is colored blue.
  *   - Inline code spans: text enclosed in backticks (`) is colored cyan.
- *   - Bold text: text enclosed in double asterisks (**) is colored bold yellow.
- *   - Italic text: text enclosed in single asterisks (*) is colored italic magenta.
+ *   - Bold text: text enclosed in double asterisks (**) or underscores (__) is colored bold yellow.
+ *   - Italic text: text enclosed in single asterisks (*) or underscores (_) is colored italic magenta.
  *
  * Design principles:
  *  - Plain C using -std=c11 and only standard libraries.
@@ -316,10 +366,30 @@ char *highlight_other_line(const char *line) {
             ri += rl;
         }
     } else {
+        // Highlight list bullets (-, * or +) followed by a space
+        if (i < len && (line[i] == '-' || line[i] == '*' || line[i] == '+') &&
+            (i + 1 < len && line[i + 1] == ' ')) {
+            const char *bullet_color = "\x1b[32m";  // green for bullets
+            size_t cl = strlen(bullet_color);
+            if (ri + cl < buf_size) {
+                memcpy(result + ri, bullet_color, cl);
+                ri += cl;
+            }
+            result[ri++] = line[i++];
+            result[ri++] = line[i++];
+            const char *reset = "\x1b[0m";
+            size_t rl = strlen(reset);
+            if (ri + rl < buf_size) {
+                memcpy(result + ri, reset, rl);
+                ri += rl;
+            }
+        }
         // Process the line for markup tags, inline code, bold and italic markers
         int in_tag = 0;     // inside a <...> tag
-        int in_bold = 0;    // inside a bold (**...**) span
-        int in_italic = 0;  // inside an italic (*...*) span
+        int in_bold = 0;    // inside a bold span
+        int in_italic = 0;  // inside an italic span
+        char bold_marker = 0;
+        char italic_marker = 0;
         for (; i < len; i++) {
             char c = line[i];
             // Check for inline code span start (backtick) if not inside a tag
@@ -351,27 +421,25 @@ char *highlight_other_line(const char *line) {
                 continue;
             }
             // Check for bold and italic markers if not inside a tag
-            if (!in_tag && c == '*') {
-                // Bold marker: two asterisks
-                if (i + 1 < len && line[i + 1] == '*') {
+            if (!in_tag && (c == '*' || c == '_')) {
+                char marker = c;
+                if (i + 1 < len && line[i + 1] == marker) {
                     if (!in_bold) {
-                        // Start bold formatting
                         const char *bold_color = "\x1b[1;33m";  // bold yellow
                         size_t cl = strlen(bold_color);
                         if (ri + cl < buf_size) {
                             memcpy(result + ri, bold_color, cl);
                             ri += cl;
                         }
-                        // Append the bold marker "**"
-                        result[ri++] = '*';
-                        result[ri++] = '*';
+                        result[ri++] = marker;
+                        result[ri++] = marker;
                         in_bold = 1;
-                        i++;  // Skip the next '*'
+                        bold_marker = marker;
+                        i++;
                         continue;
-                    } else {
-                        // End bold formatting
-                        result[ri++] = '*';
-                        result[ri++] = '*';
+                    } else if (bold_marker == marker) {
+                        result[ri++] = marker;
+                        result[ri++] = marker;
                         const char *reset = "\x1b[0m";
                         size_t rl = strlen(reset);
                         if (ri + rl < buf_size) {
@@ -379,30 +447,31 @@ char *highlight_other_line(const char *line) {
                             ri += rl;
                         }
                         in_bold = 0;
-                        i++;  // Skip the next '*'
+                        bold_marker = 0;
+                        i++;
+                        continue;
+                    } else {
+                        result[ri++] = marker;
                         continue;
                     }
                 } else {
-                    // Single asterisk marker for italic
-                    // If currently in bold, treat single '*' as literal
-                    if (in_bold) {
-                        result[ri++] = '*';
+                    if (in_bold && bold_marker == marker) {
+                        result[ri++] = marker;
                         continue;
                     }
                     if (!in_italic) {
-                        // Start italic formatting
                         const char *italic_color = "\x1b[3;35m";  // italic magenta
                         size_t cl = strlen(italic_color);
                         if (ri + cl < buf_size) {
                             memcpy(result + ri, italic_color, cl);
                             ri += cl;
                         }
-                        result[ri++] = '*';
+                        result[ri++] = marker;
                         in_italic = 1;
+                        italic_marker = marker;
                         continue;
-                    } else {
-                        // End italic formatting
-                        result[ri++] = '*';
+                    } else if (italic_marker == marker) {
+                        result[ri++] = marker;
                         const char *reset = "\x1b[0m";
                         size_t rl = strlen(reset);
                         if (ri + rl < buf_size) {
@@ -410,6 +479,10 @@ char *highlight_other_line(const char *line) {
                             ri += rl;
                         }
                         in_italic = 0;
+                        italic_marker = 0;
+                        continue;
+                    } else {
+                        result[ri++] = marker;
                         continue;
                     }
                 }

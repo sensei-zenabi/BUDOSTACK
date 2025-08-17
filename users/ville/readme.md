@@ -2,6 +2,13 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Sunday, 17th of August 2025 ###
+
+Improved today edit.c and libedit.c using OpenAI's CODEX. The agentic AI creates an environment
+where it is able to analyze and run the budostack source code. It seems to be able to test the
+changes as well, and then create a PULL request to git to be reviewed. Interesting times we are
+living...
+
 ### Saturday, 9th of August 2025 ###
 
 Ok, GPT 5 by OpenAI was release few days ago. My long time trouble app edit.c was the chosen 

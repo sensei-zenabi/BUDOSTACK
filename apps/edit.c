@@ -1737,7 +1737,6 @@ int main(int argc, char *argv[]) {
 
     enableRawMode();
     while (1) {
-        editorRefreshScreen();
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
@@ -1747,8 +1746,24 @@ int main(int argc, char *argv[]) {
         int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
         if (ret == -1)
             die("select");
-        if (ret > 0)
-            editorProcessKeypress();
+
+        if (ret > 0) {
+            /*
+             * Process all pending input before refreshing the screen.  This
+             * drastically speeds up bracketed paste operations because the
+             * display is redrawn only once after the whole chunk is inserted.
+             */
+            do {
+                editorProcessKeypress();
+                FD_ZERO(&readfds);
+                FD_SET(STDIN_FILENO, &readfds);
+                tv.tv_sec = 0;
+                tv.tv_usec = 0;
+                ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
+            } while (ret > 0);
+        }
+
+        editorRefreshScreen();
     }
     return 0;
 }

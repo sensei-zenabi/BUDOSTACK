@@ -2,7 +2,7 @@
 **Programmed by:** Ville Suoranta, by using OpenAI tools.<br>
 **Status:** Early Access (in development)
 
-Check out development diary from [HERE](https://github.com/sensei-zenabi/BUDOSTACK/blob/main/users/ville/readme.md)
+Check out development blog from [HERE](https://sensei-zenabi.github.io/suoranta/index.html)
 
 ### Licence:
 BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 

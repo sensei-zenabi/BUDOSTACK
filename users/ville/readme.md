@@ -2,6 +2,12 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Monday, 18th of August 2025 ###
+
+I created a more suitable format for my development diary and started hosting it in github
+as a website using git's pages feature. It loads the readme.md hosting the diary and parses
+it as individual blog entries.
+
 ### Sunday, 17th of August 2025 ###
 
 Improved today edit.c and libedit.c using OpenAI's CODEX. The agentic AI creates an environment

@@ -293,7 +293,7 @@ int is_realtime_command(const char *command) {
  * - For realtime commands (or when the "-nopaging" flag is provided), execute directly.
  * - Otherwise, fork a child process to execute the command and capture its output.
  */
-void execute_command_with_paging(CommandStruct *cmd) {
+int execute_command_with_paging(CommandStruct *cmd) {
     int nopaging = 0;
     /* Check if the command parameters contain "-nopaging" flag. */
     for (int i = 0; i < cmd->param_count; i++) {
@@ -313,14 +313,13 @@ void execute_command_with_paging(CommandStruct *cmd) {
      * - The command is in the realtime command list loaded from apps/ folder.
      */
     if (nopaging || is_realtime_command(cmd->command)) {
-        execute_command(cmd);
-        return;
+        return execute_command(cmd);
     }
     
     int pipefd[2];
     if (pipe(pipefd) == -1) {
         perror("pipe");
-        return;
+        return execute_command(cmd);
     }
     
     pid_t pid = fork();
@@ -328,7 +327,7 @@ void execute_command_with_paging(CommandStruct *cmd) {
         perror("fork");
         close(pipefd[0]);
         close(pipefd[1]);
-        return;
+        return execute_command(cmd);
     }
     
     if (pid == 0) {
@@ -344,8 +343,8 @@ void execute_command_with_paging(CommandStruct *cmd) {
         }
         close(pipefd[0]);
         close(pipefd[1]);
-        execute_command(cmd);
-        exit(EXIT_SUCCESS);
+        int exec_ret = execute_command(cmd);
+        exit(exec_ret == 0 ? EXIT_SUCCESS : 127);
     }
     
     /* Parent process: Close write end and capture output */
@@ -361,9 +360,11 @@ void execute_command_with_paging(CommandStruct *cmd) {
     if (!output) {
         perror("malloc");
         close(pipefd[0]);
-        return;
+        int status; waitpid(pid, &status, 0);
+        return (WIFEXITED(status) && WEXITSTATUS(status) == 127) ? -1 : 0;
     }
     char buffer[4096];
+    int child_status = 0;
     
     /* Concurrently read from the pipe while monitoring the child process */
     while (1) {
@@ -382,7 +383,8 @@ void execute_command_with_paging(CommandStruct *cmd) {
                         perror("realloc");
                         free(output);
                         close(pipefd[0]);
-                        return;
+                        int status; waitpid(pid, &status, 0);
+                        return (WIFEXITED(status) && WEXITSTATUS(status) == 127) ? -1 : 0;
                     }
                     output = temp;
                 }
@@ -394,22 +396,24 @@ void execute_command_with_paging(CommandStruct *cmd) {
             }
         }
         /* Check if child has finished */
-        pid_t result = waitpid(pid, NULL, WNOHANG);
+        pid_t result = waitpid(pid, &child_status, WNOHANG);
         if (result == pid) {
             // Child finished. Continue reading any remaining data.
         }
         if (time(NULL) - start_time > timeout_seconds) {
             /* Timeout reached; kill child process if still running */
             kill(pid, SIGKILL);
-            waitpid(pid, NULL, 0);
+            waitpid(pid, &child_status, 0);
             break;
         }
     }
     close(pipefd[0]);
-    
+    if (waitpid(pid, &child_status, 0) < 0)
+        perror("waitpid");
+
     if (total_size == 0) {
         free(output);
-        return;
+        return (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 127) ? -1 : 0;
     }
     output[total_size] = '\0';
     
@@ -428,7 +432,7 @@ void execute_command_with_paging(CommandStruct *cmd) {
     if (!lines) {
         perror("malloc");
         free(output);
-        return;
+        return (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 127) ? -1 : 0;
     }
     size_t current_line = 0;
     char *start = output;
@@ -462,6 +466,22 @@ void execute_command_with_paging(CommandStruct *cmd) {
     }
     free(lines);
     free(output);
+    return (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 127) ? -1 : 0;
+}
+
+static void run_shell_command(const char *shell_command) {
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
+    } else if (pid == 0) {
+        signal(SIGINT, SIG_DFL);
+        execl("/bin/sh", "sh", "-c", shell_command, (char *)NULL);
+        perror("execl");
+        exit(EXIT_FAILURE);
+    } else {
+        int status;
+        waitpid(pid, &status, 0);
+    }
 }
 
 int main(int argc, char *argv[]) {
@@ -527,7 +547,9 @@ int main(int argc, char *argv[]) {
     /* Execute auto_command if set */
     if (auto_command != NULL) {
         parse_input(auto_command, &cmd);
-        execute_command_with_paging(&cmd);
+        if (execute_command_with_paging(&cmd) == -1) {
+            run_shell_command(auto_command);
+        }
         free_command_struct(&cmd);
         free(auto_command);
     }
@@ -633,25 +655,15 @@ int main(int argc, char *argv[]) {
             char *shell_command = input + 4;
             while (*shell_command == ' ')
                 shell_command++;
-            pid_t pid = fork();
-            if (pid == -1) {
-                perror("fork");
-            } else if (pid == 0) {
-                // Reset SIGINT to default so that CTRL+C can kill the app.
-                signal(SIGINT, SIG_DFL);
-                execl("/bin/sh", "sh", "-c", shell_command, (char *)NULL);
-                perror("execl");
-                exit(EXIT_FAILURE);
-            } else {
-                int status;
-                waitpid(pid, &status, 0);
-            }
+            run_shell_command(shell_command);
             free(input);
             continue;
         }
         /* Default processing for other commands */
         parse_input(input, &cmd);
-        execute_command_with_paging(&cmd);
+        if (execute_command_with_paging(&cmd) == -1) {
+            run_shell_command(input);
+        }
         free(input);
         free_command_struct(&cmd);
     }

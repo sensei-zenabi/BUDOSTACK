@@ -26,7 +26,7 @@ typedef struct {
 } CommandStruct;
 
 void parse_input(const char *input, CommandStruct *cmd);
-void execute_command(const CommandStruct *cmd);
+int execute_command(const CommandStruct *cmd);
 void free_command_struct(CommandStruct *cmd);
 
 /* 

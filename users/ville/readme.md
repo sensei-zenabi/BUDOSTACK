@@ -7,8 +7,9 @@ This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is
 Today I took a big leap towards usability by enabling the main.c and commandparser.h/.c to
 detect whether command can be found from the built-in apps and commands list. If it is not,
 the parser defaults running the command in linux shell. This makes running budostack much
-user friendly, when "run" command is not needed to run not built-in apps/commands. Really
-proud of this one!
+more user friendly, when "run" command is not needed to run not built-in apps/commands.
+Basically, user can leave now BUDOSTACK on, and use terminal like before but with additional
+apps and commands provided by BUDOSTACK!
 
 ### Monday, 18th of August 2025 ###
 

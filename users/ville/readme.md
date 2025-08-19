@@ -2,6 +2,14 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Tuesday, 19th of August 2025 ###
+
+Today I took a big leap towards usability by enabling the main.c and commandparser.h/.c to
+detect whether command can be found from the built-in apps and commands list. If it is not,
+the parser defaults running the command in linux shell. This makes running budostack much
+user friendly, when "run" command is not needed to run not built-in apps/commands. Really
+proud of this one!
+
 ### Monday, 18th of August 2025 ###
 
 I created a more suitable format for my development diary and started hosting it in github

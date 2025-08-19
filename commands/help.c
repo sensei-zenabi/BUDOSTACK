@@ -45,7 +45,6 @@ int main(int argc, char *argv[]) {
     printf("  display  : Display the contents of a file.\n");
     printf("  drives   : Lists all found drives.\n");
     printf("  find     : Find anything.\n");
-    printf("  git      : Git helper, type git -help. Use run command to use git!\n");
     printf("  inet     : Interactive internet connection manager.\n");
     printf("  list     : List contents of a directory (type 'list -help').\n");
     printf("  makedir  : Create a new directory.\n");

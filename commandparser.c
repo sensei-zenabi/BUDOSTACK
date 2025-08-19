@@ -156,7 +156,7 @@ void parse_input(const char *input, CommandStruct *cmd) {
  * Locate the executable under base_path, then execv() it,
  * passing all flags (and their values) first, then positional parameters.
  */
-void execute_command(const CommandStruct *cmd) {
+int execute_command(const CommandStruct *cmd) {
     char command_path[PATH_MAX];
     int found = 0;
 
@@ -185,15 +185,15 @@ void execute_command(const CommandStruct *cmd) {
     }
 
     if (!found) {
-        fprintf(stderr, "Command not found or not executable: %s\n", cmd->command);
-        return;
+        //fprintf(stderr, "%s was ran as shell command...\n", cmd->command);
+        return -1;
     }
 
     /* Resolve to absolute path */
     char abs_path[PATH_MAX];
     if (!realpath(command_path, abs_path)) {
         perror("realpath failed");
-        return;
+        return -1;
     }
 
     /* Build argv: flags+values first, then parameters */
@@ -211,7 +211,7 @@ void execute_command(const CommandStruct *cmd) {
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork failed");
-        return;
+        return -1;
     }
     if (pid == 0) {
         signal(SIGINT, SIG_DFL);
@@ -220,9 +220,12 @@ void execute_command(const CommandStruct *cmd) {
         exit(EXIT_FAILURE);
     } else {
         int status;
-        if (waitpid(pid, &status, 0) < 0)
+        if (waitpid(pid, &status, 0) < 0) {
             perror("waitpid failed");
+            return -1;
+        }
     }
+    return 0;
 }
 
 /* Free all strdup’d memory in a CommandStruct */

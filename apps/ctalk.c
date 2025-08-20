@@ -12,6 +12,7 @@
  *   - Added feature: if the user types "/quit" (as the only input), a quit message ("user quit the chat.")
  *     is sent before the application exits. In addition, if a client sends a quit message, the server
  *     removes that client from its registry so that messaging between the remaining users continues normally.
+ *   - Supports "/who" to list chat members and "/help" to show available commands.
  *   - To fix a bug that occurred when one client quits and only one client remains, we now always broadcast
  *     to all registered clients (i.e. we no longer exclude the sender). The client code filters out echoes,
  *     so duplicate display is avoided.
@@ -53,6 +54,15 @@ pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Global variable holding the local username */
 const char *my_username = NULL;
+
+/* Help text listing supported commands */
+const char *help_text = "Available commands: /help, /who, /quit";
+
+/* Display help text */
+void print_help(void) {
+    printf("\r\33[2K%s\n", help_text);
+    fflush(stdout);
+}
 
 /* Terminal raw mode management */
 static struct termios orig_termios;
@@ -297,6 +307,14 @@ void run_server(void) {
                     close(sock);
                     exit(EXIT_SUCCESS);
                 }
+                if (strcmp(input_buf, "/help") == 0) {
+                    print_help();
+                    input_len = 0;
+                    input_buf[0] = '\0';
+                    printf(">> ");
+                    fflush(stdout);
+                    continue;
+                }
                 if (strcmp(input_buf, "/who") == 0) {
                     char list_buf[BUF_SIZE];
                     build_client_list(list_buf, sizeof(list_buf));
@@ -393,6 +411,23 @@ void run_server(void) {
                 broadcast_message(join_msg, NULL);
             } else {
                 /* Regular chat message or command from a known client */
+                if (strcmp(buf, "/help") == 0) {
+                    char help_buf[BUF_SIZE];
+                    snprintf(help_buf, sizeof(help_buf), "%s", help_text);
+                    ensure_newline(help_buf, sizeof(help_buf));
+                    int resp_sock = socket(AF_INET, SOCK_DGRAM, 0);
+                    if (resp_sock < 0) {
+                        perror("socket");
+                    } else {
+                        if (sendto(resp_sock, help_buf, strlen(help_buf), 0,
+                                   (struct sockaddr *)&client_addr, sizeof(client_addr)) < 0) {
+                            perror("sendto");
+                        }
+                        close(resp_sock);
+                    }
+                    reprint_prompt(input_buf);
+                    continue;
+                }
                 if (strcmp(buf, "/who") == 0) {
                     char list_buf[BUF_SIZE];
                     build_client_list(list_buf, sizeof(list_buf));
@@ -505,7 +540,9 @@ void run_client(const char *username, const char *server_ip) {
                     close(sock);
                     exit(EXIT_SUCCESS);
                 }
-                if (strcmp(input_buf, "/who") == 0) {
+                if (strcmp(input_buf, "/help") == 0) {
+                    print_help();
+                } else if (strcmp(input_buf, "/who") == 0) {
                     if (sendto(sock, input_buf, strlen(input_buf), 0,
                                (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
                         perror("sendto");

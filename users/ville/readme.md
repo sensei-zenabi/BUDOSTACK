@@ -2,6 +2,11 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Wednesday, 20th of August 2025 ###
+
+Introduced /who and /help commands to ctalk app. Users are now able to see who all are in
+the chat, and what all commands are supported by ctalk.
+
 ### Tuesday, 19th of August 2025 ###
 
 Today I took a big leap towards usability by enabling the main.c and commandparser.h/.c to

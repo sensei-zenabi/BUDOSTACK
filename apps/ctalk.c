@@ -123,6 +123,20 @@ void remove_client(struct sockaddr_in *addr) {
     pthread_mutex_unlock(&clients_mutex);
 }
 
+/* Build a comma-separated list of all chat members. */
+void build_client_list(char *out, size_t size) {
+    pthread_mutex_lock(&clients_mutex);
+    snprintf(out, size, "Chat members: %s", my_username);
+    size_t len = strlen(out);
+    for (int i = 0; i < client_count; i++) {
+        if (len + strlen(clients[i]->username) + 2 < size) {
+            snprintf(out + len, size - len, ", %s", clients[i]->username);
+            len = strlen(out);
+        }
+    }
+    pthread_mutex_unlock(&clients_mutex);
+}
+
 /* Broadcast a message to all registered clients.
  * Note: We removed the exclusion parameter to ensure every registered client gets the message.
  * The client side filters out echoes of its own message.
@@ -283,6 +297,16 @@ void run_server(void) {
                     close(sock);
                     exit(EXIT_SUCCESS);
                 }
+                if (strcmp(input_buf, "/who") == 0) {
+                    char list_buf[BUF_SIZE];
+                    build_client_list(list_buf, sizeof(list_buf));
+                    printf("\r\33[2K%s\n", list_buf);
+                    input_len = 0;
+                    input_buf[0] = '\0';
+                    printf(">> ");
+                    fflush(stdout);
+                    continue;
+                }
                 if (input_len > 0) {
                     char timestamp[64];
                     char message[BUF_SIZE];
@@ -368,7 +392,24 @@ void run_server(void) {
                 reprint_prompt(input_buf);
                 broadcast_message(join_msg, NULL);
             } else {
-                /* Regular chat message from a known client */
+                /* Regular chat message or command from a known client */
+                if (strcmp(buf, "/who") == 0) {
+                    char list_buf[BUF_SIZE];
+                    build_client_list(list_buf, sizeof(list_buf));
+                    ensure_newline(list_buf, sizeof(list_buf));
+                    int resp_sock = socket(AF_INET, SOCK_DGRAM, 0);
+                    if (resp_sock < 0) {
+                        perror("socket");
+                    } else {
+                        if (sendto(resp_sock, list_buf, strlen(list_buf), 0,
+                                   (struct sockaddr *)&client_addr, sizeof(client_addr)) < 0) {
+                            perror("sendto");
+                        }
+                        close(resp_sock);
+                    }
+                    reprint_prompt(input_buf);
+                    continue;
+                }
                 char timestamp[64];
                 char formatted[BUF_SIZE];
                 get_timestamp(timestamp, sizeof(timestamp));
@@ -464,7 +505,12 @@ void run_client(const char *username, const char *server_ip) {
                     close(sock);
                     exit(EXIT_SUCCESS);
                 }
-                if (input_len > 0) {
+                if (strcmp(input_buf, "/who") == 0) {
+                    if (sendto(sock, input_buf, strlen(input_buf), 0,
+                               (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+                        perror("sendto");
+                    }
+                } else if (input_len > 0) {
                     if (sendto(sock, input_buf, strlen(input_buf), 0,
                                (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
                         perror("sendto");

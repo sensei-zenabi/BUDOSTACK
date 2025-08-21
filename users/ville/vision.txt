@@ -1,8 +1,15 @@
+Updated: 21st of August, 2025
 ==========================================
-Vision:
+BUDOSTACK
 
+What:
+A closed ecosystem of tools, games and apps aimed for BUDOSTACK Retro PC.
+
+Requirements:
+#1 - Need to run in debian linux with no GUI
 
 ==========================================
 Things to explore:
 
-+ linux framebuffer in TTY for creating 2D pixel graphics to games and applications
++ linux framebuffer in TTY for creating 2D
+pixel graphics to games and applications

@@ -241,10 +241,14 @@ void fill_circle(int cx, int cy, int radius, uint8_t r, uint8_t g, uint8_t b){
 
 // Present the backbuffer to the real framebuffer (single blit per frame)
 void fb_present(void){
-    for (int y = 0; y < FB.height; ++y) {
-        memcpy(FB.fbp + (size_t)y * FB.line_length,
-               FB.back + (size_t)y * FB.back_stride,
-               FB.back_stride);
+    if ((size_t)FB.line_length == FB.back_stride){
+        memcpy(FB.fbp, FB.back, FB.back_stride * (size_t)FB.height);
+    } else {
+        for (int y = 0; y < FB.height; ++y) {
+            memcpy(FB.fbp + (size_t)y * (size_t)FB.line_length,
+                   FB.back + (size_t)y * FB.back_stride,
+                   FB.back_stride);
+        }
     }
 }
 

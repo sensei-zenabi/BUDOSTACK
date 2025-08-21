@@ -125,16 +125,16 @@ int main(void){
     int paddle_h = H/40; if (paddle_h < 5) paddle_h = 5;
     int paddle_x = (W - paddle_w)/2;
     int paddle_y = H - paddle_h - 20;
-    int paddle_speed = W/60; if (paddle_speed < 4) paddle_speed = 4;
+    int paddle_speed = W/30; if (paddle_speed < 8) paddle_speed = 8;
 
     int ball_r = H/60; if(ball_r < 3) ball_r = 3;
     int ball_x = W/2;
     int ball_y = paddle_y - ball_r - 1;
-    int ball_dx = 3;
-    int ball_dy = -3;
+    int ball_dx = 6;
+    int ball_dy = -6;
 
     uint64_t next = now_ns();
-    const uint64_t frame_ns = 16666667ull; // ~60Hz
+    const uint64_t frame_ns = 33333333ull; // ~30Hz
 
     while (running){
         int key = read_key();

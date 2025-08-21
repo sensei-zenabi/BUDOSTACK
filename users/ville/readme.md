@@ -2,6 +2,13 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Thursday, 21st of August 2025 ###
+
+Fixed the select from edit.c in case where user wants to select region upwards from the cursor.
+Re-ordered the help.c as per functionality. Added left and right arrow support to budostack
+prompting to enable editing prompts. Created a library for framebuffer graphis in TTY, but the
+demogame (drawdemo) runs terribly slow.
+
 ### Wednesday, 20th of August 2025 ###
 
 Introduced /who and /help commands to ctalk app. Users are now able to see who all are in

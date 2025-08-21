@@ -1,120 +1,208 @@
-// =========================
-// drawdemo.c — demo using the optimized libdraw
-// =========================
+/*
+ * drawdemo.c — simple Arkanoid-like game using libdraw framebuffer.
+ */
 
 #define _POSIX_C_SOURCE 200809L
 #include <stdint.h>
 #include <time.h>
-#include <math.h>
 #include <signal.h>
+#include <termios.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdlib.h>
 
 // Forward declarations from libdraw.c (no separate headers used)
 int  fb_init(const char *devpath);
 void fb_close(void);
 int  fb_width(void);
 int  fb_height(void);
-int  fb_bpp(void);
 void fb_clear_rgb(uint8_t r, uint8_t g, uint8_t b);
-void put_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b);
-void draw_hline(int x, int y, int w, uint8_t r, uint8_t g, uint8_t b);
-void draw_vline(int x, int y, int h, uint8_t r, uint8_t g, uint8_t b);
-void draw_line(int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, uint8_t b);
 void draw_rect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b);
 void fill_rect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b);
-void draw_circle(int cx, int cy, int radius, uint8_t r, uint8_t g, uint8_t b);
+void draw_line(int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, uint8_t b);
 void fill_circle(int cx, int cy, int radius, uint8_t r, uint8_t g, uint8_t b);
 void fb_present(void);
 
 static volatile sig_atomic_t running = 1;
 static void on_sigint(int sig){ (void)sig; running = 0; }
 
-static inline uint64_t now_ns(){
+/* --- timing helpers --- */
+static inline uint64_t now_ns(void){
     struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec*1000000000ull + (uint64_t)ts.tv_nsec;
 }
-
 static inline void sleep_until_ns(uint64_t target){
     uint64_t t = now_ns();
     if (target <= t) return;
     struct timespec ts;
     uint64_t d = target - t;
-    ts.tv_sec = (time_t)(d / 1000000000ull);
-    ts.tv_nsec = (long)(d % 1000000000ull);
-    clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, NULL);
+    ts.tv_sec = (time_t)(d/1000000000ull);
+    ts.tv_nsec = (long)(d%1000000000ull);
+    clock_nanosleep(CLOCK_MONOTONIC,0,&ts,NULL);
+}
+
+/* --- minimal raw keyboard handling --- */
+static struct termios orig_termios;
+static int orig_fl;
+
+static void disable_raw(void){
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+    fcntl(STDIN_FILENO, F_SETFL, orig_fl);
+}
+
+static void enable_raw(void){
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    struct termios raw = orig_termios;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    orig_fl = fcntl(STDIN_FILENO, F_GETFL);
+    fcntl(STDIN_FILENO, F_SETFL, orig_fl | O_NONBLOCK);
+    atexit(disable_raw);
+}
+
+static int read_key(void){
+    unsigned char c;
+    if (read(STDIN_FILENO, &c, 1) != 1) return 0;
+    if (c == '\033'){
+        unsigned char seq[2];
+        if (read(STDIN_FILENO,&seq[0],1) != 1) return 0;
+        if (read(STDIN_FILENO,&seq[1],1) != 1) return 0;
+        if (seq[0]=='['){
+            if (seq[1]=='C') return 'R'; // right
+            if (seq[1]=='D') return 'L'; // left
+        }
+        return 0;
+    }
+    return c;
+}
+
+/* --- brick definition --- */
+#define BRICK_ROWS 5
+#define BRICK_COLS 10
+
+typedef struct {
+    int x,y,w,h;
+    int alive;
+    uint8_t r,g,b;
+} Brick;
+
+static Brick bricks[BRICK_ROWS*BRICK_COLS];
+
+static void init_bricks(int W, int H){
+    int bw = W / BRICK_COLS;
+    int bh = H / 20;
+    uint8_t colors[BRICK_ROWS][3] = {
+        {255,0,0}, {255,128,0}, {255,255,0}, {0,128,0}, {0,0,255}
+    };
+    for(int r=0;r<BRICK_ROWS;r++){
+        for(int c=0;c<BRICK_COLS;c++){
+            Brick *b = &bricks[r*BRICK_COLS + c];
+            b->x = c*bw + 1;
+            b->y = r*bh + 40;
+            b->w = bw - 2;
+            b->h = bh - 2;
+            b->alive = 1;
+            b->r = colors[r%BRICK_ROWS][0];
+            b->g = colors[r%BRICK_ROWS][1];
+            b->b = colors[r%BRICK_ROWS][2];
+        }
+    }
 }
 
 int main(void){
     if (fb_init("/dev/fb0") != 0) return 1;
     signal(SIGINT, on_sigint);
+    enable_raw();
 
     const int W = fb_width();
     const int H = fb_height();
 
-    // Pre-fill background gradient in backbuffer once
-    for (int y = 0; y < H; ++y) {
-        uint8_t r = (uint8_t)((y * 255) / (H ? H : 1));
-        for (int x = 0; x < W; ++x) {
-            uint8_t b = (uint8_t)((x * 255) / (W ? W : 1));
-            put_pixel(x, y, r, 0, b);
-        }
-    }
-    fb_present();
+    init_bricks(W,H);
 
-    // Animated objects
-    int bx = W/4, by = H/3, bw = W/8, bh = H/10;     // bouncing rectangle
-    int bdx = 4, bdy = 3;
+    int paddle_w = W/8;
+    int paddle_h = H/40; if (paddle_h < 5) paddle_h = 5;
+    int paddle_x = (W - paddle_w)/2;
+    int paddle_y = H - paddle_h - 20;
+    int paddle_speed = W/60; if (paddle_speed < 4) paddle_speed = 4;
 
-    int cx = (3*W)/4, cy = (2*H)/3, cr = H/12;       // bouncing circle
-    int cdx = -3, cdy = -4;
+    int ball_r = H/60; if(ball_r < 3) ball_r = 3;
+    int ball_x = W/2;
+    int ball_y = paddle_y - ball_r - 1;
+    int ball_dx = 3;
+    int ball_dy = -3;
 
     uint64_t next = now_ns();
     const uint64_t frame_ns = 16666667ull; // ~60Hz
-    int t = 0;
 
-    while (running) {
-        // Redraw minimal background in areas we will overwrite (cheap clear)
-        // For simplicity here, we clear a small band around objects; adjust as needed.
-        fill_rect(bx-2, by-2, bw+4, bh+4, 0,0,0);   // overwrite with black band
-        fill_circle(cx, cy, cr+2, 0,0,0);           // black ring to erase edge
+    while (running){
+        int key = read_key();
+        if (key == 'q' || key == 'Q') break;
+        if (key == 'L') {
+            paddle_x -= paddle_speed;
+            if (paddle_x < 0) paddle_x = 0;
+        } else if (key == 'R') {
+            paddle_x += paddle_speed;
+            if (paddle_x + paddle_w >= W) paddle_x = W - paddle_w - 1;
+        } else if (key == 'a' || key == 'A') {
+            paddle_x -= paddle_speed;
+            if (paddle_x < 0) paddle_x = 0;
+        } else if (key == 'd' || key == 'D') {
+            paddle_x += paddle_speed;
+            if (paddle_x + paddle_w >= W) paddle_x = W - paddle_w - 1;
+        }
 
-        // Move objects
-        bx += bdx; by += bdy;
-        if (bx < 0) { bx = 0; bdx = -bdx; }
-        if (by < 0) { by = 0; bdy = -bdy; }
-        if (bx + bw >= W) { bx = W - bw - 1; bdx = -bdx; }
-        if (by + bh >= H) { by = H - bh - 1; bdy = -bdy; }
+        /* update ball position */
+        ball_x += ball_dx;
+        ball_y += ball_dy;
 
-        cx += cdx; cy += cdy;
-        if (cx - cr < 0) { cx = cr; cdx = -cdx; }
-        if (cy - cr < 0) { cy = cr; cdy = -cdy; }
-        if (cx + cr >= W) { cx = W - cr - 1; cdx = -cdx; }
-        if (cy + cr >= H) { cy = H - cr - 1; cdy = -cdy; }
+        /* wall collisions */
+        if (ball_x - ball_r <= 0){ ball_x = ball_r; ball_dx = -ball_dx; }
+        if (ball_x + ball_r >= W){ ball_x = W - ball_r - 1; ball_dx = -ball_dx; }
+        if (ball_y - ball_r <= 0){ ball_y = ball_r; ball_dy = -ball_dy; }
+        if (ball_y - ball_r > H){ break; } // missed paddle
 
-        // Colors pulsate
-        double tt = (double)t;
-        uint8_t R = (uint8_t)(128 + 127 * sin(tt * 0.05));
-        uint8_t G = (uint8_t)(128 + 127 * sin((tt+40.0) * 0.04));
-        uint8_t B = (uint8_t)(128 + 127 * sin((tt+80.0) * 0.03));
+        /* paddle collision */
+        if (ball_y + ball_r >= paddle_y &&
+            ball_y + ball_r <= paddle_y + paddle_h &&
+            ball_x >= paddle_x && ball_x <= paddle_x + paddle_w &&
+            ball_dy > 0){
+            ball_y = paddle_y - ball_r;
+            ball_dy = -ball_dy;
+            int rel = ball_x - (paddle_x + paddle_w/2);
+            ball_dx = rel / (paddle_w/4);
+            if (ball_dx==0) ball_dx = (rel>0)?1:-1;
+        }
 
-        // Draw shapes
-        fill_rect(bx, by, bw, bh, 255, 180, 40);
-        draw_rect(bx, by, bw, bh, 0, 0, 0);
+        /* brick collisions */
+        int remaining = 0;
+        for (int i=0;i<BRICK_ROWS*BRICK_COLS;i++){
+            Brick *b = &bricks[i];
+            if (!b->alive) continue;
+            remaining++;
+            if (ball_x + ball_r > b->x && ball_x - ball_r < b->x + b->w &&
+                ball_y + ball_r > b->y && ball_y - ball_r < b->y + b->h){
+                b->alive = 0;
+                ball_dy = -ball_dy;
+            }
+        }
+        if (remaining == 0) break; // win
 
-        fill_circle(cx, cy, cr, R, G, B);
-        draw_circle(cx, cy, cr, 0, 0, 0);
-
-        // Spinning crosshair
-        int len = H/6;
-        double ang = tt * 0.05;
-        int x0 = W/2 + (int)(len * cos(ang));
-        int y0 = H/2 + (int)(len * sin(ang));
-        int x1 = W/2 - (int)(len * cos(ang));
-        int y1 = H/2 - (int)(len * sin(ang));
-        draw_line(x0,y0,x1,y1,255,255,255);
-        draw_line(x0,y1,x1,y0, 80,200,255);
-
+        /* render */
+        fb_clear_rgb(0,0,0);
+        for (int i=0;i<BRICK_ROWS*BRICK_COLS;i++){
+            Brick *b = &bricks[i];
+            if (!b->alive) continue;
+            fill_rect(b->x, b->y, b->w, b->h, b->r, b->g, b->b);
+            draw_rect(b->x, b->y, b->w, b->h, 0,0,0);
+        }
+        fill_rect(paddle_x, paddle_y, paddle_w, paddle_h, 200,200,200);
+        draw_rect(paddle_x, paddle_y, paddle_w, paddle_h, 0,0,0);
+        fill_circle(ball_x, ball_y, ball_r, 255,255,255);
+        draw_line(0, H-1, W, H-1, 50,50,50); // baseline
         fb_present();
-        t++;
+
         next += frame_ns;
         sleep_until_ns(next);
     }
@@ -122,13 +210,3 @@ int main(void){
     fb_close();
     return 0;
 }
-
-/* =========================
-Build & Run (from a VT like Ctrl+Alt+F3):
-
-  gcc -O3 -march=native -ffast-math -fno-strict-aliasing -std=c11 -c libdraw.c -o libdraw.o
-  gcc -O3 -march=native -ffast-math -fno-strict-aliasing -std=c11 drawdemo.c libdraw.o -lm -o drawdemo
-
-  sudo ./drawdemo   # if /dev/fb0 permissions require
-========================= */
-

@@ -12,6 +12,7 @@
 #include <stdlib.h>
 
 // Forward declarations from libdraw.c (no separate headers used)
+int  fb_init_res(const char *devpath, int width, int height);
 int  fb_init(const char *devpath);
 void fb_close(void);
 int  fb_width(void);
@@ -112,7 +113,7 @@ static void init_bricks(int W, int H){
 }
 
 int main(void){
-    if (fb_init("/dev/fb0") != 0) return 1;
+    if (fb_init_res("/dev/fb0", 320, 200) != 0) return 1;
     signal(SIGINT, on_sigint);
     enable_raw();
 

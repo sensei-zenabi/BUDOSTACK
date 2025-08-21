@@ -20,7 +20,8 @@ static struct {
     int fbfd;
     uint8_t *fbp;               // mapped framebuffer
     size_t screensize;          // bytes
-    int width, height;          // visible resolution
+    int width, height;          // virtual drawing resolution
+    int phys_width, phys_height; // actual framebuffer resolution
     int bpp;                    // bits per pixel
     int line_length;            // bytes per line in fb
     struct fb_var_screeninfo vinfo;
@@ -44,24 +45,26 @@ static inline uint32_t pack_rgb(uint8_t r, uint8_t g, uint8_t b) {
     return px;
 }
 
-int fb_init(const char *devpath) {
+int fb_init_res(const char *devpath, int width, int height) {
     memset(&FB, 0, sizeof(FB));
     FB.fbfd = open(devpath ? devpath : "/dev/fb0", O_RDWR);
     if (FB.fbfd < 0) { perror("open fb"); return -1; }
     if (ioctl(FB.fbfd, FBIOGET_FSCREENINFO, &FB.finfo) == -1) { perror("FBIOGET_FSCREENINFO"); goto fail; }
     if (ioctl(FB.fbfd, FBIOGET_VSCREENINFO, &FB.vinfo) == -1) { perror("FBIOGET_VSCREENINFO"); goto fail; }
 
-    FB.width  = (int)FB.vinfo.xres;
-    FB.height = (int)FB.vinfo.yres;
+    FB.phys_width  = (int)FB.vinfo.xres;
+    FB.phys_height = (int)FB.vinfo.yres;
     FB.bpp    = (int)FB.vinfo.bits_per_pixel;
     FB.line_length = FB.finfo.line_length;
-    FB.screensize = (size_t)FB.line_length * FB.height;
+    FB.screensize = (size_t)FB.line_length * FB.phys_height;
+
+    FB.width  = (width  > 0) ? width  : FB.phys_width;
+    FB.height = (height > 0) ? height : FB.phys_height;
 
     FB.fbp = (uint8_t*)mmap(NULL, FB.screensize, PROT_READ | PROT_WRITE, MAP_SHARED, FB.fbfd, 0);
     if (FB.fbp == MAP_FAILED) { perror("mmap"); goto fail; }
 
     FB.back_stride = (size_t)FB.width * (size_t)(FB.bpp/8);
-    // 64-byte alignment is nice for memcpy; use posix_memalign for portability
     if (posix_memalign((void**)&FB.back, 64, FB.back_stride * (size_t)FB.height) != 0) {
         perror("posix_memalign"); goto fail2; }
     memset(FB.back, 0, FB.back_stride * (size_t)FB.height);
@@ -73,6 +76,9 @@ fail:
     if (FB.fbfd >= 0) close(FB.fbfd);
     memset(&FB, 0, sizeof(FB));
     return -1;
+}
+int fb_init(const char *devpath){
+    return fb_init_res(devpath, 0, 0);
 }
 
 void fb_close(void) {
@@ -249,13 +255,26 @@ void fill_circle(int cx, int cy, int radius, uint8_t r, uint8_t g, uint8_t b){
 
 // Present the backbuffer to the real framebuffer (single blit per frame)
 void fb_present(void){
-    if ((size_t)FB.line_length == FB.back_stride){
-        memcpy(FB.fbp, FB.back, FB.back_stride * (size_t)FB.height);
+    if (FB.width == FB.phys_width && FB.height == FB.phys_height) {
+        if ((size_t)FB.line_length == FB.back_stride){
+            memcpy(FB.fbp, FB.back, FB.back_stride * (size_t)FB.height);
+        } else {
+            for (int y = 0; y < FB.height; ++y) {
+                memcpy(FB.fbp + (size_t)y * (size_t)FB.line_length,
+                       FB.back + (size_t)y * FB.back_stride,
+                       FB.back_stride);
+            }
+        }
     } else {
-        for (int y = 0; y < FB.height; ++y) {
-            memcpy(FB.fbp + (size_t)y * (size_t)FB.line_length,
-                   FB.back + (size_t)y * FB.back_stride,
-                   FB.back_stride);
+        int bytes = FB.bpp/8;
+        for (int y = 0; y < FB.phys_height; ++y) {
+            int sy = (int)((long long)y * FB.height / FB.phys_height);
+            const uint8_t *src_row = FB.back + (size_t)sy * FB.back_stride;
+            uint8_t *dst_row = FB.fbp + (size_t)y * FB.line_length;
+            for (int x = 0; x < FB.phys_width; ++x) {
+                int sx = (int)((long long)x * FB.width / FB.phys_width);
+                memcpy(dst_row + (size_t)x * bytes, src_row + (size_t)sx * bytes, bytes);
+            }
         }
     }
 }

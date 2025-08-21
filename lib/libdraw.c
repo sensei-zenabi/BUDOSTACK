@@ -266,14 +266,54 @@ void fb_present(void){
             }
         }
     } else {
-        int bytes = FB.bpp/8;
-        for (int y = 0; y < FB.phys_height; ++y) {
-            int sy = (int)((long long)y * FB.height / FB.phys_height);
-            const uint8_t *src_row = FB.back + (size_t)sy * FB.back_stride;
-            uint8_t *dst_row = FB.fbp + (size_t)y * FB.line_length;
-            for (int x = 0; x < FB.phys_width; ++x) {
-                int sx = (int)((long long)x * FB.width / FB.phys_width);
-                memcpy(dst_row + (size_t)x * bytes, src_row + (size_t)sx * bytes, bytes);
+        int bytes = FB.bpp / 8;
+        const int dst_w = FB.phys_width, dst_h = FB.phys_height;
+        const int src_w = FB.width,      src_h = FB.height;
+        size_t dst_stride = (size_t)FB.line_length;
+        size_t src_stride = FB.back_stride;
+
+        if (bytes == 4) {
+            int sy = 0, verr = 0;
+            for (int y = 0; y < dst_h; ++y) {
+                const uint32_t *sp = (const uint32_t *)(FB.back + (size_t)sy * src_stride);
+                uint32_t *dp = (uint32_t *)(FB.fbp + (size_t)y * dst_stride);
+                int errx = 0;
+                for (int x = 0; x < dst_w; ++x) {
+                    *dp++ = *sp;
+                    errx += src_w;
+                    while (errx >= dst_w) { errx -= dst_w; sp++; }
+                }
+                verr += src_h;
+                while (verr >= dst_h) { verr -= dst_h; sy++; }
+            }
+        } else if (bytes == 2) {
+            int sy = 0, verr = 0;
+            for (int y = 0; y < dst_h; ++y) {
+                const uint16_t *sp = (const uint16_t *)(FB.back + (size_t)sy * src_stride);
+                uint16_t *dp = (uint16_t *)(FB.fbp + (size_t)y * dst_stride);
+                int errx = 0;
+                for (int x = 0; x < dst_w; ++x) {
+                    *dp++ = *sp;
+                    errx += src_w;
+                    while (errx >= dst_w) { errx -= dst_w; sp++; }
+                }
+                verr += src_h;
+                while (verr >= dst_h) { verr -= dst_h; sy++; }
+            }
+        } else {
+            int sy = 0, verr = 0;
+            for (int y = 0; y < dst_h; ++y) {
+                const uint8_t *sp = FB.back + (size_t)sy * src_stride;
+                uint8_t *dp = FB.fbp + (size_t)y * dst_stride;
+                int errx = 0;
+                for (int x = 0; x < dst_w; ++x) {
+                    for (int b = 0; b < bytes; ++b) dp[b] = sp[b];
+                    dp += bytes;
+                    errx += src_w;
+                    while (errx >= dst_w) { errx -= dst_w; sp += bytes; }
+                }
+                verr += src_h;
+                while (verr >= dst_h) { verr -= dst_h; sy++; }
             }
         }
     }

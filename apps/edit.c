@@ -410,16 +410,16 @@ void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, stru
                     sel_local_start = E.sel_anchor_x;
                     sel_local_end = editorDisplayWidth(row->chars);
                 } else {
-                    sel_local_start = 0;
-                    sel_local_end = E.sel_anchor_x;
+                    sel_local_start = E.cx;
+                    sel_local_end = editorDisplayWidth(row->chars);
                 }
             } else if (file_row == end_line) {
                 if (E.sel_anchor_y < E.cy) {
                     sel_local_start = 0;
                     sel_local_end = E.cx;
                 } else {
-                    sel_local_start = E.cx;
-                    sel_local_end = editorDisplayWidth(row->chars);
+                    sel_local_start = 0;
+                    sel_local_end = E.sel_anchor_x;
                 }
             } else {
                 sel_local_start = 0;

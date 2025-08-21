@@ -179,11 +179,13 @@ char* read_input(void) {
                     fflush(stdout);
                     memmove(buffer + token_start, completion, comp_len + 1);
                     pos = token_start + comp_len;
+                    cursor = pos;
                 } else if (count > 1) {
                     printf("\n");
                     list_command_matches(token);
                     printf("%s", buffer);
                     fflush(stdout);
+                    cursor = pos;
                 }
             } else {
                 char completion[INPUT_SIZE] = {0};
@@ -206,6 +208,7 @@ char* read_input(void) {
                     fflush(stdout);
                     memmove(buffer + token_start, completion, comp_len + 1);
                     pos = token_start + comp_len;
+                    cursor = pos;
                 } else if (count > 1) {
                     printf("\n");
                     char dir[INPUT_SIZE];
@@ -223,6 +226,7 @@ char* read_input(void) {
                     list_filename_matches(dir, prefix);
                     printf("%s", buffer);
                     fflush(stdout);
+                    cursor = pos;
                 }
             }
         }

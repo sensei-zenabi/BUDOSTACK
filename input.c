@@ -33,6 +33,7 @@ static void list_filename_matches(const char *dir, const char *prefix);
  * Features:
  * - Raw mode input handling (non-canonical, no echo)
  * - Up/Down arrow keys to navigate through previously entered commands
+ * - Left/Right arrow keys for in-line cursor movement
  * - TAB key for autocomplete (command or filename based on position)
  *
  * Design principles:
@@ -42,7 +43,8 @@ static void list_filename_matches(const char *dir, const char *prefix);
  */
 char* read_input(void) {
     static char buffer[INPUT_SIZE];
-    size_t pos = 0;
+    size_t pos = 0;        // End of current input
+    size_t cursor = 0;     // Current cursor position within buffer
     struct termios oldt, newt;
 
     /* Static history storage */
@@ -79,12 +81,17 @@ char* read_input(void) {
                 if (next2 == 'A') { /* Up arrow */
                     if (history_count > 0 && history_index > 0) {
                         history_index--;
-                        /* Clear current line */
+                        /* Move cursor to end and clear line */
+                        while (cursor < pos) {
+                            printf("\033[C");
+                            cursor++;
+                        }
                         for (size_t i = 0; i < pos; i++) {
                             printf("\b \b");
                         }
                         strcpy(buffer, history[history_index]);
                         pos = strlen(buffer);
+                        cursor = pos;
                         printf("%s", buffer);
                         fflush(stdout);
                     }
@@ -92,20 +99,44 @@ char* read_input(void) {
                 } else if (next2 == 'B') { /* Down arrow */
                     if (history_count > 0 && history_index < history_count - 1) {
                         history_index++;
+                        while (cursor < pos) {
+                            printf("\033[C");
+                            cursor++;
+                        }
                         for (size_t i = 0; i < pos; i++) {
                             printf("\b \b");
                         }
                         strcpy(buffer, history[history_index]);
                         pos = strlen(buffer);
+                        cursor = pos;
                         printf("%s", buffer);
                         fflush(stdout);
                     } else if (history_count > 0 && history_index == history_count - 1) {
                         history_index = history_count;
+                        while (cursor < pos) {
+                            printf("\033[C");
+                            cursor++;
+                        }
                         for (size_t i = 0; i < pos; i++) {
                             printf("\b \b");
                         }
                         buffer[0] = '\0';
                         pos = 0;
+                        cursor = 0;
+                        fflush(stdout);
+                    }
+                    continue;
+                } else if (next2 == 'C') { /* Right arrow */
+                    if (cursor < pos) {
+                        printf("\033[C");
+                        cursor++;
+                        fflush(stdout);
+                    }
+                    continue;
+                } else if (next2 == 'D') { /* Left arrow */
+                    if (cursor > 0) {
+                        printf("\033[D");
+                        cursor--;
                         fflush(stdout);
                     }
                     continue;
@@ -148,11 +179,13 @@ char* read_input(void) {
                     fflush(stdout);
                     memmove(buffer + token_start, completion, comp_len + 1);
                     pos = token_start + comp_len;
+                    cursor = pos;
                 } else if (count > 1) {
                     printf("\n");
                     list_command_matches(token);
                     printf("%s", buffer);
                     fflush(stdout);
+                    cursor = pos;
                 }
             } else {
                 char completion[INPUT_SIZE] = {0};
@@ -175,6 +208,7 @@ char* read_input(void) {
                     fflush(stdout);
                     memmove(buffer + token_start, completion, comp_len + 1);
                     pos = token_start + comp_len;
+                    cursor = pos;
                 } else if (count > 1) {
                     printf("\n");
                     char dir[INPUT_SIZE];
@@ -192,22 +226,35 @@ char* read_input(void) {
                     list_filename_matches(dir, prefix);
                     printf("%s", buffer);
                     fflush(stdout);
+                    cursor = pos;
                 }
             }
         }
         /* Handle backspace */
         else if (c == 127 || c == 8) {
-            if (pos > 0) {
+            if (cursor > 0) {
+                memmove(buffer + cursor - 1, buffer + cursor, pos - cursor + 1);
+                cursor--;
                 pos--;
-                printf("\b \b");
+                printf("\b");
+                printf("%s ", buffer + cursor);
+                for (size_t i = cursor; i <= pos; i++) {
+                    printf("\b");
+                }
                 fflush(stdout);
             }
         }
         /* Regular character input */
         else {
             if (pos < INPUT_SIZE - 1) {
-                buffer[pos++] = (char)c;
-                putchar(c);
+                memmove(buffer + cursor + 1, buffer + cursor, pos - cursor + 1);
+                buffer[cursor] = (char)c;
+                pos++;
+                cursor++;
+                printf("%s", buffer + cursor - 1);
+                for (size_t i = cursor; i < pos; i++) {
+                    printf("\b");
+                }
                 fflush(stdout);
             }
         }

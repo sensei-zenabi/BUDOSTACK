@@ -108,10 +108,11 @@ void put_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
 void fb_clear_rgb(uint8_t r, uint8_t g, uint8_t b) {
     uint32_t px = pack_rgb(r,g,b);
     if (FB.bpp == 32) {
-        for (int y = 0; y < FB.height; ++y) {
-            uint32_t *row = (uint32_t *)(FB.back + (size_t)y * FB.back_stride);
-            for (int x = 0; x < FB.width; ++x) row[x] = px;
-        }
+        size_t total = (size_t)FB.width * (size_t)FB.height;
+        uint64_t pat = ((uint64_t)px << 32) | px;
+        uint64_t *dst64 = (uint64_t *)FB.back;
+        while (total >= 2) { *dst64++ = pat; total -= 2; }
+        if (total) *((uint32_t *)dst64) = px;
     } else {
         int bytes = FB.bpp/8;
         for (int y = 0; y < FB.height; ++y) {
@@ -188,9 +189,16 @@ void fill_rect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b){
     if (w <= 0 || h <= 0) return;
     uint32_t px = pack_rgb(r,g,b);
     if (FB.bpp == 32) {
-        for (int yy = 0; yy < h; ++yy) {
-            uint32_t *row = (uint32_t *)(FB.back + (size_t)(y + yy) * FB.back_stride);
-            for (int xx = 0; xx < w; ++xx) row[x + xx] = px;
+        uint8_t *row0 = FB.back + (size_t)y * FB.back_stride + (size_t)x * 4;
+        uint64_t pat = ((uint64_t)px << 32) | px;
+        uint64_t *p64 = (uint64_t *)row0;
+        int w64 = w / 2;
+        for (int i = 0; i < w64; ++i) p64[i] = pat;
+        if (w & 1) ((uint32_t *)row0)[w - 1] = px;
+        size_t row_bytes = (size_t)w * 4;
+        for (int yy = 1; yy < h; ++yy) {
+            memcpy(FB.back + (size_t)(y + yy) * FB.back_stride + (size_t)x * 4,
+                   row0, row_bytes);
         }
     } else {
         int bytes = FB.bpp/8;

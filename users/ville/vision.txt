@@ -1,0 +1,8 @@
+==========================================
+Vision:
+
+
+==========================================
+Things to explore:
+
++ linux framebuffer in TTY for creating 2D pixel graphics to games and applications

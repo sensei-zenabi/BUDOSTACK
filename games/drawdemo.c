@@ -10,19 +10,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <stdlib.h>
+#include <string.h>
 
-// Forward declarations from libdraw.c (no separate headers used)
-int  fb_init_res(const char *devpath, int width, int height);
-int  fb_init(const char *devpath);
-void fb_close(void);
-int  fb_width(void);
-int  fb_height(void);
-void fb_clear_rgb(uint8_t r, uint8_t g, uint8_t b);
-void draw_rect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b);
-void fill_rect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b);
-void draw_line(int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, uint8_t b);
-void fill_circle(int cx, int cy, int radius, uint8_t r, uint8_t g, uint8_t b);
-void fb_present(void);
+#include "../lib/libdraw.c"
 
 static volatile sig_atomic_t running = 1;
 static void on_sigint(int sig){ (void)sig; running = 0; }
@@ -113,14 +103,28 @@ static void init_bricks(int W, int H){
 }
 
 int main(void){
-    if (fb_init_res("/dev/fb0", 320, 200) != 0) return 1;
+    if (draw_open(320, 200) != 0) return 1;
     signal(SIGINT, on_sigint);
     enable_raw();
 
-    const int W = fb_width();
-    const int H = fb_height();
+    const int W = draw_w();
+    const int H = draw_h();
+    size_t pitch = draw_stride();
+    uint8_t *background = malloc(pitch * (size_t)H);
+    if (!background) { draw_close(); return 1; }
 
     init_bricks(W,H);
+
+    // Render static background once
+    draw_clear(COLOR(0,0,0));
+    for (int i=0;i<BRICK_ROWS*BRICK_COLS;i++){
+        Brick *b = &bricks[i];
+        draw_rect_fill(b->x, b->y, b->w, b->h, COLOR(b->r, b->g, b->b));
+        draw_rect(b->x, b->y, b->w, b->h, COLOR(0,0,0));
+    }
+    draw_line(0, H-1, W, H-1, COLOR(50,50,50));
+    draw_text(5, 5, "Q to quit", COLOR(255,255,255));
+    memcpy(background, draw_pixels(), pitch * (size_t)H);
 
     int paddle_w = W/8;
     int paddle_h = H/40; if (paddle_h < 5) paddle_h = 5;
@@ -178,6 +182,7 @@ int main(void){
 
         /* brick collisions */
         int remaining = 0;
+        int bricks_dirty = 0;
         for (int i=0;i<BRICK_ROWS*BRICK_COLS;i++){
             Brick *b = &bricks[i];
             if (!b->alive) continue;
@@ -186,28 +191,36 @@ int main(void){
                 ball_y + ball_r > b->y && ball_y - ball_r < b->y + b->h){
                 b->alive = 0;
                 ball_dy = -ball_dy;
+                bricks_dirty = 1;
             }
         }
         if (remaining == 0) break; // win
 
         /* render */
-        fb_clear_rgb(0,0,0);
-        for (int i=0;i<BRICK_ROWS*BRICK_COLS;i++){
-            Brick *b = &bricks[i];
-            if (!b->alive) continue;
-            fill_rect(b->x, b->y, b->w, b->h, b->r, b->g, b->b);
-            draw_rect(b->x, b->y, b->w, b->h, 0,0,0);
+        if (bricks_dirty) {
+            draw_clear(COLOR(0,0,0));
+            for (int i=0;i<BRICK_ROWS*BRICK_COLS;i++){
+                Brick *b = &bricks[i];
+                if (!b->alive) continue;
+                draw_rect_fill(b->x, b->y, b->w, b->h, COLOR(b->r, b->g, b->b));
+                draw_rect(b->x, b->y, b->w, b->h, COLOR(0,0,0));
+            }
+            draw_line(0, H-1, W, H-1, COLOR(50,50,50));
+            memcpy(background, draw_pixels(), pitch * (size_t)H);
+        } else {
+            memcpy(draw_pixels(), background, pitch * (size_t)H);
         }
-        fill_rect(paddle_x, paddle_y, paddle_w, paddle_h, 200,200,200);
-        draw_rect(paddle_x, paddle_y, paddle_w, paddle_h, 0,0,0);
-        fill_circle(ball_x, ball_y, ball_r, 255,255,255);
-        draw_line(0, H-1, W, H-1, 50,50,50); // baseline
-        fb_present();
+
+        draw_rect_fill(paddle_x, paddle_y, paddle_w, paddle_h, COLOR(200,200,200));
+        draw_rect(paddle_x, paddle_y, paddle_w, paddle_h, COLOR(0,0,0));
+        draw_circle_fill(ball_x, ball_y, ball_r, COLOR(255,255,255));
+        draw_present();
 
         next += frame_ns;
         sleep_until_ns(next);
     }
 
-    fb_close();
+    free(background);
+    draw_close();
     return 0;
 }

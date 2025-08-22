@@ -10,7 +10,8 @@ LDFLAGS = -lasound -lm -pthread
 # --------------------------------------------------------------------
 
 # Find all .c files in the lib folder (library function sources)
-LIB_SRCS = $(shell find ./lib -type f -name '*.c')
+# libdraw.c is meant to be included directly by games, so exclude it
+LIB_SRCS = $(shell find ./lib -type f -name '*.c' -not -name 'libdraw.c')
 LIB_OBJS = $(LIB_SRCS:.c=.o)
 
 # Find all .c files recursively (all sources, except user folders)

@@ -2,6 +2,15 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Friday, 22nd of August 2025 ###
+
+Learnt a lot about compiler flags today as while optimizing the makefile introduced unnecessary
+optimization flags that caused edit.c to have buffer overflow in case of pasting large content
+from clipboard. Took a while to figure out that it was not a bug in edit.c. As a lessons learnt
+I introduced more warnings to build process and transformed all warnings as errors. That way I
+should not end up into a situation, where I need to mass refactor my source code to kill all the
+warnings that have accumulated as a technical debt into the codebase...
+
 ### Thursday, 21st of August 2025 ###
 
 Fixed the select from edit.c in case where user wants to select region upwards from the cursor.

@@ -279,7 +279,7 @@ int main(int argc, char *argv[]) {
                     fflush(stdout);
                     
                     // Also send the payload to the server, prefixed with outN:
-                    char send_msg[BUFFER_SIZE];
+                    char send_msg[BUFFER_SIZE * 2];
                     snprintf(send_msg, sizeof(send_msg), "out%d:%s\n", i, payload);
                     if (send(sockfd, send_msg, strlen(send_msg), 0) < 0) {
                         perror("send");

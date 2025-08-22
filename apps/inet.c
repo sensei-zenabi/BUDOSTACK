@@ -74,8 +74,7 @@ int read_netdev_stats(NetDevStats stats[], int max) {
                              &dummy1, &dummy2, &dummy3, &dummy4,
                              &t_bytes, &t_packets, &t_errs, &t_drop);
         if (matched == 13) {
-            strncpy(stats[count].name, iface, sizeof(stats[count].name) - 1);
-            stats[count].name[sizeof(stats[count].name) - 1] = '\0';
+            snprintf(stats[count].name, sizeof(stats[count].name), "%s", iface);
             stats[count].rx_bytes   = r_bytes;
             stats[count].rx_packets = r_packets;
             stats[count].rx_errs    = r_errs;
@@ -280,9 +279,9 @@ void monitor_mode(int interval) {
                  }
              }
              if (!found_max) {
-                 strncpy(max_stats[max_stats_count].name, curr[i].name,
-                         sizeof(max_stats[max_stats_count].name) - 1);
-                 max_stats[max_stats_count].name[sizeof(max_stats[max_stats_count].name) - 1] = '\0';
+                 size_t nlen = strnlen(curr[i].name, sizeof(max_stats[max_stats_count].name) - 1);
+                 memcpy(max_stats[max_stats_count].name, curr[i].name, nlen);
+                 max_stats[max_stats_count].name[nlen] = '\0';
                  max_stats[max_stats_count].max_rx = rx_rates[i];
                  max_stats[max_stats_count].max_tx = tx_rates[i];
                  max_stats_count++;
@@ -484,7 +483,9 @@ int main(void) {
             case 1:
                 // List available wireless networks using nmcli.
                 printf("Searching for available wireless networks...\n");
-                system("nmcli device wifi list");
+                if (system("nmcli device wifi list") != 0) {
+                    printf("Command failed.\n");
+                }
                 break;
             case 2: {
                 // Connect to a wireless network.
@@ -514,7 +515,9 @@ int main(void) {
             case 3:
                 // Disconnect from the current wireless network (assumes interface is wlan0).
                 printf("Disconnecting from current wireless network...\n");
-                system("nmcli device disconnect wlan0");
+                if (system("nmcli device disconnect wlan0") != 0) {
+                    printf("Disconnect command failed.\n");
+                }
                 break;
             case 4:
                 // Run diagnostics.

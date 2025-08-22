@@ -130,7 +130,7 @@ static void sleep_microseconds(useconds_t usec) {
 
 void clear_terminal(void) {
     // Move cursor to home and clear screen.
-    write(STDOUT_FILENO, "\033[H\033[J", 6);
+    if (write(STDOUT_FILENO, "\033[H\033[J", 6) < 0) perror("write");
 }
 
 void get_terminal_size(int *cols, int *rows) {
@@ -321,7 +321,7 @@ void draw_menu_bar(double fps, int term_cols, int term_rows, int out0, int out1)
         vis_len++;
     }
     strcat(menu, "\033[0m");
-    write(STDOUT_FILENO, menu, strlen(menu));
+    if (write(STDOUT_FILENO, menu, strlen(menu)) < 0) perror("write");
     fflush(stdout);
 }
 
@@ -649,7 +649,7 @@ int main(int argc, char *argv[]) {
         frame_to_halfblock_ascii(local_frame, FRAME_WIDTH, FRAME_HEIGHT,
                                  term_cols, render_rows, quality_mode,
                                  output_buf, output_buf_size);
-        write(STDOUT_FILENO, output_buf, strlen(output_buf));
+        if (write(STDOUT_FILENO, output_buf, strlen(output_buf)) < 0) perror("write");
         
         frame_count++;
         clock_gettime(CLOCK_MONOTONIC, &current_time);

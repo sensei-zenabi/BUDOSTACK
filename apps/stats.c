@@ -17,8 +17,8 @@ int get_battery_charge(void) {
     }
 
     struct dirent *entry;
-    char type_path[256];
-    char capacity_path[256];
+    char type_path[512];
+    char capacity_path[512];
     char type_str[64];
     int battery = -1;
 

@@ -328,7 +328,9 @@ static void handle_new_connection(int server_fd) {
     }
     if (idx < 0) {
         const char *msg = "Server full.\n";
-        write(client_sock, msg, strlen(msg));
+        if (write(client_sock, msg, strlen(msg)) < 0) {
+            perror("write");
+        }
         close(client_sock);
         return;
     }
@@ -340,7 +342,9 @@ static void handle_new_connection(int server_fd) {
     char greet[128];
     snprintf(greet, sizeof(greet),
              "Welcome to Switchboard. You are client_id=%d, with 5 in / 5 out.\n", cid);
-    write(client_sock, greet, strlen(greet));
+    if (write(client_sock, greet, strlen(greet)) < 0) {
+        perror("write");
+    }
     printf("Local client %d connected (slot=%d).\n", cid, idx);
 }
 
@@ -371,8 +375,7 @@ static void handle_client_input(int i) {
                 msg = colon+1;
                 while (*msg == ' ' || *msg=='\t') msg++;
             }
-            strncpy(client_data[i].last_out[out_ch], msg, MAX_MSG_LENGTH-1);
-            client_data[i].last_out[out_ch][MAX_MSG_LENGTH-1] = '\0';
+            snprintf(client_data[i].last_out[out_ch], MAX_MSG_LENGTH, "%s", msg);
             int out_cid = clients[i].client_id;
             Route r = routing[out_cid][out_ch];
             if (r.in_client_id >= 0) {
@@ -381,8 +384,7 @@ static void handle_client_input(int i) {
                     char outbuf[600];
                     snprintf(outbuf, sizeof(outbuf), "in%d from client%d: %s\n", r.in_channel, out_cid, msg);
                     send(clients[idx_in].sockfd, outbuf, strlen(outbuf), 0);
-                    strncpy(client_data[idx_in].last_in[r.in_channel], outbuf, MAX_MSG_LENGTH-1);
-                    client_data[idx_in].last_in[r.in_channel][MAX_MSG_LENGTH-1] = '\0';
+                    snprintf(client_data[idx_in].last_in[r.in_channel], MAX_MSG_LENGTH, "%s", outbuf);
                 }
             }
         }
@@ -918,8 +920,7 @@ static void monitor_mode(int fps) {
             for (int j = 0; j < recorded_client_count; j++) {
                 int idx = recorded_client_indices[j];
                 char data[MAX_MSG_LENGTH];
-                strncpy(data, client_data[idx].last_out[0], MAX_MSG_LENGTH - 1);
-                data[MAX_MSG_LENGTH - 1] = '\0';
+                snprintf(data, MAX_MSG_LENGTH, "%s", client_data[idx].last_out[0]);
                 fprintf(log_file, "\"%s\",", data);
             }
             for (int i = 0; i < remote_node_count; i++) {
@@ -929,7 +930,9 @@ static void monitor_mode(int fps) {
             fprintf(log_file, "\n");
             fflush(log_file);
         }
-        system("clear");
+        if (system("clear") == -1) {
+            perror("system");
+        }
         printf("=== Monitor Mode (FPS: %d) ===\n", fps);
         printf("Press 'Q' to quit, 'R' to toggle recording.\n");
         if (recording)
@@ -1007,7 +1010,7 @@ static void process_udp_message(void) {
         if (!exists && remote_node_count < MAX_REMOTE_NODES) {
             RemoteNode *rn = &remote_nodes[remote_node_count];
             rn->addr = sender_addr;
-            strncpy(rn->ip, sender_ip, sizeof(rn->ip)-1);
+            snprintf(rn->ip, sizeof(rn->ip), "%s", sender_ip);
             rn->client_count = 0;
             rn->connected = true;
             remote_node_count++;
@@ -1027,7 +1030,7 @@ static void process_udp_message(void) {
         if (!exists && remote_node_count < MAX_REMOTE_NODES) {
             RemoteNode *rn = &remote_nodes[remote_node_count];
             rn->addr = sender_addr;
-            strncpy(rn->ip, sender_ip, sizeof(rn->ip)-1);
+            snprintf(rn->ip, sizeof(rn->ip), "%s", sender_ip);
             rn->client_count = 0;
             rn->connected = true;
             remote_node_count++;
@@ -1043,7 +1046,7 @@ static void process_udp_message(void) {
         if (!exists && remote_node_count < MAX_REMOTE_NODES) {
             RemoteNode *rn = &remote_nodes[remote_node_count];
             rn->addr = sender_addr;
-            strncpy(rn->ip, sender_ip, sizeof(rn->ip)-1);
+            snprintf(rn->ip, sizeof(rn->ip), "%s", sender_ip);
             rn->client_count = 0;
             rn->connected = true;
             remote_node_count++;
@@ -1061,14 +1064,16 @@ static void process_udp_message(void) {
                     bool found = false;
                     for (int j = 0; j < remote_nodes[i].client_count; j++) {
                         if (remote_nodes[i].clients[j].client_id == cid) {
-                            strncpy(remote_nodes[i].clients[j].name, cname, sizeof(cname));
+                            snprintf(remote_nodes[i].clients[j].name,
+                                     sizeof(remote_nodes[i].clients[j].name), "%s", cname);
                             found = true;
                             break;
                         }
                     }
                     if (!found && remote_nodes[i].client_count < MAX_REMOTE_CLIENTS) {
                         remote_nodes[i].clients[remote_nodes[i].client_count].client_id = cid;
-                        strncpy(remote_nodes[i].clients[remote_nodes[i].client_count].name, cname, sizeof(cname));
+                        snprintf(remote_nodes[i].clients[remote_nodes[i].client_count].name,
+                                 sizeof(remote_nodes[i].clients[remote_nodes[i].client_count].name), "%s", cname);
                         remote_nodes[i].client_count++;
                     }
                 }
@@ -1086,15 +1091,13 @@ static void process_udp_message(void) {
         if (!space) return;
         space++;
         char channel_data[256];
-        strncpy(channel_data, space, sizeof(channel_data)-1);
-        channel_data[sizeof(channel_data)-1] = '\0';
+        snprintf(channel_data, sizeof(channel_data), "%s", space);
         char *token;
         int ch = 0;
         char channels[CHANNELS_PER_APP][MAX_MSG_LENGTH];
         token = strtok(channel_data, ";");
         while (token && ch < CHANNELS_PER_APP) {
-            strncpy(channels[ch], token, MAX_MSG_LENGTH-1);
-            channels[ch][MAX_MSG_LENGTH-1] = '\0';
+            snprintf(channels[ch], MAX_MSG_LENGTH, "%s", token);
             trim_newline(channels[ch]);  // Trim newline characters from the token.
             ch++;
             token = strtok(NULL, ";");
@@ -1105,8 +1108,9 @@ static void process_udp_message(void) {
                 for (int j = 0; j < remote_nodes[i].client_count; j++) {
                     if (remote_nodes[i].clients[j].client_id == cid) {
                         for (int k = 0; k < CHANNELS_PER_APP; k++) {
-                            strncpy(remote_nodes[i].clients[j].last_out[k], channels[k], MAX_MSG_LENGTH-1);
-                            remote_nodes[i].clients[j].last_out[k][MAX_MSG_LENGTH-1] = '\0';
+                            size_t clen = strnlen(channels[k], MAX_MSG_LENGTH - 1);
+                            memcpy(remote_nodes[i].clients[j].last_out[k], channels[k], clen);
+                            remote_nodes[i].clients[j].last_out[k][clen] = '\0';
                             trim_newline(remote_nodes[i].clients[j].last_out[k]);
                         }
                         found = true;
@@ -1115,10 +1119,13 @@ static void process_udp_message(void) {
                 }
                 if (!found && remote_nodes[i].client_count < MAX_REMOTE_CLIENTS) {
                     remote_nodes[i].clients[remote_nodes[i].client_count].client_id = cid;
-                    strncpy(remote_nodes[i].clients[remote_nodes[i].client_count].name, "RemoteClient", sizeof(remote_nodes[i].clients[remote_nodes[i].client_count].name)-1);
+                    snprintf(remote_nodes[i].clients[remote_nodes[i].client_count].name,
+                             sizeof(remote_nodes[i].clients[remote_nodes[i].client_count].name),
+                             "%s", "RemoteClient");
                     for (int k = 0; k < CHANNELS_PER_APP; k++) {
-                        strncpy(remote_nodes[i].clients[remote_nodes[i].client_count].last_out[k], channels[k], MAX_MSG_LENGTH-1);
-                        remote_nodes[i].clients[remote_nodes[i].client_count].last_out[k][MAX_MSG_LENGTH-1] = '\0';
+                        size_t clen = strnlen(channels[k], MAX_MSG_LENGTH - 1);
+                        memcpy(remote_nodes[i].clients[remote_nodes[i].client_count].last_out[k], channels[k], clen);
+                        remote_nodes[i].clients[remote_nodes[i].client_count].last_out[k][clen] = '\0';
                         trim_newline(remote_nodes[i].clients[remote_nodes[i].client_count].last_out[k]);
                     }
                     remote_nodes[i].client_count++;

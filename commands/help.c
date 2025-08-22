@@ -35,6 +35,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
     printf("  crc32    : Calculate and/or verify CRC32 checksum of a file.\n");
+    printf("  diff     : See the difference of two files.\n");
     printf("  display  : Display the contents of a file.\n");    
     printf("  drives   : Lists all found drives.\n");    
     printf("  find     : Find anything.\n");    

@@ -39,7 +39,7 @@ int main(void) {
     
     // Iterate over /dev directory entries.
     while ((entry = readdir(dev_dir)) != NULL) {
-        char path[256];
+        char path[512];
         snprintf(path, sizeof(path), "/dev/%s", entry->d_name);
         
         struct stat st;
@@ -106,7 +106,9 @@ int main(void) {
     
     // Launch a new shell to simulate "going" to the selected drive.
     printf("Launching a new shell...\n");
-    system("bash");
+    if (system("bash") == -1) {
+        perror("system");
+    }
     
     return 0;
 }

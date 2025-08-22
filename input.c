@@ -343,8 +343,7 @@ static int autocomplete_filename(const char *token, char *completion, size_t com
     if (match_count == 1) {
         char full_completion[INPUT_SIZE];
         snprintf(full_completion, sizeof(full_completion), "%s%s", dir, match);
-        strncpy(completion, full_completion, completion_size - 1);
-        completion[completion_size - 1] = '\0';
+        snprintf(completion, completion_size, "%s", full_completion);
     }
     return match_count;
 }

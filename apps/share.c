@@ -94,7 +94,9 @@ char* read_file(const char *filename, uint32_t *size_out) {
         fprintf(stderr, "Diagnostic: Memory allocation failed for file %s.\n", filename);
         return NULL;
     }
-    fread(buffer, 1, size, f);
+    if (fread(buffer, 1, size, f) != (size_t)size) {
+        fprintf(stderr, "Diagnostic: Failed to read file %s.\n", filename);
+    }
     fclose(f);
     *size_out = (uint32_t)size;
     fprintf(stdout, "Diagnostic: Read file %s, size=%u bytes.\n", filename, *size_out);
@@ -108,7 +110,11 @@ int write_file(const char *filename, const char *buffer, uint32_t size) {
         fprintf(stderr, "Diagnostic: Failed to open file %s for writing.\n", filename);
         return -1;
     }
-    fwrite(buffer, 1, size, f);
+    if (fwrite(buffer, 1, size, f) != size) {
+        fprintf(stderr, "Diagnostic: Failed to write file %s.\n", filename);
+        fclose(f);
+        return -1;
+    }
     fclose(f);
     fprintf(stdout, "Diagnostic: Wrote %u bytes to file %s.\n", size, filename);
     return 0;

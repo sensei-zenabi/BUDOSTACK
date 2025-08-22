@@ -273,10 +273,10 @@ int main(int argc, char *argv[]) {
                 if (last_slash != NULL) {
                     window_name = last_slash + 1;
                 }
-                char command[1024];
+                char command[2048];
 
                 // Check if the session exists by querying tmux with our dedicated socket.
-                char check_cmd[256];
+                char check_cmd[512];
                 snprintf(check_cmd, sizeof(check_cmd),
                          "unset TMUX; tmux -S %s has-session -t %s 2>/dev/null", socket_path, session_name);
                 int session_exists = (system(check_cmd) == 0);
@@ -295,7 +295,9 @@ int main(int argc, char *argv[]) {
                 }
                 if (debug)
                     fprintf(stderr, "Executing RUN: %s\n", command);
-                system(command);
+                if (system(command) != 0) {
+                    fprintf(stderr, "RUN command failed\n");
+                }
             } else {
                 if (debug)
                     fprintf(stderr, "Error: Invalid RUN command format at line %d: %s\n",
@@ -311,10 +313,10 @@ int main(int argc, char *argv[]) {
                 char path[512];
                 // Build the path to the shell script in the "shell/" directory.
                 snprintf(path, sizeof(path), "shell/%s", script);
-                char command[1024];
+                char command[2048];
 
                 // Check if the tmux session exists by querying tmux with our dedicated socket.
-                char check_cmd[256];
+                char check_cmd[512];
                 snprintf(check_cmd, sizeof(check_cmd),
                          "unset TMUX; tmux -S %s has-session -t %s 2>/dev/null", socket_path, session_name);
                 int session_exists = (system(check_cmd) == 0);
@@ -333,7 +335,9 @@ int main(int argc, char *argv[]) {
                 }
                 if (debug)
                     fprintf(stderr, "Executing SHELL: %s\n", command);
-                system(command);
+                if (system(command) != 0) {
+                    fprintf(stderr, "SHELL command failed\n");
+                }
             } else {
                 if (debug)
                     fprintf(stderr, "Error: Invalid SHELL command format at line %d: %s\n",
@@ -401,12 +405,14 @@ int main(int argc, char *argv[]) {
         else if (strncmp(scriptLines[pc].text, "START", 5) == 0) {
             // The START command attaches to the tmux session.
             if (tmux_started) {
-                char attach_cmd[256];
+                char attach_cmd[512];
                 snprintf(attach_cmd, sizeof(attach_cmd),
                          "unset TMUX; tmux -S %s attach -t %s", socket_path, session_name);
                 if (debug)
                     fprintf(stderr, "Attaching to tmux session '%s'...\n", session_name);
-                system(attach_cmd);
+                if (system(attach_cmd) != 0) {
+                    fprintf(stderr, "tmux attach failed\n");
+                }
             } else {
                 fprintf(stderr, "No tmux session created. Please run a RUN or SHELL command first.\n");
             }

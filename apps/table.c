@@ -65,11 +65,15 @@ static int show_help = 0;
  * Terminal control functions using system("stty ...")
  */
 void enable_raw_mode(void) {
-    system("stty raw -echo");
+    if (system("stty raw -echo") != 0) {
+        perror("stty raw");
+    }
 }
 
 void disable_raw_mode(void) {
-    system("stty cooked echo");
+    if (system("stty cooked echo") != 0) {
+        perror("stty cooked");
+    }
 }
 
 void hide_cursor(void) {
@@ -125,7 +129,8 @@ void save_table(void) {
     printf("\rEnter filename to save: ");
     fflush(stdout);
     disable_raw_mode();
-    fgets(filename, MAX_INPUT, stdin);
+    if (!fgets(filename, MAX_INPUT, stdin))
+        return;
     size_t len = strlen(filename);
     if (len && filename[len - 1] == '\n')
         filename[len - 1] = '\0';

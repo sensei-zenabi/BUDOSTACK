@@ -125,7 +125,10 @@ void login() {
     // Build the target directory relative to the current directory.
     // This path will be: "<current_dir>/users/<username>"
     char new_path[PATH_MAX];
-    snprintf(new_path, sizeof(new_path), "%s/users/%s", cwd, username);
+    if (snprintf(new_path, sizeof(new_path), "%s/users/%s", cwd, username) >= (int)sizeof(new_path)) {
+        fprintf(stderr, "path too long\n");
+        return;
+    }
 
     // Attempt to change the current working directory.
     if (chdir(new_path) != 0) {

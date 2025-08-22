@@ -25,6 +25,11 @@
 // Declaration of prettyprint, assumed to be provided externally.
 extern void prettyprint(const char *message, unsigned int delay_ms);
 
+static void run_cmd(const char *cmd) {
+    if (system(cmd) == -1) {
+        perror("system");
+    }
+}
 /*
  * Function: print_network_ascii
  * -----------------------------
@@ -49,7 +54,7 @@ void print_network_ascii(char devices[][MAX_LINE_LEN], int count) {
 
 int main(void) {
     // Clear the console.
-    system("clear");
+    run_cmd("clear");
     prettyprint("Hello User! How can I help you?\n", 25);
 
     // Seed the random number generator.
@@ -119,8 +124,7 @@ int main(void) {
                             line[linelen - 1] = '\0';
                         }
                         // Copy the line into our devices array.
-                        strncpy(devices[device_count], line, MAX_LINE_LEN - 1);
-                        devices[device_count][MAX_LINE_LEN - 1] = '\0';
+                        snprintf(devices[device_count], MAX_LINE_LEN, "%s", line);
                         device_count++;
                     }
                 }
@@ -169,69 +173,69 @@ int main(void) {
         else if (strcmp(input, "search hardware") == 0) {
             printf("Gathering comprehensive hardware specs...\n");
             // Remove any previous temporary file.
-            system("rm -f " TEMP_HWFILE);
+            run_cmd("rm -f " TEMP_HWFILE);
             
             // Create logs directory if not exists.
-            system("mkdir -p logs");
+            run_cmd("mkdir -p logs");
 
             // Create organized sections in the temporary file.
-            system("echo \"=== Detailed Hardware Information ===\" > " TEMP_HWFILE);
+            run_cmd("echo \"=== Detailed Hardware Information ===\" > " TEMP_HWFILE);
 
             // Section: Hierarchical hardware overview.
-            system("echo \"\n--- Hardware Overview (lshw -short) ---\" >> " TEMP_HWFILE);
-            system("lshw -short 2>/dev/null >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Hardware Overview (lshw -short) ---\" >> " TEMP_HWFILE);
+            run_cmd("lshw -short 2>/dev/null >> " TEMP_HWFILE);
 
             // Section: Detailed hardware info.
-            system("echo \"\n--- Detailed lshw Output ---\" >> " TEMP_HWFILE);
-            system("lshw 2>/dev/null >> " TEMP_HWFILE);
-            system("echo \"\n--- CPU Info (/proc/cpuinfo & lscpu) ---\" >> " TEMP_HWFILE);
-            system("cat /proc/cpuinfo >> " TEMP_HWFILE);
-            system("lscpu >> " TEMP_HWFILE);
-            system("echo \"\n--- Memory Info (proc & free) ---\" >> " TEMP_HWFILE);
-            system("cat /proc/meminfo >> " TEMP_HWFILE);
-            system("free -h >> " TEMP_HWFILE);
-            system("echo \"\n--- PCI Devices ---\" >> " TEMP_HWFILE);
-            system("lspci -v >> " TEMP_HWFILE);
-            system("echo \"\n--- USB Devices ---\" >> " TEMP_HWFILE);
-            system("lsusb -v 2>/dev/null | head -n 50 >> " TEMP_HWFILE);
-            system("echo \"\n--- Network Interfaces ---\" >> " TEMP_HWFILE);
-            system("ip addr >> " TEMP_HWFILE);
-            system("echo \"\n--- Sensors Info ---\" >> " TEMP_HWFILE);
-            system("sensors 2>/dev/null >> " TEMP_HWFILE);
-            system("echo \"\n--- Battery Info ---\" >> " TEMP_HWFILE);
-            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/status; "
+            run_cmd("echo \"\n--- Detailed lshw Output ---\" >> " TEMP_HWFILE);
+            run_cmd("lshw 2>/dev/null >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- CPU Info (/proc/cpuinfo & lscpu) ---\" >> " TEMP_HWFILE);
+            run_cmd("cat /proc/cpuinfo >> " TEMP_HWFILE);
+            run_cmd("lscpu >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Memory Info (proc & free) ---\" >> " TEMP_HWFILE);
+            run_cmd("cat /proc/meminfo >> " TEMP_HWFILE);
+            run_cmd("free -h >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- PCI Devices ---\" >> " TEMP_HWFILE);
+            run_cmd("lspci -v >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- USB Devices ---\" >> " TEMP_HWFILE);
+            run_cmd("lsusb -v 2>/dev/null | head -n 50 >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Network Interfaces ---\" >> " TEMP_HWFILE);
+            run_cmd("ip addr >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Sensors Info ---\" >> " TEMP_HWFILE);
+            run_cmd("sensors 2>/dev/null >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Battery Info ---\" >> " TEMP_HWFILE);
+            run_cmd("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/status; "
                    "elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/status; "
                    "else echo \"No battery found\"; fi' >> " TEMP_HWFILE);
-            system("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/capacity; "
+            run_cmd("sh -c 'if [ -d /sys/class/power_supply/BAT0 ]; then cat /sys/class/power_supply/BAT0/capacity; "
                    "elif [ -d /sys/class/power_supply/BAT1 ]; then cat /sys/class/power_supply/BAT1/capacity; fi && echo \"%\"' >> " TEMP_HWFILE);
-            system("echo \"\n--- Storage Devices (lsblk) ---\" >> " TEMP_HWFILE);
-            system("lsblk >> " TEMP_HWFILE);
-            system("echo \"\n--- Input Devices (/proc/bus/input/devices) ---\" >> " TEMP_HWFILE);
-            system("cat /proc/bus/input/devices >> " TEMP_HWFILE);
-            system("echo \"\n--- Audio Devices (aplay -l) ---\" >> " TEMP_HWFILE);
-            system("aplay -l 2>/dev/null >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Storage Devices (lsblk) ---\" >> " TEMP_HWFILE);
+            run_cmd("lsblk >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Input Devices (/proc/bus/input/devices) ---\" >> " TEMP_HWFILE);
+            run_cmd("cat /proc/bus/input/devices >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Audio Devices (aplay -l) ---\" >> " TEMP_HWFILE);
+            run_cmd("aplay -l 2>/dev/null >> " TEMP_HWFILE);
 
             // Section: Logical tree view of top-level device tree nodes.
-            system("echo \"\n--- Device Tree Overview (Logical Tree) ---\" >> " TEMP_HWFILE);
-            system("find /proc/device-tree -maxdepth 2 | sort >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Device Tree Overview (Logical Tree) ---\" >> " TEMP_HWFILE);
+            run_cmd("find /proc/device-tree -maxdepth 2 | sort >> " TEMP_HWFILE);
 
             // Section: Truncated device tree dump.
             {
                 char truncated_cmd[128];
                 snprintf(truncated_cmd, sizeof(truncated_cmd), "dtc -I fs -O dts /proc/device-tree | head -n %d >> %s", TRUNCATED_DT_LINES, TEMP_HWFILE);
-                system(truncated_cmd);
+                run_cmd(truncated_cmd);
             }
 
             // Section: Full device tree dump.
-            system("echo \"\n--- Full Device Tree Dump ---\" >> " TEMP_HWFILE);
-            system("dtc -I fs -O dts /proc/device-tree >> " TEMP_HWFILE);
+            run_cmd("echo \"\n--- Full Device Tree Dump ---\" >> " TEMP_HWFILE);
+            run_cmd("dtc -I fs -O dts /proc/device-tree >> " TEMP_HWFILE);
 
             // Export the complete output to logs/hwtree.txt.
-            system("cp " TEMP_HWFILE " " LOG_HW_FILE);
+            run_cmd("cp " TEMP_HWFILE " " LOG_HW_FILE);
 
             // Page the organized output.
-            system("less " TEMP_HWFILE);
-            system("rm " TEMP_HWFILE);
+            run_cmd("less " TEMP_HWFILE);
+            run_cmd("rm " TEMP_HWFILE);
         }
         else if (strcmp(input, "linux") == 0) {
             printf("Displaying the complete Linux command list from logs/linux.txt...\n");

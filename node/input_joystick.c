@@ -159,7 +159,7 @@ int main(int argc, char *argv[]) {
 
     DIR *dir;
     struct dirent *entry;
-    char path[256];
+    char path[512];
     int js_fds[MAX_JOYSTICKS];
     int js_count = 0;
     for (int i = 0; i < MAX_JOYSTICKS; i++) {

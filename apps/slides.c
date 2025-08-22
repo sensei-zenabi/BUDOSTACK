@@ -159,19 +159,23 @@ void computeDimensions(void) {
 
 /* Clear the screen and reposition the cursor at the top–left */
 void clearScreen(void) {
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    if (write(STDOUT_FILENO, "\x1b[2J", 4) < 0) {
+        perror("write");
+    }
+    if (write(STDOUT_FILENO, "\x1b[H", 3) < 0) {
+        perror("write");
+    }
 }
 
 /* Draw the outer border covering the whole terminal */
 void drawBorder(void) {
     int r, c;
     /* Draw the top border */
-    write(STDOUT_FILENO, "+", 1);
+    if (write(STDOUT_FILENO, "+", 1) < 0) perror("write");
     for (c = 2; c < g_term_cols; c++) {
-        write(STDOUT_FILENO, "-", 1);
+        if (write(STDOUT_FILENO, "-", 1) < 0) perror("write");
     }
-    write(STDOUT_FILENO, "+", 1);
+    if (write(STDOUT_FILENO, "+", 1) < 0) perror("write");
 
     /* Draw the sides for rows 2 .. g_term_rows-1 */
     char line[g_term_cols + 1];
@@ -186,9 +190,9 @@ void drawBorder(void) {
     /* Draw the bottom border */
     dprintf(STDOUT_FILENO, "\x1b[%d;1H+", g_term_rows);
     for (c = 2; c < g_term_cols; c++) {
-        write(STDOUT_FILENO, "-", 1);
+        if (write(STDOUT_FILENO, "-", 1) < 0) perror("write");
     }
-    write(STDOUT_FILENO, "+", 1);
+    if (write(STDOUT_FILENO, "+", 1) < 0) perror("write");
 }
 
 /*

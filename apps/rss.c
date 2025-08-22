@@ -238,7 +238,9 @@ void format_current_time(char *buffer, size_t buf_size) {
 // The layout now includes TOP_MARGIN blank lines at the top and BOTTOM_MARGIN blank lines before the bottom bar.
 // Also prints user instructions for navigation at the bottom.
 void display_page(news_item *news, int news_count, int page, int items_per_page, const char *last_update_str, int total_pages) {
-    system("clear");
+    if (system("clear") == -1) {
+        perror("system");
+    }
     int printed_lines = 0;
 
     // Print top margin

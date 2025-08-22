@@ -585,7 +585,9 @@ void editorRefreshScreen(void) {
     len = snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cursor_y, cursor_x);
     abAppend(&ab, buf, len);
     abAppend(&ab, "\x1b[?25h", 6);
-    write(STDOUT_FILENO, ab.b, ab.len);
+    if (write(STDOUT_FILENO, ab.b, ab.len) < 0) {
+        perror("write");
+    }
     abFree(&ab);
 }
 
@@ -732,15 +734,15 @@ void pop_undo_state(void) {
 
 /*** Terminal Setup Functions ***/
 void die(const char *s) {
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    if (write(STDOUT_FILENO, "\x1b[2J", 4) < 0) perror("write");
+    if (write(STDOUT_FILENO, "\x1b[H", 3) < 0) perror("write");
     perror(s);
     exit(1);
 }
 
 void disableRawMode(void) {
     // Disable bracketed paste mode before restoring terminal settings.
-    write(STDOUT_FILENO, "\x1b[?2004l", 9);
+    if (write(STDOUT_FILENO, "\x1b[?2004l", 9) < 0) perror("write");
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios);
 }
 
@@ -759,7 +761,7 @@ void enableRawMode(void) {
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1)
         die("tcsetattr");
     // Enable bracketed paste mode.
-    write(STDOUT_FILENO, "\x1b[?2004h", 9);
+    if (write(STDOUT_FILENO, "\x1b[?2004h", 9) < 0) perror("write");
 }
 
 /*** Input Processing ***/
@@ -806,8 +808,8 @@ void editorProcessKeypress(void) {
     }
     switch (c) {
         case CTRL_KEY('q'):
-            write(STDOUT_FILENO, "\x1b[2J", 4);
-            write(STDOUT_FILENO, "\x1b[H", 3);
+            if (write(STDOUT_FILENO, "\x1b[2J", 4) < 0) perror("write");
+            if (write(STDOUT_FILENO, "\x1b[H", 3) < 0) perror("write");
             exit(0);
             break;
         case CTRL_KEY('s'):
@@ -1468,7 +1470,9 @@ void systemClipboardWrite(const char *s) {
     FILE *fp = popen("xclip -selection clipboard", "w");
     if (!fp)
         return;
-    fwrite(s, 1, strlen(s), fp);
+    if (fwrite(s, 1, strlen(s), fp) != strlen(s)) {
+        perror("fwrite");
+    }
     pclose(fp);
 }
 

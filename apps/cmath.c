@@ -84,14 +84,14 @@ char *get_line(void) {
     memset(buffer, 0, sizeof(buffer));
     
     enable_raw_mode();
-    write(STDOUT_FILENO, "math> ", 6);
+    if (write(STDOUT_FILENO, "math> ", 6) < 0) perror("write");
     
     while (1) {
         char c;
         if (read(STDIN_FILENO, &c, 1) != 1)
             break;
         if (c == '\r' || c == '\n') {
-            write(STDOUT_FILENO, "\r\n", 2);
+            if (write(STDOUT_FILENO, "\r\n", 2) < 0) perror("write");
             buffer[pos] = '\0';
             break;
         } else if (c == 127 || c == 8) { // Handle backspace
@@ -99,7 +99,7 @@ char *get_line(void) {
                 pos--;
                 buffer[pos] = '\0';
                 /* Erase the character from the terminal */
-                write(STDOUT_FILENO, "\b \b", 3);
+                if (write(STDOUT_FILENO, "\b \b", 3) < 0) perror("write");
             }
         } else if (c == 27) { // Start of an escape sequence (likely arrow keys)
             char seq[2];
@@ -111,32 +111,32 @@ char *get_line(void) {
                         history_index--;
                         /* Clear current line: ESC[2K clears entire line, \r returns cursor */
                         char clear_seq[] = "\33[2K\r";
-                        write(STDOUT_FILENO, clear_seq, strlen(clear_seq));
-                        write(STDOUT_FILENO, "math> ", 6);
+                        if (write(STDOUT_FILENO, clear_seq, strlen(clear_seq)) < 0) perror("write");
+                        if (write(STDOUT_FILENO, "math> ", 6) < 0) perror("write");
                         /* Load command from history */
                         int len = strlen(history[history_index]);
                         if (len > 255) len = 255;
                         strcpy(buffer, history[history_index]);
                         pos = len;
-                        write(STDOUT_FILENO, buffer, pos);
+                        if (write(STDOUT_FILENO, buffer, pos) < 0) perror("write");
                     }
                 } else if (seq[1] == 'B') { // Down arrow: navigate to next command
                     if (history_index < history_count - 1) {
                         history_index++;
                         char clear_seq[] = "\33[2K\r";
-                        write(STDOUT_FILENO, clear_seq, strlen(clear_seq));
-                        write(STDOUT_FILENO, "math> ", 6);
+                        if (write(STDOUT_FILENO, clear_seq, strlen(clear_seq)) < 0) perror("write");
+                        if (write(STDOUT_FILENO, "math> ", 6) < 0) perror("write");
                         int len = strlen(history[history_index]);
                         if (len > 255) len = 255;
                         strcpy(buffer, history[history_index]);
                         pos = len;
-                        write(STDOUT_FILENO, buffer, pos);
+                        if (write(STDOUT_FILENO, buffer, pos) < 0) perror("write");
                     } else {
                         /* At the end of history, clear the line */
                         history_index = history_count;
                         char clear_seq[] = "\33[2K\r";
-                        write(STDOUT_FILENO, clear_seq, strlen(clear_seq));
-                        write(STDOUT_FILENO, "math> ", 6);
+                        if (write(STDOUT_FILENO, clear_seq, strlen(clear_seq)) < 0) perror("write");
+                        if (write(STDOUT_FILENO, "math> ", 6) < 0) perror("write");
                         pos = 0;
                         buffer[0] = '\0';
                     }
@@ -145,7 +145,7 @@ char *get_line(void) {
         } else if (c >= 32 && c <= 126) { // Printable characters
             if (pos < 255) {
                 buffer[pos++] = c;
-                write(STDOUT_FILENO, &c, 1);
+                if (write(STDOUT_FILENO, &c, 1) < 0) perror("write");
             }
         }
     }

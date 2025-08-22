@@ -531,7 +531,8 @@ int main(int argc, char *argv[]) {
                     int bar_height = (int)(norm * (graph_height - 1));
                     graph_lines[row][col] = ((graph_height - 1 - row) <= bar_height) ? '*' : ' ';
                 }
-                graph_lines[row][term_width] = '\0';
+                if (term_width > 0)
+                    graph_lines[row][term_width] = '\0';
             }
             // Build x-axis with frequency labels
             memset(xaxis_line, '-', term_width);
@@ -545,7 +546,7 @@ int main(int argc, char *argv[]) {
                     snprintf(label, sizeof(label), "%.0fHz", freq);
                     int label_len = strlen(label);
                     if (pos + label_len > term_width) pos = term_width - label_len;
-                    strncpy(&xaxis_line[pos], label, label_len);
+                    memcpy(&xaxis_line[pos], label, label_len);
                 }
             } else {
                 double test_freqs[5] = {20.0, 100.0, 1000.0, 5000.0, freq_max};
@@ -563,11 +564,12 @@ int main(int argc, char *argv[]) {
                         snprintf(label, sizeof(label), "%.1fk", f / 1000.0);
                     int label_len = strlen(label);
                     if (pos + label_len > term_width) pos = term_width - label_len;
-                    strncpy(&xaxis_line[pos], label, label_len);
+                    memcpy(&xaxis_line[pos], label, label_len);
                 }
             }
-            strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
-            graph_lines[graph_height - 1][term_width] = '\0';
+            memcpy(graph_lines[graph_height - 1], xaxis_line, term_width);
+            if (term_width > 0)
+                graph_lines[graph_height - 1][term_width] = '\0';
 
             free(col_magnitudes);
             free(fft_in);
@@ -650,7 +652,7 @@ int main(int argc, char *argv[]) {
                 if (col_magnitudes[j] > max_val)
                     max_val = col_magnitudes[j];
 
-            char waterfall_line[term_width * 20];
+            char waterfall_line[term_width * 20 + 1];
             waterfall_line[0] = '\0';
             for (int col = 0; col < term_width; col++) {
                 double norm = (max_val > 0.0) ? (col_magnitudes[col] / max_val) : 0.0;
@@ -683,7 +685,7 @@ int main(int argc, char *argv[]) {
                     snprintf(label, sizeof(label), "%.0fHz", freq);
                     int label_len = strlen(label);
                     if (pos + label_len > term_width) pos = term_width - label_len;
-                    strncpy(&xaxis_line[pos], label, label_len);
+                    memcpy(&xaxis_line[pos], label, label_len);
                 }
             } else {
                 double test_freqs[5] = {20.0, 100.0, 1000.0, 5000.0, freq_max};
@@ -701,11 +703,12 @@ int main(int argc, char *argv[]) {
                         snprintf(label, sizeof(label), "%.1fk", f / 1000.0);
                     int label_len = strlen(label);
                     if (pos + label_len > term_width) pos = term_width - label_len;
-                    strncpy(&xaxis_line[pos], label, label_len);
+                    memcpy(&xaxis_line[pos], label, label_len);
                 }
             }
-            strncpy(graph_lines[graph_height - 1], xaxis_line, term_width);
-            graph_lines[graph_height - 1][term_width] = '\0';
+            memcpy(graph_lines[graph_height - 1], xaxis_line, term_width);
+            if (term_width > 0)
+                graph_lines[graph_height - 1][term_width] = '\0';
             
             // Set channel 4 output (checksum) when view 3 is active.
             {

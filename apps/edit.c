@@ -369,8 +369,11 @@ void abAppendHighlighted(struct abuf *ab, const char *s, int avail) {
 void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
     int logical_width = 0;
     int byte_index = editorRowCxToByteIndex(row, E.coloff);
-    char buffer[1024];
-    int buf_index = 0;
+    size_t buf_cap = (size_t)avail * MB_CUR_MAX;
+    char *buffer = malloc(buf_cap);
+    if (!buffer)
+        return;
+    size_t buf_index = 0;
     size_t bytes;
     wchar_t wc;
     while (byte_index < row->size && logical_width < avail) {
@@ -381,13 +384,23 @@ void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
         if (w < 0) w = 0;
         if (logical_width + w > avail)
             break;
-        for (int j = 0; j < (int)bytes; j++) {
-            if (buf_index < (int)sizeof(buffer) - 1)
-                buffer[buf_index++] = row->chars[byte_index + j];
+        if (buf_index + bytes > buf_cap) {
+            size_t new_cap = buf_cap * 2;
+            char *tmp = realloc(buffer, new_cap);
+            if (!tmp) {
+                free(buffer);
+                return;
+            }
+            buffer = tmp;
+            buf_cap = new_cap;
         }
-        logical_width += w; byte_index += bytes;
+        memcpy(buffer + buf_index, row->chars + byte_index, bytes);
+        buf_index += bytes;
+        logical_width += w;
+        byte_index += bytes;
     }
     abAppend(ab, buffer, buf_index);
+    free(buffer);
 }
 
 void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab) {

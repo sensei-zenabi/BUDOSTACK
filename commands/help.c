@@ -36,7 +36,7 @@ int main(int argc, char *argv[]) {
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
     printf("  crc32    : Calculate and/or verify CRC32 checksum of a file.\n");
     printf("  display  : Display the contents of a file.\n");    
-    printf("  drives   : Lists all found drives.\n");    
+    printf("  drives   : List and explore attached drives.\n");
     printf("  find     : Find anything.\n");    
     printf("  list     : List contents of a directory (type 'list -help').\n");    
     printf("  makedir  : Create a new directory.\n");    

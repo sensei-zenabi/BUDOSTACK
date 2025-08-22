@@ -384,7 +384,10 @@ static void handle_client_input(int i) {
                     char outbuf[600];
                     snprintf(outbuf, sizeof(outbuf), "in%d from client%d: %s\n", r.in_channel, out_cid, msg);
                     send(clients[idx_in].sockfd, outbuf, strlen(outbuf), 0);
-                    snprintf(client_data[idx_in].last_in[r.in_channel], MAX_MSG_LENGTH, "%s", outbuf);
+                    /* Store last input without exceeding buffer */
+                    strncpy(client_data[idx_in].last_in[r.in_channel], outbuf,
+                            MAX_MSG_LENGTH - 1);
+                    client_data[idx_in].last_in[r.in_channel][MAX_MSG_LENGTH - 1] = '\0';
                 }
             }
         }

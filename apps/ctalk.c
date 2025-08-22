@@ -329,7 +329,9 @@ void run_server(void) {
                     char timestamp[64];
                     char message[BUF_SIZE];
                     get_timestamp(timestamp, sizeof(timestamp));
-                    snprintf(message, sizeof(message), "[%s] %s - %s", timestamp, my_username, input_buf);
+                    /* Construct message safely without truncation */
+                    snprintf(message, sizeof(message), "[%s] %s - ", timestamp, my_username);
+                    strncat(message, input_buf, sizeof(message) - strlen(message) - 1);
                     ensure_newline(message, sizeof(message));
                     broadcast_message(message, NULL);
                     /* Print own message immediately */
@@ -451,7 +453,9 @@ void run_server(void) {
                 pthread_mutex_lock(&clients_mutex);
                 const char *sender = clients[idx]->username;
                 pthread_mutex_unlock(&clients_mutex);
-                snprintf(formatted, sizeof(formatted), "[%s] %s - %s", timestamp, sender, buf);
+                /* Safely combine timestamp, sender, and message */
+                snprintf(formatted, sizeof(formatted), "[%s] %s - ", timestamp, sender);
+                strncat(formatted, buf, sizeof(formatted) - strlen(formatted) - 1);
                 ensure_newline(formatted, sizeof(formatted));
                 printf("\r\33[2K%s", formatted);
                 reprint_prompt(input_buf);
@@ -556,7 +560,9 @@ void run_client(const char *username, const char *server_ip) {
                     char timestamp[64];
                     char message[BUF_SIZE];
                     get_timestamp(timestamp, sizeof(timestamp));
-                    snprintf(message, sizeof(message), "[%s] %s - %s", timestamp, username, input_buf);
+                    /* Construct client's message without overflowing buffer */
+                    snprintf(message, sizeof(message), "[%s] %s - ", timestamp, username);
+                    strncat(message, input_buf, sizeof(message) - strlen(message) - 1);
                     ensure_newline(message, sizeof(message));
                     printf("\r\33[2K%s", message);
                 }

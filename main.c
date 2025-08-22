@@ -54,7 +54,10 @@ static char **g_argv;
  */
 void load_realtime_commands(void) {
     char apps_path[PATH_MAX];
-    snprintf(apps_path, sizeof(apps_path), "%s/apps", base_directory);
+    if (snprintf(apps_path, sizeof(apps_path), "%s/apps", base_directory) >= (int)sizeof(apps_path)) {
+        perror("snprintf");
+        return;
+    }
     DIR *dir = opendir(apps_path);
     if (!dir) {
         perror("opendir");
@@ -69,7 +72,8 @@ void load_realtime_commands(void) {
         
         /* Construct the full path to the file */
         char full_path[PATH_MAX];
-        snprintf(full_path, sizeof(full_path), "%s/%s", apps_path, entry->d_name);
+        if (snprintf(full_path, sizeof(full_path), "%s/%s", apps_path, entry->d_name) >= (int)sizeof(full_path))
+            continue;
         
         /* Check if it's a regular file and executable */
         struct stat sb;
@@ -507,7 +511,7 @@ int main(int argc, char *argv[]) {
                 *last_slash = '\0'; // Terminate the string at the last '/'
             }
             set_base_path(exe_path);
-            strncpy(base_directory, exe_path, sizeof(base_directory)-1);
+            snprintf(base_directory, sizeof(base_directory), "%s", exe_path);
         }
     }
     
@@ -515,7 +519,8 @@ int main(int argc, char *argv[]) {
     load_realtime_commands();
 
     /* Clear the screen */
-    system("clear");
+    if (system("clear") != 0)
+        perror("system");
 
     /* Modified: Determine if we need to auto-run a command. */
     char *auto_command = NULL;
@@ -533,7 +538,8 @@ int main(int argc, char *argv[]) {
     if ((argc > 1 && strcmp(argv[1], "-f") == 0) || auto_command != NULL) {
         /* Do not print startup messages and skip login() */
     } else {
-        system("clear");
+        if (system("clear") != 0)
+            perror("system");
         printlogo();
         login();
         printf("========================================================================\n");

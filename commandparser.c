@@ -169,15 +169,18 @@ int execute_command(const CommandStruct *cmd) {
 
     /* Search for the executable */
     for (int i = 0; i < num_dirs; i++) {
+        int n;
         if (base_path[0] != '\0') {
-            snprintf(command_path, sizeof(command_path),
-                     "%s/%s/%s",
-                     base_path, relative_commands_dirs[i], cmd->command);
+            n = snprintf(command_path, sizeof(command_path),
+                         "%s/%s/%s",
+                         base_path, relative_commands_dirs[i], cmd->command);
         } else {
-            snprintf(command_path, sizeof(command_path),
-                     "./%s/%s",
-                     relative_commands_dirs[i], cmd->command);
+            n = snprintf(command_path, sizeof(command_path),
+                         "./%s/%s",
+                         relative_commands_dirs[i], cmd->command);
         }
+        if (n < 0 || n >= (int)sizeof(command_path))
+            continue;
         if (access(command_path, X_OK) == 0) {
             found = 1;
             break;

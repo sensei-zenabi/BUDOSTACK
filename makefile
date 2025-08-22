@@ -1,6 +1,6 @@
 # Compiler and flags
 CC = gcc
-CFLAGS = -std=c11 -Wall -Wextra -pedantic 
+CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic 
 LDFLAGS = -lasound -lm -pthread
 
 # --------------------------------------------------------------------

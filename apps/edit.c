@@ -1372,9 +1372,11 @@ void editorCopySelection(void) {
         int end_byte = editorRowCxToByteIndex(&E.row[i], sel_end);
         int chunk_len = end_byte - start_byte;
         if (len + chunk_len + 2 > bufsize) {
-            bufsize *= 2;
-            buf = realloc(buf, bufsize);
-            if (!buf) die("realloc clipboard");
+            while (len + chunk_len + 2 > bufsize)
+                bufsize *= 2;
+            char *new_buf = realloc(buf, bufsize);
+            if (!new_buf) die("realloc clipboard");
+            buf = new_buf;
         }
         memcpy(buf + len, E.row[i].chars + start_byte, chunk_len);
         len += chunk_len;

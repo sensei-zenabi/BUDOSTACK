@@ -33,6 +33,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/ioctl.h>
+#include <stdint.h>
 
 void* _draw_create(int width, int height);
 void  _draw_destroy(void* ctx);
@@ -65,6 +66,41 @@ int cell_w = CELL_PIX_W;
 int cell_h = CELL_PIX_H;
 int leaderboard_shown = 0;
 int running = 1;
+
+/* Simple 8x6 bitmap for an invader */
+static const uint8_t inv_sprite[6][8] = {
+    {0,1,1,0,0,1,1,0},
+    {1,1,1,1,1,1,1,1},
+    {1,1,1,1,1,1,1,1},
+    {1,0,1,1,1,1,0,1},
+    {1,0,1,0,0,1,0,1},
+    {0,1,0,0,0,0,1,0}
+};
+
+/* 8x6 bitmap for the player's cannon */
+static const uint8_t player_sprite[6][8] = {
+    {0,0,0,1,0,0,0,0},
+    {0,0,1,1,1,0,0,0},
+    {0,1,1,1,1,1,0,0},
+    {1,1,1,1,1,1,1,0},
+    {1,1,1,1,1,1,1,0},
+    {0,0,0,1,0,0,0,0}
+};
+
+/* Draw a bitmap scaled to the given width/height */
+static void draw_bitmap(int x, int y, int w, int h, const uint8_t *bmp, int bw, int bh) {
+    int px = w / bw;
+    int py = h / bh;
+    if (px < 1) px = 1;
+    if (py < 1) py = 1;
+    for (int r = 0; r < bh; r++) {
+        for (int c = 0; c < bw; c++) {
+            if (bmp[r * bw + c]) {
+                _draw_fill_rect(draw_ctx, x + c * px, y + r * py, px, py, 1);
+            }
+        }
+    }
+}
 
 int determineScale() {
     struct winsize ws;
@@ -193,10 +229,10 @@ void process_input() {
             if (kbhit() && getch() == 91) {
                 int dir = getch();
                 if (dir == 68) { // Left arrow
-                    if (player_x > 0)
+                    if (player_x > 1)
                         player_x--;
                 } else if (dir == 67) { // Right arrow
-                    if (player_x < BOARD_WIDTH - 1)
+                    if (player_x < BOARD_WIDTH - 2)
                         player_x++;
                 }
             }
@@ -205,7 +241,7 @@ void process_input() {
             if (!bullet.active) {
                 bullet.active = 1;
                 bullet.x = player_x;
-                bullet.y = BOARD_HEIGHT - 2;
+                bullet.y = BOARD_HEIGHT - 3;
             }
         } else if (c == 'q' || c == 'Q') {
             running = 0;
@@ -225,8 +261,9 @@ void update_bullet() {
             for (int j = 0; j < INV_COLS; j++) {
                 if (invaders[i][j]) {
                     int inv_x = invader_offset_x + j * 4;
-                    int inv_y = invader_offset_y + i * 2;
-                    if (bullet.x == inv_x && bullet.y == inv_y) {
+                    int inv_y = invader_offset_y + i * 3;
+                    if (bullet.x >= inv_x && bullet.x < inv_x + 3 &&
+                        bullet.y >= inv_y && bullet.y < inv_y + 2) {
                         invaders[i][j] = 0; // invader hit
                         bullet.active = 0;
                         score += 10;  // Increase score
@@ -259,8 +296,8 @@ void update_invaders() {
                 int inv_x = invader_offset_x + j * 4;
                 if (inv_x < leftmost)
                     leftmost = inv_x;
-                if (inv_x > rightmost)
-                    rightmost = inv_x;
+                if (inv_x + 2 > rightmost)
+                    rightmost = inv_x + 2;
             }
         }
     }
@@ -281,8 +318,8 @@ void update_invaders() {
     for (int i = 0; i < INV_ROWS; i++) {
         for (int j = 0; j < INV_COLS; j++) {
             if (invaders[i][j]) {
-                int inv_y = invader_offset_y + i * 2;
-                if (inv_y >= BOARD_HEIGHT - 1) {
+                int inv_y = invader_offset_y + i * 3;
+                if (inv_y + 1 >= BOARD_HEIGHT - 1) {
                     game_over = 1;
                 }
             }
@@ -356,8 +393,8 @@ void draw_game() {
         for (int j = 0; j < INV_COLS; j++) {
             if (invaders[i][j]) {
                 int x = (invader_offset_x + j * 4) * cell_w;
-                int y = (invader_offset_y + i * 2) * cell_h;
-                _draw_fill_rect(draw_ctx, x, y, cell_w, cell_h, 1);
+                int y = (invader_offset_y + i * 3) * cell_h;
+                draw_bitmap(x, y, 3 * cell_w, 2 * cell_h, &inv_sprite[0][0], 8, 6);
             }
         }
     }
@@ -366,7 +403,9 @@ void draw_game() {
         _draw_fill_rect(draw_ctx, bullet.x * cell_w, bullet.y * cell_h, cell_w, cell_h, 1);
     }
 
-    _draw_fill_rect(draw_ctx, player_x * cell_w, (BOARD_HEIGHT - 1) * cell_h, cell_w, cell_h, 1);
+    // Draw player centered around player_x
+    draw_bitmap((player_x - 1) * cell_w, (BOARD_HEIGHT - 2) * cell_h,
+                3 * cell_w, 2 * cell_h, &player_sprite[0][0], 8, 6);
 
     _draw_render_to_stdout(draw_ctx);
 

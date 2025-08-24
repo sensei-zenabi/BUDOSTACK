@@ -19,9 +19,9 @@ void  _draw_render_to_stdout(void* ctx);
 #define WIDTH 40
 #define HEIGHT 20
 
-// Base pixel size of one board cell (for 320x240 at scale 1)
-#define CELL_PIX_W 8
-#define CELL_PIX_H 12
+// Base pixel size of one board cell (unscaled)
+#define CELL_PIX_W 2
+#define CELL_PIX_H 4
 // Maximum snake length
 #define MAX_SNAKE_LENGTH 100
 
@@ -59,20 +59,21 @@ int scale = 1;
 int cell_w = CELL_PIX_W;
 int cell_h = CELL_PIX_H;
 
-// Determine drawing scale (1x, 2x, or 3x) based on terminal dimensions
+// Determine drawing scale based on terminal dimensions
 int determineScale() {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1)
         return 1;
 
     int avail_w = ws.ws_col * 2;          // characters to pixels
-    int avail_h = (ws.ws_row - 3) * 4;     // leave room for status lines
+    int avail_h = (ws.ws_row - 3) * 4;    // leave room for status lines
 
-    if (avail_w >= 320 * 3 && avail_h >= 240 * 3)
-        return 3;
-    if (avail_w >= 320 * 2 && avail_h >= 240 * 2)
-        return 2;
-    return 1;
+    int max_scale_w = avail_w / (WIDTH * CELL_PIX_W);
+    int max_scale_h = avail_h / (HEIGHT * CELL_PIX_H);
+    int s = max_scale_w < max_scale_h ? max_scale_w : max_scale_h;
+    if (s < 1)
+        s = 1;
+    return s;
 }
 
 // Terminal settings storage so we can restore them
@@ -235,19 +236,19 @@ void drawBoard() {
 
     // Draw fruit
     _draw_fill_rect(draw_ctx,
-                    fruit.x * cell_w + 1,
-                    fruit.y * cell_h + 1,
-                    cell_w - 2,
-                    cell_h - 2,
+                    fruit.x * cell_w,
+                    fruit.y * cell_h,
+                    cell_w,
+                    cell_h,
                     1);
 
     // Draw snake segments
     for (int i = 0; i < snake_length; i++) {
         _draw_fill_rect(draw_ctx,
-                        snake[i].x * cell_w + 1,
-                        snake[i].y * cell_h + 1,
-                        cell_w - 2,
-                        cell_h - 2,
+                        snake[i].x * cell_w,
+                        snake[i].y * cell_h,
+                        cell_w,
+                        cell_h,
                         1);
     }
 

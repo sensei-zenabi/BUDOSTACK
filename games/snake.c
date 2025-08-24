@@ -5,18 +5,23 @@
 #include <termios.h>
 #include <fcntl.h>
 #include <time.h>
+#include <sys/ioctl.h>
 
 // libdraw forward declarations
 void* _draw_create(int width, int height);
 void  _draw_destroy(void* ctx);
 void  _draw_clear(void* ctx, int value);
-void  _draw_set_pixel(void* ctx, int x, int y, int value);
 void  _draw_rect(void* ctx, int x, int y, int w, int h, int value);
+void  _draw_fill_rect(void* ctx, int x, int y, int w, int h, int value);
 void  _draw_render_to_stdout(void* ctx);
 
 // Board dimensions
 #define WIDTH 40
 #define HEIGHT 20
+
+// Base pixel size of one board cell (for 320x240 at scale 1)
+#define CELL_PIX_W 8
+#define CELL_PIX_H 12
 // Maximum snake length
 #define MAX_SNAKE_LENGTH 100
 
@@ -48,6 +53,27 @@ int game_over = 0;
 
 // Drawing context for libdraw
 void* draw_ctx = NULL;
+
+// Scaling factors determined from terminal size
+int scale = 1;
+int cell_w = CELL_PIX_W;
+int cell_h = CELL_PIX_H;
+
+// Determine drawing scale (1x, 2x, or 3x) based on terminal dimensions
+int determineScale() {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1)
+        return 1;
+
+    int avail_w = ws.ws_col * 2;          // characters to pixels
+    int avail_h = (ws.ws_row - 3) * 4;     // leave room for status lines
+
+    if (avail_w >= 320 * 3 && avail_h >= 240 * 3)
+        return 3;
+    if (avail_w >= 320 * 2 && avail_h >= 240 * 2)
+        return 2;
+    return 1;
+}
 
 // Terminal settings storage so we can restore them
 struct termios orig_termios;
@@ -201,22 +227,32 @@ void drawBoard() {
     // Clear the screen and move cursor to home position
     printf("\033[2J\033[H");
 
-    // Clear drawing buffer and draw border
+    int board_w = WIDTH * cell_w;
+    int board_h = HEIGHT * cell_h;
+
     _draw_clear(draw_ctx, 0);
-    _draw_rect(draw_ctx, 0, 0, WIDTH + 2, HEIGHT + 2, 1);
+    _draw_rect(draw_ctx, 0, 0, board_w, board_h, 1);
 
     // Draw fruit
-    _draw_set_pixel(draw_ctx, fruit.x + 1, fruit.y + 1, 1);
+    _draw_fill_rect(draw_ctx,
+                    fruit.x * cell_w + 1,
+                    fruit.y * cell_h + 1,
+                    cell_w - 2,
+                    cell_h - 2,
+                    1);
 
     // Draw snake segments
     for (int i = 0; i < snake_length; i++) {
-        _draw_set_pixel(draw_ctx, snake[i].x + 1, snake[i].y + 1, 1);
+        _draw_fill_rect(draw_ctx,
+                        snake[i].x * cell_w + 1,
+                        snake[i].y * cell_h + 1,
+                        cell_w - 2,
+                        cell_h - 2,
+                        1);
     }
 
-    // Render to terminal
     _draw_render_to_stdout(draw_ctx);
 
-    // Display game status, score, and instructions
     if(game_over)
         printf("Game Over!\n");
     printf("Score: %d\n", snake_length - 3);
@@ -227,7 +263,12 @@ void drawBoard() {
 int main() {
     enableRawMode();
     initGame();
-    draw_ctx = _draw_create(WIDTH + 2, HEIGHT + 2);
+
+    scale = determineScale();
+    cell_w = CELL_PIX_W * scale;
+    cell_h = CELL_PIX_H * scale;
+
+    draw_ctx = _draw_create(WIDTH * cell_w, HEIGHT * cell_h);
 
     while(1) {
         if(!game_over) {

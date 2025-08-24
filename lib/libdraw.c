@@ -1,289 +1,454 @@
-// =========================
-// libdraw.c — minimal 2D primitives on Linux framebuffer (/dev/fb0)
-// Optimized: 32bpp fast paths, backbuffer + single blit per frame
-// Build: see bottom of this file or drawdemo.c notes
-// =========================
+/*
+ * libdraw.c — Minimal Braille-based raster drawing in plain C (single file)
+ *
+ * Draws into a 1bpp pixel buffer and renders as Unicode Braille (U+2800..U+28FF),
+ * packing each 2x4 pixel tile into one character. No separate headers needed.
+ *
+ * Public API (all start with _draw):
+ *   void* _draw_create(int width, int height);
+ *   void  _draw_destroy(void* ctx);
+ *   void  _draw_clear(void* ctx, int value);
+ *   void  _draw_set_pixel(void* ctx, int x, int y, int value);
+ *   int   _draw_get_pixel(void* ctx, int x, int y);
+ *   void  _draw_line(void* ctx, int x0, int y0, int x1, int y1, int value);
+ *   void  _draw_rect(void* ctx, int x, int y, int w, int h, int value);
+ *   void  _draw_fill_rect(void* ctx, int x, int y, int w, int h, int value);
+ *   void  _draw_circle(void* ctx, int cx, int cy, int r, int value);
+ *   void  _draw_fill_circle(void* ctx, int cx, int cy, int r, int value);
+ *   void  _draw_set_clip(void* ctx, int x, int y, int w, int h);
+ *   void  _draw_reset_clip(void* ctx);
+ *   void  _draw_char(void* ctx, int x, int y, unsigned char ch, int scale, int value);
+ *   void  _draw_text(void* ctx, int x, int y, const char* str, int scale, int value);
+ *   void  _draw_render(void* ctx, void* file, int invert);  (file is a FILE*)
+ *   void  _draw_render_to_stdout(void* ctx);
+ *
+ * Notes:
+ * - Width/height are in logical pixels; rendering packs 2x4 pixels per Braille cell.
+ * - If width is not multiple of 2 or height not multiple of 4, rendering treats
+ *   out-of-bounds pixels as 0 (background).
+ * - Output encoding is UTF-8 (written via FILE*).
+ */
 
-#define _POSIX_C_SOURCE 200809L
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <sys/mman.h>
-#include <linux/fb.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
-// -------- Internal framebuffer state --------
-static struct {
-    int fbfd;
-    uint8_t *fbp;               // mapped framebuffer
-    size_t screensize;          // bytes
-    int width, height;          // virtual drawing resolution
-    int phys_width, phys_height; // actual framebuffer resolution
-    int bpp;                    // bits per pixel
-    int line_length;            // bytes per line in fb
-    struct fb_var_screeninfo vinfo;
-    struct fb_fix_screeninfo finfo;
+/* --------------------------- Internal structures --------------------------- */
 
-    // Backbuffer for drawing (malloc'd)
-    uint8_t *back;
-    size_t back_stride;         // bytes per line in backbuffer
-} FB;
+typedef struct {
+    int w, h;                          /* pixel dimensions */
+    int clipx, clipy, clipw, cliph;    /* clip rect */
+    uint8_t *pix;                      /* w*h bytes: 0 or 1 */
+} _draw_Context;
 
-static inline uint32_t pack_rgb(uint8_t r, uint8_t g, uint8_t b) {
-    const struct fb_var_screeninfo *vi = &FB.vinfo;
-    uint32_t R = r, G = g, B = b;
-    if (vi->red.length   < 8) R >>= (8 - vi->red.length);
-    if (vi->green.length < 8) G >>= (8 - vi->green.length);
-    if (vi->blue.length  < 8) B >>= (8 - vi->blue.length);
-    uint32_t px = 0;
-    px |= (R & ((1u << vi->red.length)   - 1))   << vi->red.offset;
-    px |= (G & ((1u << vi->green.length) - 1))   << vi->green.offset;
-    px |= (B & ((1u << vi->blue.length)  - 1))   << vi->blue.offset;
-    return px;
+static int s_in_clip(_draw_Context *c, int x, int y) {
+    return x >= c->clipx && y >= c->clipy
+        && x < (c->clipx + c->clipw) && y < (c->clipy + c->cliph);
 }
 
-int fb_init_res(const char *devpath, int width, int height) {
-    memset(&FB, 0, sizeof(FB));
-    FB.fbfd = open(devpath ? devpath : "/dev/fb0", O_RDWR);
-    if (FB.fbfd < 0) { perror("open fb"); return -1; }
-    if (ioctl(FB.fbfd, FBIOGET_FSCREENINFO, &FB.finfo) == -1) { perror("FBIOGET_FSCREENINFO"); goto fail; }
-    if (ioctl(FB.fbfd, FBIOGET_VSCREENINFO, &FB.vinfo) == -1) { perror("FBIOGET_VSCREENINFO"); goto fail; }
-
-    FB.phys_width  = (int)FB.vinfo.xres;
-    FB.phys_height = (int)FB.vinfo.yres;
-    FB.bpp    = (int)FB.vinfo.bits_per_pixel;
-    FB.line_length = FB.finfo.line_length;
-    FB.screensize = (size_t)FB.line_length * FB.phys_height;
-
-    FB.width  = (width  > 0) ? width  : FB.phys_width;
-    FB.height = (height > 0) ? height : FB.phys_height;
-
-    FB.fbp = (uint8_t*)mmap(NULL, FB.screensize, PROT_READ | PROT_WRITE, MAP_SHARED, FB.fbfd, 0);
-    if (FB.fbp == MAP_FAILED) { perror("mmap"); goto fail; }
-
-    FB.back_stride = (size_t)FB.width * (size_t)(FB.bpp/8);
-    if (posix_memalign((void**)&FB.back, 64, FB.back_stride * (size_t)FB.height) != 0) {
-        perror("posix_memalign"); goto fail2; }
-    memset(FB.back, 0, FB.back_stride * (size_t)FB.height);
-    return 0;
-
-fail2:
-    if (FB.fbp && FB.fbp != MAP_FAILED) munmap(FB.fbp, FB.screensize);
-fail:
-    if (FB.fbfd >= 0) close(FB.fbfd);
-    memset(&FB, 0, sizeof(FB));
-    return -1;
-}
-int fb_init(const char *devpath){
-    return fb_init_res(devpath, 0, 0);
+static void s_setp(_draw_Context *c, int x, int y, int v) {
+    if ((unsigned)x >= (unsigned)c->w || (unsigned)y >= (unsigned)c->h) return;
+    if (!s_in_clip(c, x, y)) return;
+    c->pix[y * c->w + x] = (uint8_t)(v != 0);
 }
 
-void fb_close(void) {
-    if (FB.back) { free(FB.back); FB.back = NULL; }
-    if (FB.fbp && FB.fbp != MAP_FAILED) munmap(FB.fbp, FB.screensize);
-    if (FB.fbfd >= 0) close(FB.fbfd);
-    memset(&FB, 0, sizeof(FB));
+static int s_getp(_draw_Context *c, int x, int y) {
+    if ((unsigned)x >= (unsigned)c->w || (unsigned)y >= (unsigned)c->h) return 0;
+    return c->pix[y * c->w + x] ? 1 : 0;
 }
 
-int fb_width(void)  { return FB.width; }
-int fb_height(void) { return FB.height; }
-int fb_bpp(void)    { return FB.bpp; }
-
-// -------- Drawing helpers (write to backbuffer) --------
-static inline void put_pixel32(int x, int y, uint32_t px){
-    if ((unsigned)x >= (unsigned)FB.width || (unsigned)y >= (unsigned)FB.height) return;
-    uint32_t *row = (uint32_t *)(FB.back + (size_t)y * FB.back_stride);
-    row[x] = px;
-}
-
-static inline void put_pixel_generic(int x, int y, uint32_t px){
-    if ((unsigned)x >= (unsigned)FB.width || (unsigned)y >= (unsigned)FB.height) return;
-    int bytes = FB.bpp/8;
-    uint8_t *dst = FB.back + (size_t)y * FB.back_stride + (size_t)x * bytes;
-    memcpy(dst, &px, bytes);
-}
-
-void put_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
-    uint32_t px = pack_rgb(r,g,b);
-    if (FB.bpp == 32) put_pixel32(x,y,px); else put_pixel_generic(x,y,px);
-}
-
-void fb_clear_rgb(uint8_t r, uint8_t g, uint8_t b) {
-    uint32_t px = pack_rgb(r,g,b);
-    if (FB.bpp == 32) {
-        size_t total = (size_t)FB.width * (size_t)FB.height;
-        uint64_t pat = ((uint64_t)px << 32) | px;
-        uint64_t *dst64 = (uint64_t *)FB.back;
-        while (total >= 2) { *dst64++ = pat; total -= 2; }
-        if (total) *((uint32_t *)dst64) = px;
+/* UTF-8 encode a codepoint to FILE* */
+static void s_put_utf8(FILE *f, uint32_t cp) {
+    if (cp <= 0x7Fu) {
+        fputc((int)cp, f);
+    } else if (cp <= 0x7FFu) {
+        fputc(0xC0 | (int)(cp >> 6), f);
+        fputc(0x80 | (int)(cp & 0x3F), f);
+    } else if (cp <= 0xFFFFu) {
+        fputc(0xE0 | (int)(cp >> 12), f);
+        fputc(0x80 | (int)((cp >> 6) & 0x3F), f);
+        fputc(0x80 | (int)(cp & 0x3F), f);
     } else {
-        int bytes = FB.bpp/8;
-        for (int y = 0; y < FB.height; ++y) {
-            uint8_t *row = FB.back + (size_t)y * FB.back_stride;
-            for (int x = 0; x < FB.width; ++x) memcpy(row + (size_t)x*bytes, &px, bytes);
-        }
+        fputc(0xF0 | (int)(cp >> 18), f);
+        fputc(0x80 | (int)((cp >> 12) & 0x3F), f);
+        fputc(0x80 | (int)((cp >> 6) & 0x3F), f);
+        fputc(0x80 | (int)(cp & 0x3F), f);
     }
 }
 
-void draw_hline(int x, int y, int w, uint8_t r, uint8_t g, uint8_t b){
-    if (y < 0 || y >= FB.height || w <= 0) return;
+/* Convert 2x4 block at (x, y) -> Braille bits per Unicode mapping.
+   Dot numbering (bit indices):
+   (0,0)->1(0)  (1,0)->4(3)
+   (0,1)->2(1)  (1,1)->5(4)
+   (0,2)->3(2)  (1,2)->6(5)
+   (0,3)->7(6)  (1,3)->8(7)
+*/
+static uint8_t s_block_bits(_draw_Context *c, int x, int y, int invert) {
+    static const int bx[8] = {0,0,0,1,1,1,0,1};
+    static const int by[8] = {0,1,2,0,1,2,3,3};
+    uint8_t bits = 0;
+    int i;
+    for (i = 0; i < 8; ++i) {
+        int px = x + bx[i];
+        int py = y + by[i];
+        int v = 0;
+        if ((unsigned)px < (unsigned)c->w && (unsigned)py < (unsigned)c->h)
+            v = s_getp(c, px, py);
+        if (invert) v = !v;
+        if (v) bits |= (uint8_t)(1u << i);
+    }
+    return bits;
+}
+
+/* ------------------------------- Text: 5x7 -------------------------------- */
+/* Public-domain 5x7 font for ASCII 32..126. Each glyph is 5 columns wide,
+   7 rows high, stored as 5 bytes (column-major). Bit 0 = top row. */
+static const uint8_t s_font5x7[95][5] = {
+/* 0x20 ' ' */ {0x00,0x00,0x00,0x00,0x00},
+/* 0x21 '!' */ {0x00,0x00,0x5F,0x00,0x00},
+/* 0x22 '\"'*/ {0x00,0x07,0x00,0x07,0x00},
+/* 0x23 '#' */ {0x14,0x7F,0x14,0x7F,0x14},
+/* 0x24 '$' */ {0x24,0x2A,0x7F,0x2A,0x12},
+/* 0x25 '%' */ {0x23,0x13,0x08,0x64,0x62},
+/* 0x26 '&' */ {0x36,0x49,0x55,0x22,0x50},
+/* 0x27 '\\''*/ {0x00,0x05,0x03,0x00,0x00},
+/* 0x28 '(' */ {0x00,0x1C,0x22,0x41,0x00},
+/* 0x29 ')' */ {0x00,0x41,0x22,0x1C,0x00},
+/* 0x2A '*' */ {0x14,0x08,0x3E,0x08,0x14},
+/* 0x2B '+' */ {0x08,0x08,0x3E,0x08,0x08},
+/* 0x2C ',' */ {0x00,0x50,0x30,0x00,0x00},
+/* 0x2D '-' */ {0x08,0x08,0x08,0x08,0x08},
+/* 0x2E '.' */ {0x00,0x60,0x60,0x00,0x00},
+/* 0x2F '/' */ {0x20,0x10,0x08,0x04,0x02},
+/* 0x30 '0' */ {0x3E,0x51,0x49,0x45,0x3E},
+/* 0x31 '1' */ {0x00,0x42,0x7F,0x40,0x00},
+/* 0x32 '2' */ {0x42,0x61,0x51,0x49,0x46},
+/* 0x33 '3' */ {0x21,0x41,0x45,0x4B,0x31},
+/* 0x34 '4' */ {0x18,0x14,0x12,0x7F,0x10},
+/* 0x35 '5' */ {0x27,0x45,0x45,0x45,0x39},
+/* 0x36 '6' */ {0x3C,0x4A,0x49,0x49,0x30},
+/* 0x37 '7' */ {0x01,0x71,0x09,0x05,0x03},
+/* 0x38 '8' */ {0x36,0x49,0x49,0x49,0x36},
+/* 0x39 '9' */ {0x06,0x49,0x49,0x29,0x1E},
+/* 0x3A ':' */ {0x00,0x36,0x36,0x00,0x00},
+/* 0x3B ';' */ {0x00,0x56,0x36,0x00,0x00},
+/* 0x3C '<' */ {0x08,0x14,0x22,0x41,0x00},
+/* 0x3D '=' */ {0x14,0x14,0x14,0x14,0x14},
+/* 0x3E '>' */ {0x00,0x41,0x22,0x14,0x08},
+/* 0x3F '?' */ {0x02,0x01,0x51,0x09,0x06},
+/* 0x40 '@' */ {0x32,0x49,0x79,0x41,0x3E},
+/* 0x41 'A' */ {0x7E,0x11,0x11,0x11,0x7E},
+/* 0x42 'B' */ {0x7F,0x49,0x49,0x49,0x36},
+/* 0x43 'C' */ {0x3E,0x41,0x41,0x41,0x22},
+/* 0x44 'D' */ {0x7F,0x41,0x41,0x22,0x1C},
+/* 0x45 'E' */ {0x7F,0x49,0x49,0x49,0x41},
+/* 0x46 'F' */ {0x7F,0x09,0x09,0x09,0x01},
+/* 0x47 'G' */ {0x3E,0x41,0x49,0x49,0x7A},
+/* 0x48 'H' */ {0x7F,0x08,0x08,0x08,0x7F},
+/* 0x49 'I' */ {0x00,0x41,0x7F,0x41,0x00},
+/* 0x4A 'J' */ {0x20,0x40,0x41,0x3F,0x01},
+/* 0x4B 'K' */ {0x7F,0x08,0x14,0x22,0x41},
+/* 0x4C 'L' */ {0x7F,0x40,0x40,0x40,0x40},
+/* 0x4D 'M' */ {0x7F,0x02,0x04,0x02,0x7F},
+/* 0x4E 'N' */ {0x7F,0x04,0x08,0x10,0x7F},
+/* 0x4F 'O' */ {0x3E,0x41,0x41,0x41,0x3E},
+/* 0x50 'P' */ {0x7F,0x09,0x09,0x09,0x06},
+/* 0x51 'Q' */ {0x3E,0x41,0x51,0x21,0x5E},
+/* 0x52 'R' */ {0x7F,0x09,0x19,0x29,0x46},
+/* 0x53 'S' */ {0x46,0x49,0x49,0x49,0x31},
+/* 0x54 'T' */ {0x01,0x01,0x7F,0x01,0x01},
+/* 0x55 'U' */ {0x3F,0x40,0x40,0x40,0x3F},
+/* 0x56 'V' */ {0x1F,0x20,0x40,0x20,0x1F},
+/* 0x57 'W' */ {0x3F,0x40,0x38,0x40,0x3F},
+/* 0x58 'X' */ {0x63,0x14,0x08,0x14,0x63},
+/* 0x59 'Y' */ {0x07,0x08,0x70,0x08,0x07},
+/* 0x5A 'Z' */ {0x61,0x51,0x49,0x45,0x43},
+/* 0x5B '[' */ {0x00,0x7F,0x41,0x41,0x00},
+/* 0x5C '\\\\'*/{0x02,0x04,0x08,0x10,0x20},
+/* 0x5D ']' */ {0x00,0x41,0x41,0x7F,0x00},
+/* 0x5E '^' */ {0x04,0x02,0x01,0x02,0x04},
+/* 0x5F '_' */ {0x40,0x40,0x40,0x40,0x40},
+/* 0x60 '`' */ {0x00,0x03,0x07,0x00,0x00},
+/* 0x61 'a' */ {0x20,0x54,0x54,0x54,0x78},
+/* 0x62 'b' */ {0x7F,0x48,0x44,0x44,0x38},
+/* 0x63 'c' */ {0x38,0x44,0x44,0x44,0x20},
+/* 0x64 'd' */ {0x38,0x44,0x44,0x48,0x7F},
+/* 0x65 'e' */ {0x38,0x54,0x54,0x54,0x18},
+/* 0x66 'f' */ {0x08,0x7E,0x09,0x01,0x02},
+/* 0x67 'g' */ {0x0C,0x52,0x52,0x52,0x3E},
+/* 0x68 'h' */ {0x7F,0x08,0x04,0x04,0x78},
+/* 0x69 'i' */ {0x00,0x44,0x7D,0x40,0x00},
+/* 0x6A 'j' */ {0x20,0x40,0x44,0x3D,0x00},
+/* 0x6B 'k' */ {0x7F,0x10,0x28,0x44,0x00},
+/* 0x6C 'l' */ {0x00,0x41,0x7F,0x40,0x00},
+/* 0x6D 'm' */ {0x7C,0x04,0x18,0x04,0x78},
+/* 0x6E 'n' */ {0x7C,0x08,0x04,0x04,0x78},
+/* 0x6F 'o' */ {0x38,0x44,0x44,0x44,0x38},
+/* 0x70 'p' */ {0x7C,0x14,0x14,0x14,0x08},
+/* 0x71 'q' */ {0x08,0x14,0x14,0x14,0x7C},
+/* 0x72 'r' */ {0x7C,0x08,0x04,0x04,0x08},
+/* 0x73 's' */ {0x48,0x54,0x54,0x54,0x20},
+/* 0x74 't' */ {0x04,0x3F,0x44,0x40,0x20},
+/* 0x75 'u' */ {0x3C,0x40,0x40,0x20,0x7C},
+/* 0x76 'v' */ {0x1C,0x20,0x40,0x20,0x1C},
+/* 0x77 'w' */ {0x3F,0x40,0x38,0x40,0x3F},
+/* 0x78 'x' */ {0x63,0x14,0x08,0x14,0x63},
+/* 0x79 'y' */ {0x07,0x08,0x70,0x08,0x07},
+/* 0x7A 'z' */ {0x61,0x51,0x49,0x45,0x43},
+/* 0x7B '{' */ {0x00,0x08,0x36,0x41,0x00},
+/* 0x7C '|' */ {0x00,0x00,0x7F,0x00,0x00},
+/* 0x7D '}' */ {0x00,0x41,0x36,0x08,0x00},
+/* 0x7E '~' */ {0x10,0x08,0x10,0x20,0x10}
+};
+
+/* ------------------------------ Public API -------------------------------- */
+
+void* _draw_create(int width, int height) {
+    if (width <= 0 || height <= 0) return NULL;
+    _draw_Context *c = (_draw_Context*)malloc(sizeof(*c));
+    if (!c) return NULL;
+    c->w = width;
+    c->h = height;
+    c->clipx = 0;
+    c->clipy = 0;
+    c->clipw = width;
+    c->cliph = height;
+    {
+        size_t n = (size_t)width * (size_t)height;
+        c->pix = (uint8_t*)calloc(n, 1);
+        if (!c->pix) { free(c); return NULL; }
+    }
+    return (void*)c;
+}
+
+void _draw_destroy(void* ctx) {
+    if (!ctx) return;
+    _draw_Context *c = (_draw_Context*)ctx;
+    free(c->pix);
+    free(c);
+}
+
+void _draw_clear(void* ctx, int value) {
+    if (!ctx) return;
+    _draw_Context *c = (_draw_Context*)ctx;
+    memset(c->pix, (value ? 1 : 0), (size_t)c->w * (size_t)c->h);
+}
+
+void _draw_set_pixel(void* ctx, int x, int y, int value) {
+    if (!ctx) return;
+    s_setp((_draw_Context*)ctx, x, y, value);
+}
+
+int _draw_get_pixel(void* ctx, int x, int y) {
+    if (!ctx) return 0;
+    return s_getp((_draw_Context*)ctx, x, y);
+}
+
+void _draw_set_clip(void* ctx, int x, int y, int w, int h) {
+    if (!ctx) return;
+    _draw_Context *c = (_draw_Context*)ctx;
+
+    if (w < 0) { x += w; w = -w; }
+    if (h < 0) { y += h; h = -h; }
+
     if (x < 0) { w += x; x = 0; }
-    if (x + w > FB.width) { w = FB.width - x; }
-    if (w <= 0) return;
-    uint32_t px = pack_rgb(r,g,b);
-    if (FB.bpp == 32) {
-        uint32_t *row = (uint32_t *)(FB.back + (size_t)y * FB.back_stride);
-        for (int i = 0; i < w; ++i) row[x + i] = px;
-    } else {
-        int bytes = FB.bpp/8; uint8_t *dst = FB.back + (size_t)y * FB.back_stride + (size_t)x * bytes;
-        for (int i = 0; i < w; ++i) memcpy(dst + (size_t)i * bytes, &px, bytes);
-    }
-}
-
-void draw_vline(int x, int y, int h, uint8_t r, uint8_t g, uint8_t b){
-    if (x < 0 || x >= FB.width || h <= 0) return;
     if (y < 0) { h += y; y = 0; }
-    if (y + h > FB.height) { h = FB.height - y; }
-    if (h <= 0) return;
-    uint32_t px = pack_rgb(r,g,b);
-    if (FB.bpp == 32) {
-        for (int i = 0; i < h; ++i) {
-            uint32_t *row = (uint32_t *)(FB.back + (size_t)(y + i) * FB.back_stride);
-            row[x] = px;
-        }
-    } else {
-        int bytes = FB.bpp/8;
-        for (int i = 0; i < h; ++i) {
-            uint8_t *dst = FB.back + (size_t)(y + i) * FB.back_stride + (size_t)x * bytes;
-            memcpy(dst, &px, bytes);
-        }
-    }
+
+    if (x + w > c->w) w = c->w - x;
+    if (y + h > c->h) h = c->h - y;
+
+    if (w < 0) w = 0;
+    if (h < 0) h = 0;
+
+    c->clipx = x;
+    c->clipy = y;
+    c->clipw = w;
+    c->cliph = h;
 }
 
-// Bresenham line
-void draw_line(int x0, int y0, int x1, int y1, uint8_t r, uint8_t g, uint8_t b){
-    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+void _draw_reset_clip(void* ctx) {
+    if (!ctx) return;
+    _draw_Context *c = (_draw_Context*)ctx;
+    c->clipx = 0;
+    c->clipy = 0;
+    c->clipw = c->w;
+    c->cliph = c->h;
+}
+
+/* Bresenham line */
+void _draw_line(void* ctx, int x0, int y0, int x1, int y1, int value) {
+    if (!ctx) return;
+    _draw_Context *c = (_draw_Context*)ctx;
+    int dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
+    int sx = (x0 < x1) ? 1 : -1;
+    int dy = (y1 > y0) ? (y0 - y1) : (y1 - y0); /* negative abs */
+    int sy = (y0 < y1) ? 1 : -1;
     int err = dx + dy;
-    uint32_t px = pack_rgb(r,g,b);
+    (void)c;
+
     for (;;) {
-        if (FB.bpp == 32) put_pixel32(x0,y0,px); else put_pixel_generic(x0,y0,px);
+        s_setp(c, x0, y0, value);
         if (x0 == x1 && y0 == y1) break;
-        int e2 = 2 * err;
-        if (e2 >= dy) { err += dy; x0 += sx; }
-        if (e2 <= dx) { err += dx; y0 += sy; }
-    }
-}
-
-void draw_rect(int x,int y,int w,int h, uint8_t r,uint8_t g,uint8_t b){
-    if (w<=0||h<=0) return;
-    draw_hline(x,y,w,r,g,b);
-    draw_hline(x,y+h-1,w,r,g,b);
-    draw_vline(x,y,h,r,g,b);
-    draw_vline(x+w-1,y,h,r,g,b);
-}
-
-void fill_rect(int x, int y, int w, int h, uint8_t r, uint8_t g, uint8_t b){
-    if (w <= 0 || h <= 0) return;
-    if (x < 0) { w += x; x = 0; }
-    if (y < 0) { h += y; y = 0; }
-    if (x + w > FB.width)  w = FB.width - x;
-    if (y + h > FB.height) h = FB.height - y;
-    if (w <= 0 || h <= 0) return;
-    uint32_t px = pack_rgb(r,g,b);
-    if (FB.bpp == 32) {
-        uint8_t *row0 = FB.back + (size_t)y * FB.back_stride + (size_t)x * 4;
-        uint64_t pat = ((uint64_t)px << 32) | px;
-        uint64_t *p64 = (uint64_t *)row0;
-        int w64 = w / 2;
-        for (int i = 0; i < w64; ++i) p64[i] = pat;
-        if (w & 1) ((uint32_t *)row0)[w - 1] = px;
-        size_t row_bytes = (size_t)w * 4;
-        for (int yy = 1; yy < h; ++yy) {
-            memcpy(FB.back + (size_t)(y + yy) * FB.back_stride + (size_t)x * 4,
-                   row0, row_bytes);
-        }
-    } else {
-        int bytes = FB.bpp/8;
-        for (int yy = 0; yy < h; ++yy) {
-            uint8_t *dst = FB.back + (size_t)(y + yy) * FB.back_stride + (size_t)x * bytes;
-            for (int xx = 0; xx < w; ++xx) memcpy(dst + (size_t)xx * bytes, &px, bytes);
+        {
+            int e2 = err << 1;
+            if (e2 >= dy) { err += dy; x0 += sx; }
+            if (e2 <= dx) { err += dx; y0 += sy; }
         }
     }
 }
 
-// Midpoint circle (outline)
-void draw_circle(int cx, int cy, int radius, uint8_t r, uint8_t g, uint8_t b){
-    if (radius <= 0) return;
-    int x = radius, y = 0; int err = 1 - x;
-    uint32_t px = pack_rgb(r,g,b);
-    while (x >= y) {
-        if (FB.bpp==32){
-            put_pixel32(cx + x, cy + y, px); put_pixel32(cx + y, cy + x, px);
-            put_pixel32(cx - y, cy + x, px); put_pixel32(cx - x, cy + y, px);
-            put_pixel32(cx - x, cy - y, px); put_pixel32(cx - y, cy - x, px);
-            put_pixel32(cx + y, cy - x, px); put_pixel32(cx + x, cy - y, px);
-        } else {
-            put_pixel_generic(cx + x, cy + y, px); put_pixel_generic(cx + y, cy + x, px);
-            put_pixel_generic(cx - y, cy + x, px); put_pixel_generic(cx - x, cy + y, px);
-            put_pixel_generic(cx - x, cy - y, px); put_pixel_generic(cx - y, cy - x, px);
-            put_pixel_generic(cx + y, cy - x, px); put_pixel_generic(cx + x, cy - y, px);
-        }
-        y++;
-        if (err < 0) { err += 2*y + 1; }
-        else { x--; err += 2*(y - x + 1); }
-    }
+void _draw_rect(void* ctx, int x, int y, int w, int h, int value) {
+    if (!ctx) return;
+    _draw_line(ctx, x, y, x + w - 1, y, value);
+    _draw_line(ctx, x, y + h - 1, x + w - 1, y + h - 1, value);
+    _draw_line(ctx, x, y, x, y + h - 1, value);
+    _draw_line(ctx, x + w - 1, y, x + w - 1, y + h - 1, value);
 }
 
-// Filled circle via horizontal spans
-void fill_circle(int cx, int cy, int radius, uint8_t r, uint8_t g, uint8_t b){
-    if (radius <= 0) return;
-    int x = radius, y = 0; int err = 1 - x;
-    while (x >= y) {
-        draw_hline(cx - x, cy + y, 2*x + 1, r,g,b);
-        draw_hline(cx - x, cy - y, 2*x + 1, r,g,b);
-        draw_hline(cx - y, cy + x, 2*y + 1, r,g,b);
-        draw_hline(cx - y, cy - x, 2*y + 1, r,g,b);
-        y++;
-        if (err < 0) { err += 2*y + 1; }
-        else { x--; err += 2*(y - x + 1); }
-    }
-}
+void _draw_fill_rect(void* ctx, int x, int y, int w, int h, int value) {
+    if (!ctx) return;
+    _draw_Context *c = (_draw_Context*)ctx;
 
-// Present the backbuffer to the real framebuffer (single blit per frame)
-void fb_present(void){
-    if (FB.width == FB.phys_width && FB.height == FB.phys_height) {
-        if ((size_t)FB.line_length == FB.back_stride){
-            memcpy(FB.fbp, FB.back, FB.back_stride * (size_t)FB.height);
-        } else {
-            for (int y = 0; y < FB.height; ++y) {
-                memcpy(FB.fbp + (size_t)y * (size_t)FB.line_length,
-                       FB.back + (size_t)y * FB.back_stride,
-                       FB.back_stride);
-            }
-        }
-    } else {
-        int bytes = FB.bpp/8;
-        for (int y = 0; y < FB.phys_height; ++y) {
-            int sy = (int)((long long)y * FB.height / FB.phys_height);
-            const uint8_t *src_row = FB.back + (size_t)sy * FB.back_stride;
-            uint8_t *dst_row = FB.fbp + (size_t)y * FB.line_length;
-            for (int x = 0; x < FB.phys_width; ++x) {
-                int sx = (int)((long long)x * FB.width / FB.phys_width);
-                memcpy(dst_row + (size_t)x * bytes, src_row + (size_t)sx * bytes, bytes);
+    if (w < 0) { x += w; w = -w; }
+    if (h < 0) { y += h; h = -h; }
+
+    {
+        int x2 = x + w;
+        int y2 = y + h;
+
+        if (x < 0) x = 0;
+        if (y < 0) y = 0;
+
+        if (x2 > c->w) x2 = c->w;
+        if (y2 > c->h) y2 = c->h;
+
+        for (int j = y; j < y2; ++j) {
+            for (int i = x; i < x2; ++i) {
+                s_setp(c, i, j, value);
             }
         }
     }
 }
 
-/* =========================
-Build (split files):
-  gcc -O3 -march=native -ffast-math -fno-strict-aliasing -std=c11 \
-      -c libdraw.c -o libdraw.o
-  gcc -O3 -march=native -ffast-math -fno-strict-aliasing -std=c11 \
-      drawdemo.c libdraw.o -lm -o drawdemo
-========================= */
+/* Midpoint circle */
+void _draw_circle(void* ctx, int cx, int cy, int r, int value) {
+    if (!ctx || r < 0) return;
+    int x = r;
+    int y = 0;
+    int err = 1 - r;
 
+    while (x >= y) {
+        _draw_set_pixel(ctx, cx + x, cy + y, value);
+        _draw_set_pixel(ctx, cx + y, cy + x, value);
+        _draw_set_pixel(ctx, cx - y, cy + x, value);
+        _draw_set_pixel(ctx, cx - x, cy + y, value);
+        _draw_set_pixel(ctx, cx - x, cy - y, value);
+        _draw_set_pixel(ctx, cx - y, cy - x, value);
+        _draw_set_pixel(ctx, cx + y, cy - x, value);
+        _draw_set_pixel(ctx, cx + x, cy - y, value);
+        y++;
+        if (err < 0) {
+            err += (y << 1) + 1;
+        } else {
+            x--;
+            err += ((y - x) << 1) + 1;
+        }
+    }
+}
+
+void _draw_fill_circle(void* ctx, int cx, int cy, int r, int value) {
+    if (!ctx || r < 0) return;
+    int x = r;
+    int y = 0;
+    int err = 1 - r;
+
+    while (x >= y) {
+        _draw_line(ctx, cx - x, cy + y, cx + x, cy + y, value);
+        _draw_line(ctx, cx - y, cy + x, cx + y, cy + x, value);
+        _draw_line(ctx, cx - x, cy - y, cx + x, cy - y, value);
+        _draw_line(ctx, cx - y, cy - x, cx + y, cy - x, value);
+        y++;
+        if (err < 0) {
+            err += (y << 1) + 1;
+        } else {
+            x--;
+            err += ((y - x) << 1) + 1;
+        }
+    }
+}
+
+/* ------------------------------- Text API --------------------------------- */
+
+void _draw_char(void* ctx, int x, int y, unsigned char ch, int scale, int value) {
+    if (!ctx) return;
+    if (scale <= 0) scale = 1;
+    if (ch < 32 || ch > 126) ch = '?';
+
+    {
+        _draw_Context *c = (_draw_Context*)ctx;
+        const uint8_t *g = s_font5x7[ch - 32];
+        int col, row;
+        for (col = 0; col < 5; ++col) {
+            uint8_t bits = g[col];
+            for (row = 0; row < 7; ++row) {
+                if (bits & (uint8_t)(1u << row)) {
+                    int px = x + col * scale;
+                    int py = y + row * scale;
+                    int yy, xx;
+                    for (yy = 0; yy < scale; ++yy) {
+                        for (xx = 0; xx < scale; ++xx) {
+                            s_setp(c, px + xx, py + yy, value);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+void _draw_text(void* ctx, int x, int y, const char* str, int scale, int value) {
+    if (!ctx || !str) return;
+    if (scale <= 0) scale = 1;
+
+    {
+        int cx = x;
+        const unsigned char* p = (const unsigned char*)str;
+        for (; *p; ++p) {
+            if (*p == '\n') {
+                y += (7 + 1) * scale;
+                cx = x;
+                continue;
+            }
+            _draw_char(ctx, cx, y, *p, scale, value);
+            cx += (5 + 1) * scale; /* 1 px spacing */
+        }
+    }
+}
+
+/* ------------------------------- Rendering -------------------------------- */
+
+void _draw_render(void* ctx, void* file, int invert) {
+    if (!ctx) return;
+    {
+        FILE *f = (FILE*)file;
+        if (!f) f = stdout;
+        _draw_Context *c = (_draw_Context*)ctx;
+        int H = c->h;
+        int W = c->w;
+        int y, x;
+
+        for (y = 0; y < H; y += 4) {
+            for (x = 0; x < W; x += 2) {
+                uint8_t bits = s_block_bits(c, x, y, invert);
+                uint32_t cp = 0x2800u + (uint32_t)bits; /* U+2800 base */
+                s_put_utf8(f, cp);
+            }
+            fputc('\n', f);
+        }
+    }
+}
+
+void _draw_render_to_stdout(void* ctx) {
+    _draw_render(ctx, stdout, 0);
+}

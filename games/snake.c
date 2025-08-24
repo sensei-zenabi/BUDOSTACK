@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <time.h>
 #include <sys/ioctl.h>
+#include <string.h>
 
 // libdraw forward declarations
 void* _draw_create(int width, int height);
@@ -58,6 +59,17 @@ void* draw_ctx = NULL;
 int scale = 1;
 int cell_w = CELL_PIX_W;
 int cell_h = CELL_PIX_H;
+
+#define SCORE_FILE "games/snake_scores.txt"
+#define MAX_NAME_LEN 32
+#define MAX_SCORES 100
+
+typedef struct {
+    char name[MAX_NAME_LEN];
+    int score;
+} ScoreEntry;
+
+int leaderboard_shown = 0;
 
 // Determine drawing scale based on terminal dimensions
 int determineScale() {
@@ -113,8 +125,9 @@ void initGame() {
     srand(time(NULL));
     fruit.x = rand() % WIDTH;
     fruit.y = rand() % HEIGHT;
-    
+
     game_over = 0;
+    leaderboard_shown = 0;
 }
 
 // Read a single character from input (non-blocking)
@@ -219,7 +232,52 @@ void updateSnake() {
                     break;
                 }
             }
+    }
+    }
+}
+
+void recordScore(int score) {
+    char name[MAX_NAME_LEN];
+    disableRawMode();
+    printf("Enter name: ");
+    fflush(stdout);
+    if (fgets(name, sizeof(name), stdin) == NULL) {
+        strcpy(name, "anon");
+    }
+    name[strcspn(name, "\n")] = '\0';
+    enableRawMode();
+
+    FILE* f = fopen(SCORE_FILE, "a");
+    if (f) {
+        fprintf(f, "%s %d\n", name, score);
+        fclose(f);
+    }
+}
+
+void showScores() {
+    FILE* f = fopen(SCORE_FILE, "r");
+    if (!f) {
+        printf("No scores yet.\n");
+        return;
+    }
+    ScoreEntry entries[MAX_SCORES];
+    int count = 0;
+    while (count < MAX_SCORES && fscanf(f, "%31s %d", entries[count].name, &entries[count].score) == 2) {
+        count++;
+    }
+    fclose(f);
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (entries[j].score > entries[i].score) {
+                ScoreEntry tmp = entries[i];
+                entries[i] = entries[j];
+                entries[j] = tmp;
+            }
         }
+    }
+    printf("Leaderboard:\n");
+    for (int i = 0; i < count; i++) {
+        printf("%d. %s - %d\n", i + 1, entries[i].name, entries[i].score);
     }
 }
 
@@ -278,9 +336,13 @@ int main() {
         }
         
         drawBoard();        // render the game board
-        
-        // If game over, wait for restart or quit input
+
         if(game_over) {
+            if(!leaderboard_shown) {
+                recordScore(snake_length - 3);
+                leaderboard_shown = 1;
+            }
+            showScores();
             char c = getInput();
             if(c == 'r' || c == 'R') {
                 initGame();

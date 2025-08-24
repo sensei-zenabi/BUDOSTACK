@@ -32,12 +32,53 @@
 #include <sys/select.h>
 #include <string.h>
 #include <time.h>
+#include <sys/ioctl.h>
+
+void* _draw_create(int width, int height);
+void  _draw_destroy(void* ctx);
+void  _draw_clear(void* ctx, int value);
+void  _draw_rect(void* ctx, int x, int y, int w, int h, int value);
+void  _draw_fill_rect(void* ctx, int x, int y, int w, int h, int value);
+void  _draw_render_to_stdout(void* ctx);
 
 #define BOARD_WIDTH 80
 #define BOARD_HEIGHT 20
 
 #define INV_ROWS 4
 #define INV_COLS 12
+
+#define CELL_PIX_W 2
+#define CELL_PIX_H 4
+
+#define SCORE_FILE "games/invaders_scores.txt"
+#define MAX_NAME_LEN 32
+#define MAX_SCORES 100
+
+typedef struct {
+    char name[MAX_NAME_LEN];
+    int score;
+} ScoreEntry;
+
+void* draw_ctx = NULL;
+int scale = 1;
+int cell_w = CELL_PIX_W;
+int cell_h = CELL_PIX_H;
+int leaderboard_shown = 0;
+int running = 1;
+
+int determineScale() {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1)
+        return 1;
+    int avail_w = ws.ws_col * 2;
+    int avail_h = (ws.ws_row - 3) * 4;
+    int max_scale_w = avail_w / (BOARD_WIDTH * CELL_PIX_W);
+    int max_scale_h = avail_h / (BOARD_HEIGHT * CELL_PIX_H);
+    int s = max_scale_w < max_scale_h ? max_scale_w : max_scale_h;
+    if (s < 1)
+        s = 1;
+    return s;
+}
 
 /* Function to sleep for a given number of milliseconds */
 void sleep_ms(int milliseconds) {
@@ -116,6 +157,7 @@ void init_game() {
     game_over = 0;
     game_win = 0;
     frame_count = 0;
+    leaderboard_shown = 0;
     // Initialize all invaders to alive
     for (i = 0; i < INV_ROWS; i++) {
         for (j = 0; j < INV_COLS; j++) {
@@ -136,8 +178,10 @@ void process_input() {
         int c = getch();
         // When game over or win, restrict input to 'r' (restart) and 'q' (quit)
         if (game_over || game_win) {
-            if (c == 'q' || c == 'Q')
-                exit(0);
+            if (c == 'q' || c == 'Q') {
+                running = 0;
+                return;
+            }
             if (c == 'r' || c == 'R') {
                 init_game();
                 return;
@@ -164,10 +208,8 @@ void process_input() {
                 bullet.y = BOARD_HEIGHT - 2;
             }
         } else if (c == 'q' || c == 'Q') {
-            // Quit the game
-            exit(0);
+            running = 0;
         } else if (c == 'r' || c == 'R') {
-            // Restart the game
             init_game();
         }
     }
@@ -258,84 +300,107 @@ void update_game() {
     update_invaders();
 }
 
-/* Render the game board with borders and a SCORE field */
-void draw_game() {
-    char board[BOARD_HEIGHT][BOARD_WIDTH + 1];
-    // Initialize board with spaces
-    for (int i = 0; i < BOARD_HEIGHT; i++) {
-        for (int j = 0; j < BOARD_WIDTH; j++) {
-            board[i][j] = ' ';
-        }
-        board[i][BOARD_WIDTH] = '\0';
+void recordScore(int s) {
+    char name[MAX_NAME_LEN];
+    reset_terminal_mode();
+    printf("Enter name: ");
+    fflush(stdout);
+    if (fgets(name, sizeof(name), stdin) == NULL)
+        strcpy(name, "anon");
+    name[strcspn(name, "\n")] = '\0';
+    set_conio_terminal_mode();
+    FILE* f = fopen(SCORE_FILE, "a");
+    if (f) {
+        fprintf(f, "%s %d\n", name, s);
+        fclose(f);
     }
-    // Draw invaders
-    for (int i = 0; i < INV_ROWS; i++) {
-        for (int j = 0; j < INV_COLS; j++) {
-            if (invaders[i][j]) {
-                int x = invader_offset_x + j * 4;
-                int y = invader_offset_y + i * 2;
-                if (x >= 0 && x < BOARD_WIDTH && y >= 0 && y < BOARD_HEIGHT)
-                    board[y][x] = 'W';
+}
+
+void showScores() {
+    FILE* f = fopen(SCORE_FILE, "r");
+    if (!f) {
+        printf("No scores yet.\n");
+        return;
+    }
+    ScoreEntry entries[MAX_SCORES];
+    int count = 0;
+    while (count < MAX_SCORES && fscanf(f, "%31s %d", entries[count].name, &entries[count].score) == 2) {
+        count++;
+    }
+    fclose(f);
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (entries[j].score > entries[i].score) {
+                ScoreEntry tmp = entries[i];
+                entries[i] = entries[j];
+                entries[j] = tmp;
             }
         }
     }
-    // Draw bullet
-    if (bullet.active) {
-        if (bullet.x >= 0 && bullet.x < BOARD_WIDTH && bullet.y >= 0 && bullet.y < BOARD_HEIGHT)
-            board[bullet.y][bullet.x] = '|';
+    printf("Leaderboard:\n");
+    for (int i = 0; i < count; i++) {
+        printf("%d. %s - %d\n", i + 1, entries[i].name, entries[i].score);
     }
-    // Draw player (ship) with 'A'
-    if (player_x >= 0 && player_x < BOARD_WIDTH)
-        board[BOARD_HEIGHT - 1][player_x] = 'A';
-    
-    // Clear screen and move cursor to top-left
+}
+
+/* Render the game board with borders and a SCORE field */
+void draw_game() {
+    int board_w = BOARD_WIDTH * cell_w;
+    int board_h = BOARD_HEIGHT * cell_h;
+
     printf("\033[H\033[J");
-    // Print SCORE field
+    _draw_clear(draw_ctx, 0);
+    _draw_rect(draw_ctx, 0, 0, board_w, board_h, 1);
+
+    for (int i = 0; i < INV_ROWS; i++) {
+        for (int j = 0; j < INV_COLS; j++) {
+            if (invaders[i][j]) {
+                int x = (invader_offset_x + j * 4) * cell_w;
+                int y = (invader_offset_y + i * 2) * cell_h;
+                _draw_fill_rect(draw_ctx, x, y, cell_w, cell_h, 1);
+            }
+        }
+    }
+
+    if (bullet.active) {
+        _draw_fill_rect(draw_ctx, bullet.x * cell_w, bullet.y * cell_h, cell_w, cell_h, 1);
+    }
+
+    _draw_fill_rect(draw_ctx, player_x * cell_w, (BOARD_HEIGHT - 1) * cell_h, cell_w, cell_h, 1);
+
+    _draw_render_to_stdout(draw_ctx);
+
     printf("SCORE: %d\n", score);
-    
-    // Draw top border
-    printf("+");
-    for (int j = 0; j < BOARD_WIDTH; j++) {
-        printf("-");
-    }
-    printf("+\n");
-    
-    // Print board with vertical borders
-    for (int i = 0; i < BOARD_HEIGHT; i++) {
-        printf("|%s|\n", board[i]);
-    }
-    
-    // Draw bottom border
-    printf("+");
-    for (int j = 0; j < BOARD_WIDTH; j++) {
-        printf("-");
-    }
-    printf("+\n");
-    
-    // Print game status messages if game over or win
-    if (game_over) {
+    if (game_over)
         printf("\nGame Over! Invaders reached your ship.\n");
-    }
-    if (game_win) {
+    if (game_win)
         printf("\nYou Win! All invaders eliminated.\n");
-    }
-    
-    // Print key instructions below the game area
-    printf("\nControls: Arrow keys to move, Space to fire, Q to quit, R to restart\n");
+    printf("Controls: Arrow keys to move, Space to fire, Q to quit, R to restart\n");
 }
 
 /* Main game loop */
 int main(void) {
     set_conio_terminal_mode();
     init_game();
-    while (1) {
+    scale = determineScale();
+    cell_w = CELL_PIX_W * scale;
+    cell_h = CELL_PIX_H * scale;
+    draw_ctx = _draw_create(BOARD_WIDTH * cell_w, BOARD_HEIGHT * cell_h);
+    while (running) {
         process_input();
         update_game();
         draw_game();
+        if (game_over || game_win) {
+            if (!leaderboard_shown) {
+                recordScore(score);
+                leaderboard_shown = 1;
+            }
+            showScores();
+        }
         frame_count++;
         sleep_ms(100); // Sleep 100ms => ~10fps
     }
-    // Final draw to show end message (never reached because of exit() on quit)
-    draw_game();
+    _draw_destroy(draw_ctx);
+    reset_terminal_mode();
     return 0;
 }

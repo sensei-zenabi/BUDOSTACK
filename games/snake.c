@@ -6,6 +6,14 @@
 #include <fcntl.h>
 #include <time.h>
 
+// libdraw forward declarations
+void* _draw_create(int width, int height);
+void  _draw_destroy(void* ctx);
+void  _draw_clear(void* ctx, int value);
+void  _draw_set_pixel(void* ctx, int x, int y, int value);
+void  _draw_rect(void* ctx, int x, int y, int w, int h, int value);
+void  _draw_render_to_stdout(void* ctx);
+
 // Board dimensions
 #define WIDTH 40
 #define HEIGHT 20
@@ -37,6 +45,9 @@ Point fruit;
 
 // Flag to indicate game over state
 int game_over = 0;
+
+// Drawing context for libdraw
+void* draw_ctx = NULL;
 
 // Terminal settings storage so we can restore them
 struct termios orig_termios;
@@ -185,56 +196,26 @@ void updateSnake() {
     }
 }
 
-// Draw the game board using line-drawing characters for the borders,
-// and display the snake, fruit, score, and instructions.
+// Draw the game board using libdraw for rendering
 void drawBoard() {
     // Clear the screen and move cursor to home position
     printf("\033[2J\033[H");
-    
-    // Draw top border using line-drawing characters
-    printf("┌");
-    for (int x = 0; x < WIDTH; x++) {
-        printf("─");
+
+    // Clear drawing buffer and draw border
+    _draw_clear(draw_ctx, 0);
+    _draw_rect(draw_ctx, 0, 0, WIDTH + 2, HEIGHT + 2, 1);
+
+    // Draw fruit
+    _draw_set_pixel(draw_ctx, fruit.x + 1, fruit.y + 1, 1);
+
+    // Draw snake segments
+    for (int i = 0; i < snake_length; i++) {
+        _draw_set_pixel(draw_ctx, snake[i].x + 1, snake[i].y + 1, 1);
     }
-    printf("┐\n");
-    
-    // Draw board rows with left/right borders
-    for (int y = 0; y < HEIGHT; y++) {
-        printf("│"); // left border
-        for (int x = 0; x < WIDTH; x++) {
-            int printed = 0;
-            // Draw fruit if at this position
-            if(fruit.x == x && fruit.y == y) {
-                printf("*");
-                printed = 1;
-            } else {
-                // Check if snake occupies this cell
-                for (int k = 0; k < snake_length; k++) {
-                    if(snake[k].x == x && snake[k].y == y) {
-                        if(k == 0)
-                            // Unicode full block for snake head
-                            printf("\u2588");
-                        else
-                            // Unicode dark shade block for snake body
-                            printf("\u2593");
-                        printed = 1;
-                        break;
-                    }
-                }
-            }
-            if(!printed)
-                printf(" ");
-        }
-        printf("│\n"); // right border
-    }
-    
-    // Draw bottom border using line-drawing characters
-    printf("└");
-    for (int x = 0; x < WIDTH; x++) {
-        printf("─");
-    }
-    printf("┘\n");
-    
+
+    // Render to terminal
+    _draw_render_to_stdout(draw_ctx);
+
     // Display game status, score, and instructions
     if(game_over)
         printf("Game Over!\n");
@@ -246,7 +227,8 @@ void drawBoard() {
 int main() {
     enableRawMode();
     initGame();
-    
+    draw_ctx = _draw_create(WIDTH + 2, HEIGHT + 2);
+
     while(1) {
         if(!game_over) {
             updateDirection();  // process user input
@@ -264,9 +246,10 @@ int main() {
                 break;
             }
         }
-        
+
         usleep(delay_time); // delay to control game speed
     }
-    
+
+    _draw_destroy(draw_ctx);
     return 0;
 }

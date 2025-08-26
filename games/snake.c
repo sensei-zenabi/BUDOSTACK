@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #define _XOPEN_SOURCE 600  // Feature test macro to expose usleep
 #include <stdio.h>
 #include <stdlib.h>
@@ -5,10 +6,24 @@
 #include <termios.h>
 #include <fcntl.h>
 #include <time.h>
+#include <string.h>
 
-// Board dimensions
-#define WIDTH 40
-#define HEIGHT 20
+/* libdraw prototypes */
+void* _draw_create(int width, int height);
+void  _draw_destroy(void* ctx);
+void  _draw_clear(void* ctx, int value);
+void  _draw_fill_rect(void* ctx, int x, int y, int w, int h, int value);
+void  _draw_fill_circle(void* ctx, int cx, int cy, int r, int value);
+void  _draw_render(void* ctx, void* file, int invert);
+
+/* Board dimensions in pixel units (Braille uses 2x4 pixels per char) */
+#define WIDTH 80
+#define HEIGHT 80
+#define STEP 2 /* movement step in pixels to balance aspect ratio */
+
+/* Rendered character dimensions */
+#define CHAR_WIDTH  (WIDTH / 2)
+#define CHAR_HEIGHT (HEIGHT / 4)
 // Maximum snake length
 #define MAX_SNAKE_LENGTH 100
 
@@ -34,6 +49,9 @@ enum Direction dir = RIGHT;
 
 // Global fruit position
 Point fruit;
+
+/* Drawing canvas */
+void* canvas = NULL;
 
 // Flag to indicate game over state
 int game_over = 0;
@@ -66,15 +84,15 @@ void initGame() {
     // Start snake at center going right
     snake[0].x = WIDTH / 2;
     snake[0].y = HEIGHT / 2;
-    snake[1].x = snake[0].x - 1;
+    snake[1].x = snake[0].x - STEP;
     snake[1].y = snake[0].y;
-    snake[2].x = snake[0].x - 2;
+    snake[2].x = snake[0].x - 2 * STEP;
     snake[2].y = snake[0].y;
-    
+
     // Seed random and place the first fruit
     srand(time(NULL));
-    fruit.x = rand() % WIDTH;
-    fruit.y = rand() % HEIGHT;
+    fruit.x = (rand() % (WIDTH / STEP)) * STEP;
+    fruit.y = (rand() % (HEIGHT / STEP)) * STEP;
     
     game_over = 0;
 }
@@ -135,10 +153,10 @@ void updateSnake() {
     // Calculate new head position
     Point new_head = snake[0];
     switch(dir) {
-        case UP:    new_head.y--; break;
-        case DOWN:  new_head.y++; break;
-        case LEFT:  new_head.x--; break;
-        case RIGHT: new_head.x++; break;
+        case UP:    new_head.y -= STEP; break;
+        case DOWN:  new_head.y += STEP; break;
+        case LEFT:  new_head.x -= STEP; break;
+        case RIGHT: new_head.x += STEP; break;
     }
     // Check collision with walls
     if(new_head.x < 0 || new_head.x >= WIDTH || new_head.y < 0 || new_head.y >= HEIGHT) {
@@ -172,8 +190,8 @@ void updateSnake() {
         // Place new fruit ensuring it does not appear on the snake
         int valid = 0;
         while(!valid) {
-            fruit.x = rand() % WIDTH;
-            fruit.y = rand() % HEIGHT;
+            fruit.x = (rand() % (WIDTH / STEP)) * STEP;
+            fruit.y = (rand() % (HEIGHT / STEP)) * STEP;
             valid = 1;
             for (int i = 0; i < snake_length; i++) {
                 if(snake[i].x == fruit.x && snake[i].y == fruit.y) {
@@ -185,56 +203,60 @@ void updateSnake() {
     }
 }
 
-// Draw the game board using line-drawing characters for the borders,
-// and display the snake, fruit, score, and instructions.
+// Draw the game board using Braille graphics with ASCII borders and text.
 void drawBoard() {
     // Clear the screen and move cursor to home position
     printf("\033[2J\033[H");
-    
-    // Draw top border using line-drawing characters
-    printf("┌");
-    for (int x = 0; x < WIDTH; x++) {
-        printf("─");
-    }
-    printf("┐\n");
-    
-    // Draw board rows with left/right borders
-    for (int y = 0; y < HEIGHT; y++) {
-        printf("│"); // left border
-        for (int x = 0; x < WIDTH; x++) {
-            int printed = 0;
-            // Draw fruit if at this position
-            if(fruit.x == x && fruit.y == y) {
-                printf("*");
-                printed = 1;
-            } else {
-                // Check if snake occupies this cell
-                for (int k = 0; k < snake_length; k++) {
-                    if(snake[k].x == x && snake[k].y == y) {
-                        if(k == 0)
-                            // Unicode full block for snake head
-                            printf("\u2588");
-                        else
-                            // Unicode dark shade block for snake body
-                            printf("\u2593");
-                        printed = 1;
-                        break;
-                    }
-                }
-            }
-            if(!printed)
-                printf(" ");
+
+    _draw_clear(canvas, 0);
+
+    // Draw fruit
+    _draw_fill_circle(canvas, fruit.x + STEP / 2, fruit.y + STEP / 2, STEP / 2, 1);
+
+    // Draw snake (head as circle, body as rectangles)
+    for (int k = 0; k < snake_length; k++) {
+        if(k == 0) {
+            _draw_fill_circle(canvas, snake[k].x + STEP / 2, snake[k].y + STEP / 2, STEP / 2 + 1, 1);
+        } else {
+            _draw_fill_rect(canvas, snake[k].x, snake[k].y, STEP, STEP, 1);
         }
-        printf("│\n"); // right border
     }
-    
-    // Draw bottom border using line-drawing characters
-    printf("└");
-    for (int x = 0; x < WIDTH; x++) {
-        printf("─");
+
+    // Render to memory so we can add ASCII borders
+    char *buf = NULL;
+    size_t len = 0;
+    FILE *mem = open_memstream(&buf, &len);
+    if(mem) {
+        _draw_render(canvas, mem, 0);
+        fclose(mem);
+
+        // Top border
+        printf("┌");
+        for (int x = 0; x < CHAR_WIDTH; x++) {
+            printf("─");
+        }
+        printf("┐\n");
+
+        // Board rows with left/right borders
+        char *ptr = buf;
+        for (int y = 0; y < CHAR_HEIGHT; y++) {
+            char *newline = strchr(ptr, '\n');
+            if (newline) *newline = '\0';
+            printf("│%s│\n", ptr);
+            if (!newline) break;
+            ptr = newline + 1;
+        }
+
+        // Bottom border
+        printf("└");
+        for (int x = 0; x < CHAR_WIDTH; x++) {
+            printf("─");
+        }
+        printf("┘\n");
+
+        free(buf);
     }
-    printf("┘\n");
-    
+
     // Display game status, score, and instructions
     if(game_over)
         printf("Game Over!\n");
@@ -245,8 +267,9 @@ void drawBoard() {
 // Main game loop: if game_over is set, wait for 'r' (restart) or 'q' (quit)
 int main() {
     enableRawMode();
+    canvas = _draw_create(WIDTH, HEIGHT);
     initGame();
-    
+
     while(1) {
         if(!game_over) {
             updateDirection();  // process user input
@@ -267,6 +290,7 @@ int main() {
         
         usleep(delay_time); // delay to control game speed
     }
-    
+
+    _draw_destroy(canvas);
     return 0;
 }

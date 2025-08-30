@@ -163,8 +163,8 @@ void set_bottom_bar(const char *text) {
         snprintf(bottom_bar, sizeof(bottom_bar), "%s", text);
 }
 
-/* Draw persistent top and bottom bars and confine scrolling to the area
- * between them. The prompt is positioned on the line above the bottom bar. */
+/* Draw persistent top and bottom bars and clear the area between them. The
+ * cursor is positioned at the first line of the content area (row 2). */
 void draw_bars(void) {
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
@@ -172,19 +172,22 @@ void draw_bars(void) {
         w.ws_col = 80;
     }
 
-    /* Reset scroll region and set new boundaries leaving space for bars */
+    /* Reset scroll region and confine it between the bars */
     printf("\033[r");
     if (w.ws_row > 2)
         printf("\033[2;%dr", w.ws_row - 1);
 
-    /* Top bar */
+    /* Draw top and bottom bars */
     printf("\033[1;1H\033[7m%-*.*s\033[0m", w.ws_col, w.ws_col, top_bar);
-
-    /* Bottom bar */
     printf("\033[%d;1H\033[7m%-*.*s\033[0m", w.ws_row, w.ws_col, w.ws_col, bottom_bar);
 
-    /* Position cursor for prompt/input just above the bottom bar */
-    printf("\033[%d;1H", w.ws_row - 1);
+    /* Clear the content area */
+    for (int row = 2; row < w.ws_row; row++) {
+        printf("\033[%d;1H\033[K", row);
+    }
+
+    /* Position cursor at start of content area */
+    printf("\033[2;1H");
     fflush(stdout);
 }
 
@@ -194,7 +197,7 @@ void reset_screen(void) {
     fflush(stdout);
 }
 
-/* search_mode remains unchanged from the original implementation. */
+/* Search mode with persistent bars */
 int search_mode(const char **lines, size_t line_count, const char *query) {
     int *matches = malloc(line_count * sizeof(int));
     if (!matches) {
@@ -213,30 +216,32 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
         getchar();
         return -1;
     }
+
     int active = 0;
     int menu_start = 0;
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
         w.ws_row = 24;
     }
-    int menu_height = w.ws_row - 1;
+    int menu_height = w.ws_row - 2;
     while (1) {
-        printf("\033[H\033[J"); // Clear screen.
+        draw_bars();
         int end = menu_start + menu_height;
         if (end > match_count)
             end = match_count;
         for (int i = menu_start; i < end; i++) {
-            if (i == active) {
-                printf("\033[7m"); // Highlight active match.
-            }
-            printf("Line %d: %s", matches[i] + 1, lines[matches[i]]);
-            if (i == active) {
-                printf("\033[0m"); // Reset formatting.
-            }
-            printf("\n");
+            int row = 2 + i - menu_start;
+            printf("\033[%d;1H\033[K", row);
+            if (i == active)
+                printf("\033[7m");
+            printf("\033[%d;1HLine %d: %s", row, matches[i] + 1, lines[matches[i]]);
+            if (i == active)
+                printf("\033[0m");
         }
-        printf("\nUse Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
+        printf("\033[%d;1HUse Up/Down arrows to select, Enter to jump, 'q' to cancel.",
+               w.ws_row - 1);
         fflush(stdout);
+
         struct termios oldt, newt;
         tcgetattr(STDIN_FILENO, &oldt);
         newt = oldt;
@@ -249,16 +254,16 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
             break;
         } else if (ch == '\n' || ch == '\r') {
             break;
-        } else if (ch == '\033') { // Arrow key
+        } else if (ch == '\033') {
             if (getchar() == '[') {
                 int code = getchar();
-                if (code == 'A') { // Up arrow.
+                if (code == 'A') {
                     if (active > 0) {
                         active--;
                         if (active < menu_start)
                             menu_start = active;
                     }
-                } else if (code == 'B') { // Down arrow.
+                } else if (code == 'B') {
                     if (active < match_count - 1) {
                         active++;
                         if (active >= menu_start + menu_height)
@@ -268,15 +273,16 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
             }
         }
     }
+
     int result = -1;
-    if (active != -1) {
+    if (active != -1)
         result = matches[active];
-    }
+
     free(matches);
     return result;
 }
 
-/* Pager function remains unchanged from the original implementation. */
+/* Pager with persistent bars */
 void pager(const char **lines, size_t line_count) {
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
@@ -287,13 +293,15 @@ void pager(const char **lines, size_t line_count) {
         page_height = 10;
     int start = 0;
     while (1) {
-        printf("\033[H\033[J"); // Clear the screen.
-        for (int i = start; i < start + page_height && i < (int)line_count; i++) {
-            printf("%s\n", lines[i]);
+        draw_bars();
+        for (int i = 0; i < page_height && start + i < (int)line_count; i++) {
+            printf("%s\n", lines[start + i]);
         }
-        printf("\nPage %d/%d - Use Up/Down arrows to scroll, 'f' to search, 'q' to quit.",
-               start / page_height + 1, (int)((line_count + page_height - 1) / page_height));
+        printf("\033[%d;1HPage %d/%d - Use Up/Down arrows to scroll, 'f' to search, 'q' to quit.",
+               w.ws_row - 1, start / page_height + 1,
+               (int)((line_count + page_height - 1) / page_height));
         fflush(stdout);
+
         struct termios oldt, newt;
         tcgetattr(STDIN_FILENO, &oldt);
         newt = oldt;
@@ -306,19 +314,19 @@ void pager(const char **lines, size_t line_count) {
         } else if (c == '\033') {
             if (getchar() == '[') {
                 int code = getchar();
-                if (code == 'A') { // Up arrow.
+                if (code == 'A') {
                     if (start - page_height >= 0)
                         start -= page_height;
                     else
                         start = 0;
-                } else if (code == 'B') { // Down arrow.
+                } else if (code == 'B') {
                     if (start + page_height < (int)line_count)
                         start += page_height;
                 }
             }
         } else if (c == 'f') {
             char search[256];
-            printf("\nSearch: ");
+            printf("\033[%d;1HSearch: ", w.ws_row - 1);
             fflush(stdout);
             if (fgets(search, sizeof(search), stdin) != NULL) {
                 search[strcspn(search, "\n")] = '\0';
@@ -330,7 +338,8 @@ void pager(const char **lines, size_t line_count) {
             }
         }
     }
-    printf("\n");
+    draw_bars();
+    printf("\033[%d;1H\033[K", w.ws_row - 1);
 }
 
 int is_realtime_command(const char *command) {
@@ -366,6 +375,7 @@ int execute_command_with_paging(CommandStruct *cmd) {
      * - The command is in the realtime command list loaded from apps/ folder.
      */
     if (nopaging || is_realtime_command(cmd->command)) {
+        draw_bars();
         return execute_command(cmd);
     }
     
@@ -510,12 +520,15 @@ int execute_command_with_paging(CommandStruct *cmd) {
         page_height = 10;
     
     /* If the output fits in one page, print directly; otherwise, page the output. */
+    draw_bars();
     if ((int)current_line <= page_height) {
         for (size_t i = 0; i < current_line; i++) {
             printf("%s\n", lines[i]);
         }
+        printf("\033[%d;1H", ws.ws_row - 1);
     } else {
         pager((const char **)lines, current_line);
+        printf("\033[%d;1H", ws.ws_row - 1);
     }
     free(lines);
     free(output);
@@ -523,6 +536,7 @@ int execute_command_with_paging(CommandStruct *cmd) {
 }
 
 static void run_shell_command(const char *shell_command) {
+    draw_bars();
     pid_t pid = fork();
     if (pid == -1) {
         perror("fork");
@@ -615,6 +629,10 @@ int main(int argc, char *argv[]) {
     /* Main loop */
     while (1) {
         draw_bars();
+        struct winsize loop_w;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &loop_w) == -1)
+            loop_w.ws_row = 24;
+        printf("\033[%d;1H", loop_w.ws_row - 1);
         display_prompt();
         input = read_input();
         if (input == NULL) {

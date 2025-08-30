@@ -47,6 +47,10 @@ int realtime_command_count = 0;
 static int g_argc;
 static char **g_argv;
 
+/* Content buffers for the persistent top and bottom bars */
+static char top_bar[256] = "BUDOSTACK";
+static char bottom_bar[256] = "READY";
+
 /* load_realtime_commands()
  *
  * This function scans the "apps/" directory (relative to the base_directory) and
@@ -143,6 +147,51 @@ void display_prompt(void) {
         printf("%s$ ", cwd);
     else
         printf("shell$ ");
+}
+
+/* Update the text shown in the top bar. The content is truncated to the
+ * available buffer size. */
+void set_top_bar(const char *text) {
+    if (text)
+        snprintf(top_bar, sizeof(top_bar), "%s", text);
+}
+
+/* Update the text shown in the bottom bar. The content is truncated to the
+ * available buffer size. */
+void set_bottom_bar(const char *text) {
+    if (text)
+        snprintf(bottom_bar, sizeof(bottom_bar), "%s", text);
+}
+
+/* Draw persistent top and bottom bars and confine scrolling to the area
+ * between them. The prompt is positioned on the line above the bottom bar. */
+void draw_bars(void) {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
+        w.ws_row = 24;
+        w.ws_col = 80;
+    }
+
+    /* Reset scroll region and set new boundaries leaving space for bars */
+    printf("\033[r");
+    if (w.ws_row > 2)
+        printf("\033[2;%dr", w.ws_row - 1);
+
+    /* Top bar */
+    printf("\033[1;1H\033[7m%-*.*s\033[0m", w.ws_col, w.ws_col, top_bar);
+
+    /* Bottom bar */
+    printf("\033[%d;1H\033[7m%-*.*s\033[0m", w.ws_row, w.ws_col, w.ws_col, bottom_bar);
+
+    /* Position cursor for prompt/input just above the bottom bar */
+    printf("\033[%d;1H", w.ws_row - 1);
+    fflush(stdout);
+}
+
+/* Restore the terminal to its default scroll region and clear the screen */
+void reset_screen(void) {
+    printf("\033[r\033[H\033[J");
+    fflush(stdout);
 }
 
 /* search_mode remains unchanged from the original implementation. */
@@ -492,11 +541,12 @@ int main(int argc, char *argv[]) {
     char *input;
     CommandStruct cmd;
 
-    /* 
+    /*
      * Ignore SIGINT in the shell so that CTRL+C does not quit BUDOSTACK.
      * Child processes will reset SIGINT to default.
      */
     signal(SIGINT, SIG_IGN);
+    atexit(reset_screen);
     
     /* Store original command-line arguments for later use by the "restart" command */
     g_argc = argc;
@@ -549,6 +599,8 @@ int main(int argc, char *argv[]) {
     say("system ready");
     printf("\nType 'help' for command list.");
     printf("\nType 'exit' to quit.\n\n");
+    set_top_bar("BUDOSTACK");
+    set_bottom_bar("READY");
 
     /* Execute auto_command if set */
     if (auto_command != NULL) {
@@ -562,6 +614,7 @@ int main(int argc, char *argv[]) {
 
     /* Main loop */
     while (1) {
+        draw_bars();
         display_prompt();
         input = read_input();
         if (input == NULL) {

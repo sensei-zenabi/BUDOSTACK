@@ -16,6 +16,8 @@
 #include <sys/select.h> // For select()
 #include <dirent.h>     // For directory handling
 #include <sys/stat.h>   // For stat()
+#include <sys/sysinfo.h>  // For memory info
+#include <sys/statvfs.h>  // For disk space info
 
 #include "commandparser.h"
 #include "input.h"      // Include the input handling header
@@ -62,10 +64,27 @@ static void update_top_bar(void) {
     else
         snprintf(time_buf, sizeof(time_buf), "--:--:--");
 
+    struct sysinfo info;
+    if (sysinfo(&info) != 0) {
+        memset(&info, 0, sizeof(info));
+    }
+    double load = info.loads[0] / 65536.0;
+    unsigned long used = info.totalram ? (info.totalram - info.freeram) : 0;
+    unsigned long mem_pct = info.totalram ? (used * 100 / info.totalram) : 0;
+
+    struct statvfs fs;
+    double free_gb = 0.0;
+    if (statvfs(".", &fs) == 0)
+        free_gb = (double)fs.f_bfree * fs.f_frsize / (1024.0 * 1024 * 1024);
+
     if (getcwd(cwd, sizeof(cwd)) != NULL)
-        snprintf(top_bar, sizeof(top_bar), " BUDOSTACK | %s | %s ", cwd, time_buf);
+        snprintf(top_bar, sizeof(top_bar),
+                 " BUDOSTACK | %s | %s | L%.2f | M%lu%% | D%.1fG ",
+                 cwd, time_buf, load, mem_pct, free_gb);
     else
-        snprintf(top_bar, sizeof(top_bar), " BUDOSTACK | %s ", time_buf);
+        snprintf(top_bar, sizeof(top_bar),
+                 " BUDOSTACK | %s | L%.2f | M%lu%% | D%.1fG ",
+                 time_buf, load, mem_pct, free_gb);
 }
 
 /* Update the contents of the bottom status bar. */
@@ -84,10 +103,16 @@ static void draw_bars(void) {
         w.ws_col = 80;
     }
     printf("\033[s");
+    printf("\033[2;%dr", w.ws_row - 1);
     printf("\033[H\033[7m%-*s\033[0m", w.ws_col, top_bar);
     printf("\033[%d;1H\033[7m%-*s\033[0m", w.ws_row, w.ws_col, bottom_bar);
     printf("\033[u");
     fflush(stdout);
+}
+
+void refresh_bars(void) {
+    update_top_bar();
+    draw_bars();
 }
 
 /* load_realtime_commands()
@@ -188,7 +213,7 @@ void display_prompt(void) {
     update_top_bar();
     update_bottom_bar("exit to quit | help for help");
     draw_bars();
-    printf("\033[%d;1H", w.ws_row - 1);
+    printf("\033[%d;1H\033[K", w.ws_row - 1);
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) != NULL)
         printf("%s$ ", cwd);
@@ -343,7 +368,9 @@ void pager(const char **lines, size_t line_count) {
             }
         }
     }
-    printf("\n");
+    printf("\033[2;1H\033[J");
+    update_bottom_bar(NULL);
+    refresh_bars();
 }
 
 int is_realtime_command(const char *command) {
@@ -379,7 +406,19 @@ int execute_command_with_paging(CommandStruct *cmd) {
      * - The command is in the realtime command list loaded from apps/ folder.
      */
     if (nopaging || is_realtime_command(cmd->command)) {
-        return execute_command(cmd);
+        struct winsize w;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
+            w.ws_row = 24;
+        }
+        printf("\033[2;1H\033[J");
+        update_bottom_bar(NULL);
+        refresh_bars();
+        printf("\033[2;1H");
+        fflush(stdout);
+        int ret = execute_command(cmd);
+        update_bottom_bar(NULL);
+        refresh_bars();
+        return ret;
     }
     
     int pipefd[2];

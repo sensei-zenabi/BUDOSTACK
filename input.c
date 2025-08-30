@@ -6,6 +6,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/select.h>
 #include "input.h"
 
 #define INPUT_SIZE 1024
@@ -68,6 +69,18 @@ char* read_input(void) {
     fflush(stdout);
 
     while (1) {
+        fd_set set;
+        FD_ZERO(&set);
+        FD_SET(STDIN_FILENO, &set);
+        struct timeval tv = {1, 0};
+        int rv = select(STDIN_FILENO + 1, &set, NULL, NULL, &tv);
+        if (rv == -1) {
+            perror("select");
+            break;
+        } else if (rv == 0) {
+            refresh_bars();
+            continue;
+        }
         int c = getchar();
         if (c == '\n') {
             putchar('\n');

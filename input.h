@@ -5,4 +5,6 @@
    The returned string is dynamically allocated (caller must free it). */
 char* read_input(void);
 
+void refresh_bars(void);
+
 #endif // INPUT_H

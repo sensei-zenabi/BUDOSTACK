@@ -40,12 +40,55 @@ char base_directory[PATH_MAX] = {0};
 char **realtime_commands = NULL;
 int realtime_command_count = 0;
 
-/* 
+/*
  * Global copies of the original command-line arguments.
  * These will be used by the "restart" command when re-executing the new binary.
  */
 static int g_argc;
 static char **g_argv;
+
+/* Buffers for the persistent top and bottom status bars. */
+static char top_bar[PATH_MAX + 64];
+static char bottom_bar[256];
+
+/* Update the contents of the top status bar. */
+static void update_top_bar(void) {
+    char cwd[PATH_MAX];
+    time_t now = time(NULL);
+    struct tm *tm_info = localtime(&now);
+    char time_buf[9];
+    if (tm_info)
+        strftime(time_buf, sizeof(time_buf), "%H:%M:%S", tm_info);
+    else
+        snprintf(time_buf, sizeof(time_buf), "--:--:--");
+
+    if (getcwd(cwd, sizeof(cwd)) != NULL)
+        snprintf(top_bar, sizeof(top_bar), " BUDOSTACK | %s | %s ", cwd, time_buf);
+    else
+        snprintf(top_bar, sizeof(top_bar), " BUDOSTACK | %s ", time_buf);
+}
+
+/* Update the contents of the bottom status bar. */
+static void update_bottom_bar(const char *msg) {
+    if (msg)
+        snprintf(bottom_bar, sizeof(bottom_bar), " %s ", msg);
+    else
+        bottom_bar[0] = '\0';
+}
+
+/* Draw the top and bottom status bars without moving the cursor. */
+static void draw_bars(void) {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
+        w.ws_row = 24;
+        w.ws_col = 80;
+    }
+    printf("\033[s");
+    printf("\033[H\033[7m%-*s\033[0m", w.ws_col, top_bar);
+    printf("\033[%d;1H\033[7m%-*s\033[0m", w.ws_row, w.ws_col, bottom_bar);
+    printf("\033[u");
+    fflush(stdout);
+}
 
 /* load_realtime_commands()
  *
@@ -138,14 +181,23 @@ int search_mode(const char **lines, size_t line_count, const char *query);
 
 /* Displays the current working directory as the prompt. */
 void display_prompt(void) {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
+        w.ws_row = 24;
+    }
+    update_top_bar();
+    update_bottom_bar("exit to quit | help for help");
+    draw_bars();
+    printf("\033[%d;1H", w.ws_row - 1);
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) != NULL)
         printf("%s$ ", cwd);
     else
         printf("shell$ ");
+    fflush(stdout);
 }
 
-/* search_mode remains unchanged from the original implementation. */
+/* search_mode with status bar support. */
 int search_mode(const char **lines, size_t line_count, const char *query) {
     int *matches = malloc(line_count * sizeof(int));
     if (!matches) {
@@ -170,23 +222,26 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
         w.ws_row = 24;
     }
-    int menu_height = w.ws_row - 1;
+    int menu_height = w.ws_row - 2;
     while (1) {
-        printf("\033[H\033[J"); // Clear screen.
+        printf("\033[H\033[J");
+        update_top_bar();
+        update_bottom_bar("Up/Down select  Enter jump  q: cancel");
+        draw_bars();
+        printf("\033[2;1H");
         int end = menu_start + menu_height;
         if (end > match_count)
             end = match_count;
         for (int i = menu_start; i < end; i++) {
             if (i == active) {
-                printf("\033[7m"); // Highlight active match.
+                printf("\033[7m");
             }
             printf("Line %d: %s", matches[i] + 1, lines[matches[i]]);
             if (i == active) {
-                printf("\033[0m"); // Reset formatting.
+                printf("\033[0m");
             }
             printf("\n");
         }
-        printf("\nUse Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
         fflush(stdout);
         struct termios oldt, newt;
         tcgetattr(STDIN_FILENO, &oldt);
@@ -227,7 +282,7 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
     return result;
 }
 
-/* Pager function remains unchanged from the original implementation. */
+/* Pager function with status bar support. */
 void pager(const char **lines, size_t line_count) {
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
@@ -238,12 +293,19 @@ void pager(const char **lines, size_t line_count) {
         page_height = 10;
     int start = 0;
     while (1) {
-        printf("\033[H\033[J"); // Clear the screen.
+        printf("\033[H\033[J");
+        update_top_bar();
+        char info[256];
+        snprintf(info, sizeof(info),
+                 "Page %d/%d - Up/Down scroll  f: search  q: quit",
+                 start / page_height + 1,
+                 (int)((line_count + page_height - 1) / page_height));
+        update_bottom_bar(info);
+        draw_bars();
+        printf("\033[2;1H");
         for (int i = start; i < start + page_height && i < (int)line_count; i++) {
             printf("%s\n", lines[i]);
         }
-        printf("\nPage %d/%d - Use Up/Down arrows to scroll, 'f' to search, 'q' to quit.",
-               start / page_height + 1, (int)((line_count + page_height - 1) / page_height));
         fflush(stdout);
         struct termios oldt, newt;
         tcgetattr(STDIN_FILENO, &oldt);
@@ -269,7 +331,7 @@ void pager(const char **lines, size_t line_count) {
             }
         } else if (c == 'f') {
             char search[256];
-            printf("\nSearch: ");
+            printf("\033[%d;1HSearch: ", w.ws_row - 1);
             fflush(stdout);
             if (fgets(search, sizeof(search), stdin) != NULL) {
                 search[strcspn(search, "\n")] = '\0';
@@ -456,12 +518,17 @@ int execute_command_with_paging(CommandStruct *cmd) {
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
         ws.ws_row = 24;
     }
-    int page_height = ws.ws_row - 1;
+    int page_height = ws.ws_row - 2;
     if (page_height < 1)
         page_height = 10;
-    
-    /* If the output fits in one page, print directly; otherwise, page the output. */
+
+    /* If the output fits in one page, print directly with bars; otherwise, page. */
     if ((int)current_line <= page_height) {
+        printf("\033[H\033[J");
+        update_top_bar();
+        update_bottom_bar(NULL);
+        draw_bars();
+        printf("\033[2;1H");
         for (size_t i = 0; i < current_line; i++) {
             printf("%s\n", lines[i]);
         }

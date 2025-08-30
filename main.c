@@ -100,10 +100,20 @@ static void draw_bars(void) {
         w.ws_row = 24;
         w.ws_col = 80;
     }
+    /* Preserve cursor position while updating the bars. */
     printf("\033[s");
-    printf("\033[2;%dr", w.ws_row - 1);
-    printf("\033[H\033[7m%-*s\033[0m", w.ws_col, top_bar);
+
+    /* Reset scroll region to full height so bars can be drawn outside it. */
+    printf("\033[r");
+
+    /* Draw top and bottom bars using inverse video for visibility. */
+    printf("\033[1;1H\033[7m%-*s\033[0m", w.ws_col, top_bar);
     printf("\033[%d;1H\033[7m%-*s\033[0m", w.ws_row, w.ws_col, bottom_bar);
+
+    /* Constrain scrolling to the area between the two bars. */
+    printf("\033[2;%dr", w.ws_row - 1);
+
+    /* Restore original cursor position. */
     printf("\033[u");
     fflush(stdout);
 }

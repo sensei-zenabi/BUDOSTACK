@@ -14,8 +14,6 @@
 #include <fcntl.h>
 #include <signal.h>     // For signal handling
 #include <sys/select.h> // For select()
-#include <dirent.h>     // For directory handling
-#include <sys/stat.h>   // For stat()
 #include <sys/sysinfo.h>  // For memory info
 #include <sys/statvfs.h>  // For disk space info
 
@@ -117,51 +115,44 @@ void refresh_bars(void) {
 
 /* load_realtime_commands()
  *
- * This function scans the "apps/" directory (relative to the base_directory) and
- * adds the name of each executable file found to the realtime_commands list.
+ * Reads a list of realtime commands from config/realtime.txt (relative to the
+ * base directory). Each non-empty line represents a command that should run
+ * without paging.
  */
 void load_realtime_commands(void) {
-    char apps_path[PATH_MAX];
-    if (snprintf(apps_path, sizeof(apps_path), "%s/apps", base_directory) >= (int)sizeof(apps_path)) {
+    char cfg_path[PATH_MAX];
+    if (snprintf(cfg_path, sizeof(cfg_path), "%s/config/realtime.txt", base_directory) >= (int)sizeof(cfg_path)) {
         perror("snprintf");
         return;
     }
-    DIR *dir = opendir(apps_path);
-    if (!dir) {
-        perror("opendir");
+
+    FILE *fp = fopen(cfg_path, "r");
+    if (!fp) {
+        /* Absence of the config file is not fatal; simply use no realtime commands. */
         return;
     }
-    
-    struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        /* Skip the special entries "." and ".." */
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (line[0] == '\0' || line[0] == '#')
             continue;
-        
-        /* Construct the full path to the file */
-        char full_path[PATH_MAX];
-        if (snprintf(full_path, sizeof(full_path), "%s/%s", apps_path, entry->d_name) >= (int)sizeof(full_path))
-            continue;
-        
-        /* Check if it's a regular file and executable */
-        struct stat sb;
-        if (stat(full_path, &sb) == 0 && S_ISREG(sb.st_mode) && access(full_path, X_OK) == 0) {
-            realtime_commands = realloc(realtime_commands, (realtime_command_count + 1) * sizeof(char *));
-            if (!realtime_commands) {
-                perror("realloc");
-                closedir(dir);
-                return;
-            }
-            realtime_commands[realtime_command_count] = strdup(entry->d_name);
-            if (!realtime_commands[realtime_command_count]) {
-                perror("strdup");
-                closedir(dir);
-                return;
-            }
-            realtime_command_count++;
+
+        char **tmp = realloc(realtime_commands, (realtime_command_count + 1) * sizeof(char *));
+        if (!tmp) {
+            perror("realloc");
+            break;
         }
+        realtime_commands = tmp;
+        realtime_commands[realtime_command_count] = strdup(line);
+        if (!realtime_commands[realtime_command_count]) {
+            perror("strdup");
+            break;
+        }
+        realtime_command_count++;
     }
-    closedir(dir);
+
+    fclose(fp);
 }
 
 /* free_realtime_commands()

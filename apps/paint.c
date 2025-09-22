@@ -425,32 +425,45 @@ static void render(void){
     int cols_now; get_terminal_size(&rows,&cols_now);
     for (int i=curcol;i<cols_now;i++) write(STDOUT_FILENO, " ", 1);
 
-    // Draw viewport
-    for (int ry=0; ry<draw_rows; ry++){
-        write(STDOUT_FILENO, "\r\n", 2);
-        int y = view_y + ry;
-        for (int rx=0; rx<draw_cols; rx++){
-            int x = view_x + rx;
-            char out = ' ';
-            uint8_t idx = EMPTY;
-            if (x >=0 && x < img_w && y >=0 && y < img_h){
-                idx = pixels[y*img_w + x];
-                out = (idx==EMPTY)?'.':palette[idx].letter;
-            } else {
-                out = ' ';
-            }
-            if (x==cursor_x && y==cursor_y){
-                write(STDOUT_FILENO, "\x1b[7m", 4); // inverse for cursor cell
-                set_color_ansi(idx);
-                write(STDOUT_FILENO, &out, 1);
-                write(STDOUT_FILENO, "\x1b[0m", 4);
-            } else {
-                set_color_ansi(idx);
-                write(STDOUT_FILENO, &out, 1);
-                write(STDOUT_FILENO, "\x1b[39m", 5);
-            }
-        }
-    }
+	// Draw viewport
+	for (int ry = 0; ry < draw_rows; ry++) {
+	    write(STDOUT_FILENO, "\r\n", 2);
+	    int y = view_y + ry;
+
+	    for (int rx = 0; rx < draw_cols; rx++) {
+	        int x = view_x + rx;
+	        int in_bounds = (x >= 0 && x < img_w && y >= 0 && y < img_h);
+
+	        if (!in_bounds) {
+	            // Outside the image area: print space (no dot, no color)
+	            write(STDOUT_FILENO, " ", 1);
+	            continue;
+	        }
+
+	        uint8_t idx = pixels[y * img_w + x];
+
+	        if (x == cursor_x && y == cursor_y) {
+	            // Cursor cell (inverse video)
+	            write(STDOUT_FILENO, "\x1b[7m", 4);
+	            set_color_ansi(idx);
+	            if (idx == EMPTY) {
+	                write(STDOUT_FILENO, ".", 1);
+	            } else {
+	                write(STDOUT_FILENO, "█", 3); // U+2588
+	            }
+	            write(STDOUT_FILENO, "\x1b[0m", 4);
+	        } else {
+	            set_color_ansi(idx);
+	            if (idx == EMPTY) {
+	                write(STDOUT_FILENO, ".", 1);
+	            } else {
+	                write(STDOUT_FILENO, "█", 3); // U+2588
+	            }
+	            write(STDOUT_FILENO, "\x1b[39m", 5); // reset to default FG
+	        }
+	    }
+	}
+
     write(STDOUT_FILENO, "\r\n", 2);
     // Status
     draw_status_line(cols_now);

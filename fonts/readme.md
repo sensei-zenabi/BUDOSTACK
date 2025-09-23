@@ -1,7 +1,6 @@
 The fonts in this folder are acquired from:
-https://www.seasip.info/Unix/PSF/Amstrad/Letafont/index.html
+https://www.seasip.info/Unix/PSF/Amstrad/index.html
 
-They are not part of the code that is licensed with GPL-2.0. Instead the website claims them to be example fonts from a Public Domain
-screen font editor for the PCW.
+They are not part of the code that is licensed with GPL-2.0. Instead the website claims them to be example fonts from a Public Domain.
 
-The LICENCE.txt file for the fonts can be found from the root of this folder.
+The "public domain" LICENCE.txt file for the fonts can be found from the root of this folder.

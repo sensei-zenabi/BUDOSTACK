@@ -1,0 +1,19 @@
+00 CLEAR
+10 PRINT "--- TASK DEMONSTRATION ---"
+20 PRINT ""
+30 WAIT 1000
+40 PRINT "This demo illustrates all task language capabilites."
+50 WAIT 2500
+60 PRINT "Now I will list folder content..."
+70 WAIT 1000
+80 RUN list
+90 WAIT 1000
+100 PRINT "Here are the hardware specs..."
+110 WAIT 1000
+120 RUN stats
+130 CLEAR
+140 PRINT "See! The task just keeps on going..."
+150 WAIT 2500
+160 PRINT "...and starts from the beginning until you press CTRL+c"
+170 WAIT 2500
+180 GOTO 00

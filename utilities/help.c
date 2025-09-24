@@ -34,14 +34,14 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("/* Folder Structure */\n");
     printf("\n");
-    printf("  ./apps/       - System commands that do not use paging.\n");
+    printf("  ./apps/       - System applications that do not use paging.\n");
     printf("  ./commands/   - BUDOSTACK (BS) programming commands for developers.\n");
     printf("  ./fonts/      - .psf fonts that can be set with 'setfont'.\n");
-    printf("  ./games/      - Built-in games and games developed with BS language.\n");
-    printf("  ./lib/        - System libraries used by system commands.\n");
-    printf("  ./tasks/      - Reserved for global tasks.\n");
+    printf("  ./games/      - Built-in games.\n");
+    printf("  ./lib/        - System libraries used by applications and utilities.\n");
+    printf("  ./tasks/      - Reserved for tasks. Few built-in examples provided.\n");
     printf("  ./users/      - User folders for those who like them.\n");
-    printf("  ./utilities/  - System commands that use paging.\n");
+    printf("  ./utilities/  - System utilities that use paging.\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     printf("                             - SYSTEM UTILITIES -\n");
@@ -94,7 +94,8 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("/* Just-for-Fun */\n");
     printf("\n");
-    printf("  assist   : Interactive assistant that provides various utilities.\n");    
+    printf("  assist   : Interactive assistant that provides various utilities.\n");
+    printf("  paint    : ASCII paint application to edit bitmaps.\n");    
     printf("  signal   : Signal generator. Type 'signal' for help.\n");
     printf("  skydial  : Simple sky-dial to identify and locate celestial objects.\n");
     printf("             Type 'skydial lat lon' to tell your position.\n");
@@ -117,7 +118,6 @@ int main(int argc, char *argv[]) {
     printf("/* BUDOSTACK Developer Tools */\n");
     printf("\n");
     printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
-    printf("  paint    : ASCII paint application to edit bitmaps.\n");
     printf("\n");
     printf("/* BUDOSTACK Programming Commands */\n");
     printf("\n");

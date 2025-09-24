@@ -15,7 +15,7 @@ LIB_OBJS = $(LIB_SRCS:.c=.o)
 # Find all .c files recursively (all sources, except user folders)
 ALL_SOURCES = $(shell find . -type f -name '*.c' -not -path "./users/*")
 # Exclude command, app, and lib sources from the main executable sources.
-NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./games/% ./lib/% ./node/% ./utilities/%, $(ALL_SOURCES))
+NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./games/% ./lib/% ./utilities/%, $(ALL_SOURCES))
 NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)
 TARGET = budostack
 
@@ -31,16 +31,12 @@ APPS_EXES = $(APPS_SRCS:.c=)
 GAMES_SRCS = $(shell find ./games -type f -name '*.c')
 GAMES_EXES = $(GAMES_SRCS:.c=)
 
-# Find all .c files in the node folder
-NODE_SRCS = $(shell find ./node -type f -name '*.c')
-NODE_EXES = $(NODE_SRCS:.c=)
-
 # Find all .c files in the utilities folder
 UTILITIES_SRCS = $(shell find ./utilities -type f -name '*.c')
 UTILITIES_EXES = $(UTILITIES_SRCS:.c=)
 
 # Define all targets (main, commands, and apps)
-ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(NODE_EXES) $(UTILITIES_EXES)
+ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
 
 .PHONY: all clean
 
@@ -52,7 +48,7 @@ $(TARGET): $(NON_COMMAND_OBJECTS) $(LIB_OBJS)
 	$(CC) $(NON_COMMAND_OBJECTS) $(LIB_OBJS) $(LDFLAGS) -o $(TARGET)
 
 # For each executable, link its corresponding object file with the lib objects.
-$(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(NODE_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS)
+$(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS)
 	@echo "Linking $@..."
 	$(CC) $< $(LIB_OBJS) $(LDFLAGS) -o $@
 
@@ -63,6 +59,6 @@ $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(NODE_EXES) $(UTILITIES_EXES): %: %
 
 # Clean: remove all executables and all .o files recursively.
 clean:
-	rm -f $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(NODE_EXES) $(UTILITIES_EXES)
+	rm -f $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
 	@echo "Removing all .o files..."
 	$(shell find . -type f -name '*.o' -delete)

@@ -504,14 +504,37 @@ int main(int argc, char *argv[]) {
     
     /* Determine the base directory of the executable. */
     char exe_path[PATH_MAX] = {0};
-    if (argc > 0) {
+    const char *env_base = getenv("BUDOSTACK_BASE");
+    if (env_base && env_base[0] != '\0') {
+        const char *source = env_base;
+        if (realpath(env_base, exe_path) != NULL) {
+            source = exe_path;
+        }
+        snprintf(base_directory, sizeof(base_directory), "%s", source);
+        set_base_path(base_directory);
+    } else if (argc > 0) {
+        int resolved = 0;
         if (realpath(argv[0], exe_path) != NULL) {
+            resolved = 1;
+        } else {
+            ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+            if (len != -1) {
+                exe_path[len] = '\0';
+                resolved = 1;
+            }
+        }
+        if (resolved) {
             char *last_slash = strrchr(exe_path, '/');
             if (last_slash != NULL) {
                 *last_slash = '\0'; // Terminate the string at the last '/'
             }
             set_base_path(exe_path);
             snprintf(base_directory, sizeof(base_directory), "%s", exe_path);
+            if (setenv("BUDOSTACK_BASE", base_directory, 1) != 0) {
+                perror("setenv BUDOSTACK_BASE");
+            }
+        } else {
+            fprintf(stderr, "Warning: unable to resolve executable path; relative commands may fail.\n");
         }
     }
     

@@ -9,8 +9,13 @@
 #include <unistd.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <limits.h>
 
-#define FONTS_DIR "./fonts"
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+#define DEFAULT_FONTS_DIR "./fonts"
 #define EXT ".psf"
 
 static int has_psf_ext(const char *name) {
@@ -34,6 +39,26 @@ static int file_readable(const char *path) {
 
 static int is_pathlike(const char *s) {
     return strchr(s, '/') != NULL;
+}
+
+static const char *get_fonts_dir(void) {
+    static char cached[PATH_MAX];
+    static int initialized = 0;
+
+    if (!initialized) {
+        initialized = 1;
+        const char *base = getenv("BUDOSTACK_BASE");
+        if (base && base[0] != '\0') {
+            if (snprintf(cached, sizeof(cached), "%s/fonts", base) >= (int)sizeof(cached)) {
+                cached[0] = '\0';
+            }
+        }
+        if (cached[0] == '\0') {
+            strncpy(cached, DEFAULT_FONTS_DIR, sizeof(cached) - 1);
+            cached[sizeof(cached) - 1] = '\0';
+        }
+    }
+    return cached;
 }
 
 static int run_setfont(const char *path, int use_double) {
@@ -77,11 +102,12 @@ static int run_setfont(const char *path, int use_double) {
 }
 
 static void print_usage(const char *prog) {
+    const char *fonts_dir = get_fonts_dir();
     fprintf(stderr,
         "Usage: %s [-d|--double] <fontfile.psf>\n"
         "       %s               (interactive mode)\n"
         "\nIf <fontfile.psf> has no '/' it is looked up under %s.\n",
-        prog, prog, FONTS_DIR);
+        prog, prog, fonts_dir);
 }
 
 int main(int argc, char **argv) {
@@ -118,12 +144,13 @@ int main(int argc, char **argv) {
                 return run_setfont(path, use_double);
             } else {
                 // Treat as a font name under FONTS_DIR
-                if (snprintf(path, sizeof(path), "%s/%s", FONTS_DIR, font_arg) >= (int)sizeof(path)) {
+                const char *fonts_dir = get_fonts_dir();
+                if (snprintf(path, sizeof(path), "%s/%s", fonts_dir, font_arg) >= (int)sizeof(path)) {
                     fprintf(stderr, "Path too long.\n");
                     return 1;
                 }
                 if (!file_readable(path)) {
-                    fprintf(stderr, "Font not found or not readable under %s: %s\n", FONTS_DIR, font_arg);
+                    fprintf(stderr, "Font not found or not readable under %s: %s\n", fonts_dir, font_arg);
                     return 1;
                 }
                 return run_setfont(path, use_double);
@@ -133,9 +160,10 @@ int main(int argc, char **argv) {
     }
 
     /* --- Original interactive UI --- */
-    DIR *dir = opendir(FONTS_DIR);
+    const char *fonts_dir = get_fonts_dir();
+    DIR *dir = opendir(fonts_dir);
     if (!dir) {
-        fprintf(stderr, "Error: could not open %s: %s\n", FONTS_DIR, strerror(errno));
+        fprintf(stderr, "Error: could not open %s: %s\n", fonts_dir, strerror(errno));
         return 1;
     }
 
@@ -176,14 +204,14 @@ int main(int argc, char **argv) {
     closedir(dir);
 
     if (count == 0) {
-        fprintf(stderr, "No .psf fonts found in %s\n", FONTS_DIR);
+        fprintf(stderr, "No .psf fonts found in %s\n", fonts_dir);
         free(fonts);
         return 1;
     }
 
     qsort(fonts, count, sizeof(*fonts), cmpstr);
 
-    printf("Available .psf fonts in %s:\n\n", FONTS_DIR);
+    printf("Available .psf fonts in %s:\n\n", fonts_dir);
     for (size_t i = 0; i < count; ++i) {
         printf("%3zu) %s\n", i + 1, fonts[i]);
     }
@@ -227,7 +255,7 @@ int main(int argc, char **argv) {
     }
 
     char path[4096];
-    if (snprintf(path, sizeof(path), "%s/%s", FONTS_DIR, selected) >= (int)sizeof(path)) {
+    if (snprintf(path, sizeof(path), "%s/%s", fonts_dir, selected) >= (int)sizeof(path)) {
         fprintf(stderr, "Path too long.\n");
         goto cleanup_err;
     }

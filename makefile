@@ -1,7 +1,7 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic 
-LDFLAGS = -lasound -lm -pthread
+LDFLAGS = -lm -pthread
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.
@@ -20,19 +20,19 @@ NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)
 TARGET = budostack
 
 # Find all .c files in the commands folder
-COMMANDS_SRCS = $(shell find ./commands -type f -name '*.c')
+COMMANDS_SRCS = $(shell find ./commands -type f -name '*.c' 2>/dev/null)
 COMMANDS_EXES = $(COMMANDS_SRCS:.c=)
 
 # Find all .c files in the apps folder
-APPS_SRCS = $(shell find ./apps -type f -name '*.c')
+APPS_SRCS = $(shell find ./apps -type f -name '*.c' 2>/dev/null)
 APPS_EXES = $(APPS_SRCS:.c=)
 
 # Find all .c files in the games folder
-GAMES_SRCS = $(shell find ./games -type f -name '*.c')
+GAMES_SRCS = $(shell find ./games -type f -name '*.c' 2>/dev/null)
 GAMES_EXES = $(GAMES_SRCS:.c=)
 
 # Find all .c files in the utilities folder
-UTILITIES_SRCS = $(shell find ./utilities -type f -name '*.c')
+UTILITIES_SRCS = $(shell find ./utilities -type f -name '*.c' 2>/dev/null)
 UTILITIES_EXES = $(UTILITIES_SRCS:.c=)
 
 # Define all targets (main, commands, and apps)

@@ -8,6 +8,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/stat.h>
 
 #define FONTS_DIR "./fonts"
 #define EXT ".psf"
@@ -27,7 +28,111 @@ static int cmpstr(const void *a, const void *b) {
     return strcasecmp(*sa, *sb);
 }
 
-int main(void) {
+static int file_readable(const char *path) {
+    return access(path, R_OK) == 0;
+}
+
+static int is_pathlike(const char *s) {
+    return strchr(s, '/') != NULL;
+}
+
+static int run_setfont(const char *path, int use_double) {
+    printf("\nRunning: setfont %s %s\n\n", use_double ? "-d" : "", path);
+    pid_t pid = fork();
+    if (pid < 0) {
+        fprintf(stderr, "Failed to fork: %s\n", strerror(errno));
+        return 1;
+    }
+    if (pid == 0) {
+        if (use_double) {
+            execlp("setfont", "setfont", "-d", path, (char *)NULL);
+        } else {
+            execlp("setfont", "setfont", path, (char *)NULL);
+        }
+        fprintf(stderr, "Failed to exec 'setfont': %s\n", strerror(errno));
+        _exit(127);
+    } else {
+        int status = 0;
+        if (waitpid(pid, &status, 0) < 0) {
+            fprintf(stderr, "waitpid failed: %s\n", strerror(errno));
+            return 1;
+        }
+        if (WIFEXITED(status)) {
+            int rc = WEXITSTATUS(status);
+            if (rc == 0) {
+                printf("Font applied successfully.\n");
+                return 0;
+            } else {
+                printf("setfont exited with code %d.\n", rc);
+                return rc ? rc : 1;
+            }
+        } else if (WIFSIGNALED(status)) {
+            printf("setfont terminated by signal %d.\n", WTERMSIG(status));
+            return 1;
+        } else {
+            printf("setfont ended abnormally.\n");
+            return 1;
+        }
+    }
+}
+
+static void print_usage(const char *prog) {
+    fprintf(stderr,
+        "Usage: %s [-d|--double] <fontfile.psf>\n"
+        "       %s               (interactive mode)\n"
+        "\nIf <fontfile.psf> has no '/' it is looked up under %s.\n",
+        prog, prog, FONTS_DIR);
+}
+
+int main(int argc, char **argv) {
+    /* --- Fast path: CLI bypass --- */
+    if (argc > 1) {
+        int use_double = 0;
+        const char *font_arg = NULL;
+
+        for (int i = 1; i < argc; ++i) {
+            if (strcmp(argv[i], "-d") == 0 || strcmp(argv[i], "--double") == 0) {
+                use_double = 1;
+            } else if (!font_arg) {
+                font_arg = argv[i];
+            } else {
+                // Extra unexpected args: show usage and exit
+                print_usage(argv[0]);
+                return 2;
+            }
+        }
+
+        if (font_arg) {
+            char path[4096];
+
+            if (is_pathlike(font_arg)) {
+                // Treat as provided path
+                if (snprintf(path, sizeof(path), "%s", font_arg) >= (int)sizeof(path)) {
+                    fprintf(stderr, "Path too long.\n");
+                    return 1;
+                }
+                if (!file_readable(path)) {
+                    fprintf(stderr, "Font not readable: %s\n", path);
+                    return 1;
+                }
+                return run_setfont(path, use_double);
+            } else {
+                // Treat as a font name under FONTS_DIR
+                if (snprintf(path, sizeof(path), "%s/%s", FONTS_DIR, font_arg) >= (int)sizeof(path)) {
+                    fprintf(stderr, "Path too long.\n");
+                    return 1;
+                }
+                if (!file_readable(path)) {
+                    fprintf(stderr, "Font not found or not readable under %s: %s\n", FONTS_DIR, font_arg);
+                    return 1;
+                }
+                return run_setfont(path, use_double);
+            }
+        }
+        // If only -d/--double provided with no font, fall through to interactive
+    }
+
+    /* --- Original interactive UI --- */
     DIR *dir = opendir(FONTS_DIR);
     if (!dir) {
         fprintf(stderr, "Error: could not open %s: %s\n", FONTS_DIR, strerror(errno));
@@ -127,43 +232,12 @@ int main(void) {
         goto cleanup_err;
     }
 
-    printf("\nRunning: setfont %s %s\n\n", use_double ? "-d" : "", path);
-    pid_t pid = fork();
-    if (pid < 0) {
-        fprintf(stderr, "Failed to fork: %s\n", strerror(errno));
-        goto cleanup_err;
+    {
+        int rc = run_setfont(path, use_double);
+        for (size_t i = 0; i < count; ++i) free(fonts[i]);
+        free(fonts);
+        return rc;
     }
-    if (pid == 0) {
-        if (use_double) {
-            execlp("setfont", "setfont", "-d", path, (char *)NULL);
-        } else {
-            execlp("setfont", "setfont", path, (char *)NULL);
-        }
-        fprintf(stderr, "Failed to exec 'setfont': %s\n", strerror(errno));
-        _exit(127);
-    } else {
-        int status = 0;
-        if (waitpid(pid, &status, 0) < 0) {
-            fprintf(stderr, "waitpid failed: %s\n", strerror(errno));
-            goto cleanup_err;
-        }
-        if (WIFEXITED(status)) {
-            int rc = WEXITSTATUS(status);
-            if (rc == 0) {
-                printf("Font applied successfully.\n");
-            } else {
-                printf("setfont exited with code %d.\n", rc);
-            }
-        } else if (WIFSIGNALED(status)) {
-            printf("setfont terminated by signal %d.\n", WTERMSIG(status));
-        } else {
-            printf("setfont ended abnormally.\n");
-        }
-    }
-
-    for (size_t i = 0; i < count; ++i) free(fonts[i]);
-    free(fonts);
-    return 0;
 
 cleanup_err:
     for (size_t i = 0; i < count; ++i) free(fonts[i]);

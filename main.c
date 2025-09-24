@@ -545,6 +545,23 @@ int main(int argc, char *argv[]) {
         printf("========================================================================\n");
     }
 
+	/* Run autoexec before announcing readiness */
+	{
+	    CommandStruct aut;
+	    char *autoexec_cmd = strdup("runtask autoexec.task");
+	    if (!autoexec_cmd) {
+	        perror("strdup");
+	    } else {
+	        parse_input(autoexec_cmd, &aut);
+	        /* Try in-app command first; if not handled, fall back to /bin/sh */
+	        if (execute_command_with_paging(&aut) == -1) {
+	            run_shell_command(autoexec_cmd);
+	        }
+	        free_command_struct(&aut);
+	        free(autoexec_cmd);
+	    }
+	}
+
     printf("\nSYSTEM READY");
     say("system ready");
     printf("\nType 'help' for command list.");

@@ -6,6 +6,8 @@
 * - RUN executes an app by name from ./apps/, ./commands/, or ./utilities/ (blocking),
 *   similar to how task files are forced under tasks/. Arguments are passed as-is.
 * - If RUN's first token contains '/', it's treated as an explicit path and executed directly.
+* - Fixed argv lifetime: arguments are now heap-allocated (no static buffers). RUN reliably
+*   passes switches/arguments (e.g., "setfont -d small2.psf") to the child.
 *
 * Examples (assuming an executable "mytool" exists in ./apps or ./commands or ./utilities):
 *   RUN mytool -v "arg with spaces"
@@ -13,7 +15,7 @@
 *   RUN ./apps/build.sh all
 *
 * Compile:
-*   gcc -std=c11 -o runtask runtask.c
+*   gcc -std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -o runtask apps/runtask.c
 */
 
 #include <stdio.h>
@@ -36,12 +38,12 @@
 // Global flag to signal termination (set by SIGINT handler)
 volatile sig_atomic_t stop = 0;
 
-void sigint_handler(int signum) {
+static void sigint_handler(int signum) {
     (void)signum;
     stop = 1;
 }
 
-void print_help(void) {
+static void print_help(void) {
     printf("\nRuntask Help\n");
     printf("============\n\n");
     printf("Commands:\n");
@@ -57,7 +59,7 @@ void print_help(void) {
     printf("- Task files are loaded from 'tasks/' automatically (e.g., tasks/demo.task)\n");
     printf("- Place your executables in ./apps, ./commands, or ./utilities and make them executable.\n\n");
     printf("Compilation:\n");
-    printf("  gcc -std=c11 -o runtask runtask.c\n\n");
+    printf("  gcc -std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -o runtask apps/runtask.c\n\n");
 }
 
 static char *trim(char *s) {
@@ -90,58 +92,86 @@ static int cmpScriptLine(const void *a, const void *b) {
     return A->number - B->number;
 }
 
-/* --- Simple argv tokenizer that supports quotes and backslash escapes ---
+/* Portable strdup replacement to stay ISO C compliant under -std=c11 -pedantic */
+static char *xstrdup(const char *s) {
+    size_t len = strlen(s) + 1;
+    char *p = (char*)malloc(len);
+    if (!p) { perror("malloc"); exit(EXIT_FAILURE); }
+    memcpy(p, s, len);
+    return p;
+}
+
+/* --- Heap-based argv tokenizer supporting quotes and backslash escapes ---
    - Splits by whitespace.
    - Supports "double quoted" and 'single quoted' args.
    - Supports backslash escapes inside double quotes and unquoted text.
-   - Returns argc, fills argv[] with pointers into an internal buffer.
+   - Returns a NULL-terminated argv array; *out_argc has argc.
+   - Caller must free with free_argv().
 */
-static int tokenize_args(const char *cmdline, char **argv, int max_args) {
-    static char buf[1024];
-    size_t n = strlen(cmdline);
-    if (n >= sizeof(buf)) n = sizeof(buf) - 1;
-    memcpy(buf, cmdline, n);
-    buf[n] = '\0';
+static char **split_args_heap(const char *cmdline, int *out_argc) {
+    char **argv = NULL;
+    int argc = 0, cap = 0;
 
-    int argc = 0;
-    char *p = buf;
-
-    while (*p && argc < max_args) {
+    const char *p = cmdline;
+    while (*p) {
         // skip leading spaces
         while (isspace((unsigned char)*p)) p++;
         if (!*p) break;
 
-        char *arg = p;
-        char *out = p;
-        bool in_squote = false, in_dquote = false;
+        bool in_sq = false, in_dq = false;
+        // grow token buffer dynamically to avoid truncation
+        size_t tcap = 64, ti = 0;
+        char *token = (char*)malloc(tcap);
+        if (!token) { perror("malloc"); exit(EXIT_FAILURE); }
 
         while (*p) {
-            if (!in_squote && *p == '"' ) { in_dquote = !in_dquote; p++; continue; }
-            if (!in_dquote && *p == '\'') { in_squote = !in_squote; p++; continue; }
-
-            if (!in_squote && *p == '\\') {
-                // backslash escape (always consume next char if present)
+            if (!in_dq && *p == '\'') { in_sq = !in_sq; p++; continue; }
+            if (!in_sq && *p == '"')  { in_dq = !in_dq; p++; continue; }
+            if (!in_sq && *p == '\\') {
                 p++;
-                if (*p) *out++ = *p++;
+                if (*p) {
+                    if (ti + 1 >= tcap) { tcap *= 2; token = (char*)realloc(token, tcap); if (!token) { perror("realloc"); exit(EXIT_FAILURE); } }
+                    token[ti++] = *p++;
+                }
                 continue;
             }
+            if (!in_sq && !in_dq && isspace((unsigned char)*p)) break;
 
-            if (!in_squote && !in_dquote && isspace((unsigned char)*p)) {
-                // end of arg
-                break;
-            }
-
-            *out++ = *p++;
+            if (ti + 1 >= tcap) { tcap *= 2; token = (char*)realloc(token, tcap); if (!token) { perror("realloc"); exit(EXIT_FAILURE); } }
+            token[ti++] = *p++;
         }
-        *out = '\0';
-        argv[argc++] = arg;
+        if (in_sq || in_dq) {
+            // Unmatched quotes: close them implicitly
+            // (Alternative: error out. Here we just proceed.)
+        }
+        if (ti + 1 >= tcap) { tcap += 1; token = (char*)realloc(token, tcap); if (!token) { perror("realloc"); exit(EXIT_FAILURE); } }
+        token[ti] = '\0';
 
-        while (*p && !isspace((unsigned char)*p)) p++; // (safety)
-        while (isspace((unsigned char)*p)) p++;
+        if (argc == cap) {
+            cap = cap ? cap * 2 : 8;
+            char **newv = (char**)realloc(argv, (size_t)(cap + 1) * sizeof(char *));
+            if (!newv) { perror("realloc"); exit(EXIT_FAILURE); }
+            argv = newv;
+        }
+        argv[argc++] = token;
     }
 
+    if (!argv) {
+        argv = (char**)malloc(2 * sizeof(char *));
+        if (!argv) { perror("malloc"); exit(EXIT_FAILURE); }
+        argv[0] = NULL;
+        if (out_argc) *out_argc = 0;
+        return argv;
+    }
     argv[argc] = NULL;
-    return argc;
+    if (out_argc) *out_argc = argc;
+    return argv;
+}
+
+static void free_argv(char **argv) {
+    if (!argv) return;
+    for (char **p = argv; *p; ++p) free(*p);
+    free(argv);
 }
 
 /* Resolve executable path:
@@ -254,34 +284,40 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
-            // Tokenize to argv[]
-            char *argvv[64];
-            int argcnt = tokenize_args(cmdline, argvv, (int)(sizeof(argvv)/sizeof(argvv[0]) - 1));
+            // Tokenize to argv[] (heap-based)
+            int argcnt = 0;
+            char **argv_heap = split_args_heap(cmdline, &argcnt);
             if (argcnt <= 0) {
                 if (debug) fprintf(stderr, "RUN: failed to parse command at line %d\n", script[pc].number);
+                free_argv(argv_heap);
                 continue;
             }
 
             // Resolve executable path
             char resolved[PATH_MAX];
-            if (resolve_exec_path(argvv[0], resolved, sizeof(resolved)) != 0) {
-                fprintf(stderr, "RUN: executable not found or not executable: %s (searched apps/, commands/, utilities/)\n", argvv[0]);
+            if (resolve_exec_path(argv_heap[0], resolved, sizeof(resolved)) != 0) {
+                fprintf(stderr, "RUN: executable not found or not executable: %s (searched apps/, commands/, utilities/)\n", argv_heap[0]);
+                free_argv(argv_heap);
                 continue;
             }
-            argvv[0] = resolved; // replace with full path
+
+            // Replace argv[0] with a heap copy of the resolved path
+            free(argv_heap[0]);
+            argv_heap[0] = xstrdup(resolved);
 
             if (debug) {
-                fprintf(stderr, "RUN: execv %s", argvv[0]);
-                for (int i = 1; i < argcnt; ++i) fprintf(stderr, " [%s]", argvv[i]);
+                fprintf(stderr, "RUN: execv %s", argv_heap[0]);
+                for (int i = 1; i < argcnt; ++i) fprintf(stderr, " [%s]", argv_heap[i]);
                 fprintf(stderr, "\n");
             }
 
             pid_t pid = fork();
             if (pid < 0) {
                 perror("fork");
+                free_argv(argv_heap);
                 continue;
             } else if (pid == 0) {
-                execv(argvv[0], argvv);
+                execv(argv_heap[0], argv_heap);
                 perror("execv");
                 _exit(EXIT_FAILURE);
             } else {
@@ -295,6 +331,7 @@ int main(int argc, char *argv[]) {
                     else if (WIFSIGNALED(status))
                         fprintf(stderr, "RUN: killed by signal %d\n", WTERMSIG(status));
                 }
+                free_argv(argv_heap);
             }
         }
         else if (strncmp(script[pc].text, "CLEAR", 5) == 0) {
@@ -308,4 +345,3 @@ int main(int argc, char *argv[]) {
 
     return 0;
 }
-

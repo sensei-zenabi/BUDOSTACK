@@ -20,7 +20,6 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("Note! AI has been used in the development of this software.\n");
     printf("\n");
-
     printf("-----------------------------------------------------------------------------\n");
     printf("                           - GENERAL INFORMATION -\n");
     printf("\n");
@@ -31,20 +30,22 @@ int main(int argc, char *argv[]) {
     printf("  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n");
     printf("             Use 'restart -f' to clean before building.\n");
     printf("\n");
-
+    printf("  Start BUDOSTACK faster: ./budostack -f | Start TASK: ./budostack mytask.task\n");
+    printf("\n");
     printf("/* Folder Structure */\n");
     printf("\n");
-    printf("  ./apps/       - System applications listed in help.\n");
+    printf("  ./apps/       - System commands that do not use paging.\n");
     printf("  ./commands/   - BUDOSTACK (BS) programming commands for developers.\n");
     printf("  ./fonts/      - .psf fonts that can be set with 'setfont'.\n");
     printf("  ./games/      - Built-in games and games developed with BS language.\n");
-    printf("  ./lib/        - System libraries one should not modify.\n");
+    printf("  ./lib/        - System libraries used by system commands.\n");
+    printf("  ./tasks/      - Reserved for global tasks.\n");
     printf("  ./users/      - User folders for those who like them.\n");
-    printf("  ./utilities/  - System commands listed in help.\n");
+    printf("  ./utilities/  - System commands that use paging.\n");
     printf("\n");
-
-    // Print available apps and commands
     printf("-----------------------------------------------------------------------------\n");
+    printf("                             - SYSTEM UTILITIES -\n");
+    printf("\n");
     printf("/* System Commands */\n");
     printf("\n");
     printf("  cls      : Clear terminal screen.\n");
@@ -68,16 +69,9 @@ int main(int argc, char *argv[]) {
     printf("  update   : Create an empty file or update its modification time.\n");  
     printf("  exit     : Exit BUDOSTACK.\n");
     printf("\n");
-
-    printf("/* BUDOSTACK Developer Tools */\n");
+    printf("-----------------------------------------------------------------------------\n");
+    printf("                            - SYSTEM APPLICATIONS -\n");
     printf("\n");
-    printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
-    printf("  paint    : ASCII paint application to edit bitmaps.\n");
-    printf("\n");
-    
-    printf("/* BUDOSTACK Programming Commands */\n");
-    printf("\n");
-    
     printf("/* Office Tools */\n");
     printf("\n");
     printf("  cmath    : Math interpreter that has interactive mode and macro execution.\n");
@@ -91,7 +85,6 @@ int main(int argc, char *argv[]) {
     printf("             For help CTRL+H when the app is running.\n");
     printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.tbl'.\n");
     printf("\n");
-    
     printf("/* Internet and Communications */\n");
     printf("\n");
     printf("  ctalk    : Simple UDP based LAN chat. Start with 'ctalk myname'.\n");    
@@ -99,7 +92,6 @@ int main(int argc, char *argv[]) {
     printf("  inet     : Interactive internet connection manager.\n");    
     printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");    
     printf("\n");
-    
     printf("/* Just-for-Fun */\n");
     printf("\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");    
@@ -111,33 +103,23 @@ int main(int argc, char *argv[]) {
     printf("  time     : Display time now in different time-zones. 'time -s' for\n");     
     printf("             astronomical events.\n");    
     printf("\n");
-           
-    // Games list
     printf("-----------------------------------------------------------------------------\n"); 
+    printf("                              - BUILT-IN GAMES -\n");
+    printf("\n");
     printf("/* List of Games */\n");
     printf("\n");
     printf("  invaders : A space invaders clone tailored to terminal.\n");
     printf("  snake    : A snake clone, reminence from the good old Nokia days.\n");
     printf("\n");
-
-    // Print node applications information    
     printf("-----------------------------------------------------------------------------\n"); 
-    printf("/* Running Node Applications */\n");
+    printf("                              - FOR DEVELOPERS -\n");
     printf("\n");
-    printf("  All node apps are stored in the node/ folder and they can be ran only via\n");
-    printf("  TASK scripting.\n");
+    printf("/* BUDOSTACK Developer Tools */\n");
     printf("\n");
-    printf("  Different types of node applications:\n");
+    printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
+    printf("  paint    : ASCII paint application to edit bitmaps.\n");
     printf("\n");
-    printf("  server   : A switchboard server that uses route.rt to route client\n"); 
-    printf("             application inputs and outputs.\n");
-    printf("  <app>    : A client application that can have up to 5 inputs and 5 outputs.\n");
-    printf("             Some apps might require that the server is running before\n");
-    printf("             starting.\n");
-    printf("  client.c : Client application template.\n");
-    printf("\n");
-    printf("  Tips:\n");
-    printf("  Start BUDOSTACK faster: ./budostack -f | Start TASK: ./budostack mytask.task\n");
+    printf("/* BUDOSTACK Programming Commands */\n");
     printf("\n");
     printf("=============================================================================\n");
 

@@ -17,6 +17,7 @@ lib/*
 !lib/*.h
 tasks/*
 !tasks/*.task
+!tasks/*.md
 
 # Backup files and temporary files
 *~

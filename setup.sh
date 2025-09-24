@@ -28,13 +28,13 @@ PACKAGE_MANAGER="apt-get install -y"
 
 # Array of packages to install. Extend this list as needed.
 PACKAGES=(
-	"gcc"
-	"build-essential"
-    "curl"
-    "git"
-    "tmux"
-    "zip"
-    "espeak"
+	"gcc" 				# Mandatory: commands: 'restart', 'build', etc.
+	"build-essential"	# Mandatory: commands: 'restart', 'build', etc.
+    "curl"				# Optional: apps: 'news' / nodes: gui_webui
+    "git"				# Mandatory: general requirement
+    "tmux"				# Optional: only for nodes, could be removed?
+    "zip"				# Mandatory: commands: unpack, pack
+    "espeak"			# Optional: Speech assist
 )
 
 # Function: prompt_user

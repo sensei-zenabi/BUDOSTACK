@@ -1,2 +1,2 @@
 00 PRINT "Configuring TTY font..."
-10 RUN setfont -d sanserif.psf
+10 RUN setfont -d pcw8x8.psf

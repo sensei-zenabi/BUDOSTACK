@@ -38,6 +38,46 @@
 // Global flag to signal termination (set by SIGINT handler)
 volatile sig_atomic_t stop = 0;
 
+static const char *get_base_dir(void) {
+    static char cached[PATH_MAX];
+    static int initialized = 0;
+
+    if (!initialized) {
+        initialized = 1;
+        const char *env = getenv("BUDOSTACK_BASE");
+        if (env && env[0] != '\0') {
+            strncpy(cached, env, sizeof(cached) - 1);
+            cached[sizeof(cached) - 1] = '\0';
+        }
+    }
+
+    return cached[0] ? cached : NULL;
+}
+
+static int build_from_base(const char *suffix, char *buffer, size_t size) {
+    const char *base = get_base_dir();
+
+    if (!suffix || !*suffix)
+        return -1;
+
+    if (suffix[0] == '/') {
+        if (snprintf(buffer, size, "%s", suffix) >= (int)size)
+            return -1;
+        return 0;
+    }
+
+    if (base && base[0] != '\0') {
+        size_t len = strlen(base);
+        const char *fmt = (len > 0 && base[len - 1] == '/') ? "%s%s" : "%s/%s";
+        if (snprintf(buffer, size, fmt, base, suffix) >= (int)size)
+            return -1;
+    } else {
+        if (snprintf(buffer, size, "%s", suffix) >= (int)size)
+            return -1;
+    }
+    return 0;
+}
+
 static void sigint_handler(int signum) {
     (void)signum;
     stop = 1;
@@ -184,14 +224,21 @@ static int resolve_exec_path(const char *argv0, char *resolved, size_t size) {
 
     if (strchr(argv0, '/')) {
         // explicit relative/absolute path
-        if (snprintf(resolved, size, "%s", argv0) >= (int)size) return -1;
-        return access(resolved, X_OK) == 0 ? 0 : -1;
+        if (build_from_base(argv0, resolved, size) != 0) return -1;
+        if (access(resolved, X_OK) != 0) return -1;
+        return 0;
     }
 
     const char *dirs[] = { "apps", "commands", "utilities" };
     for (size_t i = 0; i < sizeof(dirs)/sizeof(dirs[0]); ++i) {
-        if (snprintf(resolved, size, "%s/%s", dirs[i], argv0) >= (int)size) continue;
-        if (access(resolved, X_OK) == 0) return 0;
+        char candidate[PATH_MAX];
+        if (snprintf(candidate, sizeof(candidate), "%s/%s", dirs[i], argv0) >= (int)sizeof(candidate))
+            continue;
+        if (build_from_base(candidate, resolved, size) != 0)
+            continue;
+        if (access(resolved, X_OK) == 0) {
+            return 0;
+        }
     }
     return -1;
 }

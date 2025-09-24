@@ -218,9 +218,12 @@ int execute_command(const CommandStruct *cmd) {
     }
     if (pid == 0) {
         if (base_path[0] != '\0') {
-            if (setenv("BUDOSTACK_BASE", base_path, 1) != 0) {
-                perror("setenv failed");
-                _exit(EXIT_FAILURE);
+            const char *env_base = getenv("BUDOSTACK_BASE");
+            if (!env_base || strcmp(env_base, base_path) != 0) {
+                if (setenv("BUDOSTACK_BASE", base_path, 1) != 0) {
+                    perror("setenv failed");
+                    _exit(EXIT_FAILURE);
+                }
             }
         }
         signal(SIGINT, SIG_DFL);

@@ -22,16 +22,30 @@ int main(int argc, char *argv[]) {
     printf("\n");
 
     printf("-----------------------------------------------------------------------------\n");
-    printf("/* TOP Tips */\n\n");
+    printf("                           - GENERAL INFORMATION -\n");
+    printf("\n");
+    printf("/* TOP Tips */\n");
+    printf("\n");
     printf("  edit     : Opens a basic file editor: edit <filename>.\n");
     printf("             Supported languages: C/C++, Markup\n");
     printf("  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n");
     printf("             Use 'restart -f' to clean before building.\n");
     printf("\n");
 
+    printf("/* Folder Structure */\n");
+    printf("\n");
+    printf("  ./apps/       - System applications listed in help.\n");
+    printf("  ./commands/   - BUDOSTACK (BS) programming commands for developers.\n");
+    printf("  ./fonts/      - .psf fonts that can be set with 'setfont'.\n");
+    printf("  ./games/      - Built-in games and games developed with BS language.\n");
+    printf("  ./lib/        - System libraries one should not modify.\n");
+    printf("  ./users/      - User folders for those who like them.\n");
+    printf("  ./utilities/  - System commands listed in help.\n");
+    printf("\n");
+
     // Print available apps and commands
     printf("-----------------------------------------------------------------------------\n");
-    printf("/* System Utilities */\n");
+    printf("/* System Commands */\n");
     printf("\n");
     printf("  cls      : Clear terminal screen.\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
@@ -61,7 +75,7 @@ int main(int argc, char *argv[]) {
     printf("  paint    : ASCII paint application to edit bitmaps.\n");
     printf("\n");
     
-    printf("/* BUDOSTACK Programming Commands */");
+    printf("/* BUDOSTACK Programming Commands */\n");
     printf("\n");
     
     printf("/* Office Tools */\n");

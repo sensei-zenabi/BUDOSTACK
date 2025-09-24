@@ -259,9 +259,26 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-d") == 0) { debug = 1; break; }
     }
 
-    // Prepend tasks/ like before
-    char task_path[512];
-    snprintf(task_path, sizeof(task_path), "tasks/%s", argv[1]);
+    // Prepend tasks/ like before but resolve relative to Budostack base when available
+    char suffix[PATH_MAX];
+    if (argv[1][0] == '/' || argv[1][0] == '.') {
+        if (snprintf(suffix, sizeof(suffix), "%s", argv[1]) >= (int)sizeof(suffix)) {
+            fprintf(stderr, "Error: task path too long: %s\n", argv[1]);
+            return 1;
+        }
+    } else {
+        if (snprintf(suffix, sizeof(suffix), "tasks/%s", argv[1]) >= (int)sizeof(suffix)) {
+            fprintf(stderr, "Error: task name too long: %s\n", argv[1]);
+            return 1;
+        }
+    }
+
+    char task_path[PATH_MAX];
+    if (build_from_base(suffix, task_path, sizeof(task_path)) != 0) {
+        fprintf(stderr, "Error: could not resolve task path for '%s'\n", argv[1]);
+        return 1;
+    }
+
     FILE *fp = fopen(task_path, "r");
     if (!fp) {
         fprintf(stderr, "Error: Could not open task file '%s'\n", task_path);

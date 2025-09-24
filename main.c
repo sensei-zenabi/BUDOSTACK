@@ -534,17 +534,6 @@ int main(int argc, char *argv[]) {
         snprintf(auto_command, len, "runtask %s.task", argv[1]);
     }
 
-    /* Modified: Skip startup messages if in forced mode (-f) or auto_command mode. */
-    if ((argc > 1 && strcmp(argv[1], "-f") == 0) || auto_command != NULL) {
-        /* Do not print startup messages and skip login() */
-    } else {
-        if (system("clear") != 0)
-            perror("system");
-        printlogo();
-        login();
-        printf("========================================================================\n");
-    }
-
 	/* Run autoexec before announcing readiness */
 	{
 	    CommandStruct aut;
@@ -561,6 +550,19 @@ int main(int argc, char *argv[]) {
 	        free(autoexec_cmd);
 	    }
 	}
+
+	system("clear");
+
+    /* Modified: Skip startup messages if in forced mode (-f) or auto_command mode. */
+    if ((argc > 1 && strcmp(argv[1], "-f") == 0) || auto_command != NULL) {
+        /* Do not print startup messages and skip login() */
+    } else {
+        if (system("clear") != 0)
+            perror("system");
+        printlogo();
+        login();
+        printf("========================================================================\n");
+    }
 
     printf("\nSYSTEM READY");
     say("system ready");

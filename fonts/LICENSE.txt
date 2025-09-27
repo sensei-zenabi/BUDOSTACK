@@ -1,3 +1,47 @@
+.psf Fonts License
+===========================
+
 These fonts are in the public domain, as stated by the original author. 
 No rights reserved.
 
+Ac437_ATI_8x8 Font License
+===========================
+
+This project includes the "Px ATI 8x8" TrueType font, which is part of the
+Oldschool PC Font Pack by VileR / int10h.org.
+
+License
+-------
+
+The Oldschool PC Font Pack is licensed under the Creative Commons
+Attribution-ShareAlike 4.0 International License (CC BY-SA 4.0).
+
+You are free to:
+
+- Share — copy and redistribute the font in any medium or format.
+- Adapt — remix, transform, and build upon the font for any purpose,
+  even commercially.
+
+Under the following terms:
+
+- Attribution — You must give appropriate credit, provide a link to the license,
+  and indicate if changes were made. You may do so in any reasonable manner,
+  but not in any way that suggests the licensor endorses you or your use.
+- ShareAlike — If you remix, transform, or build upon the font, you must
+  distribute your contributions under the same license as the original.
+
+Full license text:  
+https://creativecommons.org/licenses/by-sa/4.0/
+
+Attribution
+-----------
+
+Font author: VileR  
+Source: Oldschool PC Font Pack (https://int10h.org/oldschool-pc-fonts/)  
+Font name: "Px ATI 8x8"  
+
+---
+
+This `LICENSE.txt` only applies to the Px ATI 8x8 font included in this project.  
+The rest of the project may be licensed under different terms, as specified in the
+main LICENSE file of the repository.

@@ -27,9 +27,10 @@ an improved circle outline and internal cross axes for better orientation.
 
 #define PI 3.14159265358979323846
 
-// Canvas dimensions for the sky-dial.
+// Canvas dimensions for the sky-dial. Keep the grid square so that an 8x8 font
+// renders the dial without vertical distortion.
 #define WIDTH 41
-#define HEIGHT 21
+#define HEIGHT 41
 
 // Default observer location (Jyväskylä, Finland)
 #define DEFAULT_LAT 62.2426   // degrees

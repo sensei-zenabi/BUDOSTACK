@@ -33,11 +33,14 @@
 #include <string.h>
 #include <time.h>
 
-#define BOARD_WIDTH 80
+#define BOARD_WIDTH 40
 #define BOARD_HEIGHT 20
 
 #define INV_ROWS 4
 #define INV_COLS 12
+
+#define INV_SPACING_X 3
+#define INV_SPACING_Y 2
 
 /* Function to sleep for a given number of milliseconds */
 void sleep_ms(int milliseconds) {
@@ -182,8 +185,8 @@ void update_bullet() {
         for (int i = 0; i < INV_ROWS; i++) {
             for (int j = 0; j < INV_COLS; j++) {
                 if (invaders[i][j]) {
-                    int inv_x = invader_offset_x + j * 4;
-                    int inv_y = invader_offset_y + i * 2;
+                    int inv_x = invader_offset_x + j * INV_SPACING_X;
+                    int inv_y = invader_offset_y + i * INV_SPACING_Y;
                     if (bullet.x == inv_x && bullet.y == inv_y) {
                         invaders[i][j] = 0; // invader hit
                         bullet.active = 0;
@@ -214,7 +217,7 @@ void update_invaders() {
         for (int j = 0; j < INV_COLS; j++) {
             if (invaders[i][j]) {
                 any_alive = 1;
-                int inv_x = invader_offset_x + j * 4;
+                int inv_x = invader_offset_x + j * INV_SPACING_X;
                 if (inv_x < leftmost)
                     leftmost = inv_x;
                 if (inv_x > rightmost)
@@ -239,7 +242,7 @@ void update_invaders() {
     for (int i = 0; i < INV_ROWS; i++) {
         for (int j = 0; j < INV_COLS; j++) {
             if (invaders[i][j]) {
-                int inv_y = invader_offset_y + i * 2;
+                int inv_y = invader_offset_y + i * INV_SPACING_Y;
                 if (inv_y >= BOARD_HEIGHT - 1) {
                     game_over = 1;
                 }
@@ -272,8 +275,8 @@ void draw_game() {
     for (int i = 0; i < INV_ROWS; i++) {
         for (int j = 0; j < INV_COLS; j++) {
             if (invaders[i][j]) {
-                int x = invader_offset_x + j * 4;
-                int y = invader_offset_y + i * 2;
+                int x = invader_offset_x + j * INV_SPACING_X;
+                int y = invader_offset_y + i * INV_SPACING_Y;
                 if (x >= 0 && x < BOARD_WIDTH && y >= 0 && y < BOARD_HEIGHT)
                     board[y][x] = 'W';
             }

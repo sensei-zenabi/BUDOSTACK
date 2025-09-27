@@ -18,7 +18,7 @@ int main(int argc, char *argv[]) {
     printf("Contact email:   budostack@gmail.com\n");
     printf("License:         GPLv2\n");
     printf("\n");
-    printf("Note! AI has been used in the development of this software.\n");
+    printf("Note! All BUDOSTACK programs have been optimized for 8x8 square fonts.\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     printf("                           - GENERAL INFORMATION -\n");
@@ -55,6 +55,7 @@ int main(int argc, char *argv[]) {
     printf("  display  : Display the contents of a file.\n");    
     printf("  drives   : Lists all found drives.\n");    
     printf("  find     : Find anything.\n");    
+	printf("  gitter   : Professional git helper for your daily development activities.\n");
     printf("  help     : Display this help message.\n");
     printf("  list     : List contents of a directory (type 'list -help').\n");    
     printf("  makedir  : Create a new directory.\n");    

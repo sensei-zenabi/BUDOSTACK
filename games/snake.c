@@ -6,8 +6,9 @@
 #include <fcntl.h>
 #include <time.h>
 
-// Board dimensions
-#define WIDTH 40
+// Board dimensions. Match width and height so the playfield remains square when
+// rendered with the 8x8 terminal font.
+#define WIDTH 20
 #define HEIGHT 20
 // Maximum snake length
 #define MAX_SNAKE_LENGTH 100

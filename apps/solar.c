@@ -13,10 +13,6 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-// Correction factor for vertical scaling because ASCII characters
-// are taller than they are wide. This factor compresses the y axis.
-#define ASPECT_CORRECTION 0.5
-
 // Constant: Unix time for the J2000 epoch (2000 Jan 1 12:00:00 UT)
 const time_t J2000 = 946728000;
 
@@ -88,11 +84,23 @@ int main(int argc, char *argv[]) {
         ws.ws_col = 80; // fallback default width
     }
     int width = ws.ws_col;
-    // Set height so that the grid has a 2:1 ratio (width:height).
+    if (width <= 0)
+        width = 80;
+    // Maintain the previous choice of making the drawing area half as tall as it
+    // is wide, but use a square scaling factor so that an 8x8 font keeps the
+    // orbits circular.
     int height = width / 2;
-    
-    // The horizontal scaling factor converts AU to characters.
-    double scale = (width / 2.0) / max_au;
+    if (height <= 0)
+        height = 40;
+
+    double usable_span = fmin(width, height) - 2.0;
+    if (usable_span < 2.0)
+        usable_span = 2.0;
+    double scale = (usable_span / 2.0) / max_au;
+    double center_x = (width - 1) / 2.0;
+    double center_y = (height - 1) / 2.0;
+    int center_ix = (int)lround(center_x);
+    int center_iy = (int)lround(center_y);
     
     // Get the current system time and compute elapsed days since J2000.
     time_t now = time(NULL);
@@ -116,9 +124,8 @@ int main(int argc, char *argv[]) {
             double x = r * cos(f_angle);
             double y = r * sin(f_angle);
             // Map to screen coordinates.
-            int ix = (int)(width / 2 + x * scale + 0.5);
-            // Apply vertical aspect correction.
-            int iy = (int)(height / 2 - y * scale * ASPECT_CORRECTION + 0.5);
+            int ix = (int)lround(center_x + x * scale);
+            int iy = (int)lround(center_y - y * scale);
             if (ix >= 0 && ix < width && iy >= 0 && iy < height) {
                 if (screen[iy][ix] == ' ')
                     screen[iy][ix] = '.';
@@ -127,10 +134,10 @@ int main(int argc, char *argv[]) {
     }
     
     // --- Draw the Sun at the center (at the focus, 0,0) ---
-    if ((height / 2) >= 0 && (height / 2) < height &&
-        (width / 2) >= 0 && (width / 2) < width)
+    if (center_iy >= 0 && center_iy < height &&
+        center_ix >= 0 && center_ix < width)
     {
-        screen[height / 2][width / 2] = 'O';
+        screen[center_iy][center_ix] = 'O';
     }
     
     // --- Compute and draw each displayed planet's current position ---
@@ -157,8 +164,8 @@ int main(int argc, char *argv[]) {
         double y = r * sin(f_angle);
         
         // Map the coordinates to screen positions.
-        int ix = (int)(width / 2 + x * scale + 0.5);
-        int iy = (int)(height / 2 - y * scale * ASPECT_CORRECTION + 0.5);
+        int ix = (int)lround(center_x + x * scale);
+        int iy = (int)lround(center_y - y * scale);
         if (ix >= 0 && ix < width && iy >= 0 && iy < height)
             screen[iy][ix] = planets[p].symbol;
     }

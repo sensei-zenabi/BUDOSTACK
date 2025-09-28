@@ -242,7 +242,18 @@ static bool parse_string_literal(const char **p, char **out) {
     while (*s && *s != '"') {
         char ch = *s++;
         if (ch == '\\' && *s) {
-            ch = *s++;
+            char esc = *s++;
+            switch (esc) {
+                case 'n': ch = '\n'; break;
+                case 't': ch = '\t'; break;
+                case 'r': ch = '\r'; break;
+                case '"': ch = '"';  break;
+                case '\\': ch = '\\'; break;
+                default:
+                    // Unknown escape → take the char literally (e.g. \x → 'x')
+                    ch = esc;
+                    break;
+            }
         }
         if (len + 1 >= cap) {
             cap *= 2;
@@ -1106,12 +1117,18 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "PRINT: unexpected characters at %d\n", script[pc].number);
                 }
             }
-            if (ok) {
-                out_buf[out_len] = '\0';
-                printf("%s\n", out_buf);
-            }
-            free(out_buf);
-            note_branch_progress(if_stack, &if_sp);
+		    if (ok) {
+		        out_buf[out_len] = '\0';
+		        size_t len = strlen(out_buf);
+		        if (len > 0 && out_buf[len - 1] == '\n') {
+		            fputs(out_buf, stdout);
+		        } else {
+		            fputs(out_buf, stdout);
+		            fflush(stdout); // keep INPUT on the same line if needed
+		        }
+		    }
+		    free(out_buf);
+		    note_branch_progress(if_stack, &if_sp);
         }
         else if (strncmp(command, "WAIT", 4) == 0) {
             int ms;

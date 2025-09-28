@@ -1,28 +1,27 @@
 00 CLEAR
 01 SET $VAR = "n"
-10 PRINT "--- TASK DEMONSTRATION ---"
-20 PRINT ""
+10 PRINT "--- TASK DEMONSTRATION ---\n\n"
 21 PRINT "Do you want to exit?"
-22 PRINT "[y/n]: "
+22 PRINT " [y/n]: "
 23 INPUT $VAR
 24 IF $VAR == "y"
 25   GOTO 200
 26 ELSE
-27   PRINT "Great! Let's continue the demo!"
+27   PRINT "Great! Let's continue the demo!\n\n"
 30 WAIT 1000
-40 PRINT "This demo illustrates all task language capabilites."
+40 PRINT "This demo illustrates all task language capabilites.\n"
 50 WAIT 2500
-60 PRINT "Now I will list folder content..."
+60 PRINT "Now I will list folder content...\n"
 70 WAIT 1000
 80 RUN list
 90 WAIT 1000
-100 PRINT "Here are the hardware specs..."
+100 PRINT "Here are the hardware specs...\n"
 110 WAIT 1000
 120 RUN stats
 130 CLEAR
-140 PRINT "See! The task just keeps on going..."
+140 PRINT "See! The task just keeps on going...\n"
 150 WAIT 2500
-160 PRINT "...and starts from the beginning until you press CTRL+c"
+160 PRINT "...and starts from the beginning until you press CTRL+c\n"
 170 WAIT 2500
 180 GOTO 00
-200 PRINT "Exiting demo..."
+200 PRINT "\nExiting demo...\n"

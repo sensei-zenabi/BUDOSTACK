@@ -1,6 +1,14 @@
 00 CLEAR
+01 SET $VAR = "n"
 10 PRINT "--- TASK DEMONSTRATION ---"
 20 PRINT ""
+21 PRINT "Do you want to exit?"
+22 PRINT "[y/n]: "
+23 INPUT $VAR
+24 IF $VAR == "y"
+25   GOTO 200
+26 ELSE
+27   PRINT "Great! Let's continue the demo!"
 30 WAIT 1000
 40 PRINT "This demo illustrates all task language capabilites."
 50 WAIT 2500
@@ -17,3 +25,4 @@
 160 PRINT "...and starts from the beginning until you press CTRL+c"
 170 WAIT 2500
 180 GOTO 00
+200 PRINT "Exiting demo..."

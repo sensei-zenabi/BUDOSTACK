@@ -1,11 +1,11 @@
 00 CLEAR
 01 SET $VAR = "n"
-10 PRINT "--- TASK DEMONSTRATION ---\n\n"
+10 PRINT "--- TASK LANGUAGE DEMONSTRATION ---\n\n"
 21 PRINT "Do you want to exit?"
 22 PRINT " [y/n]: "
 23 INPUT $VAR
 24 IF $VAR == "y"
-25   GOTO 200
+25   GOTO 210
 26 ELSE
 27   PRINT "Great! Let's continue the demo!\n\n"
 30 WAIT 1000
@@ -19,9 +19,12 @@
 110 WAIT 1000
 120 RUN stats
 130 CLEAR
-140 PRINT "See! The task just keeps on going...\n"
+140 PRINT "Here is a demo of using external command _HELLO with RUN and storing the stdout:\n"
 150 WAIT 2500
-160 PRINT "...and starts from the beginning until you press CTRL+c\n"
-170 WAIT 2500
-180 GOTO 00
-200 PRINT "\nExiting demo...\n"
+160 RUN _HELLO TO $VAR
+170 PRINT "\n>> stdout gave: " + $VAR + "\n"
+175 WAIT 5000
+180 PRINT "\n...and now back to beginning with GOTO...\n"
+190 WAIT 2500
+200 GOTO 00
+210 PRINT "\nExiting demo...\n"

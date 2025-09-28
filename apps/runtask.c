@@ -30,6 +30,45 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <limits.h>   // PATH_MAX
+#include <math.h>
+
+#define MAX_VARIABLES 128
+
+static char *xstrdup(const char *s);
+
+typedef enum {
+    VALUE_UNSET = 0,
+    VALUE_INT,
+    VALUE_FLOAT,
+    VALUE_STRING
+} ValueType;
+
+typedef struct {
+    ValueType type;
+    long long int_val;
+    double float_val;
+    char *str_val;
+    bool owns_string;
+} Value;
+
+typedef struct {
+    char name[64];
+    ValueType type;
+    long long int_val;
+    double float_val;
+    char *str_val;
+} Variable;
+
+static Variable variables[MAX_VARIABLES];
+static size_t variable_count = 0;
+
+typedef struct {
+    bool result;
+    bool true_branch_done;
+    bool else_encountered;
+    bool else_branch_done;
+    int line_number;
+} IfContext;
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -83,11 +122,465 @@ static void sigint_handler(int signum) {
     stop = 1;
 }
 
+static Variable *find_variable(const char *name, bool create) {
+    if (!name || !*name) {
+        return NULL;
+    }
+    for (size_t i = 0; i < variable_count; ++i) {
+        if (strcmp(variables[i].name, name) == 0) {
+            return &variables[i];
+        }
+    }
+    if (!create) {
+        return NULL;
+    }
+    if (variable_count >= MAX_VARIABLES) {
+        fprintf(stderr, "Variable limit reached (%d)\n", MAX_VARIABLES);
+        return NULL;
+    }
+    Variable *var = &variables[variable_count++];
+    memset(var, 0, sizeof(*var));
+    strncpy(var->name, name, sizeof(var->name) - 1);
+    var->name[sizeof(var->name) - 1] = '\0';
+    var->type = VALUE_UNSET;
+    return var;
+}
+
+static void assign_variable(Variable *var, const Value *value) {
+    if (!var || !value) {
+        return;
+    }
+    if (var->type == VALUE_STRING && var->str_val) {
+        free(var->str_val);
+        var->str_val = NULL;
+    }
+    var->type = value->type;
+    if (value->type == VALUE_INT) {
+        var->int_val = value->int_val;
+        var->float_val = (double)value->int_val;
+    } else if (value->type == VALUE_FLOAT) {
+        var->float_val = value->float_val;
+        var->int_val = (long long)value->float_val;
+    } else if (value->type == VALUE_STRING) {
+        var->str_val = value->str_val ? xstrdup(value->str_val) : xstrdup("");
+    } else {
+        var->int_val = 0;
+        var->float_val = 0.0;
+    }
+}
+
+static void free_value(Value *value) {
+    if (!value) {
+        return;
+    }
+    if (value->type == VALUE_STRING && value->owns_string && value->str_val) {
+        free(value->str_val);
+        value->str_val = NULL;
+    }
+    value->type = VALUE_UNSET;
+    value->owns_string = false;
+    value->int_val = 0;
+    value->float_val = 0.0;
+}
+
+static Value variable_to_value(const Variable *var) {
+    Value v;
+    memset(&v, 0, sizeof(v));
+    if (!var) {
+        v.type = VALUE_UNSET;
+        return v;
+    }
+    v.type = var->type;
+    v.int_val = var->int_val;
+    v.float_val = var->float_val;
+    if (var->type == VALUE_STRING) {
+        v.str_val = var->str_val;
+        v.owns_string = false;
+    } else {
+        v.str_val = NULL;
+        v.owns_string = false;
+    }
+    return v;
+}
+
+static void cleanup_variables(void) {
+    for (size_t i = 0; i < variable_count; ++i) {
+        if (variables[i].type == VALUE_STRING && variables[i].str_val) {
+            free(variables[i].str_val);
+            variables[i].str_val = NULL;
+        }
+        variables[i].type = VALUE_UNSET;
+    }
+    variable_count = 0;
+}
+
+static bool is_token_delim(char c, const char *delims) {
+    if (!delims) {
+        return false;
+    }
+    for (const char *d = delims; *d; ++d) {
+        if (*d == c) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool parse_string_literal(const char **p, char **out) {
+    const char *s = *p;
+    if (*s != '"') {
+        return false;
+    }
+    ++s; // skip opening quote
+    size_t cap = 32;
+    size_t len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    while (*s && *s != '"') {
+        char ch = *s++;
+        if (ch == '\\' && *s) {
+            ch = *s++;
+        }
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *tmp = (char *)realloc(buf, cap);
+            if (!tmp) {
+                perror("realloc");
+                free(buf);
+                exit(EXIT_FAILURE);
+            }
+            buf = tmp;
+        }
+        buf[len++] = ch;
+    }
+    if (*s != '"') {
+        free(buf);
+        return false;
+    }
+    buf[len] = '\0';
+    *out = buf;
+    *p = (*s == '"') ? s + 1 : s;
+    return true;
+}
+
+static bool parse_token(const char **p, char **out, bool *quoted, const char *delims) {
+    const char *s = *p;
+    while (isspace((unsigned char)*s)) {
+        ++s;
+    }
+    if (!*s) {
+        return false;
+    }
+    if (*s == '"') {
+        if (!parse_string_literal(&s, out)) {
+            return false;
+        }
+        if (quoted) {
+            *quoted = true;
+        }
+        *p = s;
+        return true;
+    }
+    size_t cap = 32;
+    size_t len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    while (*s && !isspace((unsigned char)*s) && !is_token_delim(*s, delims)) {
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *tmp = (char *)realloc(buf, cap);
+            if (!tmp) {
+                perror("realloc");
+                free(buf);
+                exit(EXIT_FAILURE);
+            }
+            buf = tmp;
+        }
+        buf[len++] = *s++;
+    }
+    buf[len] = '\0';
+    *out = buf;
+    if (quoted) {
+        *quoted = false;
+    }
+    *p = s;
+    return true;
+}
+
+static bool parse_variable_name_token(const char *token, char *out, size_t size) {
+    if (!token || token[0] != '$') {
+        return false;
+    }
+    token++;
+    if (!*token) {
+        return false;
+    }
+    size_t len = 0;
+    while (*token) {
+        if (!isalnum((unsigned char)*token) && *token != '_') {
+            return false;
+        }
+        if (len + 1 >= size) {
+            return false;
+        }
+        out[len++] = *token++;
+    }
+    out[len] = '\0';
+    return true;
+}
+
+static ValueType detect_numeric_type(const char *token, long long *out_int, double *out_float) {
+    if (!token || !*token) {
+        return VALUE_UNSET;
+    }
+    errno = 0;
+    char *endptr = NULL;
+    long long iv = strtoll(token, &endptr, 10);
+    if (errno == 0 && endptr && *endptr == '\0') {
+        if (out_int) {
+            *out_int = iv;
+        }
+        if (out_float) {
+            *out_float = (double)iv;
+        }
+        return VALUE_INT;
+    }
+    errno = 0;
+    endptr = NULL;
+    double dv = strtod(token, &endptr);
+    if (errno == 0 && endptr && *endptr == '\0') {
+        if (out_float) {
+            *out_float = dv;
+        }
+        if (out_int) {
+            *out_int = (long long)dv;
+        }
+        return VALUE_FLOAT;
+    }
+    return VALUE_UNSET;
+}
+
+static bool parse_value_token(const char **p, Value *out, const char *delims, int line, int debug) {
+    char *token = NULL;
+    bool quoted = false;
+    if (!parse_token(p, &token, &quoted, delims)) {
+        if (debug) {
+            fprintf(stderr, "Line %d: failed to parse value\n", line);
+        }
+        return false;
+    }
+    Value result;
+    memset(&result, 0, sizeof(result));
+    if (quoted) {
+        result.type = VALUE_STRING;
+        result.str_val = token;
+        result.owns_string = true;
+    } else if (token[0] == '$') {
+        char name[64];
+        if (!parse_variable_name_token(token, name, sizeof(name))) {
+            if (debug) {
+                fprintf(stderr, "Line %d: invalid variable name '%s'\n", line, token);
+            }
+            free(token);
+            return false;
+        }
+        free(token);
+        Variable *var = find_variable(name, false);
+        result = variable_to_value(var);
+        if (result.type == VALUE_UNSET) {
+            result.int_val = 0;
+            result.float_val = 0.0;
+            result.str_val = NULL;
+            result.owns_string = false;
+        }
+    } else {
+        long long iv = 0;
+        double fv = 0.0;
+        ValueType vt = detect_numeric_type(token, &iv, &fv);
+        if (vt == VALUE_INT) {
+            result.type = VALUE_INT;
+            result.int_val = iv;
+            result.float_val = (double)iv;
+            result.str_val = NULL;
+            result.owns_string = false;
+            free(token);
+        } else if (vt == VALUE_FLOAT) {
+            result.type = VALUE_FLOAT;
+            result.float_val = fv;
+            result.int_val = (long long)fv;
+            result.str_val = NULL;
+            result.owns_string = false;
+            free(token);
+        } else {
+            result.type = VALUE_STRING;
+            result.str_val = token;
+            result.owns_string = true;
+        }
+    }
+    *out = result;
+    return true;
+}
+
+static bool value_as_double(const Value *value, double *out) {
+    if (!value || !out) {
+        return false;
+    }
+    if (value->type == VALUE_INT) {
+        *out = (double)value->int_val;
+        return true;
+    }
+    if (value->type == VALUE_FLOAT) {
+        *out = value->float_val;
+        return true;
+    }
+    if (value->type == VALUE_STRING && value->str_val) {
+        errno = 0;
+        char *endptr = NULL;
+        double dv = strtod(value->str_val, &endptr);
+        if (errno == 0 && endptr && *endptr == '\0') {
+            *out = dv;
+            return true;
+        }
+    }
+    return false;
+}
+
+static char *value_to_string(const Value *value) {
+    if (!value) {
+        return xstrdup("");
+    }
+    if (value->type == VALUE_STRING) {
+        return xstrdup(value->str_val ? value->str_val : "");
+    }
+    if (value->type == VALUE_INT) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%lld", value->int_val);
+        return xstrdup(buf);
+    }
+    if (value->type == VALUE_FLOAT) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%.15g", value->float_val);
+        return xstrdup(buf);
+    }
+    return xstrdup("");
+}
+
+static bool evaluate_comparison(const Value *lhs, const Value *rhs, const char *op, bool *out_result, int line, int debug) {
+    if (!lhs || !rhs || !op || !out_result) {
+        return false;
+    }
+    bool equality = (strcmp(op, "==") == 0) || (strcmp(op, "!=") == 0);
+    bool relational = !equality;
+    if (relational && (strcmp(op, ">") != 0 && strcmp(op, "<") != 0 && strcmp(op, ">=") != 0 && strcmp(op, "<=") != 0)) {
+        if (debug) {
+            fprintf(stderr, "Line %d: unsupported operator '%s'\n", line, op);
+        }
+        return false;
+    }
+
+    if (lhs->type == VALUE_UNSET || rhs->type == VALUE_UNSET) {
+        if (equality && lhs->type == VALUE_UNSET && rhs->type == VALUE_UNSET && strcmp(op, "==") == 0) {
+            *out_result = true;
+        } else if (equality && lhs->type == VALUE_UNSET && rhs->type == VALUE_UNSET && strcmp(op, "!=") == 0) {
+            *out_result = false;
+        } else {
+            *out_result = false;
+        }
+        return true;
+    }
+
+    if (relational) {
+        double lnum = 0.0, rnum = 0.0;
+        bool l_ok = value_as_double(lhs, &lnum);
+        bool r_ok = value_as_double(rhs, &rnum);
+        if (l_ok && r_ok) {
+            if (strcmp(op, ">") == 0) {
+                *out_result = lnum > rnum;
+            } else if (strcmp(op, "<") == 0) {
+                *out_result = lnum < rnum;
+            } else if (strcmp(op, ">=") == 0) {
+                *out_result = lnum >= rnum;
+            } else if (strcmp(op, "<=") == 0) {
+                *out_result = lnum <= rnum;
+            } else {
+                *out_result = false;
+            }
+            return true;
+        }
+        char *lstr = value_to_string(lhs);
+        char *rstr = value_to_string(rhs);
+        int cmp = strcmp(lstr, rstr);
+        free(lstr);
+        free(rstr);
+        if (strcmp(op, ">") == 0) {
+            *out_result = cmp > 0;
+        } else if (strcmp(op, "<") == 0) {
+            *out_result = cmp < 0;
+        } else if (strcmp(op, ">=") == 0) {
+            *out_result = cmp >= 0;
+        } else if (strcmp(op, "<=") == 0) {
+            *out_result = cmp <= 0;
+        } else {
+            *out_result = false;
+        }
+        return true;
+    }
+
+    double lnum = 0.0, rnum = 0.0;
+    bool l_numeric = value_as_double(lhs, &lnum);
+    bool r_numeric = value_as_double(rhs, &rnum);
+    if (l_numeric && r_numeric) {
+        double diff = lnum - rnum;
+        bool eq = fabs(diff) < 1e-9;
+        if (strcmp(op, "==") == 0) {
+            *out_result = eq;
+        } else {
+            *out_result = !eq;
+        }
+        return true;
+    }
+    char *lstr = value_to_string(lhs);
+    char *rstr = value_to_string(rhs);
+    int cmp = strcmp(lstr, rstr);
+    free(lstr);
+    free(rstr);
+    if (strcmp(op, "==") == 0) {
+        *out_result = (cmp == 0);
+    } else {
+        *out_result = (cmp != 0);
+    }
+    return true;
+}
+
+static void note_branch_progress(IfContext *stack, int *sp) {
+    if (!stack || !sp || *sp <= 0) {
+        return;
+    }
+    IfContext *ctx = &stack[*sp - 1];
+    if (!ctx->true_branch_done) {
+        ctx->true_branch_done = true;
+        return;
+    }
+    if (ctx->else_encountered && !ctx->else_branch_done) {
+        ctx->else_branch_done = true;
+        (*sp)--;
+    }
+}
+
 static void print_help(void) {
     printf("\nRuntask Help\n");
     printf("============\n\n");
     printf("Commands:\n");
-    printf("  PRINT \"message\"    : Prints any message\n");
+    printf("  SET $VAR = value   : Store integers, floats, or strings in a variable\n");
+    printf("  INPUT $VAR         : Read a line from stdin into $VAR (numbers auto-detected)\n");
+    printf("  IF <lhs> op <rhs>  : Compare values. Use ELSE for an alternate branch.\n");
+    printf("  PRINT expr         : Print literals and variables (use '+' to concatenate).\n");
     printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
     printf("  GOTO line_number   : Jumps to the specified line number\n");
     printf("  RUN <cmd [args...]>: Executes an executable from ./apps, ./commands, or ./utilities\n");
@@ -307,30 +800,331 @@ int main(int argc, char *argv[]) {
 
     qsort(script, count, sizeof(ScriptLine), cmpScriptLine);
 
+    IfContext if_stack[64];
+    int if_sp = 0;
+    bool skip_next_command = false;
+    int skip_context_index = -1;
+    bool skip_for_true_branch = false;
+
     // Run
     for (int pc = 0; pc < count && !stop; pc++) {
         if (debug) fprintf(stderr, "Executing line %d: %s\n", script[pc].number, script[pc].text);
 
-        if (strncmp(script[pc].text, "PRINT", 5) == 0) {
-            char *start = strchr(script[pc].text, '"');
-            if (!start) { if (debug) fprintf(stderr, "PRINT: missing opening quote at %d\n", script[pc].number); continue; }
-            start++;
-            char *end = strchr(start, '"');
-            if (!end)  { if (debug) fprintf(stderr, "PRINT: missing closing quote at %d\n", script[pc].number); continue; }
-            size_t len = (size_t)(end - start);
-            char msg[256];
-            if (len >= sizeof(msg)) { if (debug) fprintf(stderr, "PRINT: truncating at %d\n", script[pc].number); len = sizeof(msg) - 1; }
-            strncpy(msg, start, len); msg[len] = '\0';
-            printf("%s\n", msg);
+        if (skip_next_command) {
+            skip_next_command = false;
+            if (skip_context_index == if_sp - 1 && if_sp > 0) {
+                IfContext *ctx = &if_stack[if_sp - 1];
+                if (skip_for_true_branch) {
+                    ctx->true_branch_done = true;
+                } else {
+                    ctx->else_branch_done = true;
+                    if_sp--;
+                }
+            }
+            skip_context_index = -1;
+            skip_for_true_branch = false;
+            continue;
         }
-        else if (strncmp(script[pc].text, "WAIT", 4) == 0) {
+
+        char *command = script[pc].text;
+
+        if (if_sp > 0) {
+            IfContext *ctx = &if_stack[if_sp - 1];
+            if (ctx->true_branch_done && !ctx->else_encountered) {
+                if (!(strncmp(command, "ELSE", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4])))) {
+                    if_sp--;
+                }
+            }
+        }
+
+        if (strncmp(command, "IF", 2) == 0 && (command[2] == '\0' || isspace((unsigned char)command[2]))) {
+            const char *cursor = command + 2;
+            Value lhs;
+            if (!parse_value_token(&cursor, &lhs, "<>!=", script[pc].number, debug)) {
+                continue;
+            }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            char op[3] = { 0 };
+            if (cursor[0] == '=' && cursor[1] == '=') { op[0] = '='; op[1] = '='; cursor += 2; }
+            else if (cursor[0] == '!' && cursor[1] == '=') { op[0] = '!'; op[1] = '='; cursor += 2; }
+            else if (cursor[0] == '>' && cursor[1] == '=') { op[0] = '>'; op[1] = '='; cursor += 2; }
+            else if (cursor[0] == '<' && cursor[1] == '=') { op[0] = '<'; op[1] = '='; cursor += 2; }
+            else if (cursor[0] == '>') { op[0] = '>'; cursor += 1; }
+            else if (cursor[0] == '<') { op[0] = '<'; cursor += 1; }
+            else {
+                if (debug) fprintf(stderr, "IF: invalid or missing operator at %d\n", script[pc].number);
+                free_value(&lhs);
+                continue;
+            }
+            Value rhs;
+            if (!parse_value_token(&cursor, &rhs, NULL, script[pc].number, debug)) {
+                free_value(&lhs);
+                continue;
+            }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "IF: unexpected characters at %d\n", script[pc].number);
+            }
+            bool cond_result = false;
+            if (!evaluate_comparison(&lhs, &rhs, op, &cond_result, script[pc].number, debug)) {
+                cond_result = false;
+            }
+            free_value(&lhs);
+            free_value(&rhs);
+            if (if_sp >= (int)(sizeof(if_stack) / sizeof(if_stack[0]))) {
+                if (debug) fprintf(stderr, "IF: nesting limit reached at line %d\n", script[pc].number);
+                continue;
+            }
+            IfContext ctx = { .result = cond_result, .true_branch_done = false, .else_encountered = false, .else_branch_done = false, .line_number = script[pc].number };
+            if_stack[if_sp++] = ctx;
+            if (!cond_result) {
+                skip_next_command = true;
+                skip_context_index = if_sp - 1;
+                skip_for_true_branch = true;
+            }
+        }
+        else if (strncmp(command, "ELSE", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {
+            if (if_sp <= 0) {
+                if (debug) fprintf(stderr, "ELSE without matching IF at line %d\n", script[pc].number);
+                continue;
+            }
+            const char *cursor = command + 4;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "ELSE: unexpected characters at %d\n", script[pc].number);
+            }
+            IfContext *ctx = &if_stack[if_sp - 1];
+            if (ctx->else_encountered) {
+                if (debug) fprintf(stderr, "ELSE already processed for IF at line %d\n", ctx->line_number);
+                continue;
+            }
+            ctx->else_encountered = true;
+            if (ctx->result) {
+                skip_next_command = true;
+                skip_context_index = if_sp - 1;
+                skip_for_true_branch = false;
+            }
+        }
+        else if (strncmp(command, "INPUT", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {
+            const char *cursor = command + 5;
+            char *var_token = NULL;
+            bool quoted = false;
+            if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
+                if (debug) fprintf(stderr, "INPUT: expected variable at line %d\n", script[pc].number);
+                free(var_token);
+                continue;
+            }
+            char name[64];
+            if (!parse_variable_name_token(var_token, name, sizeof(name))) {
+                if (debug) fprintf(stderr, "INPUT: invalid variable name at line %d\n", script[pc].number);
+                free(var_token);
+                continue;
+            }
+            free(var_token);
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "INPUT: unexpected characters at %d\n", script[pc].number);
+            }
+            Variable *var = find_variable(name, true);
+            if (!var) {
+                continue;
+            }
+            fflush(stdout);
+            char buffer[512];
+            if (!fgets(buffer, sizeof(buffer), stdin)) {
+                if (debug) fprintf(stderr, "INPUT: failed to read input at line %d\n", script[pc].number);
+                Value empty = { .type = VALUE_STRING, .str_val = xstrdup(""), .owns_string = true };
+                assign_variable(var, &empty);
+                free_value(&empty);
+            } else {
+                size_t len = strcspn(buffer, "\r\n");
+                buffer[len] = '\0';
+                long long iv = 0;
+                double fv = 0.0;
+                Value val;
+                memset(&val, 0, sizeof(val));
+                ValueType vt = detect_numeric_type(buffer, &iv, &fv);
+                if (vt == VALUE_INT) {
+                    val.type = VALUE_INT;
+                    val.int_val = iv;
+                    val.float_val = (double)iv;
+                } else if (vt == VALUE_FLOAT) {
+                    val.type = VALUE_FLOAT;
+                    val.float_val = fv;
+                    val.int_val = (long long)fv;
+                } else {
+                    val.type = VALUE_STRING;
+                    val.str_val = xstrdup(buffer);
+                    val.owns_string = true;
+                }
+                assign_variable(var, &val);
+                free_value(&val);
+            }
+            note_branch_progress(if_stack, &if_sp);
+        }
+        else if (strncmp(command, "SET", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {
+            const char *cursor = command + 3;
+            char *var_token = NULL;
+            bool quoted = false;
+            if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
+                if (debug) fprintf(stderr, "SET: expected variable at line %d\n", script[pc].number);
+                free(var_token);
+                continue;
+            }
+            char name[64];
+            if (!parse_variable_name_token(var_token, name, sizeof(name))) {
+                if (debug) fprintf(stderr, "SET: invalid variable name at line %d\n", script[pc].number);
+                free(var_token);
+                continue;
+            }
+            free(var_token);
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '=') {
+                if (debug) fprintf(stderr, "SET: expected '=' at line %d\n", script[pc].number);
+                continue;
+            }
+            cursor++;
+            Value value;
+            if (!parse_value_token(&cursor, &value, NULL, script[pc].number, debug)) {
+                continue;
+            }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].number);
+            }
+            Variable *var = find_variable(name, true);
+            if (var) {
+                assign_variable(var, &value);
+            }
+            free_value(&value);
+            note_branch_progress(if_stack, &if_sp);
+        }
+        else if (command[0] == '$') {
+            const char *cursor = command;
+            char *var_token = NULL;
+            bool quoted = false;
+            if (!parse_token(&cursor, &var_token, &quoted, "=") || quoted) {
+                if (debug) fprintf(stderr, "Assignment: expected variable at line %d\n", script[pc].number);
+                free(var_token);
+                continue;
+            }
+            char name[64];
+            if (!parse_variable_name_token(var_token, name, sizeof(name))) {
+                if (debug) fprintf(stderr, "Assignment: invalid variable name at line %d\n", script[pc].number);
+                free(var_token);
+                continue;
+            }
+            free(var_token);
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '=') {
+                if (debug) fprintf(stderr, "Assignment: expected '=' at line %d\n", script[pc].number);
+                continue;
+            }
+            cursor++;
+            Value value;
+            if (!parse_value_token(&cursor, &value, NULL, script[pc].number, debug)) {
+                continue;
+            }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "Assignment: unexpected characters at %d\n", script[pc].number);
+            }
+            Variable *var = find_variable(name, true);
+            if (var) {
+                assign_variable(var, &value);
+            }
+            free_value(&value);
+            note_branch_progress(if_stack, &if_sp);
+        }
+        else if (strncmp(command, "PRINT", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {
+            const char *cursor = command + 5;
+            size_t out_cap = 128;
+            size_t out_len = 0;
+            char *out_buf = (char *)malloc(out_cap);
+            if (!out_buf) {
+                perror("malloc");
+                exit(EXIT_FAILURE);
+            }
+            bool ok = true;
+            while (1) {
+                Value term;
+                if (!parse_value_token(&cursor, &term, "+", script[pc].number, debug)) {
+                    ok = false;
+                    break;
+                }
+                char *as_str = value_to_string(&term);
+                size_t need = strlen(as_str);
+                if (out_len + need + 1 > out_cap) {
+                    while (out_len + need + 1 > out_cap) {
+                        out_cap *= 2;
+                    }
+                    char *tmp = (char *)realloc(out_buf, out_cap);
+                    if (!tmp) {
+                        perror("realloc");
+                        free(out_buf);
+                        free(as_str);
+                        free_value(&term);
+                        exit(EXIT_FAILURE);
+                    }
+                    out_buf = tmp;
+                }
+                memcpy(out_buf + out_len, as_str, need);
+                out_len += need;
+                free(as_str);
+                free_value(&term);
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+                if (*cursor == '+') {
+                    cursor++;
+                    continue;
+                }
+                break;
+            }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0') {
+                ok = false;
+                if (debug) {
+                    fprintf(stderr, "PRINT: unexpected characters at %d\n", script[pc].number);
+                }
+            }
+            if (ok) {
+                out_buf[out_len] = '\0';
+                printf("%s\n", out_buf);
+            }
+            free(out_buf);
+            note_branch_progress(if_stack, &if_sp);
+        }
+        else if (strncmp(command, "WAIT", 4) == 0) {
             int ms;
-            if (sscanf(script[pc].text, "WAIT %d", &ms) == 1) delay_ms(ms);
-            else if (debug) fprintf(stderr, "WAIT: invalid format at %d: %s\n", script[pc].number, script[pc].text);
+            if (sscanf(command, "WAIT %d", &ms) == 1) {
+                delay_ms(ms);
+            } else if (debug) {
+                fprintf(stderr, "WAIT: invalid format at %d: %s\n", script[pc].number, command);
+            }
+            note_branch_progress(if_stack, &if_sp);
         }
-        else if (strncmp(script[pc].text, "GOTO", 4) == 0) {
+        else if (strncmp(command, "GOTO", 4) == 0) {
             int target;
-            if (sscanf(script[pc].text, "GOTO %d", &target) == 1) {
+            if (sscanf(command, "GOTO %d", &target) == 1) {
                 int found = -1;
                 for (int i = 0; i < count; i++) if (script[i].number == target) { found = i; break; }
                 if (found == -1) {
@@ -338,10 +1132,13 @@ int main(int argc, char *argv[]) {
                 } else {
                     pc = found - 1; // -1 because loop will ++pc
                 }
-            } else if (debug) fprintf(stderr, "GOTO: invalid format at %d: %s\n", script[pc].number, script[pc].text);
+            } else if (debug) {
+                fprintf(stderr, "GOTO: invalid format at %d: %s\n", script[pc].number, command);
+            }
+            note_branch_progress(if_stack, &if_sp);
         }
-        else if (strncmp(script[pc].text, "RUN", 3) == 0) {
-            const char *after = script[pc].text + 3;
+        else if (strncmp(command, "RUN", 3) == 0) {
+            const char *after = command + 3;
             char *cmdline = trim((char*)after);
             if (!*cmdline) {
                 if (debug) fprintf(stderr, "RUN: missing command at line %d\n", script[pc].number);
@@ -397,15 +1194,18 @@ int main(int argc, char *argv[]) {
                 }
                 free_argv(argv_heap);
             }
+            note_branch_progress(if_stack, &if_sp);
         }
-        else if (strncmp(script[pc].text, "CLEAR", 5) == 0) {
+        else if (strncmp(command, "CLEAR", 5) == 0) {
             printf("\033[H\033[J");
             fflush(stdout);
+            note_branch_progress(if_stack, &if_sp);
         }
         else {
-            if (debug) fprintf(stderr, "Unrecognized command at %d: %s\n", script[pc].number, script[pc].text);
+            if (debug) fprintf(stderr, "Unrecognized command at %d: %s\n", script[pc].number, command);
         }
     }
 
+    cleanup_variables();
     return 0;
 }

@@ -5,6 +5,7 @@
 * - CMD removed.
 * - RUN executes an app by name from ./apps/, ./commands/, or ./utilities/ (blocking),
 *   similar to how task files are forced under tasks/. Arguments are passed as-is.
+* - RUN optionally supports `TO $VAR` to capture stdout into a variable (type auto-detected).
 * - If RUN's first token contains '/', it's treated as an explicit path and executed directly.
 * - Fixed argv lifetime: arguments are now heap-allocated (no static buffers). RUN reliably
 *   passes switches/arguments (e.g., "setfont -d small2.psf") to the child.
@@ -115,6 +116,20 @@ static int build_from_base(const char *suffix, char *buffer, size_t size) {
             return -1;
     }
     return 0;
+}
+
+static bool equals_ignore_case(const char *a, const char *b) {
+    if (!a || !b) {
+        return false;
+    }
+    while (*a && *b) {
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) {
+            return false;
+        }
+        ++a;
+        ++b;
+    }
+    return *a == '\0' && *b == '\0';
 }
 
 static void sigint_handler(int signum) {
@@ -596,6 +611,7 @@ static void print_help(void) {
     printf("  GOTO line_number   : Jumps to the specified line number\n");
     printf("  RUN <cmd [args...]>: Executes an executable from ./apps, ./commands, or ./utilities\n");
     printf("                       (blocking). If the command contains '/', it's executed as given.\n");
+    printf("                       Append 'TO $VAR' to capture stdout into $VAR.\n");
     printf("  CLEAR              : Clears the screen\n\n");
     printf("Usage:\n");
     printf("  ./runtask taskfile [-d]\n\n");
@@ -1171,6 +1187,38 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
+            bool capture_output = false;
+            Variable *capture_var = NULL;
+            char *captured_output = NULL;
+            size_t captured_len = 0;
+            size_t captured_cap = 0;
+
+            if (argcnt >= 3 && equals_ignore_case(argv_heap[argcnt - 2], "TO")) {
+                char name[64];
+                if (!parse_variable_name_token(argv_heap[argcnt - 1], name, sizeof(name))) {
+                    fprintf(stderr, "RUN: invalid variable name after TO at line %d\n", script[pc].number);
+                    free_argv(argv_heap);
+                    continue;
+                }
+                capture_var = find_variable(name, true);
+                if (!capture_var) {
+                    free_argv(argv_heap);
+                    continue;
+                }
+                capture_output = true;
+                free(argv_heap[argcnt - 1]);
+                free(argv_heap[argcnt - 2]);
+                argv_heap[argcnt - 2] = NULL;
+                argv_heap[argcnt - 1] = NULL;
+                argcnt -= 2;
+                argv_heap[argcnt] = NULL;
+                if (argcnt <= 0) {
+                    fprintf(stderr, "RUN: missing executable before TO at line %d\n", script[pc].number);
+                    free_argv(argv_heap);
+                    continue;
+                }
+            }
+
             // Resolve executable path
             char resolved[PATH_MAX];
             if (resolve_exec_path(argv_heap[0], resolved, sizeof(resolved)) != 0) {
@@ -1186,19 +1234,86 @@ int main(int argc, char *argv[]) {
             if (debug) {
                 fprintf(stderr, "RUN: execv %s", argv_heap[0]);
                 for (int i = 1; i < argcnt; ++i) fprintf(stderr, " [%s]", argv_heap[i]);
+                if (capture_output) fprintf(stderr, " -> TO $%s", capture_var ? capture_var->name : "?");
                 fprintf(stderr, "\n");
+            }
+
+            int pipefd[2] = { -1, -1 };
+            if (capture_output) {
+                if (pipe(pipefd) < 0) {
+                    perror("pipe");
+                    free_argv(argv_heap);
+                    continue;
+                }
             }
 
             pid_t pid = fork();
             if (pid < 0) {
                 perror("fork");
+                if (capture_output) {
+                    close(pipefd[0]);
+                    close(pipefd[1]);
+                }
                 free_argv(argv_heap);
                 continue;
             } else if (pid == 0) {
+                if (capture_output) {
+                    close(pipefd[0]);
+                    if (dup2(pipefd[1], STDOUT_FILENO) < 0) {
+                        perror("dup2");
+                        _exit(EXIT_FAILURE);
+                    }
+                    close(pipefd[1]);
+                }
                 execv(argv_heap[0], argv_heap);
                 perror("execv");
                 _exit(EXIT_FAILURE);
             } else {
+                if (capture_output) {
+                    close(pipefd[1]);
+                    char buffer[4096];
+                    ssize_t rd;
+                    while (1) {
+                        rd = read(pipefd[0], buffer, sizeof(buffer));
+                        if (rd > 0) {
+                            if (captured_len + (size_t)rd + 1 > captured_cap) {
+                                size_t new_cap = captured_cap ? captured_cap : 128;
+                                while (captured_len + (size_t)rd + 1 > new_cap) {
+                                    new_cap *= 2;
+                                }
+                                char *tmp = (char *)realloc(captured_output, new_cap);
+                                if (!tmp) {
+                                    perror("realloc");
+                                    free(captured_output);
+                                    captured_output = NULL;
+                                    captured_cap = captured_len = 0;
+                                    break;
+                                }
+                                captured_output = tmp;
+                                captured_cap = new_cap;
+                            }
+                            memcpy(captured_output + captured_len, buffer, (size_t)rd);
+                            captured_len += (size_t)rd;
+                        } else if (rd == 0) {
+                            break;
+                        } else {
+                            if (errno == EINTR) {
+                                continue;
+                            }
+                            perror("read");
+                            break;
+                        }
+                    }
+                    if (captured_output) {
+                        captured_output[captured_len] = '\0';
+                    } else {
+                        captured_output = xstrdup("");
+                        captured_len = 0;
+                        captured_cap = 1;
+                    }
+                    close(pipefd[0]);
+                }
+
                 int status;
                 while (waitpid(pid, &status, 0) < 0) {
                     if (errno != EINTR) { perror("waitpid"); break; }
@@ -1209,6 +1324,39 @@ int main(int argc, char *argv[]) {
                     else if (WIFSIGNALED(status))
                         fprintf(stderr, "RUN: killed by signal %d\n", WTERMSIG(status));
                 }
+
+                if (capture_output && capture_var && captured_output) {
+                    while (captured_len > 0 && (captured_output[captured_len - 1] == '\n' || captured_output[captured_len - 1] == '\r')) {
+                        captured_output[--captured_len] = '\0';
+                    }
+                    long long iv = 0;
+                    double fv = 0.0;
+                    Value value;
+                    memset(&value, 0, sizeof(value));
+                    ValueType vt = detect_numeric_type(captured_output, &iv, &fv);
+                    if (vt == VALUE_INT) {
+                        value.type = VALUE_INT;
+                        value.int_val = iv;
+                        value.float_val = (double)iv;
+                    } else if (vt == VALUE_FLOAT) {
+                        value.type = VALUE_FLOAT;
+                        value.float_val = fv;
+                        value.int_val = (long long)fv;
+                    } else {
+                        value.type = VALUE_STRING;
+                        value.str_val = captured_output;
+                        value.owns_string = true;
+                    }
+                    assign_variable(capture_var, &value);
+                    if (value.type != VALUE_STRING) {
+                        free(captured_output);
+                    }
+                    captured_output = NULL;
+                    free_value(&value);
+                } else if (captured_output) {
+                    free(captured_output);
+                }
+
                 free_argv(argv_heap);
             }
             note_branch_progress(if_stack, &if_sp);

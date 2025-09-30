@@ -3,8 +3,9 @@
 *
 * Changes in this version:
 * - CMD removed.
-* - RUN executes an app by name from ./apps/, ./commands/, or ./utilities/ (blocking),
-*   similar to how task files are forced under tasks/. Arguments are passed as-is.
+* - RUN executes an app by name from ./apps/, ./commands/, or ./utilities. Blocking is
+*   the default; prepend BLOCKING or NONBLOCKING to control the run mode explicitly.
+*   Arguments are passed as-is.
 * - RUN optionally supports `TO $VAR` to capture stdout into a variable (type auto-detected).
 * - If RUN's first token contains '/', it's treated as an explicit path and executed directly.
 * - Fixed argv lifetime: arguments are now heap-allocated (no static buffers). RUN reliably
@@ -609,9 +610,10 @@ static void print_help(void) {
     printf("  PRINT expr         : Print literals and variables (use '+' to concatenate).\n");
     printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
     printf("  GOTO line_number   : Jumps to the specified line number\n");
-    printf("  RUN <cmd [args...]>: Executes an executable from ./apps, ./commands, or ./utilities\n");
-    printf("                       (blocking). If the command contains '/', it's executed as given.\n");
-    printf("                       Append 'TO $VAR' to capture stdout into $VAR.\n");
+    printf("  RUN [BLOCKING|NONBLOCKING] <cmd [args...]>:\n");
+    printf("                       Executes an executable from ./apps, ./commands, or ./utilities.\n");
+    printf("                       Default is BLOCKING. If the command contains '/', it's executed as given.\n");
+    printf("                       Append 'TO $VAR' to capture stdout into $VAR (blocking mode only).\n");
     printf("  CLEAR              : Clears the screen\n\n");
     printf("Usage:\n");
     printf("  ./runtask taskfile [-d]\n\n");
@@ -1187,11 +1189,39 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
+            bool blocking_mode = true;
             bool capture_output = false;
             Variable *capture_var = NULL;
             char *captured_output = NULL;
             size_t captured_len = 0;
             size_t captured_cap = 0;
+
+            if (argcnt > 0) {
+                if (equals_ignore_case(argv_heap[0], "BLOCKING")) {
+                    blocking_mode = true;
+                    free(argv_heap[0]);
+                    for (int i = 1; i < argcnt; ++i) {
+                        argv_heap[i - 1] = argv_heap[i];
+                    }
+                    argv_heap[argcnt - 1] = NULL;
+                    argcnt--;
+                } else if (equals_ignore_case(argv_heap[0], "NONBLOCKING") ||
+                           equals_ignore_case(argv_heap[0], "NON-BLOCKING")) {
+                    blocking_mode = false;
+                    free(argv_heap[0]);
+                    for (int i = 1; i < argcnt; ++i) {
+                        argv_heap[i - 1] = argv_heap[i];
+                    }
+                    argv_heap[argcnt - 1] = NULL;
+                    argcnt--;
+                }
+            }
+
+            if (argcnt <= 0) {
+                if (debug) fprintf(stderr, "RUN: missing executable at line %d\n", script[pc].number);
+                free_argv(argv_heap);
+                continue;
+            }
 
             if (argcnt >= 3 && equals_ignore_case(argv_heap[argcnt - 2], "TO")) {
                 char name[64];
@@ -1235,7 +1265,48 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "RUN: execv %s", argv_heap[0]);
                 for (int i = 1; i < argcnt; ++i) fprintf(stderr, " [%s]", argv_heap[i]);
                 if (capture_output) fprintf(stderr, " -> TO $%s", capture_var ? capture_var->name : "?");
-                fprintf(stderr, "\n");
+                fprintf(stderr, " (%s)\n", blocking_mode ? "blocking" : "non-blocking");
+            }
+
+            if (!blocking_mode && capture_output) {
+                fprintf(stderr, "RUN: cannot capture output in non-blocking mode at line %d\n", script[pc].number);
+                free_argv(argv_heap);
+                if (captured_output) {
+                    free(captured_output);
+                }
+                continue;
+            }
+
+            if (!blocking_mode) {
+                pid_t pid = fork();
+                if (pid < 0) {
+                    perror("fork");
+                    free_argv(argv_heap);
+                    continue;
+                } else if (pid == 0) {
+                    pid_t gpid = fork();
+                    if (gpid < 0) {
+                        perror("fork");
+                        _exit(EXIT_FAILURE);
+                    }
+                    if (gpid == 0) {
+                        execv(argv_heap[0], argv_heap);
+                        perror("execv");
+                        _exit(EXIT_FAILURE);
+                    }
+                    _exit(EXIT_SUCCESS);
+                } else {
+                    int status;
+                    while (waitpid(pid, &status, 0) < 0) {
+                        if (errno != EINTR) {
+                            perror("waitpid");
+                            break;
+                        }
+                    }
+                }
+                free_argv(argv_heap);
+                note_branch_progress(if_stack, &if_sp);
+                continue;
             }
 
             int pipefd[2] = { -1, -1 };

@@ -584,7 +584,7 @@ static bool value_add_inplace(Value *acc, const Value *term) {
     return true;
 }
 
-static bool parse_expression(const char **cursor, Value *out, int line, int debug) {
+static bool parse_expression(const char **cursor, Value *out, const char *terminators, int line, int debug) {
     if (!cursor || !out) {
         return false;
     }
@@ -593,9 +593,22 @@ static bool parse_expression(const char **cursor, Value *out, int line, int debu
     memset(&accumulator, 0, sizeof(accumulator));
     bool have_term = false;
 
+    const char *delims = "+";
+    char delim_buf[32];
+    if (terminators && *terminators) {
+        size_t term_len = strlen(terminators);
+        if (term_len > sizeof(delim_buf) - 2) {
+            term_len = sizeof(delim_buf) - 2;
+        }
+        delim_buf[0] = '+';
+        memcpy(&delim_buf[1], terminators, term_len);
+        delim_buf[term_len + 1] = '\0';
+        delims = delim_buf;
+    }
+
     while (1) {
         Value term;
-        if (!parse_value_token(cursor, &term, "+", line, debug)) {
+        if (!parse_value_token(cursor, &term, delims, line, debug)) {
             free_value(&accumulator);
             return false;
         }
@@ -1131,7 +1144,7 @@ int main(int argc, char *argv[]) {
         if (strncmp(command, "IF", 2) == 0 && (command[2] == '\0' || isspace((unsigned char)command[2]))) {
             const char *cursor = command + 2;
             Value lhs;
-            if (!parse_value_token(&cursor, &lhs, "<>!=", script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &lhs, "<>!=", script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -1150,7 +1163,7 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             Value rhs;
-            if (!parse_value_token(&cursor, &rhs, NULL, script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &rhs, NULL, script[pc].source_line, debug)) {
                 free_value(&lhs);
                 continue;
             }
@@ -1289,7 +1302,7 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             Value value;
-            if (!parse_expression(&cursor, &value, script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &value, NULL, script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -1333,7 +1346,7 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             Value value;
-            if (!parse_expression(&cursor, &value, script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &value, NULL, script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {

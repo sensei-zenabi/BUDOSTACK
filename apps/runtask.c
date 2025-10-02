@@ -200,6 +200,33 @@ static void free_value(Value *value) {
     value->float_val = 0.0;
 }
 
+static bool copy_value(Value *dest, const Value *src) {
+    if (!dest || !src) {
+        return false;
+    }
+
+    free_value(dest);
+
+    dest->type = src->type;
+    dest->owns_string = false;
+    dest->str_val = NULL;
+    dest->int_val = src->int_val;
+    dest->float_val = src->float_val;
+
+    if (src->type == VALUE_STRING) {
+        dest->str_val = xstrdup(src->str_val ? src->str_val : "");
+        dest->owns_string = true;
+        dest->int_val = 0;
+        dest->float_val = 0.0;
+    } else if (src->type == VALUE_INT) {
+        dest->float_val = (double)src->int_val;
+    } else if (src->type == VALUE_FLOAT) {
+        dest->int_val = (long long)src->float_val;
+    }
+
+    return true;
+}
+
 static Value variable_to_value(const Variable *var) {
     Value v;
     memset(&v, 0, sizeof(v));
@@ -497,6 +524,106 @@ static char *value_to_string(const Value *value) {
         return xstrdup(buf);
     }
     return xstrdup("");
+}
+
+static bool value_add_inplace(Value *acc, const Value *term) {
+    if (!acc || !term) {
+        return false;
+    }
+
+    if (acc->type == VALUE_UNSET) {
+        return copy_value(acc, term);
+    }
+
+    double acc_num = 0.0;
+    double term_num = 0.0;
+    bool acc_numeric = value_as_double(acc, &acc_num);
+    bool term_numeric = value_as_double(term, &term_num);
+
+    if (acc_numeric && term_numeric) {
+        bool both_int = (acc->type == VALUE_INT && term->type == VALUE_INT);
+        Value result;
+        memset(&result, 0, sizeof(result));
+        if (both_int) {
+            result.type = VALUE_INT;
+            result.int_val = acc->int_val + term->int_val;
+            result.float_val = (double)result.int_val;
+        } else {
+            result.type = VALUE_FLOAT;
+            result.float_val = acc_num + term_num;
+            result.int_val = (long long)result.float_val;
+        }
+        free_value(acc);
+        *acc = result;
+        return true;
+    }
+
+    char *acc_str = value_to_string(acc);
+    char *term_str = value_to_string(term);
+    size_t acc_len = strlen(acc_str);
+    size_t term_len = strlen(term_str);
+    char *combined = (char *)malloc(acc_len + term_len + 1);
+    if (!combined) {
+        perror("malloc");
+        free(acc_str);
+        free(term_str);
+        exit(EXIT_FAILURE);
+    }
+    memcpy(combined, acc_str, acc_len);
+    memcpy(combined + acc_len, term_str, term_len + 1);
+    free(acc_str);
+    free(term_str);
+
+    free_value(acc);
+    Value result;
+    memset(&result, 0, sizeof(result));
+    result.type = VALUE_STRING;
+    result.str_val = combined;
+    result.owns_string = true;
+    *acc = result;
+    return true;
+}
+
+static bool parse_expression(const char **cursor, Value *out, int line, int debug) {
+    if (!cursor || !out) {
+        return false;
+    }
+
+    Value accumulator;
+    memset(&accumulator, 0, sizeof(accumulator));
+    bool have_term = false;
+
+    while (1) {
+        Value term;
+        if (!parse_value_token(cursor, &term, "+", line, debug)) {
+            free_value(&accumulator);
+            return false;
+        }
+        have_term = true;
+        if (!value_add_inplace(&accumulator, &term)) {
+            free_value(&term);
+            free_value(&accumulator);
+            return false;
+        }
+        free_value(&term);
+
+        while (isspace((unsigned char)**cursor)) {
+            (*cursor)++;
+        }
+        if (**cursor == '+') {
+            (*cursor)++;
+            continue;
+        }
+        break;
+    }
+
+    if (!have_term) {
+        free_value(&accumulator);
+        return false;
+    }
+
+    *out = accumulator;
+    return true;
 }
 
 static bool evaluate_comparison(const Value *lhs, const Value *rhs, const char *op, bool *out_result, int line, int debug) {
@@ -1158,8 +1285,11 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             cursor++;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
             Value value;
-            if (!parse_value_token(&cursor, &value, NULL, script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &value, script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -1199,8 +1329,11 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             cursor++;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
             Value value;
-            if (!parse_value_token(&cursor, &value, NULL, script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &value, script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -1628,5 +1761,6 @@ int main(int argc, char *argv[]) {
     cleanup_variables();
     return 0;
 }
+
 
 

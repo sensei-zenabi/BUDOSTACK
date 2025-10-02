@@ -34,45 +34,89 @@ int main(int argc, char *argv[]) {
     int x = -1;
     int y = -1;
     int color = 15; /* bright white by default */
-    const char *text = NULL;
+    char *text = NULL;
+    int exit_code = EXIT_FAILURE;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-x") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_TEXT: missing value for -x\n");
-                return EXIT_FAILURE;
+                goto cleanup;
             }
             if (parse_int(argv[i], "-x", &x) != 0)
-                return EXIT_FAILURE;
+                goto cleanup;
         } else if (strcmp(argv[i], "-y") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_TEXT: missing value for -y\n");
-                return EXIT_FAILURE;
+                goto cleanup;
             }
             if (parse_int(argv[i], "-y", &y) != 0)
-                return EXIT_FAILURE;
+                goto cleanup;
         } else if (strcmp(argv[i], "-text") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_TEXT: missing value for -text\n");
-                return EXIT_FAILURE;
+                goto cleanup;
             }
-            text = argv[i];
+
+            free(text);
+            text = NULL;
+            size_t text_len = 0;
+
+            for (; i < argc; ++i) {
+                int is_option = 0;
+                if (argv[i][0] == '-') {
+                    if (strcmp(argv[i], "-x") == 0 || strcmp(argv[i], "-y") == 0 ||
+                        strcmp(argv[i], "-color") == 0 || strcmp(argv[i], "-text") == 0) {
+                        is_option = 1;
+                    }
+                }
+
+                if (is_option && text_len > 0) {
+                    --i;
+                    break;
+                } else if (is_option) {
+                    is_option = 0;
+                }
+
+                size_t arg_len = strlen(argv[i]);
+                size_t new_len = text_len + arg_len + (text_len > 0 ? 1 : 0);
+                char *new_text = realloc(text, new_len + 1);
+                if (new_text == NULL) {
+                    fprintf(stderr, "_TEXT: memory allocation failed for -text\n");
+                    free(text);
+                    goto cleanup;
+                }
+
+                text = new_text;
+                if (text_len > 0) {
+                    text[text_len] = ' ';
+                    ++text_len;
+                }
+                memcpy(text + text_len, argv[i], arg_len);
+                text_len += arg_len;
+                text[text_len] = '\0';
+            }
+
+            if (text == NULL) {
+                fprintf(stderr, "_TEXT: missing value for -text\n");
+                goto cleanup;
+            }
         } else if (strcmp(argv[i], "-color") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_TEXT: missing value for -color\n");
-                return EXIT_FAILURE;
+                goto cleanup;
             }
             if (parse_int(argv[i], "-color", &color) != 0)
-                return EXIT_FAILURE;
+                goto cleanup;
         } else {
             fprintf(stderr, "_TEXT: unknown argument '%s'\n", argv[i]);
-            return EXIT_FAILURE;
+            goto cleanup;
         }
     }
 
     if (x < 0 || y < 0 || text == NULL) {
         fprintf(stderr, "Usage: _TEXT -x <col> -y <row> -text <string> [-color <0-255>]\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     clamp_color(&color);
@@ -91,5 +135,9 @@ int main(int argc, char *argv[]) {
     printf("\033[0m");
     fflush(stdout);
 
-    return EXIT_SUCCESS;
+    exit_code = EXIT_SUCCESS;
+
+cleanup:
+    free(text);
+    return exit_code;
 }

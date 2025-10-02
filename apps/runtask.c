@@ -200,6 +200,47 @@ static void free_value(Value *value) {
     value->float_val = 0.0;
 }
 
+static bool value_to_numeric(const Value *value, double *out_double, bool *is_integral) {
+    if (!value) {
+        return false;
+    }
+    if (value->type == VALUE_INT) {
+        if (out_double) {
+            *out_double = (double)value->int_val;
+        }
+        if (is_integral) {
+            *is_integral = true;
+        }
+        return true;
+    }
+    if (value->type == VALUE_FLOAT) {
+        if (out_double) {
+            *out_double = value->float_val;
+        }
+        if (is_integral) {
+            *is_integral = false;
+        }
+        return true;
+    }
+    if (value->type == VALUE_STRING && value->str_val) {
+        errno = 0;
+        char *endptr = NULL;
+        double dv = strtod(value->str_val, &endptr);
+        if (errno == 0 && endptr && *endptr == '\0') {
+            if (out_double) {
+                *out_double = dv;
+            }
+            if (is_integral) {
+                double int_part = 0.0;
+                double frac = modf(dv, &int_part);
+                *is_integral = fabs(frac) < 1e-9;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 static Value variable_to_value(const Variable *var) {
     Value v;
     memset(&v, 0, sizeof(v));
@@ -1131,8 +1172,101 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             cursor++;
-            Value value;
-            if (!parse_value_token(&cursor, &value, NULL, script[pc].source_line, debug)) {
+            Value first_value;
+            if (!parse_value_token(&cursor, &first_value, "+-*/%", script[pc].source_line, debug)) {
+                continue;
+            }
+            const char *after_first = cursor;
+            const char *peek = cursor;
+            while (isspace((unsigned char)*peek)) {
+                peek++;
+            }
+            bool is_expression = (*peek == '+' || *peek == '-' || *peek == '*' || *peek == '/' || *peek == '%');
+            Variable *var = find_variable(name, true);
+            if (!is_expression) {
+                cursor = after_first;
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+                if (*cursor != '\0' && debug) {
+                    fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].source_line);
+                }
+                if (var) {
+                    assign_variable(var, &first_value);
+                }
+                free_value(&first_value);
+                note_branch_progress(if_stack, &if_sp);
+                continue;
+            }
+
+            // Expression handling: collect operands and operators
+            cursor = after_first;
+            size_t operand_cap = 4;
+            size_t operand_count = 1;
+            Value *operands = (Value *)malloc(sizeof(Value) * operand_cap);
+            if (!operands) {
+                perror("malloc");
+                free_value(&first_value);
+                exit(EXIT_FAILURE);
+            }
+            operands[0] = first_value;
+            size_t operator_cap = 4;
+            size_t operator_count = 0;
+            char *operators = (char *)malloc(sizeof(char) * operator_cap);
+            if (!operators) {
+                perror("malloc");
+                free(operands);
+                free_value(&first_value);
+                exit(EXIT_FAILURE);
+            }
+            bool parse_error = false;
+            while (true) {
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+                char op = *cursor;
+                if (op != '+' && op != '-' && op != '*' && op != '/' && op != '%') {
+                    break;
+                }
+                cursor++;
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+                if (operator_count >= operator_cap) {
+                    operator_cap *= 2;
+                    char *tmp_ops = (char *)realloc(operators, sizeof(char) * operator_cap);
+                    if (!tmp_ops) {
+                        perror("realloc");
+                        parse_error = true;
+                        break;
+                    }
+                    operators = tmp_ops;
+                }
+                operators[operator_count++] = op;
+                Value next_value;
+                if (!parse_value_token(&cursor, &next_value, "+-*/%", script[pc].source_line, debug)) {
+                    parse_error = true;
+                    break;
+                }
+                if (operand_count >= operand_cap) {
+                    operand_cap *= 2;
+                    Value *tmp_vals = (Value *)realloc(operands, sizeof(Value) * operand_cap);
+                    if (!tmp_vals) {
+                        perror("realloc");
+                        free_value(&next_value);
+                        parse_error = true;
+                        break;
+                    }
+                    operands = tmp_vals;
+                }
+                operands[operand_count++] = next_value;
+            }
+            if (parse_error || operator_count + 1 != operand_count) {
+                for (size_t i = 0; i < operand_count; ++i) {
+                    free_value(&operands[i]);
+                }
+                free(operands);
+                free(operators);
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -1141,12 +1275,146 @@ int main(int argc, char *argv[]) {
             if (*cursor != '\0' && debug) {
                 fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].source_line);
             }
-            Variable *var = find_variable(name, true);
-            if (var) {
-                assign_variable(var, &value);
+
+            bool all_numeric = true;
+            double result_num = 0.0;
+            bool result_integral = true;
+            double temp_num = 0.0;
+            bool temp_integral = true;
+            if (!value_to_numeric(&operands[0], &temp_num, &temp_integral)) {
+                all_numeric = false;
+            } else {
+                result_num = temp_num;
+                result_integral = temp_integral;
             }
-            free_value(&value);
-            note_branch_progress(if_stack, &if_sp);
+            for (size_t i = 1; i < operand_count && all_numeric; ++i) {
+                double rhs_num = 0.0;
+                bool rhs_integral = true;
+                if (!value_to_numeric(&operands[i], &rhs_num, &rhs_integral)) {
+                    all_numeric = false;
+                    break;
+                }
+                char op = operators[i - 1];
+                if (op == '+') {
+                    result_num += rhs_num;
+                    result_integral = result_integral && rhs_integral;
+                } else if (op == '-') {
+                    result_num -= rhs_num;
+                    result_integral = result_integral && rhs_integral;
+                } else if (op == '*') {
+                    result_num *= rhs_num;
+                    result_integral = result_integral && rhs_integral;
+                } else if (op == '/') {
+                    if (fabs(rhs_num) < 1e-12) {
+                        if (debug) fprintf(stderr, "SET: division by zero at line %d\n", script[pc].source_line);
+                        all_numeric = false;
+                        break;
+                    }
+                    result_num /= rhs_num;
+                    result_integral = false;
+                } else if (op == '%') {
+                    if (!result_integral || !rhs_integral) {
+                        all_numeric = false;
+                        break;
+                    }
+                    long long lhs_ll = (long long)llround(result_num);
+                    long long rhs_ll = (long long)llround(rhs_num);
+                    if (rhs_ll == 0) {
+                        if (debug) fprintf(stderr, "SET: modulo by zero at line %d\n", script[pc].source_line);
+                        all_numeric = false;
+                        break;
+                    }
+                    result_num = (double)(lhs_ll % rhs_ll);
+                    result_integral = true;
+                }
+            }
+
+            bool assigned = false;
+            if (all_numeric) {
+                Value result_value;
+                memset(&result_value, 0, sizeof(result_value));
+                if (result_integral && fabs(result_num - llround(result_num)) < 1e-9) {
+                    long long iv = llround(result_num);
+                    result_value.type = VALUE_INT;
+                    result_value.int_val = iv;
+                    result_value.float_val = (double)iv;
+                } else {
+                    result_value.type = VALUE_FLOAT;
+                    result_value.float_val = result_num;
+                    result_value.int_val = (long long)llround(result_num);
+                }
+                if (var) {
+                    assign_variable(var, &result_value);
+                }
+                free_value(&result_value);
+                assigned = true;
+            } else {
+                bool only_plus = true;
+                for (size_t i = 0; i < operator_count; ++i) {
+                    if (operators[i] != '+') {
+                        only_plus = false;
+                        break;
+                    }
+                }
+                if (only_plus) {
+                    char **parts = (char **)malloc(sizeof(char *) * operand_count);
+                    if (!parts) {
+                        perror("malloc");
+                        for (size_t i = 0; i < operand_count; ++i) {
+                            free_value(&operands[i]);
+                        }
+                        free(operands);
+                        free(operators);
+                        exit(EXIT_FAILURE);
+                    }
+                    size_t total_len = 1;
+                    for (size_t i = 0; i < operand_count; ++i) {
+                        parts[i] = value_to_string(&operands[i]);
+                        total_len += strlen(parts[i]);
+                    }
+                    char *buf = (char *)malloc(total_len);
+                    if (!buf) {
+                        perror("malloc");
+                        for (size_t i = 0; i < operand_count; ++i) {
+                            free(parts[i]);
+                        }
+                        free(parts);
+                        for (size_t i = 0; i < operand_count; ++i) {
+                            free_value(&operands[i]);
+                        }
+                        free(operands);
+                        free(operators);
+                        exit(EXIT_FAILURE);
+                    }
+                    buf[0] = '\0';
+                    for (size_t i = 0; i < operand_count; ++i) {
+                        strcat(buf, parts[i]);
+                        free(parts[i]);
+                    }
+                    free(parts);
+                    Value result_value;
+                    memset(&result_value, 0, sizeof(result_value));
+                    result_value.type = VALUE_STRING;
+                    result_value.str_val = buf;
+                    result_value.owns_string = true;
+                    if (var) {
+                        assign_variable(var, &result_value);
+                    }
+                    free_value(&result_value);
+                    assigned = true;
+                } else {
+                    if (debug) fprintf(stderr, "SET: unsupported expression at line %d\n", script[pc].source_line);
+                }
+            }
+
+            for (size_t i = 0; i < operand_count; ++i) {
+                free_value(&operands[i]);
+            }
+            free(operands);
+            free(operators);
+            if (assigned) {
+                note_branch_progress(if_stack, &if_sp);
+            }
         }
         else if (command[0] == '$') {
             const char *cursor = command;

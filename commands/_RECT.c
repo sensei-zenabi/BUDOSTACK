@@ -30,6 +30,7 @@ int main(int argc, char *argv[]) {
     int width = -1;
     int height = -1;
     int color = 15; /* default bright white */
+    int fill = 0;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-x") == 0) {
@@ -67,6 +68,19 @@ int main(int argc, char *argv[]) {
             }
             if (parse_int(argv[i], "-color", &color) != 0)
                 return EXIT_FAILURE;
+        } else if (strcmp(argv[i], "-fill") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_RECT: missing value for -fill\n");
+                return EXIT_FAILURE;
+            }
+            if (strcmp(argv[i], "on") == 0) {
+                fill = 1;
+            } else if (strcmp(argv[i], "off") == 0) {
+                fill = 0;
+            } else {
+                fprintf(stderr, "_RECT: invalid value for -fill (expected 'on' or 'off'): '%s'\n", argv[i]);
+                return EXIT_FAILURE;
+            }
         } else {
             fprintf(stderr, "_RECT: unknown argument '%s'\n", argv[i]);
             return EXIT_FAILURE;
@@ -74,7 +88,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (x < 0 || y < 0 || width <= 0 || height <= 0) {
-        fprintf(stderr, "Usage: _RECT -x <col> -y <row> -width <pixels> -height <pixels> [-color <0-255>]\n");
+        fprintf(stderr, "Usage: _RECT -x <col> -y <row> -width <pixels> -height <pixels> [-color <0-255>] [-fill on|off]\n");
         return EXIT_FAILURE;
     }
 
@@ -120,9 +134,27 @@ int main(int argc, char *argv[]) {
             term_row = 1;
 
         printf("\033[%d;%dH", term_row, start_col);
-        printf("\033[38;5;%dm", color);
-        printf("%s", line);
-        printf("\033[0m");
+
+        if (fill || row == 0 || row == height - 1) {
+            printf("\033[38;5;%dm", color);
+            printf("%s", line);
+            printf("\033[0m");
+        } else {
+            printf("\033[38;5;%dm", color);
+            printf("%s", pixel);
+            printf("\033[0m");
+
+            if (width > 1) {
+                int interior = width - 2;
+                for (int col = 0; col < interior; ++col) {
+                    putchar(' ');
+                }
+
+                printf("\033[38;5;%dm", color);
+                printf("%s", pixel);
+                printf("\033[0m");
+            }
+        }
     }
 
     printf("\033[0m");

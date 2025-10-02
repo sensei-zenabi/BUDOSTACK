@@ -1,34 +1,36 @@
-00 CLEAR
-01 SET $VAR = "n"
-08 RUN _RECT -x 1 -y 1 -width 40 -height 3 -color 1
-09 RUN _TEXT -x 7 -y 2 -text TASK LANGUAGE DEMONSTRATION
-10 PRINT "\n\n\n"
-11 RUN _BAR -title Progress: -progress 0 -color 256
-21 PRINT "Do you want to exit?"
-22 PRINT " [y/n]: "
-23 INPUT $VAR
-24 IF $VAR == "y"
-25   GOTO 210
-26 ELSE
-27   PRINT "Great! Let's continue the demo!\n\n"
-30 WAIT 1000
-40 PRINT "This demo illustrates all task language capabilites.\n"
-50 WAIT 2500
-60 PRINT "Now I will list folder content...\n"
-70 WAIT 1000
-80 RUN list
-90 WAIT 1000
-100 PRINT "Here are the hardware specs...\n"
-110 WAIT 1000
-120 RUN stats
-130 CLEAR
-140 PRINT "Here is a demo of using external command _HELLO with RUN and storing the stdout:\n"
-150 WAIT 2500
-160 RUN _HELLO TO $VAR
-170 PRINT "\n>> stdout gave: " + $VAR + "\n\n"
-175 WAIT 5000
-176 RUN _BAR -title Progress: -progress 100 -color 256
-180 PRINT "\n...and now back to beginning with GOTO...\n"
-190 WAIT 2500
-200 GOTO 00
-210 PRINT "\nExiting demo...\n"
+@START
+CLEAR
+SET $VAR = "n"
+RUN _RECT -x 1 -y 1 -width 40 -height 3 -color 1
+RUN _TEXT -x 7 -y 2 -text TASK LANGUAGE DEMONSTRATION
+PRINT "\n\n\n"
+RUN _BAR -title Progress: -progress 0 -color 256
+PRINT "Do you want to exit?"
+PRINT " [y/n]: "
+INPUT $VAR
+IF $VAR == "y"
+  GOTO @END
+ELSE
+  PRINT "Great! Let's continue the demo!\n\n"
+WAIT 1000
+PRINT "This demo illustrates all task language capabilites.\n"
+WAIT 2500
+PRINT "Now I will list folder content...\n"
+WAIT 1000
+RUN list
+WAIT 1000
+PRINT "Here are the hardware specs...\n"
+WAIT 1000
+RUN stats
+CLEAR
+PRINT "Here is a demo of using external command _HELLO with RUN and storing the stdout:\n"
+WAIT 2500
+RUN _HELLO TO $VAR
+PRINT "\n>> stdout gave: " + $VAR + "\n\n"
+WAIT 5000
+RUN _BAR -title Progress: -progress 100 -color 256
+PRINT "\n...and now back to beginning with GOTO...\n"
+WAIT 2500
+GOTO @START
+@END
+PRINT "\nExiting demo...\n"

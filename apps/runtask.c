@@ -35,6 +35,7 @@
 #include <math.h>
 
 #define MAX_VARIABLES 128
+#define MAX_LABELS 256
 
 static char *xstrdup(const char *s);
 
@@ -609,7 +610,7 @@ static void print_help(void) {
     printf("  IF <lhs> op <rhs>  : Compare values. Use ELSE for an alternate branch.\n");
     printf("  PRINT expr         : Print literals and variables (use '+' to concatenate).\n");
     printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
-    printf("  GOTO line_number   : Jumps to the specified line number\n");
+    printf("  GOTO @label        : Jumps to the line marked with @label\n");
     printf("  RUN [BLOCKING|NONBLOCKING] <cmd [args...]>:\n");
     printf("                       Executes an executable from ./apps, ./commands, or ./utilities.\n");
     printf("                       Default is BLOCKING. If the command contains '/', it's executed as given.\n");
@@ -643,15 +644,78 @@ static void delay_ms(int ms) {
     }
 }
 
+typedef enum {
+    LINE_COMMAND = 0,
+    LINE_LABEL
+} LineType;
+
 typedef struct {
-    int number;
+    int source_line;   // original file line number for diagnostics
+    LineType type;
     char text[256];
 } ScriptLine;
 
-static int cmpScriptLine(const void *a, const void *b) {
-    const ScriptLine *A = (const ScriptLine *)a;
-    const ScriptLine *B = (const ScriptLine *)b;
-    return A->number - B->number;
+typedef struct {
+    char name[64];
+    int index;        // index into script array
+} Label;
+
+static void normalize_label_name(const char *input, char *output, size_t size) {
+    if (!input || !output || size == 0) {
+        return;
+    }
+    size_t i = 0;
+    for (; input[i] && i + 1 < size; ++i) {
+        output[i] = (char)toupper((unsigned char)input[i]);
+    }
+    output[i] = '\0';
+}
+
+static int find_label_index(const Label *labels, int label_count, const char *name) {
+    if (!labels || !name) {
+        return -1;
+    }
+    for (int i = 0; i < label_count; ++i) {
+        if (equals_ignore_case(labels[i].name, name)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static bool parse_label_definition(const char *line, char *out_name, size_t name_size) {
+    if (!line) {
+        return false;
+    }
+    const char *cursor = line;
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if (*cursor != '@') {
+        return false;
+    }
+    cursor++;
+    size_t len = 0;
+    while (*cursor && !isspace((unsigned char)*cursor) && *cursor != ':') {
+        if (len + 1 >= name_size) {
+            return false;
+        }
+        out_name[len++] = *cursor++;
+    }
+    if (len == 0) {
+        return false;
+    }
+    out_name[len] = '\0';
+    if (*cursor == ':') {
+        cursor++;
+    }
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if (*cursor != '\0') {
+        return false;
+    }
+    return true;
 }
 
 /* Portable strdup replacement to stay ISO C compliant under -std=c11 -pedantic */
@@ -809,25 +873,59 @@ int main(int argc, char *argv[]) {
 
     // Load script
     ScriptLine script[1024];
+    Label labels[MAX_LABELS];
+    memset(labels, 0, sizeof(labels));
+    int label_count = 0;
     int count = 0;
     char linebuf[256];
+    int file_line = 0;
     while (fgets(linebuf, sizeof(linebuf), fp)) {
+        file_line++;
         char *line = trim(linebuf);
-        if (!*line) continue;
-        int ln = 0, off = 0;
-        if (sscanf(line, "%d%n", &ln, &off) != 1) {
-            if (debug) fprintf(stderr, "Error: Missing/invalid line number: %s\n", line);
+        if (!*line) {
             continue;
         }
-        script[count].number = ln;
-        char *cmdpart = trim(line + off);
-        strncpy(script[count].text, cmdpart, sizeof(script[count].text) - 1);
+        if (count >= (int)(sizeof(script) / sizeof(script[0]))) {
+            fprintf(stderr, "Error: script too long (max %zu lines)\n", sizeof(script) / sizeof(script[0]));
+            break;
+        }
+
+        if (*line == '@') {
+            char label_name[64];
+            if (!parse_label_definition(line, label_name, sizeof(label_name))) {
+                fprintf(stderr, "Error: invalid label definition at line %d: %s\n", file_line, line);
+                continue;
+            }
+            script[count].source_line = file_line;
+            script[count].type = LINE_LABEL;
+            strncpy(script[count].text, line, sizeof(script[count].text) - 1);
+            script[count].text[sizeof(script[count].text) - 1] = '\0';
+
+            char normalized[64];
+            normalize_label_name(label_name, normalized, sizeof(normalized));
+            int existing = find_label_index(labels, label_count, normalized);
+            if (existing >= 0) {
+                labels[existing].index = count;
+            } else {
+                if (label_count >= MAX_LABELS) {
+                    fprintf(stderr, "Error: too many labels (max %d)\n", MAX_LABELS);
+                } else {
+                    snprintf(labels[label_count].name, sizeof(labels[label_count].name), "%s", normalized);
+                    labels[label_count].index = count;
+                    label_count++;
+                }
+            }
+            count++;
+            continue;
+        }
+
+        script[count].source_line = file_line;
+        script[count].type = LINE_COMMAND;
+        strncpy(script[count].text, line, sizeof(script[count].text) - 1);
         script[count].text[sizeof(script[count].text) - 1] = '\0';
         count++;
     }
     fclose(fp);
-
-    qsort(script, count, sizeof(ScriptLine), cmpScriptLine);
 
     IfContext if_stack[64];
     int if_sp = 0;
@@ -837,7 +935,17 @@ int main(int argc, char *argv[]) {
 
     // Run
     for (int pc = 0; pc < count && !stop; pc++) {
-        if (debug) fprintf(stderr, "Executing line %d: %s\n", script[pc].number, script[pc].text);
+        if (debug) {
+            if (script[pc].type == LINE_LABEL) {
+                fprintf(stderr, "Encountered label at line %d: %s\n", script[pc].source_line, script[pc].text);
+            } else {
+                fprintf(stderr, "Executing line %d: %s\n", script[pc].source_line, script[pc].text);
+            }
+        }
+
+        if (script[pc].type == LINE_LABEL) {
+            continue;
+        }
 
         if (skip_next_command) {
             skip_next_command = false;
@@ -869,7 +977,7 @@ int main(int argc, char *argv[]) {
         if (strncmp(command, "IF", 2) == 0 && (command[2] == '\0' || isspace((unsigned char)command[2]))) {
             const char *cursor = command + 2;
             Value lhs;
-            if (!parse_value_token(&cursor, &lhs, "<>!=", script[pc].number, debug)) {
+            if (!parse_value_token(&cursor, &lhs, "<>!=", script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -883,12 +991,12 @@ int main(int argc, char *argv[]) {
             else if (cursor[0] == '>') { op[0] = '>'; cursor += 1; }
             else if (cursor[0] == '<') { op[0] = '<'; cursor += 1; }
             else {
-                if (debug) fprintf(stderr, "IF: invalid or missing operator at %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "IF: invalid or missing operator at %d\n", script[pc].source_line);
                 free_value(&lhs);
                 continue;
             }
             Value rhs;
-            if (!parse_value_token(&cursor, &rhs, NULL, script[pc].number, debug)) {
+            if (!parse_value_token(&cursor, &rhs, NULL, script[pc].source_line, debug)) {
                 free_value(&lhs);
                 continue;
             }
@@ -896,19 +1004,19 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             if (*cursor != '\0' && debug) {
-                fprintf(stderr, "IF: unexpected characters at %d\n", script[pc].number);
+                fprintf(stderr, "IF: unexpected characters at %d\n", script[pc].source_line);
             }
             bool cond_result = false;
-            if (!evaluate_comparison(&lhs, &rhs, op, &cond_result, script[pc].number, debug)) {
+            if (!evaluate_comparison(&lhs, &rhs, op, &cond_result, script[pc].source_line, debug)) {
                 cond_result = false;
             }
             free_value(&lhs);
             free_value(&rhs);
             if (if_sp >= (int)(sizeof(if_stack) / sizeof(if_stack[0]))) {
-                if (debug) fprintf(stderr, "IF: nesting limit reached at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "IF: nesting limit reached at line %d\n", script[pc].source_line);
                 continue;
             }
-            IfContext ctx = { .result = cond_result, .true_branch_done = false, .else_encountered = false, .else_branch_done = false, .line_number = script[pc].number };
+            IfContext ctx = { .result = cond_result, .true_branch_done = false, .else_encountered = false, .else_branch_done = false, .line_number = script[pc].source_line };
             if_stack[if_sp++] = ctx;
             if (!cond_result) {
                 skip_next_command = true;
@@ -918,7 +1026,7 @@ int main(int argc, char *argv[]) {
         }
         else if (strncmp(command, "ELSE", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {
             if (if_sp <= 0) {
-                if (debug) fprintf(stderr, "ELSE without matching IF at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "ELSE without matching IF at line %d\n", script[pc].source_line);
                 continue;
             }
             const char *cursor = command + 4;
@@ -926,7 +1034,7 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             if (*cursor != '\0' && debug) {
-                fprintf(stderr, "ELSE: unexpected characters at %d\n", script[pc].number);
+                fprintf(stderr, "ELSE: unexpected characters at %d\n", script[pc].source_line);
             }
             IfContext *ctx = &if_stack[if_sp - 1];
             if (ctx->else_encountered) {
@@ -945,13 +1053,13 @@ int main(int argc, char *argv[]) {
             char *var_token = NULL;
             bool quoted = false;
             if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
-                if (debug) fprintf(stderr, "INPUT: expected variable at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "INPUT: expected variable at line %d\n", script[pc].source_line);
                 free(var_token);
                 continue;
             }
             char name[64];
             if (!parse_variable_name_token(var_token, name, sizeof(name))) {
-                if (debug) fprintf(stderr, "INPUT: invalid variable name at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "INPUT: invalid variable name at line %d\n", script[pc].source_line);
                 free(var_token);
                 continue;
             }
@@ -960,7 +1068,7 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             if (*cursor != '\0' && debug) {
-                fprintf(stderr, "INPUT: unexpected characters at %d\n", script[pc].number);
+                fprintf(stderr, "INPUT: unexpected characters at %d\n", script[pc].source_line);
             }
             Variable *var = find_variable(name, true);
             if (!var) {
@@ -969,7 +1077,7 @@ int main(int argc, char *argv[]) {
             fflush(stdout);
             char buffer[512];
             if (!fgets(buffer, sizeof(buffer), stdin)) {
-                if (debug) fprintf(stderr, "INPUT: failed to read input at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "INPUT: failed to read input at line %d\n", script[pc].source_line);
                 Value empty = { .type = VALUE_STRING, .str_val = xstrdup(""), .owns_string = true };
                 assign_variable(var, &empty);
                 free_value(&empty);
@@ -1004,13 +1112,13 @@ int main(int argc, char *argv[]) {
             char *var_token = NULL;
             bool quoted = false;
             if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
-                if (debug) fprintf(stderr, "SET: expected variable at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "SET: expected variable at line %d\n", script[pc].source_line);
                 free(var_token);
                 continue;
             }
             char name[64];
             if (!parse_variable_name_token(var_token, name, sizeof(name))) {
-                if (debug) fprintf(stderr, "SET: invalid variable name at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "SET: invalid variable name at line %d\n", script[pc].source_line);
                 free(var_token);
                 continue;
             }
@@ -1019,19 +1127,19 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             if (*cursor != '=') {
-                if (debug) fprintf(stderr, "SET: expected '=' at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "SET: expected '=' at line %d\n", script[pc].source_line);
                 continue;
             }
             cursor++;
             Value value;
-            if (!parse_value_token(&cursor, &value, NULL, script[pc].number, debug)) {
+            if (!parse_value_token(&cursor, &value, NULL, script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
                 cursor++;
             }
             if (*cursor != '\0' && debug) {
-                fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].number);
+                fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].source_line);
             }
             Variable *var = find_variable(name, true);
             if (var) {
@@ -1045,13 +1153,13 @@ int main(int argc, char *argv[]) {
             char *var_token = NULL;
             bool quoted = false;
             if (!parse_token(&cursor, &var_token, &quoted, "=") || quoted) {
-                if (debug) fprintf(stderr, "Assignment: expected variable at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "Assignment: expected variable at line %d\n", script[pc].source_line);
                 free(var_token);
                 continue;
             }
             char name[64];
             if (!parse_variable_name_token(var_token, name, sizeof(name))) {
-                if (debug) fprintf(stderr, "Assignment: invalid variable name at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "Assignment: invalid variable name at line %d\n", script[pc].source_line);
                 free(var_token);
                 continue;
             }
@@ -1060,19 +1168,19 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             if (*cursor != '=') {
-                if (debug) fprintf(stderr, "Assignment: expected '=' at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "Assignment: expected '=' at line %d\n", script[pc].source_line);
                 continue;
             }
             cursor++;
             Value value;
-            if (!parse_value_token(&cursor, &value, NULL, script[pc].number, debug)) {
+            if (!parse_value_token(&cursor, &value, NULL, script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
                 cursor++;
             }
             if (*cursor != '\0' && debug) {
-                fprintf(stderr, "Assignment: unexpected characters at %d\n", script[pc].number);
+                fprintf(stderr, "Assignment: unexpected characters at %d\n", script[pc].source_line);
             }
             Variable *var = find_variable(name, true);
             if (var) {
@@ -1093,7 +1201,7 @@ int main(int argc, char *argv[]) {
             bool ok = true;
             while (1) {
                 Value term;
-                if (!parse_value_token(&cursor, &term, "+", script[pc].number, debug)) {
+                if (!parse_value_token(&cursor, &term, "+", script[pc].source_line, debug)) {
                     ok = false;
                     break;
                 }
@@ -1132,7 +1240,7 @@ int main(int argc, char *argv[]) {
             if (*cursor != '\0') {
                 ok = false;
                 if (debug) {
-                    fprintf(stderr, "PRINT: unexpected characters at %d\n", script[pc].number);
+                    fprintf(stderr, "PRINT: unexpected characters at %d\n", script[pc].source_line);
                 }
             }
 		    if (ok) {
@@ -1153,22 +1261,68 @@ int main(int argc, char *argv[]) {
             if (sscanf(command, "WAIT %d", &ms) == 1) {
                 delay_ms(ms);
             } else if (debug) {
-                fprintf(stderr, "WAIT: invalid format at %d: %s\n", script[pc].number, command);
+                fprintf(stderr, "WAIT: invalid format at %d: %s\n", script[pc].source_line, command);
             }
             note_branch_progress(if_stack, &if_sp);
         }
-        else if (strncmp(command, "GOTO", 4) == 0) {
-            int target;
-            if (sscanf(command, "GOTO %d", &target) == 1) {
-                int found = -1;
-                for (int i = 0; i < count; i++) if (script[i].number == target) { found = i; break; }
-                if (found == -1) {
-                    if (debug) fprintf(stderr, "GOTO: target %d not found at %d\n", target, script[pc].number);
-                } else {
-                    pc = found - 1; // -1 because loop will ++pc
+        else if (strncmp(command, "GOTO", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {
+            const char *cursor = command + 4;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '@') {
+                if (debug) {
+                    fprintf(stderr, "GOTO: expected '@label' at %d: %s\n", script[pc].source_line, command);
                 }
-            } else if (debug) {
-                fprintf(stderr, "GOTO: invalid format at %d: %s\n", script[pc].number, command);
+                note_branch_progress(if_stack, &if_sp);
+                continue;
+            }
+            cursor++;
+            char label_token[64];
+            size_t len = 0;
+            bool too_long = false;
+            while (*cursor && !isspace((unsigned char)*cursor) && *cursor != ':') {
+                if (len + 1 >= sizeof(label_token)) {
+                    too_long = true;
+                    cursor++;
+                    continue;
+                }
+                label_token[len++] = *cursor++;
+            }
+            label_token[len] = '\0';
+            if (len == 0) {
+                if (debug) {
+                    fprintf(stderr, "GOTO: empty label at %d\n", script[pc].source_line);
+                }
+                note_branch_progress(if_stack, &if_sp);
+                continue;
+            }
+            if (too_long) {
+                if (debug) {
+                    fprintf(stderr, "GOTO: label too long at %d\n", script[pc].source_line);
+                }
+                note_branch_progress(if_stack, &if_sp);
+                continue;
+            }
+            if (*cursor == ':') {
+                cursor++;
+            }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "GOTO: unexpected characters at %d\n", script[pc].source_line);
+            }
+            char normalized[64];
+            normalize_label_name(label_token, normalized, sizeof(normalized));
+            int label_index = find_label_index(labels, label_count, normalized);
+            if (label_index < 0) {
+                if (debug) {
+                    fprintf(stderr, "GOTO: label '%s' not found at %d\n", label_token, script[pc].source_line);
+                }
+            } else {
+                int target_index = labels[label_index].index;
+                pc = target_index - 1; // -1 because loop will ++pc
             }
             note_branch_progress(if_stack, &if_sp);
         }
@@ -1176,7 +1330,7 @@ int main(int argc, char *argv[]) {
             const char *after = command + 3;
             char *cmdline = trim((char*)after);
             if (!*cmdline) {
-                if (debug) fprintf(stderr, "RUN: missing command at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "RUN: missing command at line %d\n", script[pc].source_line);
                 continue;
             }
 
@@ -1184,7 +1338,7 @@ int main(int argc, char *argv[]) {
             int argcnt = 0;
             char **argv_heap = split_args_heap(cmdline, &argcnt);
             if (argcnt <= 0) {
-                if (debug) fprintf(stderr, "RUN: failed to parse command at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "RUN: failed to parse command at line %d\n", script[pc].source_line);
                 free_argv(argv_heap);
                 continue;
             }
@@ -1218,7 +1372,7 @@ int main(int argc, char *argv[]) {
             }
 
             if (argcnt <= 0) {
-                if (debug) fprintf(stderr, "RUN: missing executable at line %d\n", script[pc].number);
+                if (debug) fprintf(stderr, "RUN: missing executable at line %d\n", script[pc].source_line);
                 free_argv(argv_heap);
                 continue;
             }
@@ -1226,7 +1380,7 @@ int main(int argc, char *argv[]) {
             if (argcnt >= 3 && equals_ignore_case(argv_heap[argcnt - 2], "TO")) {
                 char name[64];
                 if (!parse_variable_name_token(argv_heap[argcnt - 1], name, sizeof(name))) {
-                    fprintf(stderr, "RUN: invalid variable name after TO at line %d\n", script[pc].number);
+                    fprintf(stderr, "RUN: invalid variable name after TO at line %d\n", script[pc].source_line);
                     free_argv(argv_heap);
                     continue;
                 }
@@ -1243,7 +1397,7 @@ int main(int argc, char *argv[]) {
                 argcnt -= 2;
                 argv_heap[argcnt] = NULL;
                 if (argcnt <= 0) {
-                    fprintf(stderr, "RUN: missing executable before TO at line %d\n", script[pc].number);
+                    fprintf(stderr, "RUN: missing executable before TO at line %d\n", script[pc].source_line);
                     free_argv(argv_heap);
                     continue;
                 }
@@ -1269,7 +1423,7 @@ int main(int argc, char *argv[]) {
             }
 
             if (!blocking_mode && capture_output) {
-                fprintf(stderr, "RUN: cannot capture output in non-blocking mode at line %d\n", script[pc].number);
+                fprintf(stderr, "RUN: cannot capture output in non-blocking mode at line %d\n", script[pc].source_line);
                 free_argv(argv_heap);
                 if (captured_output) {
                     free(captured_output);
@@ -1438,10 +1592,11 @@ int main(int argc, char *argv[]) {
             note_branch_progress(if_stack, &if_sp);
         }
         else {
-            if (debug) fprintf(stderr, "Unrecognized command at %d: %s\n", script[pc].number, command);
+            if (debug) fprintf(stderr, "Unrecognized command at %d: %s\n", script[pc].source_line, command);
         }
     }
 
     cleanup_variables();
     return 0;
 }
+

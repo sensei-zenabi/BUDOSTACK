@@ -1,6 +1,8 @@
 00 CLEAR
 01 SET $VAR = "n"
-10 PRINT "--- TASK LANGUAGE DEMONSTRATION ---\n\n"
+08 RUN _RECT -x 1 -y 1 -width 40 -height 3 -color 1
+09 RUN _TEXT -x 7 -y 2 -text TASK LANGUAGE DEMONSTRATION
+10 PRINT "\n\n\n"
 11 RUN _BAR -title Progress: -progress 0 -color 256
 21 PRINT "Do you want to exit?"
 22 PRINT " [y/n]: "

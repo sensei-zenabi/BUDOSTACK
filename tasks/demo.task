@@ -1,11 +1,28 @@
+# Author: Ville Suoranta
+# Title: TASK LANGUAGE DEMONSTRATION
+# Description:
+#   TASK programming language is a very primitive framework of commands
+#   that has taken it's inspiration from languages like BASIC. The aim
+#   was to re-create the joy of simple proramming and easy automation
+#   without the need to learn modern software engineering jargon.
+
 @START
 RUN cls
+
+# Initialize variables
 SET $VAR1 = "n"
 SET $VAR2 = 0
+
+# Display the start menu
+@MENUSCREEN
 RUN _RECT -x 1 -y 1 -width 40 -height 3 -color 1
 RUN _TEXT -x 7 -y 2 -text TASK LANGUAGE DEMONSTRATION
 PRINT "\n\n\n"
-RUN _BAR -title Progress: -progress 0 -color 256
+RUN _BAR -title Loading: -progress $VAR2 -color 256
+IF $VAR2 < 100
+  SET $VAR2 = $VAR2 + 10
+  RUN _WAIT 500
+  GOTO @MENUSCREEN
 PRINT "Do you want to exit?"
 PRINT " [y/n]: "
 INPUT $VAR1
@@ -14,25 +31,38 @@ IF $VAR1 == "y"
 ELSE
   PRINT "Great! Let's continue the demo!\n\n"
 WAIT 1000
+
+# Demo 1
 RUN cls
 PRINT "\nNow I will list folder content...\n"
 WAIT 1000
 RUN list
 WAIT 2500
 RUN cls
+
+# Demo 2
 PRINT "\nHere are the hardware stats...\n"
 WAIT 2000
 RUN stats
 RUN cls
+
+# Demo 3
 PRINT "\nHere is a demo of using external command _HELLO with RUN and storing the stdout:\n"
 WAIT 2500
 RUN _HELLO TO $VAR1
 PRINT "\n>> stdout gave: " + $VAR1 + "\n\n"
 WAIT 5000
+RUN cls
+
+# Demo 4
 RUN _BAR -title Progress: -progress 100 -color 256
 PRINT "\nPress SPACE to start the demo again with GOTO...\n"
 RUN _KEYS TO $VAR2
 IF $VAR2 == 4
   GOTO @START
+
+# Exit
 @END
 PRINT "\nExiting demo...\n"
+
+

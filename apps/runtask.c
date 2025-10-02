@@ -800,6 +800,33 @@ static void free_argv(char **argv) {
     free(argv);
 }
 
+static void expand_argv_variables(char **argv, int argc, int line, int debug) {
+    if (!argv) {
+        return;
+    }
+    for (int i = 0; i < argc; ++i) {
+        char *token = argv[i];
+        if (!token || token[0] != '$') {
+            continue;
+        }
+        char name[64];
+        if (!parse_variable_name_token(token, name, sizeof(name))) {
+            if (debug) {
+                fprintf(stderr, "RUN: invalid variable reference '%s' at line %d\n", token, line);
+            }
+            continue;
+        }
+        Variable *var = find_variable(name, false);
+        Value value = variable_to_value(var);
+        char *replacement = value_to_string(&value);
+        if (!replacement) {
+            replacement = xstrdup("");
+        }
+        free(argv[i]);
+        argv[i] = replacement;
+    }
+}
+
 /* Resolve executable path:
    - If argv0 contains '/', use as-is.
    - Else try "apps/argv0", then "commands/argv0", then "utilities/argv0".
@@ -1403,6 +1430,8 @@ int main(int argc, char *argv[]) {
                 }
             }
 
+            expand_argv_variables(argv_heap, argcnt, script[pc].source_line, debug);
+
             // Resolve executable path
             char resolved[PATH_MAX];
             if (resolve_exec_path(argv_heap[0], resolved, sizeof(resolved)) != 0) {
@@ -1599,4 +1628,5 @@ int main(int argc, char *argv[]) {
     cleanup_variables();
     return 0;
 }
+
 

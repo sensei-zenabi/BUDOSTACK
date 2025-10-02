@@ -584,7 +584,7 @@ static bool value_add_inplace(Value *acc, const Value *term) {
     return true;
 }
 
-static bool parse_expression(const char **cursor, Value *out, int line, int debug) {
+static bool parse_expression(const char **cursor, Value *out, const char *terminators, int line, int debug) {
     if (!cursor || !out) {
         return false;
     }
@@ -593,9 +593,22 @@ static bool parse_expression(const char **cursor, Value *out, int line, int debu
     memset(&accumulator, 0, sizeof(accumulator));
     bool have_term = false;
 
+    const char *delims = "+";
+    char delim_buf[32];
+    if (terminators && *terminators) {
+        size_t term_len = strlen(terminators);
+        if (term_len > sizeof(delim_buf) - 2) {
+            term_len = sizeof(delim_buf) - 2;
+        }
+        delim_buf[0] = '+';
+        memcpy(&delim_buf[1], terminators, term_len);
+        delim_buf[term_len + 1] = '\0';
+        delims = delim_buf;
+    }
+
     while (1) {
         Value term;
-        if (!parse_value_token(cursor, &term, "+", line, debug)) {
+        if (!parse_value_token(cursor, &term, delims, line, debug)) {
             free_value(&accumulator);
             return false;
         }
@@ -728,6 +741,22 @@ static void note_branch_progress(IfContext *stack, int *sp) {
     }
 }
 
+static void finalize_skipped_branch(IfContext *stack, int *sp, int context_index, bool skipping_true_branch) {
+    if (!stack || !sp || *sp <= 0) {
+        return;
+    }
+    if (context_index < 0 || context_index != *sp - 1) {
+        return;
+    }
+    IfContext *ctx = &stack[*sp - 1];
+    if (skipping_true_branch) {
+        ctx->true_branch_done = true;
+    } else {
+        ctx->else_branch_done = true;
+        (*sp)--;
+    }
+}
+
 static void print_help(void) {
     printf("\nRuntask Help\n");
     printf("============\n\n");
@@ -779,6 +808,7 @@ typedef enum {
 typedef struct {
     int source_line;   // original file line number for diagnostics
     LineType type;
+    int indent;        // leading whitespace count for block handling
     char text[256];
 } ScriptLine;
 
@@ -1036,6 +1066,10 @@ int main(int argc, char *argv[]) {
     while (fgets(linebuf, sizeof(linebuf), fp)) {
         file_line++;
         char *line = trim(linebuf);
+        int indent = (int)(line - linebuf);
+        if (indent < 0) {
+            indent = 0;
+        }
         if (!*line) {
             continue;
         }
@@ -1052,6 +1086,7 @@ int main(int argc, char *argv[]) {
             }
             script[count].source_line = file_line;
             script[count].type = LINE_LABEL;
+            script[count].indent = indent;
             strncpy(script[count].text, line, sizeof(script[count].text) - 1);
             script[count].text[sizeof(script[count].text) - 1] = '\0';
 
@@ -1075,6 +1110,7 @@ int main(int argc, char *argv[]) {
 
         script[count].source_line = file_line;
         script[count].type = LINE_COMMAND;
+        script[count].indent = indent;
         strncpy(script[count].text, line, sizeof(script[count].text) - 1);
         script[count].text[sizeof(script[count].text) - 1] = '\0';
         count++;
@@ -1083,9 +1119,12 @@ int main(int argc, char *argv[]) {
 
     IfContext if_stack[64];
     int if_sp = 0;
-    bool skip_next_command = false;
+    bool skipping_block = false;
+    int skip_indent = 0;
     int skip_context_index = -1;
     bool skip_for_true_branch = false;
+    bool skip_progress_pending = false;
+    bool skip_consumed_first = false;
 
     // Run
     for (int pc = 0; pc < count && !stop; pc++) {
@@ -1097,27 +1136,52 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        char *command = script[pc].text;
+
+        if (skipping_block) {
+            int current_indent = script[pc].indent;
+            if (script[pc].type == LINE_LABEL) {
+                if (current_indent > skip_indent) {
+                    continue;
+                }
+                if (skip_progress_pending) {
+                    finalize_skipped_branch(if_stack, &if_sp, skip_context_index, skip_for_true_branch);
+                    skip_progress_pending = false;
+                }
+                skipping_block = false;
+                skip_context_index = -1;
+                skip_for_true_branch = false;
+                skip_consumed_first = false;
+            } else if (command && current_indent <= skip_indent &&
+                       strncmp(command, "ELSE", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {
+                if (skip_progress_pending) {
+                    finalize_skipped_branch(if_stack, &if_sp, skip_context_index, skip_for_true_branch);
+                    skip_progress_pending = false;
+                }
+                skipping_block = false;
+                skip_context_index = -1;
+                skip_for_true_branch = false;
+                skip_consumed_first = false;
+            } else if (!skip_consumed_first) {
+                skip_consumed_first = true;
+                continue;
+            } else if (current_indent > skip_indent) {
+                continue;
+            } else {
+                if (skip_progress_pending) {
+                    finalize_skipped_branch(if_stack, &if_sp, skip_context_index, skip_for_true_branch);
+                    skip_progress_pending = false;
+                }
+                skipping_block = false;
+                skip_context_index = -1;
+                skip_for_true_branch = false;
+                skip_consumed_first = false;
+            }
+        }
+
         if (script[pc].type == LINE_LABEL) {
             continue;
         }
-
-        if (skip_next_command) {
-            skip_next_command = false;
-            if (skip_context_index == if_sp - 1 && if_sp > 0) {
-                IfContext *ctx = &if_stack[if_sp - 1];
-                if (skip_for_true_branch) {
-                    ctx->true_branch_done = true;
-                } else {
-                    ctx->else_branch_done = true;
-                    if_sp--;
-                }
-            }
-            skip_context_index = -1;
-            skip_for_true_branch = false;
-            continue;
-        }
-
-        char *command = script[pc].text;
 
         if (if_sp > 0) {
             IfContext *ctx = &if_stack[if_sp - 1];
@@ -1131,7 +1195,7 @@ int main(int argc, char *argv[]) {
         if (strncmp(command, "IF", 2) == 0 && (command[2] == '\0' || isspace((unsigned char)command[2]))) {
             const char *cursor = command + 2;
             Value lhs;
-            if (!parse_value_token(&cursor, &lhs, "<>!=", script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &lhs, "<>!=", script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -1150,7 +1214,7 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             Value rhs;
-            if (!parse_value_token(&cursor, &rhs, NULL, script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &rhs, NULL, script[pc].source_line, debug)) {
                 free_value(&lhs);
                 continue;
             }
@@ -1173,9 +1237,12 @@ int main(int argc, char *argv[]) {
             IfContext ctx = { .result = cond_result, .true_branch_done = false, .else_encountered = false, .else_branch_done = false, .line_number = script[pc].source_line };
             if_stack[if_sp++] = ctx;
             if (!cond_result) {
-                skip_next_command = true;
+                skipping_block = true;
+                skip_indent = script[pc].indent;
                 skip_context_index = if_sp - 1;
                 skip_for_true_branch = true;
+                skip_progress_pending = true;
+                skip_consumed_first = false;
             }
         }
         else if (strncmp(command, "ELSE", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {
@@ -1197,9 +1264,12 @@ int main(int argc, char *argv[]) {
             }
             ctx->else_encountered = true;
             if (ctx->result) {
-                skip_next_command = true;
+                skipping_block = true;
+                skip_indent = script[pc].indent;
                 skip_context_index = if_sp - 1;
                 skip_for_true_branch = false;
+                skip_progress_pending = true;
+                skip_consumed_first = false;
             }
         }
         else if (strncmp(command, "INPUT", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {
@@ -1289,7 +1359,7 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             Value value;
-            if (!parse_expression(&cursor, &value, script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &value, NULL, script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -1333,7 +1403,7 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             Value value;
-            if (!parse_expression(&cursor, &value, script[pc].source_line, debug)) {
+            if (!parse_expression(&cursor, &value, NULL, script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -1756,6 +1826,13 @@ int main(int argc, char *argv[]) {
         else {
             if (debug) fprintf(stderr, "Unrecognized command at %d: %s\n", script[pc].source_line, command);
         }
+    }
+
+    if (skipping_block && skip_progress_pending) {
+        finalize_skipped_branch(if_stack, &if_sp, skip_context_index, skip_for_true_branch);
+        skip_context_index = -1;
+        skip_progress_pending = false;
+        skip_consumed_first = false;
     }
 
     cleanup_variables();

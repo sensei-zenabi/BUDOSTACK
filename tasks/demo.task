@@ -1,6 +1,7 @@
 00 CLEAR
 01 SET $VAR = "n"
 10 PRINT "--- TASK LANGUAGE DEMONSTRATION ---\n\n"
+11 RUN _BAR -title Progress: -progress 0 -color 256
 21 PRINT "Do you want to exit?"
 22 PRINT " [y/n]: "
 23 INPUT $VAR
@@ -22,8 +23,9 @@
 140 PRINT "Here is a demo of using external command _HELLO with RUN and storing the stdout:\n"
 150 WAIT 2500
 160 RUN _HELLO TO $VAR
-170 PRINT "\n>> stdout gave: " + $VAR + "\n"
+170 PRINT "\n>> stdout gave: " + $VAR + "\n\n"
 175 WAIT 5000
+176 RUN _BAR -title Progress: -progress 100 -color 256
 180 PRINT "\n...and now back to beginning with GOTO...\n"
 190 WAIT 2500
 200 GOTO 00

@@ -499,6 +499,98 @@ static char *value_to_string(const Value *value) {
     return xstrdup("");
 }
 
+static void append_to_buffer(char **buf, size_t *len, size_t *cap, const char *data, size_t data_len) {
+    if (!buf || !len || !cap || !data) {
+        return;
+    }
+    size_t required = *len + data_len + 1;
+    if (required > *cap) {
+        size_t new_cap = (*cap == 0) ? required : *cap;
+        while (new_cap < required) {
+            new_cap *= 2;
+        }
+        char *tmp = (char *)realloc(*buf, new_cap);
+        if (!tmp) {
+            perror("realloc");
+            free(*buf);
+            exit(EXIT_FAILURE);
+        }
+        *buf = tmp;
+        *cap = new_cap;
+    }
+    memcpy(*buf + *len, data, data_len);
+    *len += data_len;
+    (*buf)[*len] = '\0';
+}
+
+static void append_char_to_buffer(char **buf, size_t *len, size_t *cap, char ch) {
+    append_to_buffer(buf, len, cap, &ch, 1);
+}
+
+static char *expand_variables_in_token(const char *token) {
+    if (!token) {
+        return xstrdup("");
+    }
+
+    size_t cap = strlen(token) + 1;
+    if (cap == 0) {
+        cap = 1;
+    }
+    char *out = (char *)malloc(cap);
+    if (!out) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    size_t len = 0;
+    out[0] = '\0';
+
+    for (size_t i = 0; token[i];) {
+        if (token[i] == '$') {
+            size_t next = i + 1;
+            if (isalnum((unsigned char)token[next]) || token[next] == '_') {
+                char name[64];
+                size_t name_len = 0;
+                bool too_long = false;
+                while (isalnum((unsigned char)token[next]) || token[next] == '_') {
+                    if (name_len + 1 >= sizeof(name)) {
+                        too_long = true;
+                    } else if (!too_long) {
+                        name[name_len++] = token[next];
+                    }
+                    next++;
+                }
+                if (!too_long && name_len > 0) {
+                    name[name_len] = '\0';
+                    Variable *var = find_variable(name, false);
+                    Value val;
+                    memset(&val, 0, sizeof(val));
+                    if (var) {
+                        val = variable_to_value(var);
+                        if (val.type == VALUE_UNSET) {
+                            val.type = VALUE_INT;
+                            val.int_val = 0;
+                            val.float_val = 0.0;
+                        }
+                    } else {
+                        val.type = VALUE_INT;
+                        val.int_val = 0;
+                        val.float_val = 0.0;
+                    }
+                    char *replacement = value_to_string(&val);
+                    append_to_buffer(&out, &len, &cap, replacement, strlen(replacement));
+                    free(replacement);
+                    i = next;
+                    continue;
+                }
+            }
+        }
+        append_char_to_buffer(&out, &len, &cap, token[i]);
+        i++;
+    }
+
+    return out;
+}
+
 static bool evaluate_comparison(const Value *lhs, const Value *rhs, const char *op, bool *out_result, int line, int debug) {
     if (!lhs || !rhs || !op || !out_result) {
         return false;
@@ -1401,6 +1493,12 @@ int main(int argc, char *argv[]) {
                     free_argv(argv_heap);
                     continue;
                 }
+            }
+
+            for (int i = 0; i < argcnt; ++i) {
+                char *expanded = expand_variables_in_token(argv_heap[i]);
+                free(argv_heap[i]);
+                argv_heap[i] = expanded;
             }
 
             // Resolve executable path

@@ -73,8 +73,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    if (x < 0 || y < 0 || progress < 0 || title == NULL) {
-        fprintf(stderr, "Usage: _BAR -x <col> -y <row> -title <text> -progress <0-100> [-color <0-255>]\n");
+    if (progress < 0 || title == NULL) {
+        fprintf(stderr, "Usage: _BAR [-x <col> -y <row>] -title <text> -progress <0-100> [-color <0-255>]\n");
+        return EXIT_FAILURE;
+    }
+
+    if ((x >= 0) != (y >= 0)) {
+        fprintf(stderr, "_BAR: both -x and -y must be provided together\n");
         return EXIT_FAILURE;
     }
 
@@ -106,15 +111,17 @@ int main(int argc, char *argv[]) {
     }
     *ptr = '\0';
 
-    int row = y + 1;
-    int col = x + 1;
+    if (x >= 0 && y >= 0) {
+        int row = y + 1;
+        int col = x + 1;
 
-    if (row < 1)
-        row = 1;
-    if (col < 1)
-        col = 1;
+        if (row < 1)
+            row = 1;
+        if (col < 1)
+            col = 1;
 
-    printf("\033[%d;%dH", row, col);
+        printf("\033[%d;%dH", row, col);
+    }
     printf("\033[38;5;%dm", color);
     printf("%s %s %d%%", title, bar, progress);
     printf("\033[0m\n");

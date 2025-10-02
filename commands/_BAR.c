@@ -4,6 +4,8 @@
 #include <errno.h>
 #include <limits.h>
 
+// Code
+
 #define BAR_WIDTH 10
 
 static int parse_int(const char *value, const char *name, int *out) {

@@ -390,6 +390,74 @@ static void set_color_ansi(uint8_t idx){
 #endif
 }
 
+#if USE_ANSI_COLOR
+static void set_bg_color_ansi(uint8_t idx){
+    if (idx == EMPTY) {
+        write(STDOUT_FILENO, "\x1b[49m", 5);
+        return;
+    }
+    char seq[32];
+    int n = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", palette[idx].term256);
+    write(STDOUT_FILENO, seq, n);
+}
+
+static void reset_ansi_colors(void){
+    write(STDOUT_FILENO, "\x1b[39m", 5);
+    write(STDOUT_FILENO, "\x1b[49m", 5);
+}
+#else
+static void set_bg_color_ansi(uint8_t idx){ (void)idx; }
+static void reset_ansi_colors(void){}
+#endif
+
+static void draw_cell(uint8_t idx, int highlight){
+    char ch;
+    if (idx == EMPTY) {
+        ch = '.';
+        set_bg_color_ansi(EMPTY);
+#if USE_ANSI_COLOR
+        write(STDOUT_FILENO, "\x1b[39m", 5);
+#endif
+    } else if (idx < 26) {
+#if USE_ANSI_COLOR
+        ch = ' ';
+#else
+        ch = palette[idx].letter;
+#endif
+        set_bg_color_ansi(idx);
+#if USE_ANSI_COLOR
+        write(STDOUT_FILENO, "\x1b[39m", 5);
+#endif
+    } else {
+        ch = '?';
+        set_bg_color_ansi(EMPTY);
+#if USE_ANSI_COLOR
+        write(STDOUT_FILENO, "\x1b[39m", 5);
+#endif
+    }
+
+#if USE_ANSI_COLOR
+    if (highlight) {
+        char cursor = '+';
+        write(STDOUT_FILENO, "\x1b[97m", 5);
+        write(STDOUT_FILENO, &cursor, 1);
+        reset_ansi_colors();
+        return;
+    }
+#else
+    if (highlight) {
+        write(STDOUT_FILENO, "\x1b[7m", 4);
+    }
+#endif
+    write(STDOUT_FILENO, &ch, 1);
+#if !USE_ANSI_COLOR
+    if (highlight) {
+        write(STDOUT_FILENO, "\x1b[0m", 4);
+    }
+#endif
+    reset_ansi_colors();
+}
+
 static void render(void){
     int rows, cols;
     get_terminal_size(&rows, &cols);
@@ -419,7 +487,7 @@ static void render(void){
         write(STDOUT_FILENO, &ch, 1);
         write(STDOUT_FILENO, " ", 1);
     }
-    write(STDOUT_FILENO, "\x1b[39m", 5);
+    reset_ansi_colors();
     // Fill to end
     int curcol = 10 + 2*26;
     int cols_now; get_terminal_size(&rows,&cols_now);
@@ -440,29 +508,11 @@ static void render(void){
 	            continue;
 	        }
 
-	        uint8_t idx = pixels[y * img_w + x];
+                uint8_t idx = pixels[y * img_w + x];
 
-	        if (x == cursor_x && y == cursor_y) {
-	            // Cursor cell (inverse video)
-	            write(STDOUT_FILENO, "\x1b[7m", 4);
-	            set_color_ansi(idx);
-	            if (idx == EMPTY) {
-	                write(STDOUT_FILENO, ".", 1);
-	            } else {
-	                write(STDOUT_FILENO, "█", 3); // U+2588
-	            }
-	            write(STDOUT_FILENO, "\x1b[0m", 4);
-	        } else {
-	            set_color_ansi(idx);
-	            if (idx == EMPTY) {
-	                write(STDOUT_FILENO, ".", 1);
-	            } else {
-	                write(STDOUT_FILENO, "█", 3); // U+2588
-	            }
-	            write(STDOUT_FILENO, "\x1b[39m", 5); // reset to default FG
-	        }
-	    }
-	}
+                draw_cell(idx, x == cursor_x && y == cursor_y);
+            }
+        }
 
     write(STDOUT_FILENO, "\r\n", 2);
     // Status

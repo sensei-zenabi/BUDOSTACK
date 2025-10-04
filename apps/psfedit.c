@@ -411,7 +411,8 @@ static void draw_editor(const struct editor_state *state) {
         putchar('\n');
     }
     printf("\n%s\n", state->status);
-    printf("Commands: arrows move | space toggle | n/p next/prev glyph | g goto | r resize | c clear | s save | S save as | h help | q quit\n");
+    printf("Commands: arrows move | space toggle | n/p next/prev glyph | g goto | r resize\n");
+    printf("          c clear | s save | S save as | h help | q quit\n");
     fflush(stdout);
 }
 
@@ -510,7 +511,7 @@ static void show_help(void) {
     printf("Space       Toggle the current pixel.\n");
     printf("n / p       Next or previous glyph.\n");
     printf("g           Go to a specific glyph index (decimal or hex with 0x).\n");
-    printf("r           Resize the font (all glyphs resized with clipping).\n");
+    printf("r           Resize the font (glyphs are scaled to the new size).\n");
     printf("c           Clear the current glyph.\n");
     printf("s / S       Save (or Save As...) the font.\n");
     printf("h           Show this help.\n");
@@ -555,11 +556,29 @@ static int resize_font(struct editor_state *state, uint32_t new_width, uint32_t 
         return -1;
     }
 
+    const uint32_t old_width = state->font.width;
+    const uint32_t old_height = state->font.height;
     for (uint32_t glyph = 0; glyph < state->font.glyph_count; ++glyph) {
-        for (uint32_t y = 0; y < state->font.height && y < new_height; ++y) {
-            for (uint32_t x = 0; x < state->font.width && x < new_width; ++x) {
-                if (get_pixel(&state->font, glyph, x, y)) {
-                    uint8_t *row = new_data + glyph * (size_t)new_glyph_size + (size_t)y * new_stride;
+        if (old_width == 0 || old_height == 0) {
+            continue;
+        }
+        uint8_t *new_glyph = new_data + glyph * (size_t)new_glyph_size;
+        for (uint32_t y = 0; y < new_height; ++y) {
+            uint64_t num_y = (uint64_t)(2u * y + 1u) * old_height;
+            uint64_t den_y = 2u * (uint64_t)new_height;
+            uint32_t src_y = (uint32_t)(num_y / den_y);
+            if (src_y >= old_height) {
+                src_y = old_height - 1u;
+            }
+            uint8_t *row = new_glyph + (size_t)y * new_stride;
+            for (uint32_t x = 0; x < new_width; ++x) {
+                uint64_t num_x = (uint64_t)(2u * x + 1u) * old_width;
+                uint64_t den_x = 2u * (uint64_t)new_width;
+                uint32_t src_x = (uint32_t)(num_x / den_x);
+                if (src_x >= old_width) {
+                    src_x = old_width - 1u;
+                }
+                if (get_pixel(&state->font, glyph, src_x, src_y)) {
                     uint32_t byte_index = x / 8u;
                     uint8_t bit_mask = (uint8_t)(0x80u >> (x % 8u));
                     row[byte_index] |= bit_mask;

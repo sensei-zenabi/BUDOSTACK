@@ -638,6 +638,7 @@ static void reset_ansi_colors(void){}
 
 static void draw_cell(uint8_t idx, int highlight){
     char ch;
+    const Color *cell_color = NULL;
     if (idx == EMPTY) {
         ch = '.';
         set_bg_color_ansi(NULL);
@@ -645,13 +646,13 @@ static void draw_cell(uint8_t idx, int highlight){
         write(STDOUT_FILENO, "\x1b[39m", 5);
 #endif
     } else if (idx < TOTAL_COLORS) {
-        const Color *color = color_from_index(idx);
+        cell_color = color_from_index(idx);
 #if USE_ANSI_COLOR
         ch = ' ';
 #else
-        ch = color ? color->letter : '?';
+        ch = cell_color ? cell_color->letter : '?';
 #endif
-        set_bg_color_ansi(color);
+        set_bg_color_ansi(cell_color);
 #if USE_ANSI_COLOR
         write(STDOUT_FILENO, "\x1b[39m", 5);
 #endif
@@ -666,12 +667,19 @@ static void draw_cell(uint8_t idx, int highlight){
 #if USE_ANSI_COLOR
     if (highlight) {
         char cursor = '+';
-        write(STDOUT_FILENO, "\x1b[97m", 5);
+        if (cell_color) {
+            int luminance = (int)cell_color->r * 299 + (int)cell_color->g * 587 + (int)cell_color->b * 114;
+            const char *fg_seq = (luminance > 128000) ? "\x1b[30m" : "\x1b[97m";
+            write(STDOUT_FILENO, fg_seq, 5);
+        } else {
+            write(STDOUT_FILENO, "\x1b[97m", 5);
+        }
         write(STDOUT_FILENO, &cursor, 1);
         reset_ansi_colors();
         return;
     }
 #else
+    (void)cell_color;
     if (highlight) {
         write(STDOUT_FILENO, "\x1b[7m", 4);
     }
@@ -933,18 +941,29 @@ static void flood_fill_at_cursor(uint8_t color_idx){
 
 /* -------- Main -------- */
 
-int main(void){
+int main(int argc, char **argv){
     init_palettes();
     set_current_palette_variant(2);
 
     // Initialize default image
     for (int i=0;i<MAX_W*MAX_H;i++) pixels[i]=EMPTY;
 
+    int loaded_from_arg = 0;
+    if (argc > 1) {
+        if (load_bmp(argv[1]) == 0) {
+            loaded_from_arg = 1;
+        } else {
+            fprintf(stderr, "Failed to load image: %s\n", argv[1]);
+        }
+    }
+
     enable_raw_mode();
     clear_screen();
 
-    // New image prompt at start
-    new_image_dialog();
+    // New image prompt at start unless an image was supplied
+    if (!loaded_from_arg) {
+        new_image_dialog();
+    }
 
     int running = 1;
     while (running){

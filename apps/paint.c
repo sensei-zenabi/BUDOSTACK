@@ -567,10 +567,17 @@ static void render(void){
     if (cursor_y < view_y) view_y = cursor_y;
     if (cursor_x >= view_x + draw_cols) view_x = cursor_x - draw_cols + 1;
     if (cursor_y >= view_y + draw_rows) view_y = cursor_y - draw_rows + 1;
+
     if (view_x < 0) view_x = 0;
     if (view_y < 0) view_y = 0;
-    if (view_x > img_w - 1) view_x = img_w - 1;
-    if (view_y > img_h - 1) view_y = img_h - 1;
+
+    int max_view_x = img_w - draw_cols;
+    if (max_view_x < 0) max_view_x = 0;
+    if (view_x > max_view_x) view_x = max_view_x;
+
+    int max_view_y = img_h - draw_rows;
+    if (max_view_y < 0) max_view_y = 0;
+    if (view_y > max_view_y) view_y = max_view_y;
 
     // Clear & move home
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -673,6 +680,44 @@ static void new_image_dialog(void){
     dirty = 0;
 }
 
+static void resize_canvas_dialog(void){
+    int old_w = img_w;
+    int old_h = img_h;
+    int w = prompt_int("New width", img_w, 1, MAX_W);
+    int h = prompt_int("New height", img_h, 1, MAX_H);
+    if (w == old_w && h == old_h) return;
+
+    uint8_t temp[MAX_W * MAX_H];
+    memset(temp, EMPTY, sizeof(temp));
+
+    int copy_w = (w < old_w) ? w : old_w;
+    int copy_h = (h < old_h) ? h : old_h;
+    for (int y = 0; y < copy_h; y++) {
+        memcpy(&temp[y * w], &pixels[y * old_w], copy_w);
+    }
+
+    memset(pixels, EMPTY, sizeof(pixels));
+    img_w = w;
+    img_h = h;
+    for (int y = 0; y < img_h; y++) {
+        memcpy(&pixels[y * img_w], &temp[y * img_w], img_w);
+    }
+
+    if (cursor_x >= img_w) cursor_x = img_w - 1;
+    if (cursor_y >= img_h) cursor_y = img_h - 1;
+    if (cursor_x < 0) cursor_x = 0;
+    if (cursor_y < 0) cursor_y = 0;
+    if (view_x > cursor_x) view_x = cursor_x;
+    if (view_y > cursor_y) view_y = cursor_y;
+    if (view_x >= img_w) view_x = img_w - 1;
+    if (view_y >= img_h) view_y = img_h - 1;
+    if (view_x < 0) view_x = 0;
+    if (view_y < 0) view_y = 0;
+
+    undo_top = redo_top = 0;
+    dirty = 1;
+}
+
 static void save_dialog(void){
     char path[512];
     prompt("Save as (.bmp / .ppm): ", path, sizeof(path));
@@ -741,6 +786,7 @@ int main(void){
             case 19: /* Ctrl+S */ save_dialog(); break;
             case 15: /* Ctrl+O */ load_dialog(); break;
             case 14: /* Ctrl+N */ new_image_dialog(); break;
+            case 18: /* Ctrl+R */ resize_canvas_dialog(); break;
             case 26: /* Ctrl+Z */ undo_action(); break;
             case 25: /* Ctrl+Y */ redo_action(); break;
             case 17: /* Ctrl+Q */

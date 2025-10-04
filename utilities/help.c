@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
     printf("  display  : Display the contents of a file.\n");    
     printf("  drives   : Lists all found drives.\n");    
     printf("  find     : Find anything.\n");    
-	printf("  gitter   : Professional git helper for your daily development activities.\n");
+    printf("  gitter   : Professional git helper for your daily development activities.\n");
     printf("  help     : Display this help message.\n");
     printf("  list     : List contents of a directory (type 'list -help').\n");    
     printf("  makedir  : Create a new directory.\n");    
@@ -93,10 +93,11 @@ int main(int argc, char *argv[]) {
     printf("  inet     : Interactive internet connection manager.\n");    
     printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");    
     printf("\n");
-    printf("/* Just-for-Fun */\n");
+    printf("/* Other */\n");
     printf("\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
     printf("  paint    : ASCII paint application to edit bitmaps.\n");    
+    printf("  psfedit  : Font editor for .psf fonts used in linux TTY.\n");
     printf("  signal   : Signal generator. Type 'signal' for help.\n");
     printf("  skydial  : Simple sky-dial to identify and locate celestial objects.\n");
     printf("             Type 'skydial lat lon' to tell your position.\n");

@@ -527,30 +527,81 @@ static int read_key(void){
 
 /* -------- UI / Rendering -------- */
 
+static void append_hint(char *line, size_t cap, int *len, const char *hint) {
+    if (*len >= (int)cap - 1) return;
+    if (*len > 0) {
+        if (line[*len - 1] != ' ' && *len < (int)cap - 1) {
+            line[(*len)++] = ' ';
+        }
+        if (*len < (int)cap - 1) {
+            line[(*len)++] = ' ';
+        }
+    }
+    for (const char *p = hint; *p && *len < (int)cap - 1; ++p) {
+        line[(*len)++] = *p;
+    }
+    line[*len] = '\0';
+}
+
 static void draw_status_lines(int cols) {
     char line1[256];
     char line2[256];
     const char *fill_msg = fill_color_pending ? "  Fill:Pick color" : "";
-    int len1 = snprintf(line1, sizeof(line1),
+    snprintf(line1, sizeof(line1),
         " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%d  %s%s",
         img_w, img_h, cursor_x, cursor_y, view_x, view_y,
         current_palette_variant + 1, dirty ? "Dirty" : "Saved", fill_msg);
-    int len2 = snprintf(line2, sizeof(line2),
-        " Draw:A-Z  Fill:^F+Color  Brightness:^1-^5  Erase:Backspace/Delete  Resize:^R  Undo:^Z  Redo:^Y  Save:^S  Load:^O  New:^N  Quit:^Q");
+    line1[sizeof(line1) - 1] = '\0';
+    int len1 = (int)strlen(line1);
 
-    if (len1 > cols - 1) len1 = cols - 1;
-    if (len2 > cols - 1) len2 = cols - 1;
+    line2[0] = '\0';
+    int len2 = 0;
+
+    const char *shortcuts[] = {
+        "Draw:A-Z",
+        "Fill:^F+Color",
+        "Brightness:^1-^5",
+        "Erase:Backspace/Delete",
+        "Resize:^R",
+        "Undo:^Z",
+        "Redo:^Y",
+        "Save:^S",
+        "Load:^O",
+        "New:^N",
+        "Quit:^Q"
+    };
+    size_t shortcut_count = sizeof(shortcuts) / sizeof(shortcuts[0]);
+    size_t split = (shortcut_count + 1) / 2;
+    for (size_t i = 0; i < shortcut_count; ++i) {
+        if (i < split) {
+            int prev_len = len1;
+            append_hint(line1, sizeof(line1), &len1, shortcuts[i]);
+            if (cols > 0 && len1 > cols - 1) {
+                len1 = prev_len;
+                line1[len1] = '\0';
+                append_hint(line2, sizeof(line2), &len2, shortcuts[i]);
+            }
+        } else {
+            append_hint(line2, sizeof(line2), &len2, shortcuts[i]);
+        }
+    }
+
+    int max_len = cols > 0 ? cols - 1 : 0;
+    int write_len1 = len1;
+    int write_len2 = len2;
+    if (write_len1 > max_len) write_len1 = max_len;
+    if (write_len2 > max_len) write_len2 = max_len;
 
     write(STDOUT_FILENO, "\x1b[7m", 4);
-    write(STDOUT_FILENO, line1, len1);
-    for (int i = len1; i < cols - 1; i++) write(STDOUT_FILENO, " ", 1);
+    write(STDOUT_FILENO, line1, write_len1);
+    for (int i = write_len1; i < max_len; i++) write(STDOUT_FILENO, " ", 1);
     write(STDOUT_FILENO, "\x1b[0m", 4);
 
     write(STDOUT_FILENO, "\r\n", 2);
 
     write(STDOUT_FILENO, "\x1b[7m", 4);
-    write(STDOUT_FILENO, line2, len2);
-    for (int i = len2; i < cols - 1; i++) write(STDOUT_FILENO, " ", 1);
+    write(STDOUT_FILENO, line2, write_len2);
+    for (int i = write_len2; i < max_len; i++) write(STDOUT_FILENO, " ", 1);
     write(STDOUT_FILENO, "\x1b[0m", 4);
 }
 

@@ -172,6 +172,13 @@ static int play_tone(double frequency, unsigned int duration_ms) {
     fds[fd_count++] = STDERR_FILENO;
     fds[fd_count++] = STDIN_FILENO;
 
+    int fallback_fd = -1;
+    for (size_t i = 0; i < fd_count; ++i) {
+        if (fallback_fd < 0 && isatty(fds[i])) {
+            fallback_fd = fds[i];
+        }
+    }
+
     const char *paths[] = {"/dev/console", "/dev/tty0", "/dev/tty"};
     int extra_fds[3];
     size_t extra_count = 0;
@@ -182,6 +189,9 @@ static int play_tone(double frequency, unsigned int duration_ms) {
             extra_fds[extra_count++] = fd;
             if (fd_count < sizeof(fds) / sizeof(fds[0])) {
                 fds[fd_count++] = fd;
+            }
+            if (fallback_fd < 0 && isatty(fd)) {
+                fallback_fd = fd;
             }
         }
     }
@@ -194,16 +204,40 @@ static int play_tone(double frequency, unsigned int duration_ms) {
         }
     }
 
-    for (size_t i = 0; i < extra_count; ++i) {
-        close(extra_fds[i]);
-    }
-
     if (result != 0) {
         fprintf(stderr, "_BEEP: unable to access PC speaker, using terminal bell as fallback\n");
-        fputc('\a', stdout);
-        fflush(stdout);
+        int tty_fd = -1;
+        ssize_t written = -1;
+
+        if (fallback_fd >= 0) {
+            written = write(fallback_fd, "\a", 1);
+            if (fallback_fd == STDOUT_FILENO) {
+                fflush(stdout);
+            } else if (fallback_fd == STDERR_FILENO) {
+                fflush(stderr);
+            }
+        }
+
+        if (written != 1) {
+            tty_fd = open("/dev/tty", O_WRONLY | O_CLOEXEC);
+            if (tty_fd >= 0) {
+                (void)write(tty_fd, "\a", 1);
+            }
+        }
+
+        if (tty_fd >= 0) {
+            close(tty_fd);
+        }
+
+        for (size_t i = 0; i < extra_count; ++i) {
+            close(extra_fds[i]);
+        }
         sleep_ms(duration_ms);
         return 0;
+    }
+
+    for (size_t i = 0; i < extra_count; ++i) {
+        close(extra_fds[i]);
     }
 
     return 0;

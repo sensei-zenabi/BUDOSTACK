@@ -5,6 +5,7 @@
  *  - Undo (Ctrl+Z), Redo (Ctrl+Y)
  *  - Arrow-keys move cursor, auto-scrolling viewport
  *  - A–Z paints with 26-color palette; Backspace/Delete erases
+ *  - Ctrl+1..Ctrl+5 cycle palette brightness (3 = default)
  *  - Max resolution 320x200
  *  - Works in a terminal using raw mode (termios) + ANSI escapes
  *
@@ -39,6 +40,10 @@
 #define MAX_H 200
 #define EMPTY 255
 #define USE_ANSI_COLOR 1   /* set to 0 for strictly ASCII (no colors) */
+
+#define PALETTE_VARIANTS 5
+#define PALETTE_COLORS 26
+#define TOTAL_COLORS (PALETTE_VARIANTS * PALETTE_COLORS)
 
 static struct termios orig_termios;
 
@@ -91,7 +96,7 @@ static void get_terminal_size(int *rows, int *cols) {
 /* -------- Image data -------- */
 
 static int img_w = 64, img_h = 48;
-static uint8_t pixels[MAX_W * MAX_H]; // Each = 0..25 color index, or EMPTY
+static uint8_t pixels[MAX_W * MAX_H]; // Each = 0..TOTAL_COLORS-1 color index, or EMPTY
 
 static int cursor_x = 0, cursor_y = 0;
 static int view_x = 0, view_y = 0;
@@ -99,7 +104,7 @@ static int dirty = 0; // unsaved changes
 
 /* Palette: 26 entries mapped to letters A..Z (RGB 0..255) */
 typedef struct { uint8_t r,g,b; char letter; const char *name; int term256; } Color;
-static Color palette[26] = {
+static const Color base_palette[PALETTE_COLORS] = {
     {  0,  0,  0,'A',"Black",      16},
     {255,255,255,'B',"White",      231},
     {128,128,128,'C',"Gray",       244},
@@ -127,6 +132,84 @@ static Color palette[26] = {
     { 47, 79, 79,'Y',"DarkCyan",   23},
     {112,128,144,'Z',"SlateGray",  102}
 };
+
+static Color palettes[PALETTE_VARIANTS][PALETTE_COLORS];
+static int current_palette_variant = 2; /* 0-based; palette 3 is default */
+
+static uint8_t clamp_u8(int v) {
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return (uint8_t)v;
+}
+
+static int component_to_level(uint8_t v) {
+    int level = (v * 5 + 127) / 255;
+    if (level < 0) level = 0;
+    if (level > 5) level = 5;
+    return level;
+}
+
+static int rgb_to_ansi256(uint8_t r, uint8_t g, uint8_t b) {
+    if (r == g && g == b) {
+        if (r < 8) return 16;
+        if (r > 248) return 231;
+        int gray = (r - 8) / 10;
+        if (gray > 23) gray = 23;
+        return 232 + gray;
+    }
+    int ri = component_to_level(r);
+    int gi = component_to_level(g);
+    int bi = component_to_level(b);
+    return 16 + 36 * ri + 6 * gi + bi;
+}
+
+static uint8_t apply_brightness(uint8_t value, float factor) {
+    int adjusted = (int)(value * factor + 0.5f);
+    return clamp_u8(adjusted);
+}
+
+static void init_palettes(void) {
+    static int initialized = 0;
+    if (initialized) return;
+    const float factors[PALETTE_VARIANTS] = {0.6f, 0.8f, 1.0f, 1.2f, 1.4f};
+    for (int variant = 0; variant < PALETTE_VARIANTS; variant++) {
+        for (int i = 0; i < PALETTE_COLORS; i++) {
+            Color c = base_palette[i];
+            if (variant == 2) {
+                palettes[variant][i] = c;
+                continue;
+            }
+            c.r = apply_brightness(base_palette[i].r, factors[variant]);
+            c.g = apply_brightness(base_palette[i].g, factors[variant]);
+            c.b = apply_brightness(base_palette[i].b, factors[variant]);
+            c.term256 = rgb_to_ansi256(c.r, c.g, c.b);
+            palettes[variant][i] = c;
+        }
+    }
+    initialized = 1;
+}
+
+static inline const Color *color_from_variant(int variant, int color_index) {
+    init_palettes();
+    if (variant < 0 || variant >= PALETTE_VARIANTS) return NULL;
+    if (color_index < 0 || color_index >= PALETTE_COLORS) return NULL;
+    return &palettes[variant][color_index];
+}
+
+static inline const Color *color_from_index(uint8_t idx) {
+    init_palettes();
+    if (idx >= TOTAL_COLORS) return NULL;
+    int variant = idx / PALETTE_COLORS;
+    int color_index = idx % PALETTE_COLORS;
+    return color_from_variant(variant, color_index);
+}
+
+static void set_current_palette_variant(int variant) {
+    init_palettes();
+    if (variant < 0) variant = 0;
+    if (variant >= PALETTE_VARIANTS) variant = PALETTE_VARIANTS - 1;
+    current_palette_variant = variant;
+}
 
 /* -------- Undo/Redo -------- */
 
@@ -212,6 +295,7 @@ typedef struct {
 #pragma pack(pop)
 
 static int save_ppm(const char *path){
+    init_palettes();
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     fprintf(f, "P6\n%d %d\n255\n", img_w, img_h);
@@ -219,7 +303,10 @@ static int save_ppm(const char *path){
         for (int x=0; x<img_w; x++){
             uint8_t idx = pixels[y*img_w + x];
             uint8_t r=0,g=0,b=0;
-            if (idx != EMPTY) { r=palette[idx].r; g=palette[idx].g; b=palette[idx].b; }
+            if (idx != EMPTY) {
+                const Color *c = color_from_index(idx);
+                if (c) { r = c->r; g = c->g; b = c->b; }
+            }
             fputc(r,f); fputc(g,f); fputc(b,f);
         }
     }
@@ -228,6 +315,7 @@ static int save_ppm(const char *path){
 }
 
 static int save_bmp(const char *path){
+    init_palettes();
     FILE *f = fopen(path, "wb");
     if (!f) return -1;
     int w = img_w, h = img_h;
@@ -262,7 +350,10 @@ static int save_bmp(const char *path){
         for (int x = 0; x < w; x++) {
             uint8_t idx = pixels[y*w + x];
             uint8_t r=0,g=0,b=0;
-            if (idx != EMPTY) { r=palette[idx].r; g=palette[idx].g; b=palette[idx].b; }
+            if (idx != EMPTY) {
+                const Color *c = color_from_index(idx);
+                if (c) { r = c->r; g = c->g; b = c->b; }
+            }
             // BMP is BGR
             fputc(b, f); fputc(g, f); fputc(r, f);
         }
@@ -281,6 +372,7 @@ static int save_image(const char *path){
 }
 
 static int load_bmp(const char *path){
+    init_palettes();
     FILE *f = fopen(path, "rb");
     if (!f) return -1;
     BMPFILEHEADER bfh;
@@ -307,13 +399,16 @@ static int load_bmp(const char *path){
             // Map to nearest palette index
             int best = -1;
             int bestd = 1<<30;
-            for (int i=0;i<26;i++){
-                int dr = (int)r - (int)palette[i].r;
-                int dg = (int)g - (int)palette[i].g;
-                int db = (int)b - (int)palette[i].b;
+            for (int i=0;i<TOTAL_COLORS;i++){
+                const Color *c = color_from_index((uint8_t)i);
+                if (!c) continue;
+                int dr = (int)r - (int)c->r;
+                int dg = (int)g - (int)c->g;
+                int db = (int)b - (int)c->b;
                 int d = dr*dr + dg*dg + db*db;
                 if (d < bestd) { bestd = d; best = i; }
             }
+            if (best < 0) best = 0;
             pixels[y*w + x] = (uint8_t)best;
         }
         for (int p=0;p<padding;p++) fgetc(f);
@@ -369,8 +464,8 @@ static int read_key(void){
 static void draw_status_line(int cols) {
     char buf[256];
     int len = snprintf(buf, sizeof(buf),
-        " %dx%d  Cursor:%d,%d  Color:A-Z  Erase:Backspace  Undo:^Z  Redo:^Y  Save:^S  Load:^O  New:^N  Quit:^Q %s",
-        img_w, img_h, cursor_x, cursor_y, dirty ? "[*]" : "   ");
+        " %dx%d  Cursor:%d,%d  Palette:^1-^5:%d  Color:A-Z  Erase:Backspace  Undo:^Z  Redo:^Y  Save:^S  Load:^O  New:^N  Quit:^Q %s",
+        img_w, img_h, cursor_x, cursor_y, current_palette_variant + 1, dirty ? "[*]" : "   ");
     if (len > cols-1) len = cols-1;
     write(STDOUT_FILENO, "\x1b[7m", 4); // inverse
     write(STDIN_FILENO, "", 0); // no-op to silence unused warning on some compilers
@@ -379,25 +474,25 @@ static void draw_status_line(int cols) {
     write(STDOUT_FILENO, "\x1b[0m", 4);
 }
 
-static void set_color_ansi(uint8_t idx){
+static void set_color_ansi(const Color *color){
 #if USE_ANSI_COLOR
-    if (idx==EMPTY){ write(STDOUT_FILENO, "\x1b[39m", 5); return; }
+    if (!color) { write(STDOUT_FILENO, "\x1b[39m", 5); return; }
     char seq[32];
-    int n = snprintf(seq, sizeof(seq), "\x1b[38;5;%dm", palette[idx].term256);
+    int n = snprintf(seq, sizeof(seq), "\x1b[38;5;%dm", color->term256);
     write(STDOUT_FILENO, seq, n);
 #else
-    (void)idx;
+    (void)color;
 #endif
 }
 
 #if USE_ANSI_COLOR
-static void set_bg_color_ansi(uint8_t idx){
-    if (idx == EMPTY) {
+static void set_bg_color_ansi(const Color *color){
+    if (!color) {
         write(STDOUT_FILENO, "\x1b[49m", 5);
         return;
     }
     char seq[32];
-    int n = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", palette[idx].term256);
+    int n = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", color->term256);
     write(STDOUT_FILENO, seq, n);
 }
 
@@ -406,7 +501,7 @@ static void reset_ansi_colors(void){
     write(STDOUT_FILENO, "\x1b[49m", 5);
 }
 #else
-static void set_bg_color_ansi(uint8_t idx){ (void)idx; }
+static void set_bg_color_ansi(const Color *color){ (void)color; }
 static void reset_ansi_colors(void){}
 #endif
 
@@ -414,23 +509,24 @@ static void draw_cell(uint8_t idx, int highlight){
     char ch;
     if (idx == EMPTY) {
         ch = '.';
-        set_bg_color_ansi(EMPTY);
+        set_bg_color_ansi(NULL);
 #if USE_ANSI_COLOR
         write(STDOUT_FILENO, "\x1b[39m", 5);
 #endif
-    } else if (idx < 26) {
+    } else if (idx < TOTAL_COLORS) {
+        const Color *color = color_from_index(idx);
 #if USE_ANSI_COLOR
         ch = ' ';
 #else
-        ch = palette[idx].letter;
+        ch = color ? color->letter : '?';
 #endif
-        set_bg_color_ansi(idx);
+        set_bg_color_ansi(color);
 #if USE_ANSI_COLOR
         write(STDOUT_FILENO, "\x1b[39m", 5);
 #endif
     } else {
         ch = '?';
-        set_bg_color_ansi(EMPTY);
+        set_bg_color_ansi(NULL);
 #if USE_ANSI_COLOR
         write(STDOUT_FILENO, "\x1b[39m", 5);
 #endif
@@ -481,15 +577,16 @@ static void render(void){
 
     // Palette line
     write(STDOUT_FILENO, " Palette: ", 10);
-    for (int i=0;i<26;i++){
-        set_color_ansi(i);
-        char ch = palette[i].letter;
+    for (int i=0;i<PALETTE_COLORS;i++){
+        const Color *c = color_from_variant(current_palette_variant, i);
+        set_color_ansi(c);
+        char ch = c ? c->letter : '?';
         write(STDOUT_FILENO, &ch, 1);
         write(STDOUT_FILENO, " ", 1);
     }
     reset_ansi_colors();
     // Fill to end
-    int curcol = 10 + 2*26;
+    int curcol = 10 + 2*PALETTE_COLORS;
     int cols_now; get_terminal_size(&rows,&cols_now);
     for (int i=curcol;i<cols_now;i++) write(STDOUT_FILENO, " ", 1);
 
@@ -594,6 +691,7 @@ static void load_dialog(void){
 
 static void paint_at_cursor(uint8_t color_idx){
     if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return;
+    if (color_idx != EMPTY && color_idx >= TOTAL_COLORS) return;
     uint8_t *p = &pixels[cursor_y*img_w + cursor_x];
     if (*p == color_idx) return; // no-op
     push_change(cursor_x, cursor_y, *p, color_idx);
@@ -604,6 +702,9 @@ static void paint_at_cursor(uint8_t color_idx){
 /* -------- Main -------- */
 
 int main(void){
+    init_palettes();
+    set_current_palette_variant(2);
+
     // Initialize default image
     for (int i=0;i<MAX_W*MAX_H;i++) pixels[i]=EMPTY;
 
@@ -630,6 +731,12 @@ int main(void){
                 paint_at_cursor(EMPTY);
                 break;
 
+            case '1': set_current_palette_variant(0); break;
+            case '2': set_current_palette_variant(1); break;
+            case '3': set_current_palette_variant(2); break;
+            case '4': set_current_palette_variant(3); break;
+            case '5': set_current_palette_variant(4); break;
+
             // Ctrl shortcuts
             case 19: /* Ctrl+S */ save_dialog(); break;
             case 15: /* Ctrl+O */ load_dialog(); break;
@@ -645,12 +752,13 @@ int main(void){
                 running = 0; break;
 
             default:
-                // Letters A-Z map to palette indices 0..25
+                // Letters A-Z map to palette indices 0..25 within the active brightness set
                 if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')){
                     char up = (char)toupper(key);
                     int idx = up - 'A';
-                    if (idx >=0 && idx < 26){
-                        paint_at_cursor((uint8_t)idx);
+                    if (idx >=0 && idx < PALETTE_COLORS){
+                        uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
+                        paint_at_cursor(color_idx);
                     }
                 }
                 break;

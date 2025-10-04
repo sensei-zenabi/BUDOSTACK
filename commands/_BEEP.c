@@ -5,14 +5,14 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
 
-#include <linux/kd.h>
+#include <alsa/asoundlib.h>
 
 static void sleep_ms(unsigned int milliseconds) {
     struct timespec request = {milliseconds / 1000U, (long)(milliseconds % 1000U) * 1000000L};
@@ -135,13 +135,40 @@ static int parse_note(const char *input, double *frequency) {
     return 0;
 }
 
-static int send_tone_ioctl(int fd, unsigned int divisor, unsigned int duration) {
-    unsigned long argument = ((unsigned long)duration << 16) | (unsigned long)(divisor & 0xFFFFU);
-    if (ioctl(fd, KDMKTONE, argument) == 0) {
-        sleep_ms(duration);
-        ioctl(fd, KDMKTONE, 0);
-        return 0;
+static int fallback_bell(unsigned int duration_ms) {
+    int fds[] = {STDOUT_FILENO, STDERR_FILENO, STDIN_FILENO};
+    int fallback_fd = -1;
+
+    for (size_t i = 0; i < sizeof(fds) / sizeof(fds[0]); ++i) {
+        if (isatty(fds[i])) {
+            fallback_fd = fds[i];
+            break;
+        }
     }
+
+    if (fallback_fd >= 0) {
+        ssize_t written = write(fallback_fd, "\a", 1);
+        if (written == 1) {
+            if (fallback_fd == STDOUT_FILENO) {
+                fflush(stdout);
+            } else if (fallback_fd == STDERR_FILENO) {
+                fflush(stderr);
+            }
+            sleep_ms(duration_ms);
+            return 0;
+        }
+    }
+
+    int tty_fd = open("/dev/tty", O_WRONLY | O_CLOEXEC);
+    if (tty_fd >= 0) {
+        ssize_t written = write(tty_fd, "\a", 1);
+        close(tty_fd);
+        if (written == 1) {
+            sleep_ms(duration_ms);
+            return 0;
+        }
+    }
+
     return -1;
 }
 
@@ -151,95 +178,79 @@ static int play_tone(double frequency, unsigned int duration_ms) {
         return -1;
     }
 
-    unsigned int divisor = 0U;
-    double raw_divisor = 1193180.0 / frequency;
-    if (raw_divisor < 1.0) {
-        divisor = 1U;
-    } else if (raw_divisor > 65535.0) {
-        divisor = 65535U;
-    } else {
-        divisor = (unsigned int)lround(raw_divisor);
-        if (divisor == 0U) {
-            divisor = 1U;
-        }
+    const unsigned int sample_rate = 48000U;
+    const double amplitude = 0.2;
+    const double two_pi = 6.28318530717958647692;
+    snd_pcm_t *handle = NULL;
+
+    int err = snd_pcm_open(&handle, "default", SND_PCM_STREAM_PLAYBACK, 0);
+    if (err < 0) {
+        fprintf(stderr, "_BEEP: unable to open ALSA device: %s\n", snd_strerror(err));
+        fprintf(stderr, "_BEEP: falling back to terminal bell\n");
+        return fallback_bell(duration_ms);
     }
 
-    unsigned int duration = duration_ms > 0xFFFFU ? 0xFFFFU : duration_ms;
-
-    int fds[6];
-    size_t fd_count = 0;
-    fds[fd_count++] = STDOUT_FILENO;
-    fds[fd_count++] = STDERR_FILENO;
-    fds[fd_count++] = STDIN_FILENO;
-
-    int fallback_fd = -1;
-    for (size_t i = 0; i < fd_count; ++i) {
-        if (fallback_fd < 0 && isatty(fds[i])) {
-            fallback_fd = fds[i];
-        }
+    err = snd_pcm_set_params(handle, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 1, sample_rate, 1,
+                              500000);
+    if (err < 0) {
+        fprintf(stderr, "_BEEP: unable to configure ALSA device: %s\n", snd_strerror(err));
+        snd_pcm_close(handle);
+        fprintf(stderr, "_BEEP: falling back to terminal bell\n");
+        return fallback_bell(duration_ms);
     }
 
-    const char *paths[] = {"/dev/console", "/dev/tty0", "/dev/tty"};
-    int extra_fds[3];
-    size_t extra_count = 0;
+    double duration_seconds = (double)duration_ms / 1000.0;
+    size_t total_frames = (size_t)llround(duration_seconds * (double)sample_rate);
+    if (total_frames == 0) {
+        total_frames = 1;
+    }
 
-    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); ++i) {
-        int fd = open(paths[i], O_WRONLY | O_CLOEXEC);
-        if (fd >= 0) {
-            extra_fds[extra_count++] = fd;
-            if (fd_count < sizeof(fds) / sizeof(fds[0])) {
-                fds[fd_count++] = fd;
+    const size_t chunk_frames = 1024U;
+    int16_t buffer[chunk_frames];
+    size_t frames_written = 0;
+
+    while (frames_written < total_frames) {
+        size_t frames_to_generate = total_frames - frames_written;
+        if (frames_to_generate > chunk_frames) {
+            frames_to_generate = chunk_frames;
+        }
+
+        for (size_t i = 0; i < frames_to_generate; ++i) {
+            double sample_index = (double)(frames_written + i);
+            double sample = sin(two_pi * frequency * sample_index / (double)sample_rate);
+            double scaled = sample * amplitude;
+            if (scaled > 1.0) {
+                scaled = 1.0;
+            } else if (scaled < -1.0) {
+                scaled = -1.0;
             }
-            if (fallback_fd < 0 && isatty(fd)) {
-                fallback_fd = fd;
+            buffer[i] = (int16_t)lrint(scaled * 32767.0);
+        }
+
+        const int16_t *write_ptr = buffer;
+        size_t frames_remaining = frames_to_generate;
+
+        while (frames_remaining > 0) {
+            snd_pcm_sframes_t written = snd_pcm_writei(handle, write_ptr, frames_remaining);
+            if (written == -EPIPE) {
+                snd_pcm_prepare(handle);
+                continue;
             }
-        }
-    }
-
-    int result = -1;
-    for (size_t i = 0; i < fd_count; ++i) {
-        if (send_tone_ioctl(fds[i], divisor, duration) == 0) {
-            result = 0;
-            break;
-        }
-    }
-
-    if (result != 0) {
-        fprintf(stderr, "_BEEP: unable to access PC speaker, using terminal bell as fallback\n");
-        int tty_fd = -1;
-        ssize_t written = -1;
-
-        if (fallback_fd >= 0) {
-            written = write(fallback_fd, "\a", 1);
-            if (fallback_fd == STDOUT_FILENO) {
-                fflush(stdout);
-            } else if (fallback_fd == STDERR_FILENO) {
-                fflush(stderr);
+            if (written < 0) {
+                fprintf(stderr, "_BEEP: ALSA write error: %s\n", snd_strerror((int)written));
+                snd_pcm_close(handle);
+                fprintf(stderr, "_BEEP: falling back to terminal bell\n");
+                return fallback_bell(duration_ms);
             }
-        }
 
-        if (written != 1) {
-            tty_fd = open("/dev/tty", O_WRONLY | O_CLOEXEC);
-            if (tty_fd >= 0) {
-                (void)write(tty_fd, "\a", 1);
-            }
+            frames_written += (size_t)written;
+            write_ptr += written;
+            frames_remaining -= (size_t)written;
         }
-
-        if (tty_fd >= 0) {
-            close(tty_fd);
-        }
-
-        for (size_t i = 0; i < extra_count; ++i) {
-            close(extra_fds[i]);
-        }
-        sleep_ms(duration_ms);
-        return 0;
     }
 
-    for (size_t i = 0; i < extra_count; ++i) {
-        close(extra_fds[i]);
-    }
-
+    snd_pcm_drain(handle);
+    snd_pcm_close(handle);
     return 0;
 }
 

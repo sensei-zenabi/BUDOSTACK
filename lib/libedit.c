@@ -424,7 +424,14 @@ char *highlight_other_line(const char *line) {
             if (!in_tag && (c == '*' || c == '_')) {
                 char marker = c;
                 if (i + 1 < len && line[i + 1] == marker) {
-                    if (!in_bold) {
+                    int has_closing = 0;
+                    for (size_t k = i + 2; k + 1 < len; k++) {
+                        if (line[k] == marker && line[k + 1] == marker) {
+                            has_closing = 1;
+                            break;
+                        }
+                    }
+                    if (!in_bold && has_closing) {
                         const char *bold_color = "\x1b[1;33m";  // bold yellow
                         size_t cl = strlen(bold_color);
                         if (ri + cl < buf_size) {
@@ -459,7 +466,14 @@ char *highlight_other_line(const char *line) {
                         result[ri++] = marker;
                         continue;
                     }
-                    if (!in_italic) {
+                    int has_closing = 0;
+                    for (size_t k = i + 1; k < len; k++) {
+                        if (line[k] == marker) {
+                            has_closing = 1;
+                            break;
+                        }
+                    }
+                    if (!in_italic && has_closing) {
                         const char *italic_color = "\x1b[3;35m";  // italic magenta
                         size_t cl = strlen(italic_color);
                         if (ri + cl < buf_size) {

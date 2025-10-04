@@ -5,6 +5,7 @@
  *  - Undo (Ctrl+Z), Redo (Ctrl+Y)
  *  - Arrow-keys move cursor, auto-scrolling viewport
  *  - A–Z paints with 26-color palette; Backspace/Delete erases
+ *  - Ctrl+F then color floods a region using 8-direction adjacency
  *  - Ctrl+1..Ctrl+5 cycle palette brightness (3 = default)
  *  - Max resolution 320x200
  *  - Works in a terminal using raw mode (termios) + ANSI escapes
@@ -101,6 +102,7 @@ static uint8_t pixels[MAX_W * MAX_H]; // Each = 0..TOTAL_COLORS-1 color index, o
 static int cursor_x = 0, cursor_y = 0;
 static int view_x = 0, view_y = 0;
 static int dirty = 0; // unsaved changes
+static int fill_color_pending = 0;
 
 /* Palette: 26 entries mapped to letters A..Z (RGB 0..255) */
 typedef struct { uint8_t r,g,b; char letter; const char *name; int term256; } Color;
@@ -219,19 +221,43 @@ typedef struct {
 } Change;
 
 #define UNDO_MAX 200000
+#define CHANGE_SENTINEL 0xFFFF
 static Change undo_stack[UNDO_MAX];
 static Change redo_stack[UNDO_MAX];
 static int undo_top = 0;
 static int redo_top = 0;
 
-static inline void push_change(uint16_t x,uint16_t y,uint8_t before,uint8_t after){
-    if (undo_top < UNDO_MAX) {
-        undo_stack[undo_top++] = (Change){x,y,before,after};
+static inline void push_stack(Change *stack, int *top, Change c) {
+    if (*top < UNDO_MAX) {
+        stack[(*top)++] = c;
     } else {
-        // simple drop oldest: shift left (O(n)); acceptable for this scale
-        memmove(undo_stack, undo_stack+1, (UNDO_MAX-1)*sizeof(Change));
-        undo_stack[UNDO_MAX-1] = (Change){x,y,before,after};
+        memmove(stack, stack + 1, (UNDO_MAX - 1) * sizeof(Change));
+        stack[UNDO_MAX - 1] = c;
     }
+}
+
+static inline int change_is_marker(Change c) {
+    return c.x == CHANGE_SENTINEL && c.y == CHANGE_SENTINEL;
+}
+
+static inline Change change_marker_from_count(size_t count) {
+    if (count > 0xFFFF) count = 0xFFFF;
+    return (Change){CHANGE_SENTINEL, CHANGE_SENTINEL,
+                    (uint8_t)((count >> 8) & 0xFF), (uint8_t)(count & 0xFF)};
+}
+
+static inline size_t change_marker_count(Change c) {
+    return ((size_t)c.before << 8) | c.after;
+}
+
+static inline void push_change_marker(size_t count) {
+    if (count == 0) return;
+    push_stack(undo_stack, &undo_top, change_marker_from_count(count));
+    redo_top = 0;
+}
+
+static inline void push_change(uint16_t x,uint16_t y,uint8_t before,uint8_t after){
+    push_stack(undo_stack, &undo_top, (Change){x,y,before,after});
     // clear redo on new change
     redo_top = 0;
 }
@@ -245,13 +271,32 @@ static void apply_change(Change c, int reverse) {
 static int undo_action(void) {
     if (undo_top <= 0) return 0;
     Change c = undo_stack[--undo_top];
-    // Apply reverse
+    if (change_is_marker(c)) {
+        size_t count = change_marker_count(c);
+        size_t undone = 0;
+        while (undone < count && undo_top > 0) {
+            Change step = undo_stack[--undo_top];
+            if (change_is_marker(step)) {
+                continue;
+            }
+            uint8_t cur = pixels[step.y*img_w + step.x];
+            apply_change(step, 1);
+            push_stack(redo_stack, &redo_top,
+                       (Change){step.x, step.y, cur, pixels[step.y*img_w + step.x]});
+            undone++;
+        }
+        if (undone > 0) {
+            push_stack(redo_stack, &redo_top, change_marker_from_count(undone));
+            dirty = 1;
+            return 1;
+        }
+        return 0;
+    }
+
     uint8_t cur = pixels[c.y*img_w + c.x];
     apply_change(c, 1);
-    // For redo, we need inverse of what we just did (swap before/after)
-    if (redo_top < UNDO_MAX) {
-        redo_stack[redo_top++] = (Change){c.x,c.y,cur, pixels[c.y*img_w + c.x]};
-    }
+    push_stack(redo_stack, &redo_top,
+               (Change){c.x,c.y,cur, pixels[c.y*img_w + c.x]});
     dirty = 1;
     return 1;
 }
@@ -259,11 +304,32 @@ static int undo_action(void) {
 static int redo_action(void) {
     if (redo_top <= 0) return 0;
     Change c = redo_stack[--redo_top];
+    if (change_is_marker(c)) {
+        size_t count = change_marker_count(c);
+        size_t redone = 0;
+        while (redone < count && redo_top > 0) {
+            Change step = redo_stack[--redo_top];
+            if (change_is_marker(step)) {
+                continue;
+            }
+            uint8_t cur = pixels[step.y*img_w + step.x];
+            apply_change(step, 0);
+            push_stack(undo_stack, &undo_top,
+                       (Change){step.x, step.y, cur, pixels[step.y*img_w + step.x]});
+            redone++;
+        }
+        if (redone > 0) {
+            push_stack(undo_stack, &undo_top, change_marker_from_count(redone));
+            dirty = 1;
+            return 1;
+        }
+        return 0;
+    }
+
     uint8_t cur = pixels[c.y*img_w + c.x];
     apply_change(c, 0);
-    if (undo_top < UNDO_MAX) {
-        undo_stack[undo_top++] = (Change){c.x,c.y,cur, pixels[c.y*img_w + c.x]};
-    }
+    push_stack(undo_stack, &undo_top,
+               (Change){c.x,c.y,cur, pixels[c.y*img_w + c.x]});
     dirty = 1;
     return 1;
 }
@@ -464,12 +530,13 @@ static int read_key(void){
 static void draw_status_lines(int cols) {
     char line1[256];
     char line2[256];
+    const char *fill_msg = fill_color_pending ? "  Fill:Pick color" : "";
     int len1 = snprintf(line1, sizeof(line1),
-        " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%d  %s",
+        " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%d  %s%s",
         img_w, img_h, cursor_x, cursor_y, view_x, view_y,
-        current_palette_variant + 1, dirty ? "Dirty" : "Saved");
+        current_palette_variant + 1, dirty ? "Dirty" : "Saved", fill_msg);
     int len2 = snprintf(line2, sizeof(line2),
-        " Draw:A-Z  Brightness:^1-^5  Erase:Backspace/Delete  Resize:^R  Undo:^Z  Redo:^Y  Save:^S  Load:^O  New:^N  Quit:^Q");
+        " Draw:A-Z  Fill:^F+Color  Brightness:^1-^5  Erase:Backspace/Delete  Resize:^R  Undo:^Z  Redo:^Y  Save:^S  Load:^O  New:^N  Quit:^Q");
 
     if (len1 > cols - 1) len1 = cols - 1;
     if (len2 > cols - 1) len2 = cols - 1;
@@ -757,6 +824,62 @@ static void paint_at_cursor(uint8_t color_idx){
     dirty = 1;
 }
 
+static void flood_fill_at_cursor(uint8_t color_idx){
+    if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return;
+    if (color_idx != EMPTY && color_idx >= TOTAL_COLORS) return;
+
+    uint8_t target = pixels[cursor_y*img_w + cursor_x];
+    if (target == color_idx) return;
+
+    size_t total = (size_t)img_w * (size_t)img_h;
+    if (total == 0) return;
+    typedef struct { int x; int y; } Point;
+    Point *stack = malloc(total * sizeof(Point));
+    uint8_t *visited = calloc(total, sizeof(uint8_t));
+    if (!stack || !visited) {
+        free(stack);
+        free(visited);
+        return;
+    }
+
+    size_t sp = 0;
+    int start_idx = cursor_y * img_w + cursor_x;
+    visited[start_idx] = 1;
+    stack[sp++] = (Point){cursor_x, cursor_y};
+
+    size_t changed_count = 0;
+    while (sp > 0) {
+        Point p = stack[--sp];
+        int idx = p.y * img_w + p.x;
+        if (pixels[idx] != target) continue;
+
+        push_change((uint16_t)p.x, (uint16_t)p.y, pixels[idx], color_idx);
+        pixels[idx] = color_idx;
+        changed_count++;
+
+        for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = p.x + dx;
+                int ny = p.y + dy;
+                if (nx < 0 || ny < 0 || nx >= img_w || ny >= img_h) continue;
+                int nidx = ny * img_w + nx;
+                if (visited[nidx]) continue;
+                if (pixels[nidx] != target) continue;
+                visited[nidx] = 1;
+                stack[sp++] = (Point){nx, ny};
+            }
+        }
+    }
+
+    free(stack);
+    free(visited);
+    if (changed_count > 0) {
+        push_change_marker(changed_count);
+        dirty = 1;
+    }
+}
+
 /* -------- Main -------- */
 
 int main(void){
@@ -777,6 +900,20 @@ int main(void){
         render();
         int key = read_key();
         if (key == KEY_NONE) continue;
+
+        if (fill_color_pending) {
+            if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')) {
+                char up = (char)toupper(key);
+                int idx = up - 'A';
+                if (idx >=0 && idx < PALETTE_COLORS){
+                    uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
+                    flood_fill_at_cursor(color_idx);
+                }
+                fill_color_pending = 0;
+                continue;
+            }
+            fill_color_pending = 0;
+        }
 
         switch (key) {
             case KEY_UP:    if (cursor_y > 0) cursor_y--; break;
@@ -802,6 +939,7 @@ int main(void){
             case 18: /* Ctrl+R */ resize_canvas_dialog(); break;
             case 26: /* Ctrl+Z */ undo_action(); break;
             case 25: /* Ctrl+Y */ redo_action(); break;
+            case 6:  /* Ctrl+F */ fill_color_pending = 1; break;
             case 17: /* Ctrl+Q */
                 if (dirty){
                     char ans[8];

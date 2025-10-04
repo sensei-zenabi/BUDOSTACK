@@ -12,6 +12,14 @@ typedef struct {
     uint8_t b;
 } Pixel;
 
+typedef struct {
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    char letter;
+    int term256;
+} Color;
+
 typedef enum {
     FILETYPE_TEXT,
     FILETYPE_BMP,
@@ -23,6 +31,153 @@ static int display_text(const char *path);
 static int display_bmp(const char *path);
 static int display_ppm(const char *path);
 static void render_pixels(const Pixel *pixels, int width, int height);
+
+#define PALETTE_VARIANTS 5
+#define PALETTE_COLORS 26
+#define TOTAL_COLORS (PALETTE_VARIANTS * PALETTE_COLORS)
+
+static const Color base_palette[PALETTE_COLORS] = {
+    {  0,  0,  0,'A', 16},
+    {255,255,255,'B',231},
+    {128,128,128,'C',244},
+    {255,  0,  0,'D',196},
+    {  0,255,  0,'E', 46},
+    {  0,  0,255,'F', 21},
+    {  0,255,255,'G', 51},
+    {255,  0,255,'H',201},
+    {255,255,  0,'I',226},
+    {255,165,  0,'J',214},
+    {165, 42, 42,'K', 94},
+    {128,  0,128,'L',129},
+    {255,192,203,'M',218},
+    {135,206,235,'N',117},
+    {144,238,144,'O',120},
+    {139,  0,  0,'P', 88},
+    {  0,100,  0,'Q', 22},
+    {  0,  0,139,'R', 19},
+    {  0,128,128,'S', 30},
+    {128,128,  0,'T', 58},
+    {  0,  0, 75,'U', 17},
+    {210,105, 30,'V',166},
+    {173,216,230,'W',153},
+    { 75,  0,130,'X', 55},
+    { 47, 79, 79,'Y', 23},
+    {112,128,144,'Z',102}
+};
+
+static Color palettes[PALETTE_VARIANTS][PALETTE_COLORS];
+static int palettes_initialized = 0;
+
+static uint8_t clamp_u8(int v) {
+    if (v < 0) {
+        return 0;
+    }
+    if (v > 255) {
+        return 255;
+    }
+    return (uint8_t)v;
+}
+
+static int component_to_level(uint8_t v) {
+    int level = (v * 5 + 127) / 255;
+    if (level < 0) {
+        level = 0;
+    }
+    if (level > 5) {
+        level = 5;
+    }
+    return level;
+}
+
+static int rgb_to_ansi256(uint8_t r, uint8_t g, uint8_t b) {
+    if (r == g && g == b) {
+        if (r < 8) {
+            return 16;
+        }
+        if (r > 248) {
+            return 231;
+        }
+        int gray = (r - 8) / 10;
+        if (gray > 23) {
+            gray = 23;
+        }
+        return 232 + gray;
+    }
+    int ri = component_to_level(r);
+    int gi = component_to_level(g);
+    int bi = component_to_level(b);
+    return 16 + 36 * ri + 6 * gi + bi;
+}
+
+static uint8_t apply_brightness(uint8_t value, float factor) {
+    int adjusted = (int)(value * factor + 0.5f);
+    return clamp_u8(adjusted);
+}
+
+static void init_palettes(void) {
+    if (palettes_initialized) {
+        return;
+    }
+    const float factors[PALETTE_VARIANTS] = {0.6f, 0.8f, 1.0f, 1.2f, 1.4f};
+    for (int variant = 0; variant < PALETTE_VARIANTS; ++variant) {
+        for (int i = 0; i < PALETTE_COLORS; ++i) {
+            Color c = base_palette[i];
+            if (variant != 2) {
+                c.r = apply_brightness(base_palette[i].r, factors[variant]);
+                c.g = apply_brightness(base_palette[i].g, factors[variant]);
+                c.b = apply_brightness(base_palette[i].b, factors[variant]);
+                c.term256 = rgb_to_ansi256(c.r, c.g, c.b);
+            }
+            palettes[variant][i] = c;
+        }
+    }
+    palettes_initialized = 1;
+}
+
+static const Color *color_from_variant(int variant, int index) {
+    init_palettes();
+    if (variant < 0 || variant >= PALETTE_VARIANTS) {
+        return NULL;
+    }
+    if (index < 0 || index >= PALETTE_COLORS) {
+        return NULL;
+    }
+    return &palettes[variant][index];
+}
+
+static const Color *color_from_index(int idx) {
+    init_palettes();
+    if (idx < 0 || idx >= TOTAL_COLORS) {
+        return NULL;
+    }
+    int variant = idx / PALETTE_COLORS;
+    int color_index = idx % PALETTE_COLORS;
+    return color_from_variant(variant, color_index);
+}
+
+static int best_palette_match(uint8_t r, uint8_t g, uint8_t b) {
+    init_palettes();
+    int best_index = -1;
+    int best_distance = INT_MAX;
+    for (int i = 0; i < TOTAL_COLORS; ++i) {
+        const Color *c = color_from_index(i);
+        if (c == NULL) {
+            continue;
+        }
+        int dr = (int)r - (int)c->r;
+        int dg = (int)g - (int)c->g;
+        int db = (int)b - (int)c->b;
+        int distance = dr * dr + dg * dg + db * db;
+        if (distance < best_distance) {
+            best_distance = distance;
+            best_index = i;
+            if (distance == 0) {
+                break;
+            }
+        }
+    }
+    return best_index;
+}
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
@@ -394,15 +549,27 @@ static void render_pixels(const Pixel *pixels, int width, int height) {
         return;
     }
 
+    init_palettes();
+
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             const Pixel *p = &pixels[(size_t)y * (size_t)width + (size_t)x];
-            printf("\x1b[48;2;%u;%u;%um  ",
-                   (unsigned int)p->r,
-                   (unsigned int)p->g,
-                   (unsigned int)p->b);
+            int palette_index = best_palette_match(p->r, p->g, p->b);
+            const Color *color = color_from_index(palette_index);
+            if (color != NULL) {
+                char seq[32];
+                int len = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", color->term256);
+                if (len > 0) {
+                    fwrite(seq, 1, (size_t)len, stdout);
+                }
+                fputs("\x1b[39m", stdout);
+                fputc(' ', stdout);
+                fputs("\x1b[49m", stdout);
+            } else {
+                fputs("\x1b[49m\x1b[39m.", stdout);
+            }
         }
-        printf("\x1b[0m\n");
+        fputs("\x1b[49m\x1b[39m\n", stdout);
     }
-    printf("\x1b[0m");
+    fputs("\x1b[49m\x1b[39m", stdout);
 }

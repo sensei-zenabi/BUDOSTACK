@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../lib/termbg.h"
+
 static int parse_int(const char *value, const char *name, int *out) {
     char *endptr = NULL;
     errno = 0;
@@ -28,6 +30,34 @@ static void clamp_color(int *color) {
         *color = 0;
     else if (*color > 255)
         *color = 255;
+}
+
+static void print_with_background(const char *text, int start_x, int row) {
+    int col = start_x;
+    int last_bg = -2;
+
+    for (const unsigned char *ptr = (const unsigned char *)text; *ptr != '\0'; ++ptr) {
+        if (start_x >= 0) {
+            int bg_color;
+            if (termbg_get(col, row, &bg_color)) {
+                if (bg_color != last_bg) {
+                    printf("\033[48;5;%dm", bg_color);
+                    last_bg = bg_color;
+                }
+            } else if (last_bg != -1) {
+                printf("\033[49m");
+                last_bg = -1;
+            }
+        }
+
+        fputc(*ptr, stdout);
+
+        if (start_x >= 0)
+            ++col;
+    }
+
+    if (start_x >= 0 && last_bg != -1)
+        printf("\033[49m");
 }
 
 int main(int argc, char *argv[]) {
@@ -131,7 +161,7 @@ int main(int argc, char *argv[]) {
 
     printf("\033[%d;%dH", row, col);
     printf("\033[38;5;%dm", color);
-    fputs(text, stdout);
+    print_with_background(text, x, y);
     printf("\033[39m");
     fflush(stdout);
 
@@ -139,6 +169,7 @@ int main(int argc, char *argv[]) {
 
 cleanup:
     free(text);
+    termbg_shutdown();
     return exit_code;
 }
 

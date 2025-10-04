@@ -419,7 +419,11 @@ static void draw_cell(uint8_t idx, int highlight){
         write(STDOUT_FILENO, "\x1b[39m", 5);
 #endif
     } else if (idx < 26) {
+#if USE_ANSI_COLOR
+        ch = ' ';
+#else
         ch = palette[idx].letter;
+#endif
         set_bg_color_ansi(idx);
 #if USE_ANSI_COLOR
         write(STDOUT_FILENO, "\x1b[39m", 5);
@@ -432,13 +436,25 @@ static void draw_cell(uint8_t idx, int highlight){
 #endif
     }
 
+#if USE_ANSI_COLOR
+    if (highlight) {
+        char cursor = '+';
+        write(STDOUT_FILENO, "\x1b[97m", 5);
+        write(STDOUT_FILENO, &cursor, 1);
+        reset_ansi_colors();
+        return;
+    }
+#else
     if (highlight) {
         write(STDOUT_FILENO, "\x1b[7m", 4);
     }
+#endif
     write(STDOUT_FILENO, &ch, 1);
+#if !USE_ANSI_COLOR
     if (highlight) {
         write(STDOUT_FILENO, "\x1b[0m", 4);
     }
+#endif
     reset_ansi_colors();
 }
 

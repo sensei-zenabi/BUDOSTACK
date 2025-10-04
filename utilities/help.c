@@ -19,6 +19,7 @@ int main(int argc, char *argv[]) {
     printf("License:         GPLv2\n");
     printf("\n");
     printf("Note! All BUDOSTACK programs have been optimized for 8x8 square fonts.\n");
+    printf("      Built-in fonts are provided in the ./fonts/ folder (.psf + .ttf).\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     printf("                           - GENERAL INFORMATION -\n");

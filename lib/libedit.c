@@ -503,13 +503,16 @@ char *highlight_other_line(const char *line) {
             }
             // Check for start of a markup tag
             if (c == '<') {
-                const char *tag_color = "\x1b[34m";  // blue for tags
-                size_t cl = strlen(tag_color);
-                if (ri + cl < buf_size) {
-                    memcpy(result + ri, tag_color, cl);
-                    ri += cl;
+                /* Only treat the '<' as a markup tag if a closing '>' exists later */
+                if (strchr(line + i + 1, '>')) {
+                    const char *tag_color = "\x1b[34m";  // blue for tags
+                    size_t cl = strlen(tag_color);
+                    if (ri + cl < buf_size) {
+                        memcpy(result + ri, tag_color, cl);
+                        ri += cl;
+                    }
+                    in_tag = 1;
                 }
-                in_tag = 1;
             }
             // Copy the current character
             result[ri++] = c;
@@ -525,7 +528,7 @@ char *highlight_other_line(const char *line) {
             }
         }
         // If any formatting is still active, reset it at the end
-        if (in_bold || in_italic) {
+        if (in_tag || in_bold || in_italic) {
             const char *reset = "\x1b[0m";
             size_t rl = strlen(reset);
             if (ri + rl < buf_size) {

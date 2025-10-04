@@ -59,11 +59,14 @@ void prettyprint(const char *message, unsigned int delay_ms) {
 void printlogo(void) {
     // Each line ends with '\n' to ensure proper line breaks in the terminal.
     // Backslashes are escaped as '\\' so they are printed correctly.
+    printf("\n");
     printf(" ______  _     _ ______   _____  _______ _______ _______ _______ _     _\n");
     printf(" |_____] |     | |     \\ |     | |______    |    |_____| |       |____/ \n");
     printf(" |_____] |_____| |_____/ |_____| ______|    |    |     | |_____  |    \\_\n");
+    printf("\n");
     prettyprint("           ===== BUDOSTACK - The Martial Art of Software =====         ", 20);
     //prettyprint("", 1000);
+    printf("\n");
     prettyprint("                      ...for those about to zen...", 50);
     prettyprint("\r", 1000);
 

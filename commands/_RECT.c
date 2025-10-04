@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../lib/termbg.h"
+
 static int parse_int(const char *value, const char *name, int *out) {
     char *endptr = NULL;
     errno = 0;
@@ -97,32 +99,15 @@ int main(int argc, char *argv[]) {
     if (color > 255)
         color = 255;
 
-    const char *pixel = "\u2588";
-    size_t glyph_len = strlen(pixel);
-    if (glyph_len == 0) {
-        fprintf(stderr, "_RECT: invalid glyph length\n");
-        return EXIT_FAILURE;
-    }
-
-    size_t max_width = (SIZE_MAX - 1) / glyph_len;
-    if ((size_t)width > max_width) {
-        fprintf(stderr, "_RECT: width too large\n");
-        return EXIT_FAILURE;
-    }
-
-    size_t buffer_size = ((size_t)width * glyph_len) + 1;
+    size_t buffer_size = (size_t)width + 1;
     char *line = malloc(buffer_size);
     if (line == NULL) {
         fprintf(stderr, "_RECT: failed to allocate memory\n");
         return EXIT_FAILURE;
     }
 
-    char *ptr = line;
-    for (int i = 0; i < width; ++i) {
-        memcpy(ptr, pixel, glyph_len);
-        ptr += glyph_len;
-    }
-    *ptr = '\0';
+    memset(line, ' ', (size_t)width);
+    line[width] = '\0';
 
     int start_col = x + 1;
     if (start_col < 1)
@@ -135,31 +120,36 @@ int main(int argc, char *argv[]) {
 
         printf("\033[%d;%dH", term_row, start_col);
 
+        int logical_row = y + row;
+
         if (fill || row == 0 || row == height - 1) {
-            printf("\033[38;5;%dm", color);
-            printf("%s", line);
-            printf("\033[0m");
+            printf("\033[48;5;%dm", color);
+            fwrite(line, 1, (size_t)width, stdout);
+            printf("\033[49m");
+            for (int col = 0; col < width; ++col)
+                termbg_set(x + col, logical_row, color);
         } else {
-            printf("\033[38;5;%dm", color);
-            printf("%s", pixel);
-            printf("\033[0m");
+            printf("\033[48;5;%dm ", color);
+            printf("\033[49m");
+            termbg_set(x, logical_row, color);
 
             if (width > 1) {
                 int interior = width - 2;
-                for (int col = 0; col < interior; ++col) {
-                    putchar(' ');
-                }
+                if (interior > 0)
+                    printf("\033[%dC", interior);
 
-                printf("\033[38;5;%dm", color);
-                printf("%s", pixel);
-                printf("\033[0m");
+                printf("\033[48;5;%dm ", color);
+                printf("\033[49m");
+                termbg_set(x + width - 1, logical_row, color);
             }
         }
     }
 
-    printf("\033[0m");
+    printf("\033[49m\033[39m");
     fflush(stdout);
+    termbg_save();
     free(line);
+    termbg_shutdown();
 
     return EXIT_SUCCESS;
 }

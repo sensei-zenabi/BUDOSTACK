@@ -14,22 +14,23 @@ SET $VAR1 = "n"
 SET $VAR2 = 0
 
 # Display the start menu
+RUN _IMAGE -x 0 -y 0 -file tasks/demo/demo.bmp
+RUN _BEEP -C6 -250
 @MENUSCREEN
-RUN _RECT -x 1 -y 1 -width 40 -height 3 -color 1
-RUN _TEXT -x 7 -y 2 -text TASK LANGUAGE DEMONSTRATION
+RUN _RECT -x 20 -y 4 -width 40 -height 3 -color 1
+RUN _TEXT -x 25 -y 5 -text TASK LANGUAGE DEMONSTRATION
 PRINT "\n\n\n"
-RUN _BAR -title Loading: -progress $VAR2 -color 256
+RUN _BAR -x 4 -y 8 -title Loading: -progress $VAR2 -color 256
 IF $VAR2 < 100
   SET $VAR2 = $VAR2 + 10
   RUN _WAIT 500
   GOTO @MENUSCREEN
-PRINT "Do you want to exit?"
-PRINT " [y/n]: "
+RUN _TEXT -x 4 -y 10 -text "Do you want to exit? [y/n]: "
 INPUT $VAR1
 IF $VAR1 == "y"
   GOTO @END
 ELSE
-  PRINT "Great! Let's continue the demo!\n\n"
+  RUN _TEXT -x 4 -y 12 -text "Great! Let's continue the demo!"
 WAIT 1000
 
 # Demo 1
@@ -64,5 +65,5 @@ IF $VAR2 == 4
 # Exit
 @END
 PRINT "\nExiting demo...\n"
-
+RUN cls
 

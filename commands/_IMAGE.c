@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../lib/termbg.h"
+
 #include "../lib/libimage.h"
 
 static int parse_int(const char *value, const char *name, int *out) {
@@ -79,8 +81,13 @@ int main(int argc, char *argv[]) {
 
     LibImageResult result = libimage_render_file_at(file, x, y);
     if (result == LIBIMAGE_SUCCESS) {
+        termbg_save();
+        termbg_shutdown();
         return EXIT_SUCCESS;
     }
+
+    termbg_save();
+    termbg_shutdown();
 
     const char *message = libimage_last_error();
     if (message != NULL && message[0] != '\0') {

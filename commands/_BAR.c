@@ -4,6 +4,8 @@
 #include <errno.h>
 #include <limits.h>
 
+#include "../lib/termbg.h"
+
 // Code
 
 #define BAR_WIDTH 10
@@ -25,6 +27,35 @@ static int parse_int(const char *value, const char *name, int *out) {
 
     *out = (int)parsed;
     return 0;
+}
+
+static void print_with_background(const char *text, int row, int *col) {
+    if (text == NULL)
+        return;
+
+    int last_bg = -2;
+    for (const unsigned char *ptr = (const unsigned char *)text; *ptr != '\0'; ++ptr) {
+        if (col && *col >= 0) {
+            int bg_color;
+            if (termbg_get(*col, row, &bg_color)) {
+                if (bg_color != last_bg) {
+                    printf("\033[48;5;%dm", bg_color);
+                    last_bg = bg_color;
+                }
+            } else if (last_bg != -1) {
+                printf("\033[49m");
+                last_bg = -1;
+            }
+        }
+
+        fputc(*ptr, stdout);
+
+        if (col && *col >= 0)
+            ++(*col);
+    }
+
+    if (col && *col >= 0 && last_bg != -1)
+        printf("\033[49m");
 }
 
 int main(int argc, char *argv[]) {
@@ -113,6 +144,7 @@ int main(int argc, char *argv[]) {
     }
     *ptr = '\0';
 
+    int tracked_col = -1;
     if (x >= 0 && y >= 0) {
         int row = y + 1;
         int col = x + 1;
@@ -123,11 +155,23 @@ int main(int argc, char *argv[]) {
             col = 1;
 
         printf("\033[%d;%dH", row, col);
+        tracked_col = col - 1;
     }
     printf("\033[38;5;%dm", color);
-    printf("%s %s %d%%", title, bar, progress);
-    printf("\033[0m\n");
+
+    int row_index = (y >= 0) ? y : -1;
+    print_with_background(title, row_index, &tracked_col);
+    print_with_background(" ", row_index, &tracked_col);
+    print_with_background(bar, row_index, &tracked_col);
+
+    char percent_buffer[16];
+    snprintf(percent_buffer, sizeof(percent_buffer), " %d%%", progress);
+    print_with_background(percent_buffer, row_index, &tracked_col);
+
+    printf("\033[49m\033[39m\n");
     fflush(stdout);
+
+    termbg_shutdown();
 
     return EXIT_SUCCESS;
 }

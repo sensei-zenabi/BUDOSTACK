@@ -1,5 +1,7 @@
 #include "libimage.h"
 
+#include "termbg.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -231,8 +233,10 @@ static void render_pixels_at(const Pixel *pixels, int width, int height, int ori
                 fputs("\x1b[39m", stdout);
                 fputc(' ', stdout);
                 fputs("\x1b[49m", stdout);
+                termbg_set(origin_x + x, origin_y + y, color->term256);
             } else {
                 fputs("\x1b[49m\x1b[39m.", stdout);
+                termbg_set(origin_x + x, origin_y + y, -1);
             }
         }
         fputs("\x1b[49m\x1b[39m", stdout);

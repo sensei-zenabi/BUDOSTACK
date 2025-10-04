@@ -138,11 +138,11 @@ int main(int argc, char *argv[]) {
         if (fill || row == 0 || row == height - 1) {
             printf("\033[38;5;%dm", color);
             printf("%s", line);
-            printf("\033[0m");
+            printf("\033[39m");
         } else {
             printf("\033[38;5;%dm", color);
             printf("%s", pixel);
-            printf("\033[0m");
+            printf("\033[39m");
 
             if (width > 1) {
                 int interior = width - 2;
@@ -152,12 +152,12 @@ int main(int argc, char *argv[]) {
 
                 printf("\033[38;5;%dm", color);
                 printf("%s", pixel);
-                printf("\033[0m");
+                printf("\033[39m");
             }
         }
     }
 
-    printf("\033[0m");
+    printf("\033[39m");
     fflush(stdout);
     free(line);
 

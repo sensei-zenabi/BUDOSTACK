@@ -126,7 +126,7 @@ int main(int argc, char *argv[]) {
     }
     printf("\033[38;5;%dm", color);
     printf("%s %s %d%%", title, bar, progress);
-    printf("\033[0m\n");
+    printf("\033[39m\n");
     fflush(stdout);
 
     return EXIT_SUCCESS;

@@ -132,7 +132,7 @@ int main(int argc, char *argv[]) {
     printf("\033[%d;%dH", row, col);
     printf("\033[38;5;%dm", color);
     fputs(text, stdout);
-    printf("\033[0m");
+    printf("\033[39m");
     fflush(stdout);
 
     exit_code = EXIT_SUCCESS;

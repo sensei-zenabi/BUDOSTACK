@@ -461,16 +461,29 @@ static int read_key(void){
 
 /* -------- UI / Rendering -------- */
 
-static void draw_status_line(int cols) {
-    char buf[256];
-    int len = snprintf(buf, sizeof(buf),
-        " %dx%d  Cursor:%d,%d  Palette:^1-^5:%d  Color:A-Z  Erase:Backspace  Undo:^Z  Redo:^Y  Save:^S  Load:^O  New:^N  Quit:^Q %s",
-        img_w, img_h, cursor_x, cursor_y, current_palette_variant + 1, dirty ? "[*]" : "   ");
-    if (len > cols-1) len = cols-1;
-    write(STDOUT_FILENO, "\x1b[7m", 4); // inverse
-    write(STDIN_FILENO, "", 0); // no-op to silence unused warning on some compilers
-    write(STDOUT_FILENO, buf, len);
-    for (int i=len;i<cols-1;i++) write(STDOUT_FILENO, " ", 1);
+static void draw_status_lines(int cols) {
+    char line1[256];
+    char line2[256];
+    int len1 = snprintf(line1, sizeof(line1),
+        " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%d  %s",
+        img_w, img_h, cursor_x, cursor_y, view_x, view_y,
+        current_palette_variant + 1, dirty ? "Dirty" : "Saved");
+    int len2 = snprintf(line2, sizeof(line2),
+        " Draw:A-Z  Brightness:^1-^5  Erase:Backspace/Delete  Resize:^R  Undo:^Z  Redo:^Y  Save:^S  Load:^O  New:^N  Quit:^Q");
+
+    if (len1 > cols - 1) len1 = cols - 1;
+    if (len2 > cols - 1) len2 = cols - 1;
+
+    write(STDOUT_FILENO, "\x1b[7m", 4);
+    write(STDOUT_FILENO, line1, len1);
+    for (int i = len1; i < cols - 1; i++) write(STDOUT_FILENO, " ", 1);
+    write(STDOUT_FILENO, "\x1b[0m", 4);
+
+    write(STDOUT_FILENO, "\r\n", 2);
+
+    write(STDOUT_FILENO, "\x1b[7m", 4);
+    write(STDOUT_FILENO, line2, len2);
+    for (int i = len2; i < cols - 1; i++) write(STDOUT_FILENO, " ", 1);
     write(STDOUT_FILENO, "\x1b[0m", 4);
 }
 
@@ -559,7 +572,7 @@ static void render(void){
     get_terminal_size(&rows, &cols);
     if (rows < 5 || cols < 10) return;
 
-    int draw_rows = rows - 2; // one for status, one for palette line
+    int draw_rows = rows - 3; // palette line + two status/help lines
     int draw_cols = cols;
 
     // Clamp view to ensure cursor visible
@@ -619,8 +632,8 @@ static void render(void){
         }
 
     write(STDOUT_FILENO, "\r\n", 2);
-    // Status
-    draw_status_line(cols_now);
+    // Status + help lines
+    draw_status_lines(cols_now);
 }
 
 /* -------- Prompts (line input in raw mode) -------- */

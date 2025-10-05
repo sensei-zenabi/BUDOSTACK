@@ -14,7 +14,7 @@ SET $VAR1 = "n"
 SET $VAR2 = 0
 
 # Display the start menu
-RUN _IMAGE -x 0 -y 0 -file tasks/demo/demo.bmp
+RUN _IMAGE -x 0 -y 0 -file tasks/assets/bg_blue.bmp
 RUN _BEEP -C6 -250
 @MENUSCREEN
 RUN _RECT -x 20 -y 4 -width 40 -height 3 -color 1

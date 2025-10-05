@@ -386,27 +386,95 @@ void editorHandleResize(void) {
    Escape sequences (starting with '\x1b') do not consume display width. */
 void abAppendHighlighted(struct abuf *ab, const char *s, int avail) {
     int width = 0;
+    int skip = E.coloff;
     const char *p = s;
+    const char *active_color = NULL;
+    size_t active_len = 0;
+    mbstate_t state;
+    memset(&state, 0, sizeof state);
+
+    /* Skip columns according to the horizontal scroll offset while tracking
+       the currently active color so that we can resume drawing with the
+       correct attributes. */
+    while (*p && skip > 0) {
+        if (*p == '\x1b') {
+            const char *start = p++;
+            while (*p && (*p < '@' || *p > '~'))
+                p++;
+            if (*p)
+                p++;
+            size_t len = p - start;
+            if (len == 4 && strncmp(start, "\x1b[0m", 4) == 0) {
+                active_color = NULL;
+                active_len = 0;
+            } else {
+                active_color = start;
+                active_len = len;
+            }
+        } else {
+            wchar_t wc;
+            size_t bytes = mbrtowc(&wc, p, MB_CUR_MAX, &state);
+            if (bytes == (size_t)-1 || bytes == (size_t)-2) {
+                memset(&state, 0, sizeof state);
+                bytes = 1;
+                wc = (unsigned char)*p;
+            }
+            int w = wcwidth(wc);
+            if (w < 0)
+                w = 0;
+            if (w > skip)
+                skip = 0;
+            else
+                skip -= w;
+            p += bytes;
+        }
+    }
+
+    if (active_color)
+        abAppend(ab, active_color, active_len);
+
+    memset(&state, 0, sizeof state);
+    int color_active = active_color != NULL;
+
     while (*p && width < avail) {
         if (*p == '\x1b') {
             const char *start = p++;
-            /* Consume the rest of the escape sequence */
             while (*p && (*p < '@' || *p > '~'))
                 p++;
-            if (*p) p++;
-            abAppend(ab, start, p - start);
+            if (*p)
+                p++;
+            size_t len = p - start;
+            abAppend(ab, start, len);
+            if (len == 4 && strncmp(start, "\x1b[0m", 4) == 0) {
+                color_active = 0;
+                active_color = NULL;
+                active_len = 0;
+            } else {
+                color_active = 1;
+                active_color = start;
+                active_len = len;
+            }
         } else {
             wchar_t wc;
-            size_t bytes = mbrtowc(&wc, p, MB_CUR_MAX, NULL);
-            if (bytes == (size_t)-1 || bytes == (size_t)-2) bytes = 1;
+            size_t bytes = mbrtowc(&wc, p, MB_CUR_MAX, &state);
+            if (bytes == (size_t)-1 || bytes == (size_t)-2) {
+                memset(&state, 0, sizeof state);
+                bytes = 1;
+                wc = (unsigned char)*p;
+            }
             int w = wcwidth(wc);
-            if (w < 0) w = 0;
-            if (width + w > avail) break;
+            if (w < 0)
+                w = 0;
+            if (width + w > avail)
+                break;
             abAppend(ab, p, bytes);
             width += w;
             p += bytes;
         }
     }
+
+    if (color_active)
+        abAppend(ab, "\x1b[0m", 4);
 }
 
 /*** Modified Drawing Functions Using Append Buffer ***/
@@ -512,24 +580,20 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
             
             if (E.selecting) {
                 editorRenderRowWithSelection(&E.row[file_row], file_row, text_width, ab);
-            } else if (E.coloff == 0) {
-                if (is_c_source()) {
-                    /* Pass the current multi-line comment state for this line */
-                    char *highlighted = highlight_c_line(E.row[file_row].chars, E.row[file_row].hl_in_comment);
-                    if (highlighted) {
-                        abAppendHighlighted(ab, highlighted, text_width);
-                        free(highlighted);
-                    }
-                } else {
-                    // Use this for all other files
-                    char *highlighted = highlight_other_line(E.row[file_row].chars);
-                    if (highlighted) {
-                        abAppendHighlighted(ab, highlighted, text_width);
-                        free(highlighted);
-                    }
+            } else if (is_c_source()) {
+                /* Pass the current multi-line comment state for this line */
+                char *highlighted = highlight_c_line(E.row[file_row].chars, E.row[file_row].hl_in_comment);
+                if (highlighted) {
+                    abAppendHighlighted(ab, highlighted, text_width);
+                    free(highlighted);
                 }
             } else {
-                editorRenderRow(&E.row[file_row], text_width, ab);
+                // Use this for all other files
+                char *highlighted = highlight_other_line(E.row[file_row].chars);
+                if (highlighted) {
+                    abAppendHighlighted(ab, highlighted, text_width);
+                    free(highlighted);
+                }
             }
             
             int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;

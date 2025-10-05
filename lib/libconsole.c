@@ -63,11 +63,11 @@ void printlogo(void) {
     printf(" ______  _     _ ______   _____  _______ _______ _______ _______ _     _\n");
     printf(" |_____] |     | |     \\ |     | |______    |    |_____| |       |____/ \n");
     printf(" |_____] |_____| |_____/ |_____| ______|    |    |     | |_____  |    \\_\n");
-    printf("\n");
-    prettyprint("           ===== BUDOSTACK - The Martial Art of Software =====         ", 20);
+    printf("\n\n");
+    prettyprint("             ===== BUDOSTACK - For those about to Zen  =====         ", 20);
     //prettyprint("", 1000);
     printf("\n");
-    prettyprint("                      ...for those about to zen...", 50);
+    prettyprint("                       ...Welcome back to 1980s...", 50);
     prettyprint("\r", 1000);
 
 }

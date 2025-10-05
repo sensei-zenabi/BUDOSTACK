@@ -451,15 +451,16 @@ static int init_renderer(TerminalRenderer *renderer)
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     SDL_GetWindowSize(renderer->window, &renderer->window_width, &renderer->window_height);
 
-    float content_scale = fminf(
-        (float)renderer->target_width / (float)renderer->logical_width,
-        (float)renderer->target_height / (float)renderer->logical_height);
-    if (content_scale <= 0.0f) {
-        content_scale = 1.0f;
-    }
+    const float scale_x = (float)renderer->target_width /
+        (float)(renderer->cols * renderer->font.width);
+    const float scale_y = (float)renderer->target_height /
+        (float)(renderer->rows * renderer->font.height);
 
-    renderer->char_width = (int)lroundf(renderer->font.width * content_scale);
-    renderer->line_height = (int)lroundf(renderer->font.height * content_scale);
+    renderer->scale_x = scale_x > 0.0f ? scale_x : 1.0f;
+    renderer->scale_y = scale_y > 0.0f ? scale_y : 1.0f;
+
+    renderer->char_width = (int)lroundf(renderer->font.width * renderer->scale_x);
+    renderer->line_height = (int)lroundf(renderer->font.height * renderer->scale_y);
     if (renderer->char_width <= 0) {
         renderer->char_width = (int)renderer->font.width;
     }

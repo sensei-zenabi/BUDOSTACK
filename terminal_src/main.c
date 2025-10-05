@@ -18,10 +18,18 @@
 #include "terminal_buffer.h"
 
 #define TERMINAL_FONT_PATH "fonts/ModernDOS8x8.ttf"
-#define TERMINAL_FONT_SIZE 36
+#define TERMINAL_FONT_SIZE 16
 #define TERMINAL_MAX_LINES 2048
 #define TERMINAL_READ_CHUNK 4096
-#define TERMINAL_PADDING 12
+#define TERMINAL_PADDING 0
+#define TERMINAL_DEFAULT_COLS 80
+#define TERMINAL_DEFAULT_ROWS 25
+#define TERMINAL_TARGET_WIDTH 320
+#define TERMINAL_TARGET_HEIGHT 200
+#define TERMINAL_FALLBACK_WIDTH 640
+#define TERMINAL_FALLBACK_HEIGHT 400
+#define TERMINAL_BASE_CHAR_WIDTH 8.0f
+#define TERMINAL_BASE_CHAR_HEIGHT 8.0f
 
 typedef struct {
     SDL_Window *window;
@@ -31,11 +39,13 @@ typedef struct {
     int char_height;
     int cols;
     int rows;
+    int logical_width;
+    int logical_height;
+    float scale_x;
+    float scale_y;
 } TerminalRenderer;
 
 static int g_running = 1;
-
-static void update_size_from_window(TerminalRenderer *renderer);
 
 static void cleanup_child(pid_t pid)
 {
@@ -76,6 +86,8 @@ static int init_renderer(TerminalRenderer *renderer)
         return -1;
     }
 
+    TTF_SetFontHinting(renderer->font, TTF_HINTING_MONO);
+
     if (TTF_SizeText(renderer->font, "M", &renderer->char_width, &renderer->char_height) == -1) {
         fprintf(stderr, "TTF_SizeText failed: %s\n", TTF_GetError());
         TTF_CloseFont(renderer->font);
@@ -84,19 +96,33 @@ static int init_renderer(TerminalRenderer *renderer)
         return -1;
     }
 
-    renderer->cols = 80;
-    renderer->rows = 25;
+    renderer->cols = TERMINAL_DEFAULT_COLS;
+    renderer->rows = TERMINAL_DEFAULT_ROWS;
 
-    int width = renderer->cols * renderer->char_width + TERMINAL_PADDING * 2;
-    int height = renderer->rows * renderer->char_height + TERMINAL_PADDING * 2;
+    renderer->logical_width = (int)(TERMINAL_DEFAULT_COLS * TERMINAL_BASE_CHAR_WIDTH + TERMINAL_PADDING * 2);
+    renderer->logical_height = (int)(TERMINAL_DEFAULT_ROWS * TERMINAL_BASE_CHAR_HEIGHT + TERMINAL_PADDING * 2);
+
+    int window_width = TERMINAL_TARGET_WIDTH;
+    int window_height = TERMINAL_TARGET_HEIGHT;
+    if (renderer->logical_width > TERMINAL_TARGET_WIDTH || renderer->logical_height > TERMINAL_TARGET_HEIGHT) {
+        window_width = TERMINAL_FALLBACK_WIDTH;
+        window_height = TERMINAL_FALLBACK_HEIGHT;
+    }
+
+    float base_scale_x = TERMINAL_BASE_CHAR_WIDTH / (float)renderer->char_width;
+    float base_scale_y = TERMINAL_BASE_CHAR_HEIGHT / (float)renderer->char_height;
+    float resolution_scale_x = (float)window_width / (float)renderer->logical_width;
+    float resolution_scale_y = (float)window_height / (float)renderer->logical_height;
+    renderer->scale_x = base_scale_x * resolution_scale_x;
+    renderer->scale_y = base_scale_y * resolution_scale_y;
 
     renderer->window = SDL_CreateWindow(
         "Budostack Terminal",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        width,
-        height,
-        SDL_WINDOW_RESIZABLE);
+        window_width,
+        window_height,
+        SDL_WINDOW_ALLOW_HIGHDPI);
     if (!renderer->window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         TTF_CloseFont(renderer->font);
@@ -116,11 +142,7 @@ static int init_renderer(TerminalRenderer *renderer)
     }
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-
-    if (SDL_SetWindowFullscreen(renderer->window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
-        fprintf(stderr, "SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
-    }
-    update_size_from_window(renderer);
+    SDL_RenderSetScale(renderer->renderer, renderer->scale_x, renderer->scale_y);
     SDL_StartTextInput();
 
     return 0;
@@ -147,33 +169,6 @@ static void destroy_renderer(TerminalRenderer *renderer)
     }
     TTF_Quit();
     SDL_Quit();
-}
-
-static void update_size_from_window(TerminalRenderer *renderer)
-{
-    int width = 0;
-    int height = 0;
-    SDL_GetWindowSize(renderer->window, &width, &height);
-
-    renderer->cols = (width - TERMINAL_PADDING * 2) / renderer->char_width;
-    renderer->rows = (height - TERMINAL_PADDING * 2) / renderer->char_height;
-    if (renderer->cols < 20) {
-        renderer->cols = 20;
-    }
-    if (renderer->rows < 5) {
-        renderer->rows = 5;
-    }
-}
-
-static int update_child_window_size(int pty_fd, const TerminalRenderer *renderer)
-{
-    struct winsize ws = {0};
-    ws.ws_col = (unsigned short)renderer->cols;
-    ws.ws_row = (unsigned short)renderer->rows;
-    if (ioctl(pty_fd, TIOCSWINSZ, &ws) == -1) {
-        return -1;
-    }
-    return 0;
 }
 
 static int read_from_child(int pty_fd, TerminalBuffer *buffer, int *content_dirty)
@@ -403,10 +398,8 @@ int main(int argc, char *argv[])
                 send_text(pty_fd, event.text.text);
                 break;
             case SDL_WINDOWEVENT:
-                if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED || event.window.event == SDL_WINDOWEVENT_RESIZED) {
-                    update_size_from_window(&renderer);
-                    update_child_window_size(pty_fd, &renderer);
-                    content_dirty = 1;
+                if (event.window.event == SDL_WINDOWEVENT_CLOSE) {
+                    g_running = 0;
                 }
                 break;
             default:

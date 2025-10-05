@@ -5,7 +5,7 @@
  *  - Undo (Ctrl+Z), Redo (Ctrl+Y)
  *  - Arrow-keys move cursor, auto-scrolling viewport
  *  - A–Z paints with 26-color palette; Backspace/Delete erases
- *  - Ctrl+F then color floods a region using 8-direction adjacency
+ *  - Ctrl+F then color floods a region using 4-direction adjacency
  *  - Ctrl+1..Ctrl+5 cycle palette brightness (3 = default)
  *  - Max resolution 320x200
  *  - Works in a terminal using raw mode (termios) + ANSI escapes
@@ -907,6 +907,12 @@ static void flood_fill_at_cursor(uint8_t color_idx){
     stack[sp++] = (Point){cursor_x, cursor_y};
 
     size_t changed_count = 0;
+    const int neighbor_offsets[4][2] = {
+        { 1, 0 },
+        {-1, 0 },
+        { 0, 1 },
+        { 0,-1 }
+    };
     while (sp > 0) {
         Point p = stack[--sp];
         int idx = p.y * img_w + p.x;
@@ -916,18 +922,15 @@ static void flood_fill_at_cursor(uint8_t color_idx){
         pixels[idx] = color_idx;
         changed_count++;
 
-        for (int dy = -1; dy <= 1; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                if (dx == 0 && dy == 0) continue;
-                int nx = p.x + dx;
-                int ny = p.y + dy;
-                if (nx < 0 || ny < 0 || nx >= img_w || ny >= img_h) continue;
-                int nidx = ny * img_w + nx;
-                if (visited[nidx]) continue;
-                if (pixels[nidx] != target) continue;
-                visited[nidx] = 1;
-                stack[sp++] = (Point){nx, ny};
-            }
+        for (int i = 0; i < 4; i++) {
+            int nx = p.x + neighbor_offsets[i][0];
+            int ny = p.y + neighbor_offsets[i][1];
+            if (nx < 0 || ny < 0 || nx >= img_w || ny >= img_h) continue;
+            int nidx = ny * img_w + nx;
+            if (visited[nidx]) continue;
+            if (pixels[nidx] != target) continue;
+            visited[nidx] = 1;
+            stack[sp++] = (Point){nx, ny};
         }
     }
 

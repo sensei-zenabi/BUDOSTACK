@@ -649,14 +649,21 @@ static void process_byte(TerminalBuffer *buffer, unsigned char byte)
     }
 }
 
-int terminal_buffer_init(TerminalBuffer *buffer, size_t max_history_lines)
+int terminal_buffer_init(TerminalBuffer *buffer, int cols, int rows, size_t max_history_lines)
 {
     if (!buffer) {
         return -1;
     }
 
-    buffer->cols = TERMINAL_DEFAULT_COLS;
-    buffer->rows = TERMINAL_DEFAULT_ROWS;
+    if (cols <= 0) {
+        cols = TERMINAL_DEFAULT_COLS;
+    }
+    if (rows <= 0) {
+        rows = TERMINAL_DEFAULT_ROWS;
+    }
+
+    buffer->cols = cols;
+    buffer->rows = rows;
     buffer->max_history_lines = max_history_lines;
     buffer->cells = calloc((size_t)buffer->cols * (size_t)buffer->rows, sizeof(TerminalCell));
     if (!buffer->cells) {

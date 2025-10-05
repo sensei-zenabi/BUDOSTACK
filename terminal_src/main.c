@@ -417,8 +417,6 @@ static int init_renderer(TerminalRenderer *renderer)
     renderer->scale_x = 1.0f;
     renderer->scale_y = 1.0f;
 
-    renderer->logical_width = renderer->cols * renderer->char_width + TERMINAL_PADDING * 2;
-    renderer->logical_height = renderer->rows * renderer->line_height + TERMINAL_PADDING * 2;
     renderer->target_width = TERMINAL_FALLBACK_WIDTH;
     renderer->target_height = TERMINAL_FALLBACK_HEIGHT;
 
@@ -450,6 +448,15 @@ static int init_renderer(TerminalRenderer *renderer)
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     SDL_GetWindowSize(renderer->window, &renderer->window_width, &renderer->window_height);
+
+    int suggested_rows = renderer->target_height / renderer->line_height;
+    if (suggested_rows < TERMINAL_DEFAULT_ROWS) {
+        suggested_rows = TERMINAL_DEFAULT_ROWS;
+    }
+    renderer->rows = suggested_rows;
+
+    renderer->logical_width = renderer->cols * renderer->char_width + TERMINAL_PADDING * 2;
+    renderer->logical_height = renderer->rows * renderer->line_height + TERMINAL_PADDING * 2;
 
     float content_scale = fminf(
         (float)renderer->target_width / (float)renderer->logical_width,
@@ -659,7 +666,7 @@ int main(int argc, char *argv[])
     }
 
     TerminalBuffer buffer;
-    if (terminal_buffer_init(&buffer, TERMINAL_MAX_LINES) == -1) {
+    if (terminal_buffer_init(&buffer, renderer.cols, renderer.rows, TERMINAL_MAX_LINES) == -1) {
         fprintf(stderr, "Failed to initialize terminal buffer: %s\n", strerror(errno));
         destroy_renderer(&renderer);
         return EXIT_FAILURE;

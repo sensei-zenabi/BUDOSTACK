@@ -45,7 +45,7 @@ typedef struct {
     int utf8_bytes_remaining;
 } TerminalBuffer;
 
-int terminal_buffer_init(TerminalBuffer *buffer, size_t max_history_lines);
+int terminal_buffer_init(TerminalBuffer *buffer, int cols, int rows, size_t max_history_lines);
 void terminal_buffer_destroy(TerminalBuffer *buffer);
 int terminal_buffer_append(TerminalBuffer *buffer, const char *data, size_t length);
 const TerminalCell *terminal_buffer_cell(const TerminalBuffer *buffer, int row, int col);

@@ -31,6 +31,12 @@ typedef struct {
     int alternate_cursor_col;
     int alternate_saved_row;
     int alternate_saved_col;
+    int scroll_top;
+    int scroll_bottom;
+    int primary_scroll_top;
+    int primary_scroll_bottom;
+    int alternate_scroll_top;
+    int alternate_scroll_bottom;
     int using_alternate_screen;
     int cursor_visible;
     int primary_cursor_visible;

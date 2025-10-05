@@ -93,6 +93,122 @@ static void clear_screen(TerminalBuffer *buffer)
     buffer->cursor_col = 0;
 }
 
+static void set_default_scroll_region(TerminalBuffer *buffer)
+{
+    if (!buffer) {
+        return;
+    }
+
+    buffer->scroll_top = 0;
+    buffer->scroll_bottom = buffer->rows > 0 ? buffer->rows - 1 : 0;
+}
+
+static void clamp_scroll_region(TerminalBuffer *buffer)
+{
+    if (!buffer || buffer->rows <= 0) {
+        return;
+    }
+
+    if (buffer->scroll_top < 0) {
+        buffer->scroll_top = 0;
+    }
+    if (buffer->scroll_top >= buffer->rows) {
+        buffer->scroll_top = buffer->rows - 1;
+    }
+
+    if (buffer->scroll_bottom < buffer->scroll_top) {
+        buffer->scroll_bottom = buffer->scroll_top;
+    }
+    if (buffer->scroll_bottom >= buffer->rows) {
+        buffer->scroll_bottom = buffer->rows - 1;
+    }
+}
+
+static int cursor_within_scroll_region(TerminalBuffer *buffer)
+{
+    if (!buffer) {
+        return 0;
+    }
+
+    clamp_scroll_region(buffer);
+    return buffer->cursor_row >= buffer->scroll_top && buffer->cursor_row <= buffer->scroll_bottom;
+}
+
+static void scroll_range_up(TerminalBuffer *buffer, int top, int bottom, int lines)
+{
+    if (!buffer || lines <= 0 || top < 0 || bottom < top || bottom >= buffer->rows) {
+        return;
+    }
+
+    int region_rows = bottom - top + 1;
+    if (lines > region_rows) {
+        lines = region_rows;
+    }
+
+    size_t row_size = (size_t)buffer->cols * sizeof(TerminalCell);
+    if (region_rows > lines) {
+        memmove(buffer->cells + (top * buffer->cols),
+                buffer->cells + ((top + lines) * buffer->cols),
+                (size_t)(region_rows - lines) * row_size);
+    }
+
+    for (int row = bottom - lines + 1; row <= bottom; ++row) {
+        clear_row(buffer, row);
+    }
+}
+
+static void scroll_range_down(TerminalBuffer *buffer, int top, int bottom, int lines)
+{
+    if (!buffer || lines <= 0 || top < 0 || bottom < top || bottom >= buffer->rows) {
+        return;
+    }
+
+    int region_rows = bottom - top + 1;
+    if (lines > region_rows) {
+        lines = region_rows;
+    }
+
+    size_t row_size = (size_t)buffer->cols * sizeof(TerminalCell);
+    if (region_rows > lines) {
+        memmove(buffer->cells + ((top + lines) * buffer->cols),
+                buffer->cells + (top * buffer->cols),
+                (size_t)(region_rows - lines) * row_size);
+    }
+
+    for (int row = top; row < top + lines; ++row) {
+        clear_row(buffer, row);
+    }
+}
+
+static void scroll_region_up(TerminalBuffer *buffer, int lines)
+{
+    if (!buffer || buffer->rows <= 0) {
+        return;
+    }
+
+    clamp_scroll_region(buffer);
+    scroll_range_up(buffer, buffer->scroll_top, buffer->scroll_bottom, lines);
+}
+
+static void scroll_region_down(TerminalBuffer *buffer, int lines)
+{
+    if (!buffer || buffer->rows <= 0) {
+        return;
+    }
+
+    clamp_scroll_region(buffer);
+    scroll_range_down(buffer, buffer->scroll_top, buffer->scroll_bottom, lines);
+}
+
+static void scroll_full_up(TerminalBuffer *buffer, int lines)
+{
+    if (!buffer || buffer->rows <= 0) {
+        return;
+    }
+
+    scroll_range_up(buffer, 0, buffer->rows - 1, lines);
+}
+
 static void store_primary_state(TerminalBuffer *buffer)
 {
     if (!buffer) {
@@ -109,6 +225,8 @@ static void store_primary_state(TerminalBuffer *buffer)
     buffer->primary_inverse = buffer->current_inverse;
     buffer->primary_dim = buffer->current_dim;
     buffer->primary_cursor_visible = buffer->cursor_visible;
+    buffer->primary_scroll_top = buffer->scroll_top;
+    buffer->primary_scroll_bottom = buffer->scroll_bottom;
 }
 
 static void restore_primary_state(TerminalBuffer *buffer)
@@ -127,6 +245,9 @@ static void restore_primary_state(TerminalBuffer *buffer)
     buffer->current_inverse = buffer->primary_inverse;
     buffer->current_dim = buffer->primary_dim;
     buffer->cursor_visible = buffer->primary_cursor_visible;
+    buffer->scroll_top = buffer->primary_scroll_top;
+    buffer->scroll_bottom = buffer->primary_scroll_bottom;
+    clamp_scroll_region(buffer);
 }
 
 static void store_alternate_state(TerminalBuffer *buffer)
@@ -145,6 +266,8 @@ static void store_alternate_state(TerminalBuffer *buffer)
     buffer->alternate_inverse = buffer->current_inverse;
     buffer->alternate_dim = buffer->current_dim;
     buffer->alternate_cursor_visible = buffer->cursor_visible;
+    buffer->alternate_scroll_top = buffer->scroll_top;
+    buffer->alternate_scroll_bottom = buffer->scroll_bottom;
 }
 
 static void erase_line_range(TerminalBuffer *buffer, int row, int start_col, int end_col, int use_current_attrs)
@@ -200,6 +323,7 @@ static void switch_to_primary_screen(TerminalBuffer *buffer)
     buffer->cells = buffer->primary_cells;
     buffer->using_alternate_screen = 0;
     restore_primary_state(buffer);
+    clamp_scroll_region(buffer);
     ensure_cursor_in_bounds(buffer);
 }
 
@@ -222,56 +346,28 @@ static void switch_to_alternate_screen(TerminalBuffer *buffer)
     buffer->saved_col = 0;
     reset_attributes(buffer);
     buffer->cursor_visible = 1;
+    set_default_scroll_region(buffer);
     clear_screen(buffer);
     store_alternate_state(buffer);
 }
 
-static void scroll_up(TerminalBuffer *buffer, int lines)
-{
-    if (!buffer || lines <= 0) {
-        return;
-    }
-    if (lines > buffer->rows) {
-        lines = buffer->rows;
-    }
-
-    size_t row_size = (size_t)buffer->cols * sizeof(TerminalCell);
-    memmove(buffer->cells, buffer->cells + (lines * buffer->cols), row_size * (buffer->rows - lines));
-
-    for (int row = buffer->rows - lines; row < buffer->rows; ++row) {
-        clear_row(buffer, row);
-    }
-
-}
-
-static void scroll_down(TerminalBuffer *buffer, int lines)
-{
-    if (!buffer || lines <= 0) {
-        return;
-    }
-
-    if (lines > buffer->rows) {
-        lines = buffer->rows;
-    }
-
-    size_t row_size = (size_t)buffer->cols * sizeof(TerminalCell);
-    memmove(buffer->cells + (lines * buffer->cols),
-            buffer->cells,
-            row_size * (buffer->rows - lines));
-
-    for (int row = 0; row < lines; ++row) {
-        clear_row(buffer, row);
-    }
-}
-
 static void newline(TerminalBuffer *buffer)
 {
-    buffer->cursor_col = 0;
+    int was_within_margin = cursor_within_scroll_region(buffer);
+
     buffer->cursor_row++;
-    if (buffer->cursor_row >= buffer->rows) {
-        scroll_up(buffer, buffer->cursor_row - (buffer->rows - 1));
+
+    if (was_within_margin) {
+        if (buffer->cursor_row > buffer->scroll_bottom) {
+            scroll_region_up(buffer, buffer->cursor_row - buffer->scroll_bottom);
+            buffer->cursor_row = buffer->scroll_bottom;
+        }
+    } else if (buffer->cursor_row >= buffer->rows) {
+        scroll_full_up(buffer, buffer->cursor_row - (buffer->rows - 1));
         buffer->cursor_row = buffer->rows - 1;
     }
+
+    buffer->cursor_col = 0;
 }
 
 static void carriage_return(TerminalBuffer *buffer)
@@ -302,7 +398,7 @@ static void write_codepoint(TerminalBuffer *buffer, uint32_t codepoint)
     }
 
     if (buffer->cursor_row >= buffer->rows) {
-        scroll_up(buffer, buffer->cursor_row - (buffer->rows - 1));
+        scroll_full_up(buffer, buffer->cursor_row - (buffer->rows - 1));
     }
 
     TerminalCell *cell = cell_at(buffer, buffer->cursor_row, buffer->cursor_col);
@@ -601,12 +697,12 @@ static void handle_csi_final(TerminalBuffer *buffer, char final)
     }
     case 'S': { // Scroll up
         int amount = csi_param_or_default(buffer, 0, 1);
-        scroll_up(buffer, amount);
+        scroll_region_up(buffer, amount);
         break;
     }
     case 'T': { // Scroll down
         int amount = csi_param_or_default(buffer, 0, 1);
-        scroll_down(buffer, amount);
+        scroll_region_down(buffer, amount);
         break;
     }
     case 'J': { // Erase in display
@@ -642,12 +738,19 @@ static void handle_csi_final(TerminalBuffer *buffer, char final)
         if (amount <= 0) {
             break;
         }
-        if (amount > buffer->rows - buffer->cursor_row) {
-            amount = buffer->rows - buffer->cursor_row;
+        clamp_scroll_region(buffer);
+        if (buffer->cursor_row < buffer->scroll_top || buffer->cursor_row > buffer->scroll_bottom) {
+            break;
+        }
+
+        int bottom = buffer->scroll_bottom;
+        int available = bottom - buffer->cursor_row + 1;
+        if (amount > available) {
+            amount = available;
         }
 
         size_t row_size = (size_t)buffer->cols * sizeof(TerminalCell);
-        int move_rows = buffer->rows - buffer->cursor_row - amount;
+        int move_rows = available - amount;
         if (move_rows > 0) {
             memmove(buffer->cells + ((buffer->cursor_row + amount) * buffer->cols),
                     buffer->cells + (buffer->cursor_row * buffer->cols),
@@ -664,19 +767,26 @@ static void handle_csi_final(TerminalBuffer *buffer, char final)
         if (amount <= 0) {
             break;
         }
-        if (amount > buffer->rows - buffer->cursor_row) {
-            amount = buffer->rows - buffer->cursor_row;
+        clamp_scroll_region(buffer);
+        if (buffer->cursor_row < buffer->scroll_top || buffer->cursor_row > buffer->scroll_bottom) {
+            break;
+        }
+
+        int bottom = buffer->scroll_bottom;
+        int available = bottom - buffer->cursor_row + 1;
+        if (amount > available) {
+            amount = available;
         }
 
         size_t row_size = (size_t)buffer->cols * sizeof(TerminalCell);
-        int move_rows = buffer->rows - buffer->cursor_row - amount;
+        int move_rows = available - amount;
         if (move_rows > 0) {
             memmove(buffer->cells + (buffer->cursor_row * buffer->cols),
                     buffer->cells + ((buffer->cursor_row + amount) * buffer->cols),
                     (size_t)move_rows * row_size);
         }
 
-        for (int row = buffer->rows - amount; row < buffer->rows; ++row) {
+        for (int row = bottom - amount + 1; row <= bottom; ++row) {
             clear_row(buffer, row);
         }
         break;
@@ -702,6 +812,30 @@ static void handle_csi_final(TerminalBuffer *buffer, char final)
         int amount = csi_param_or_default(buffer, 0, 1);
         erase_line_range(buffer, buffer->cursor_row, buffer->cursor_col,
                          buffer->cursor_col + amount - 1, 1);
+        break;
+    }
+    case 'r': { // Set scroll region
+        int top = csi_param_or_default(buffer, 0, 1);
+        int bottom = csi_param_or_default(buffer, 1, buffer->rows);
+        if (buffer->rows > 0) {
+            if (top < 1) {
+                top = 1;
+            }
+            if (bottom < 1 || bottom > buffer->rows) {
+                bottom = buffer->rows;
+            }
+            top--;
+            bottom--;
+            if (bottom <= top) {
+                set_default_scroll_region(buffer);
+            } else {
+                buffer->scroll_top = top;
+                buffer->scroll_bottom = bottom;
+            }
+            clamp_scroll_region(buffer);
+            buffer->cursor_row = buffer->scroll_top;
+            buffer->cursor_col = 0;
+        }
         break;
     }
     case 's': { // Save cursor position
@@ -785,31 +919,52 @@ static void handle_escape(TerminalBuffer *buffer, unsigned char byte)
         buffer->parse_state = TERMINAL_PARSE_STATE_NORMAL;
         break;
     case 'D': // Index
-        buffer->cursor_row++;
-        if (buffer->cursor_row >= buffer->rows) {
-            scroll_up(buffer, 1);
-            buffer->cursor_row = buffer->rows - 1;
+        if (cursor_within_scroll_region(buffer)) {
+            if (buffer->cursor_row == buffer->scroll_bottom) {
+                scroll_region_up(buffer, 1);
+                buffer->cursor_row = buffer->scroll_bottom;
+            } else {
+                buffer->cursor_row++;
+                if (buffer->cursor_row > buffer->scroll_bottom) {
+                    buffer->cursor_row = buffer->scroll_bottom;
+                }
+            }
+        } else {
+            buffer->cursor_row++;
+            if (buffer->cursor_row >= buffer->rows) {
+                buffer->cursor_row = buffer->rows > 0 ? buffer->rows - 1 : 0;
+            }
         }
         buffer->parse_state = TERMINAL_PARSE_STATE_NORMAL;
         break;
     case 'E': // Next line
-        buffer->cursor_row++;
-        buffer->cursor_col = 0;
-        if (buffer->cursor_row >= buffer->rows) {
-            scroll_up(buffer, 1);
-            buffer->cursor_row = buffer->rows - 1;
+        if (cursor_within_scroll_region(buffer)) {
+            if (buffer->cursor_row == buffer->scroll_bottom) {
+                scroll_region_up(buffer, 1);
+                buffer->cursor_row = buffer->scroll_bottom;
+            } else {
+                buffer->cursor_row++;
+                if (buffer->cursor_row > buffer->scroll_bottom) {
+                    buffer->cursor_row = buffer->scroll_bottom;
+                }
+            }
+        } else {
+            buffer->cursor_row++;
+            if (buffer->cursor_row >= buffer->rows) {
+                buffer->cursor_row = buffer->rows > 0 ? buffer->rows - 1 : 0;
+            }
         }
+        buffer->cursor_col = 0;
         buffer->parse_state = TERMINAL_PARSE_STATE_NORMAL;
         break;
     case 'H': // Tab set - ignored
         buffer->parse_state = TERMINAL_PARSE_STATE_NORMAL;
         break;
     case 'M': // Reverse index
-        if (buffer->cursor_row == 0) {
-            size_t row_size = (size_t)buffer->cols * sizeof(TerminalCell);
-            memmove(buffer->cells + buffer->cols, buffer->cells, row_size * (buffer->rows - 1));
-            clear_row(buffer, 0);
-        } else {
+        if (cursor_within_scroll_region(buffer) && buffer->cursor_row == buffer->scroll_top) {
+            scroll_region_down(buffer, 1);
+            buffer->cursor_row = buffer->scroll_top;
+        } else if (buffer->cursor_row > 0) {
             buffer->cursor_row--;
         }
         buffer->parse_state = TERMINAL_PARSE_STATE_NORMAL;
@@ -978,6 +1133,7 @@ int terminal_buffer_init(TerminalBuffer *buffer, int cols, int rows, size_t max_
     reset_attributes(buffer);
     reset_csi_state(buffer);
     reset_utf8_decoder(buffer);
+    set_default_scroll_region(buffer);
     clear_screen(buffer);
     store_primary_state(buffer);
 
@@ -991,6 +1147,7 @@ int terminal_buffer_init(TerminalBuffer *buffer, int cols, int rows, size_t max_
     buffer->saved_col = 0;
     reset_attributes(buffer);
     buffer->cursor_visible = 1;
+    set_default_scroll_region(buffer);
     clear_screen(buffer);
     store_alternate_state(buffer);
     buffer->cells = previous_cells;
@@ -1021,6 +1178,12 @@ void terminal_buffer_destroy(TerminalBuffer *buffer)
     buffer->alternate_cursor_col = 0;
     buffer->alternate_saved_row = 0;
     buffer->alternate_saved_col = 0;
+    buffer->scroll_top = 0;
+    buffer->scroll_bottom = 0;
+    buffer->primary_scroll_top = 0;
+    buffer->primary_scroll_bottom = 0;
+    buffer->alternate_scroll_top = 0;
+    buffer->alternate_scroll_bottom = 0;
     buffer->primary_fg = buffer->default_fg;
     buffer->primary_bg = buffer->default_bg;
     buffer->primary_bold = 0;

@@ -14,6 +14,7 @@
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+#include <math.h>
 
 #include "terminal_buffer.h"
 
@@ -35,12 +36,23 @@ typedef struct {
     SDL_Window *window;
     SDL_Renderer *renderer;
     TTF_Font *font;
+    int glyph_width;
+    int glyph_height;
     int char_width;
     int char_height;
+    int line_height;
     int cols;
     int rows;
     int logical_width;
     int logical_height;
+    int target_width;
+    int target_height;
+    int content_width;
+    int content_height;
+    int content_offset_x;
+    int content_offset_y;
+    int window_width;
+    int window_height;
     float scale_x;
     float scale_y;
 } TerminalRenderer;
@@ -88,7 +100,7 @@ static int init_renderer(TerminalRenderer *renderer)
 
     TTF_SetFontHinting(renderer->font, TTF_HINTING_MONO);
 
-    if (TTF_SizeText(renderer->font, "M", &renderer->char_width, &renderer->char_height) == -1) {
+    if (TTF_SizeText(renderer->font, "M", &renderer->glyph_width, &renderer->glyph_height) == -1) {
         fprintf(stderr, "TTF_SizeText failed: %s\n", TTF_GetError());
         TTF_CloseFont(renderer->font);
         TTF_Quit();
@@ -101,28 +113,47 @@ static int init_renderer(TerminalRenderer *renderer)
 
     renderer->logical_width = (int)(TERMINAL_DEFAULT_COLS * TERMINAL_BASE_CHAR_WIDTH + TERMINAL_PADDING * 2);
     renderer->logical_height = (int)(TERMINAL_DEFAULT_ROWS * TERMINAL_BASE_CHAR_HEIGHT + TERMINAL_PADDING * 2);
+    renderer->target_width = TERMINAL_FALLBACK_WIDTH;
+    renderer->target_height = TERMINAL_FALLBACK_HEIGHT;
 
-    int window_width = TERMINAL_TARGET_WIDTH;
-    int window_height = TERMINAL_TARGET_HEIGHT;
-    if (renderer->logical_width > TERMINAL_TARGET_WIDTH || renderer->logical_height > TERMINAL_TARGET_HEIGHT) {
-        window_width = TERMINAL_FALLBACK_WIDTH;
-        window_height = TERMINAL_FALLBACK_HEIGHT;
+    float content_scale = fminf(
+        (float)renderer->target_width / (float)renderer->logical_width,
+        (float)renderer->target_height / (float)renderer->logical_height);
+    if (content_scale <= 0.0f) {
+        content_scale = 1.0f;
     }
 
-    float base_scale_x = TERMINAL_BASE_CHAR_WIDTH / (float)renderer->char_width;
-    float base_scale_y = TERMINAL_BASE_CHAR_HEIGHT / (float)renderer->char_height;
-    float resolution_scale_x = (float)window_width / (float)renderer->logical_width;
-    float resolution_scale_y = (float)window_height / (float)renderer->logical_height;
-    renderer->scale_x = base_scale_x * resolution_scale_x;
-    renderer->scale_y = base_scale_y * resolution_scale_y;
+    renderer->scale_x = (TERMINAL_BASE_CHAR_WIDTH / (float)renderer->glyph_width) * content_scale;
+    renderer->scale_y = (TERMINAL_BASE_CHAR_HEIGHT / (float)renderer->glyph_height) * content_scale;
 
+    renderer->char_width = (int)lroundf(TERMINAL_BASE_CHAR_WIDTH * content_scale);
+    renderer->char_height = (int)lroundf(TERMINAL_BASE_CHAR_HEIGHT * content_scale);
+    renderer->line_height = renderer->char_height;
+    if (renderer->char_width <= 0) {
+        renderer->char_width = (int)TERMINAL_BASE_CHAR_WIDTH;
+    }
+    if (renderer->line_height <= 0) {
+        renderer->line_height = (int)TERMINAL_BASE_CHAR_HEIGHT;
+    }
+    renderer->content_width = (int)lroundf(renderer->logical_width * content_scale);
+    renderer->content_height = (int)lroundf(renderer->logical_height * content_scale);
+    renderer->content_offset_x = (renderer->target_width - renderer->content_width) / 2;
+    renderer->content_offset_y = (renderer->target_height - renderer->content_height) / 2;
+    if (renderer->content_offset_x < 0) {
+        renderer->content_offset_x = 0;
+    }
+    if (renderer->content_offset_y < 0) {
+        renderer->content_offset_y = 0;
+    }
+
+    Uint32 window_flags = SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_FULLSCREEN_DESKTOP;
     renderer->window = SDL_CreateWindow(
         "Budostack Terminal",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        window_width,
-        window_height,
-        SDL_WINDOW_ALLOW_HIGHDPI);
+        renderer->target_width,
+        renderer->target_height,
+        window_flags);
     if (!renderer->window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         TTF_CloseFont(renderer->font);
@@ -142,7 +173,11 @@ static int init_renderer(TerminalRenderer *renderer)
     }
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
-    SDL_RenderSetScale(renderer->renderer, renderer->scale_x, renderer->scale_y);
+    SDL_RenderSetLogicalSize(renderer->renderer, renderer->target_width, renderer->target_height);
+#if SDL_VERSION_ATLEAST(2,0,5)
+    SDL_RenderSetIntegerScale(renderer->renderer, SDL_TRUE);
+#endif
+    SDL_GetWindowSize(renderer->window, &renderer->window_width, &renderer->window_height);
     SDL_StartTextInput();
 
     return 0;
@@ -251,38 +286,59 @@ static void render_terminal(TerminalRenderer *renderer, const TerminalBuffer *bu
 
     size_t total_lines = terminal_buffer_line_count(buffer);
     size_t max_visible = (size_t)renderer->rows;
+    if (renderer->line_height > 0) {
+        int capacity = renderer->content_height / renderer->line_height;
+        if (capacity > 0 && (size_t)capacity < max_visible) {
+            max_visible = (size_t)capacity;
+        }
+    }
     size_t start_line = 0;
     if (total_lines > max_visible) {
         start_line = total_lines - max_visible;
     }
 
-    int y = TERMINAL_PADDING;
+    const int content_left = renderer->content_offset_x + TERMINAL_PADDING;
+    const int content_top = renderer->content_offset_y + TERMINAL_PADDING;
+    const int content_bottom = renderer->content_offset_y + renderer->content_height - TERMINAL_PADDING;
+
+    int y = content_top;
     for (size_t i = start_line; i < total_lines; ++i) {
         const char *line_text = terminal_buffer_get_line(buffer, i);
         if (!line_text) {
             line_text = "";
         }
 
-        if (*line_text == '\0') {
-            y += renderer->char_height;
-            continue;
+        SDL_Surface *surface = NULL;
+        SDL_Texture *texture = NULL;
+
+        if (*line_text != '\0') {
+            surface = TTF_RenderUTF8_Blended(renderer->font, line_text, text_color);
+            if (surface) {
+                texture = SDL_CreateTextureFromSurface(renderer->renderer, surface);
+            }
         }
 
-        SDL_Surface *surface = TTF_RenderUTF8_Blended(renderer->font, line_text, text_color);
-        if (!surface) {
-            continue;
-        }
-
-        SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer->renderer, surface);
         if (texture) {
-            SDL_Rect dest = {TERMINAL_PADDING, y, surface->w, surface->h};
+            int dest_w = (int)lroundf(surface->w * renderer->scale_x);
+            int dest_h = (int)lroundf(surface->h * renderer->scale_y);
+            if (dest_w <= 0) {
+                dest_w = renderer->char_width * (int)strlen(line_text);
+            }
+            if (dest_h <= 0) {
+                dest_h = renderer->line_height;
+            }
+
+            SDL_Rect dest = {content_left, y, dest_w, dest_h};
             SDL_RenderCopy(renderer->renderer, texture, NULL, &dest);
             SDL_DestroyTexture(texture);
         }
-        SDL_FreeSurface(surface);
 
-        y += renderer->char_height;
-        if (y > renderer->rows * renderer->char_height + TERMINAL_PADDING) {
+        if (surface) {
+            SDL_FreeSurface(surface);
+        }
+
+        y += renderer->line_height;
+        if (y + renderer->line_height > content_bottom) {
             break;
         }
     }

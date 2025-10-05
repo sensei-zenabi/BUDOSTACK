@@ -3,8 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TERMINAL_DEFAULT_COLS 80
-#define TERMINAL_DEFAULT_ROWS 25
+#define TERMINAL_DEFAULT_COLS 118
+#define TERMINAL_DEFAULT_ROWS 66
 #define TERMINAL_TAB_WIDTH 4
 
 static TerminalCell *cell_at(TerminalBuffer *buffer, int row, int col)

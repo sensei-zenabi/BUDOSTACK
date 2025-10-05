@@ -25,12 +25,12 @@
 #define TERMINAL_MAX_LINES 2048
 #define TERMINAL_READ_CHUNK 4096
 #define TERMINAL_PADDING 0
-#define TERMINAL_DEFAULT_COLS 80
-#define TERMINAL_DEFAULT_ROWS 25
-#define TERMINAL_TARGET_WIDTH 320
-#define TERMINAL_TARGET_HEIGHT 200
-#define TERMINAL_FALLBACK_WIDTH 640
-#define TERMINAL_FALLBACK_HEIGHT 480
+#define TERMINAL_DEFAULT_COLS 118
+#define TERMINAL_DEFAULT_ROWS 66
+#define TERMINAL_TARGET_WIDTH 1280
+#define TERMINAL_TARGET_HEIGHT 720
+#define TERMINAL_FALLBACK_WIDTH 1280
+#define TERMINAL_FALLBACK_HEIGHT 720
 #define TERMINAL_BASE_CHAR_WIDTH 8.0f
 #define TERMINAL_BASE_CHAR_HEIGHT 8.0f
 
@@ -574,12 +574,6 @@ static int init_renderer(TerminalRenderer *renderer)
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
     SDL_GetWindowSize(renderer->window, &renderer->window_width, &renderer->window_height);
 
-    int suggested_rows = renderer->target_height / renderer->line_height;
-    if (suggested_rows < TERMINAL_DEFAULT_ROWS) {
-        suggested_rows = TERMINAL_DEFAULT_ROWS;
-    }
-    renderer->rows = suggested_rows;
-
     renderer->logical_width = renderer->cols * renderer->char_width + TERMINAL_PADDING * 2;
     renderer->logical_height = renderer->rows * renderer->line_height + TERMINAL_PADDING * 2;
 
@@ -590,14 +584,18 @@ static int init_renderer(TerminalRenderer *renderer)
         content_scale = 1.0f;
     }
 
-    renderer->char_width = (int)lroundf(renderer->font.width * content_scale);
-    renderer->line_height = (int)lroundf(renderer->font.height * content_scale);
+    float scaled_char_width = renderer->font.width * content_scale;
+    float scaled_line_height = renderer->font.height * content_scale;
+
+    renderer->char_width = (int)floorf(scaled_char_width);
+    renderer->line_height = (int)floorf(scaled_line_height);
     if (renderer->char_width <= 0) {
         renderer->char_width = (int)renderer->font.width;
     }
     if (renderer->line_height <= 0) {
         renderer->line_height = (int)renderer->font.height;
     }
+    renderer->char_height = renderer->line_height;
 
     renderer->content_width = renderer->char_width * renderer->cols + TERMINAL_PADDING * 2;
     renderer->content_height = renderer->line_height * renderer->rows + TERMINAL_PADDING * 2;

@@ -47,7 +47,7 @@ prompt_user() {
     echo
     read -p "Do you want to proceed? (y/n): " response
     case "$response" in
-        [yY][eE][sS]|[yY]) 
+        [yY][eE][sS]|[yY])
             echo "Proceeding with installation..."
             ;;
         *)
@@ -55,6 +55,46 @@ prompt_user() {
             exit 1
             ;;
     esac
+}
+
+# Function: install_font
+# Description: Installs the bundled Ac437_ATI_8x8.ttf font if it is not already
+#              available in the system font directory. The function copies the
+#              font to a dedicated folder inside /usr/local/share/fonts and, if
+#              possible, refreshes the font cache so GUI terminals can use it
+#              immediately.
+install_font() {
+    local font_source="fonts/Ac437_ATI_8x8.ttf"
+    local font_name
+    font_name="$(basename "$font_source")"
+    local target_dir="/usr/local/share/fonts/truetype/budostack"
+    local target_font_path="$target_dir/$font_name"
+
+    if [ ! -f "$font_source" ]; then
+        echo "Font source '$font_source' not found. Skipping font installation."
+        return 1
+    fi
+
+    if [ -f "$target_font_path" ]; then
+        echo "Font '$font_name' is already installed at $target_font_path."
+        return 0
+    fi
+
+    echo "Installing font '$font_name' to $target_dir..."
+    sudo mkdir -p "$target_dir"
+    if ! sudo install -m 644 "$font_source" "$target_font_path"; then
+        echo "Error: Failed to install font '$font_name'."
+        return 1
+    fi
+
+    if command -v fc-cache >/dev/null 2>&1; then
+        echo "Updating font cache..."
+        sudo fc-cache -f "$target_dir"
+    else
+        echo "Warning: 'fc-cache' not found. Please update your font cache manually to use the new font."
+    fi
+
+    echo "Font '$font_name' installed successfully."
 }
 
 # Function: install_package
@@ -88,9 +128,12 @@ main() {
     # Call the function to install all packages
     install_all_packages
 
+    # Install bundled fonts for use in GUI terminals
+    install_font
+
     echo "All requested packages have been processed."
-	echo ""
-	echo "Building BUDOSTACK..."
+        echo ""
+        echo "Building BUDOSTACK..."
 	make clean
 	make
 	echo "BUDOSTACK setup finished successfully!"

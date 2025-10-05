@@ -2,25 +2,55 @@
 #define TERMINAL_BUFFER_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 typedef struct {
-    char *text;
-    size_t length;
-    size_t capacity;
-} TerminalLine;
+    uint32_t codepoint;
+    uint8_t fg;
+    uint8_t bg;
+    uint8_t bold;
+    uint8_t inverse;
+} TerminalCell;
 
 typedef struct {
-    TerminalLine *lines;
-    size_t count;
-    size_t capacity;
-    size_t max_lines;
-    int pending_carriage_return;
+    TerminalCell *cells;
+    int cols;
+    int rows;
+    int cursor_row;
+    int cursor_col;
+    int saved_row;
+    int saved_col;
+    uint8_t default_fg;
+    uint8_t default_bg;
+    uint8_t current_fg;
+    uint8_t current_bg;
+    uint8_t current_bold;
+    uint8_t current_inverse;
+    size_t max_history_lines;
+
+    enum {
+        TERMINAL_PARSE_STATE_NORMAL = 0,
+        TERMINAL_PARSE_STATE_ESC,
+        TERMINAL_PARSE_STATE_CSI,
+        TERMINAL_PARSE_STATE_OSC
+    } parse_state;
+
+    int csi_params[16];
+    int csi_param_count;
+    int csi_collect;
+    int csi_private;
+    int osc_active;
+    int osc_escape;
+    uint32_t utf8_codepoint;
+    int utf8_bytes_remaining;
 } TerminalBuffer;
 
-int terminal_buffer_init(TerminalBuffer *buffer, size_t max_lines);
+int terminal_buffer_init(TerminalBuffer *buffer, size_t max_history_lines);
 void terminal_buffer_destroy(TerminalBuffer *buffer);
 int terminal_buffer_append(TerminalBuffer *buffer, const char *data, size_t length);
-const char *terminal_buffer_get_line(const TerminalBuffer *buffer, size_t index);
-size_t terminal_buffer_line_count(const TerminalBuffer *buffer);
+const TerminalCell *terminal_buffer_cell(const TerminalBuffer *buffer, int row, int col);
+int terminal_buffer_rows(const TerminalBuffer *buffer);
+int terminal_buffer_cols(const TerminalBuffer *buffer);
+
 
 #endif /* TERMINAL_BUFFER_H */

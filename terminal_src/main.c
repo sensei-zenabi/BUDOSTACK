@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -28,9 +29,16 @@
 #define TERMINAL_TARGET_WIDTH 320
 #define TERMINAL_TARGET_HEIGHT 200
 #define TERMINAL_FALLBACK_WIDTH 640
-#define TERMINAL_FALLBACK_HEIGHT 400
+#define TERMINAL_FALLBACK_HEIGHT 480
 #define TERMINAL_BASE_CHAR_WIDTH 8.0f
 #define TERMINAL_BASE_CHAR_HEIGHT 8.0f
+
+typedef struct {
+    uint32_t codepoint;
+    SDL_Texture *texture;
+    int width;
+    int height;
+} GlyphCacheEntry;
 
 typedef struct {
     SDL_Window *window;
@@ -55,9 +63,192 @@ typedef struct {
     int window_height;
     float scale_x;
     float scale_y;
+    GlyphCacheEntry *glyph_cache;
+    size_t glyph_cache_count;
+    size_t glyph_cache_capacity;
 } TerminalRenderer;
 
 static int g_running = 1;
+
+static SDL_Color terminal_color_from_index(uint8_t index)
+{
+    static const SDL_Color basic_palette[16] = {
+        {0, 0, 0, 255},       {205, 0, 0, 255},     {0, 205, 0, 255},
+        {205, 205, 0, 255},   {0, 0, 238, 255},     {205, 0, 205, 255},
+        {0, 205, 205, 255},   {229, 229, 229, 255}, {127, 127, 127, 255},
+        {255, 0, 0, 255},     {0, 255, 0, 255},     {255, 255, 0, 255},
+        {92, 92, 255, 255},   {255, 0, 255, 255},   {0, 255, 255, 255},
+        {255, 255, 255, 255}
+    };
+
+    SDL_Color color = {0, 0, 0, 255};
+    if (index < 16) {
+        return basic_palette[index];
+    }
+
+    if (index >= 16 && index <= 231) {
+        int idx = index - 16;
+        int r = (idx / 36) % 6;
+        int g = (idx / 6) % 6;
+        int b = idx % 6;
+        static const int levels[6] = {0, 95, 135, 175, 215, 255};
+        color.r = (Uint8)levels[r];
+        color.g = (Uint8)levels[g];
+        color.b = (Uint8)levels[b];
+        return color;
+    }
+
+    if (index >= 232) {
+        int level = 8 + ((int)index - 232) * 10;
+        if (level > 255) {
+            level = 255;
+        }
+        color.r = color.g = color.b = (Uint8)level;
+        return color;
+    }
+
+    return color;
+}
+
+static void destroy_glyph_cache(TerminalRenderer *renderer)
+{
+    if (!renderer) {
+        return;
+    }
+
+    for (size_t i = 0; i < renderer->glyph_cache_count; ++i) {
+        if (renderer->glyph_cache[i].texture) {
+            SDL_DestroyTexture(renderer->glyph_cache[i].texture);
+            renderer->glyph_cache[i].texture = NULL;
+        }
+    }
+    free(renderer->glyph_cache);
+    renderer->glyph_cache = NULL;
+    renderer->glyph_cache_count = 0;
+    renderer->glyph_cache_capacity = 0;
+}
+
+static int ensure_glyph_cache_capacity(TerminalRenderer *renderer, size_t needed)
+{
+    if (renderer->glyph_cache_capacity >= needed) {
+        return 0;
+    }
+
+    size_t new_capacity = renderer->glyph_cache_capacity ? renderer->glyph_cache_capacity * 2 : 128;
+    while (new_capacity < needed) {
+        new_capacity *= 2;
+    }
+
+    GlyphCacheEntry *new_entries = realloc(renderer->glyph_cache, new_capacity * sizeof(*new_entries));
+    if (!new_entries) {
+        return -1;
+    }
+
+    renderer->glyph_cache = new_entries;
+    renderer->glyph_cache_capacity = new_capacity;
+    return 0;
+}
+
+static GlyphCacheEntry *find_glyph(TerminalRenderer *renderer, uint32_t codepoint)
+{
+    if (!renderer) {
+        return NULL;
+    }
+    for (size_t i = 0; i < renderer->glyph_cache_count; ++i) {
+        if (renderer->glyph_cache[i].codepoint == codepoint) {
+            return &renderer->glyph_cache[i];
+        }
+    }
+    return NULL;
+}
+
+static int encode_utf8(uint32_t codepoint, char *buffer)
+{
+    if (codepoint <= 0x7F) {
+        buffer[0] = (char)codepoint;
+        buffer[1] = '\0';
+        return 1;
+    }
+    if (codepoint <= 0x7FF) {
+        buffer[0] = (char)(0xC0 | ((codepoint >> 6) & 0x1F));
+        buffer[1] = (char)(0x80 | (codepoint & 0x3F));
+        buffer[2] = '\0';
+        return 2;
+    }
+    if (codepoint <= 0xFFFF) {
+        buffer[0] = (char)(0xE0 | ((codepoint >> 12) & 0x0F));
+        buffer[1] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+        buffer[2] = (char)(0x80 | (codepoint & 0x3F));
+        buffer[3] = '\0';
+        return 3;
+    }
+    if (codepoint <= 0x10FFFF) {
+        buffer[0] = (char)(0xF0 | ((codepoint >> 18) & 0x07));
+        buffer[1] = (char)(0x80 | ((codepoint >> 12) & 0x3F));
+        buffer[2] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+        buffer[3] = (char)(0x80 | (codepoint & 0x3F));
+        buffer[4] = '\0';
+        return 4;
+    }
+    return 0;
+}
+
+static GlyphCacheEntry *cache_glyph(TerminalRenderer *renderer, uint32_t codepoint)
+{
+    if (!renderer) {
+        return NULL;
+    }
+
+    if (ensure_glyph_cache_capacity(renderer, renderer->glyph_cache_count + 1) == -1) {
+        return NULL;
+    }
+
+    SDL_Color white = {255, 255, 255, 255};
+    char utf8[5] = {0};
+    uint32_t render_codepoint = codepoint;
+    if (encode_utf8(render_codepoint, utf8) == 0) {
+        render_codepoint = '?';
+        encode_utf8(render_codepoint, utf8);
+    }
+
+    SDL_Surface *surface = NULL;
+    if (render_codepoint != 0 && render_codepoint != ' ') {
+        surface = TTF_RenderUTF8_Blended(renderer->font, utf8, white);
+        if (!surface && render_codepoint != '?') {
+            render_codepoint = '?';
+            encode_utf8(render_codepoint, utf8);
+            surface = TTF_RenderUTF8_Blended(renderer->font, utf8, white);
+        }
+    }
+
+    GlyphCacheEntry *entry = &renderer->glyph_cache[renderer->glyph_cache_count++];
+    entry->codepoint = codepoint;
+    entry->texture = NULL;
+    entry->width = renderer->char_width;
+    entry->height = renderer->line_height;
+
+    if (surface) {
+        SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer->renderer, surface);
+        if (texture) {
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+            entry->texture = texture;
+            entry->width = surface->w;
+            entry->height = surface->h;
+        }
+        SDL_FreeSurface(surface);
+    }
+
+    return entry;
+}
+
+static const GlyphCacheEntry *get_or_create_glyph(TerminalRenderer *renderer, uint32_t codepoint)
+{
+    GlyphCacheEntry *existing = find_glyph(renderer, codepoint);
+    if (existing) {
+        return existing;
+    }
+    return cache_glyph(renderer, codepoint);
+}
 
 static void cleanup_child(pid_t pid)
 {
@@ -83,6 +274,10 @@ static int init_renderer(TerminalRenderer *renderer)
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return -1;
     }
+
+    renderer->glyph_cache = NULL;
+    renderer->glyph_cache_count = 0;
+    renderer->glyph_cache_capacity = 0;
 
     if (TTF_Init() == -1) {
         fprintf(stderr, "TTF_Init failed: %s\n", TTF_GetError());
@@ -190,6 +385,7 @@ static void destroy_renderer(TerminalRenderer *renderer)
     }
 
     SDL_StopTextInput();
+    destroy_glyph_cache(renderer);
     if (renderer->renderer) {
         SDL_DestroyRenderer(renderer->renderer);
         renderer->renderer = NULL;
@@ -279,67 +475,67 @@ static int send_escape_sequence(int pty_fd, const char *sequence)
 
 static void render_terminal(TerminalRenderer *renderer, const TerminalBuffer *buffer)
 {
-    SDL_SetRenderDrawColor(renderer->renderer, 16, 16, 16, 255);
+    if (!renderer || !buffer) {
+        return;
+    }
+
+    SDL_SetRenderDrawColor(renderer->renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer->renderer);
 
-    SDL_Color text_color = {230, 230, 230, 255};
-
-    size_t total_lines = terminal_buffer_line_count(buffer);
-    size_t max_visible = (size_t)renderer->rows;
-    if (renderer->line_height > 0) {
-        int capacity = renderer->content_height / renderer->line_height;
-        if (capacity > 0 && (size_t)capacity < max_visible) {
-            max_visible = (size_t)capacity;
-        }
-    }
-    size_t start_line = 0;
-    if (total_lines > max_visible) {
-        start_line = total_lines - max_visible;
-    }
-
+    const int rows = terminal_buffer_rows(buffer);
+    const int cols = terminal_buffer_cols(buffer);
     const int content_left = renderer->content_offset_x + TERMINAL_PADDING;
     const int content_top = renderer->content_offset_y + TERMINAL_PADDING;
-    const int content_bottom = renderer->content_offset_y + renderer->content_height - TERMINAL_PADDING;
 
-    int y = content_top;
-    for (size_t i = start_line; i < total_lines; ++i) {
-        const char *line_text = terminal_buffer_get_line(buffer, i);
-        if (!line_text) {
-            line_text = "";
-        }
+    SDL_Rect cell_rect = {0, 0, renderer->char_width, renderer->line_height};
+    SDL_Color last_bg = {0, 0, 0, 255};
+    int last_bg_valid = 0;
 
-        SDL_Surface *surface = NULL;
-        SDL_Texture *texture = NULL;
+    for (int row = 0; row < rows; ++row) {
+        cell_rect.y = content_top + row * renderer->line_height;
+        for (int col = 0; col < cols; ++col) {
+            cell_rect.x = content_left + col * renderer->char_width;
 
-        if (*line_text != '\0') {
-            surface = TTF_RenderUTF8_Blended(renderer->font, line_text, text_color);
-            if (surface) {
-                texture = SDL_CreateTextureFromSurface(renderer->renderer, surface);
-            }
-        }
-
-        if (texture) {
-            int dest_w = (int)lroundf(surface->w * renderer->scale_x);
-            int dest_h = (int)lroundf(surface->h * renderer->scale_y);
-            if (dest_w <= 0) {
-                dest_w = renderer->char_width * (int)strlen(line_text);
-            }
-            if (dest_h <= 0) {
-                dest_h = renderer->line_height;
+            const TerminalCell *cell = terminal_buffer_cell(buffer, row, col);
+            if (!cell) {
+                continue;
             }
 
-            SDL_Rect dest = {content_left, y, dest_w, dest_h};
-            SDL_RenderCopy(renderer->renderer, texture, NULL, &dest);
-            SDL_DestroyTexture(texture);
-        }
+            uint8_t fg_index = cell->fg;
+            uint8_t bg_index = cell->bg;
+            if (cell->inverse) {
+                uint8_t tmp = fg_index;
+                fg_index = bg_index;
+                bg_index = tmp;
+            }
 
-        if (surface) {
-            SDL_FreeSurface(surface);
-        }
+            if (cell->bold && fg_index < 8) {
+                fg_index = (uint8_t)(fg_index + 8);
+            }
 
-        y += renderer->line_height;
-        if (y + renderer->line_height > content_bottom) {
-            break;
+            SDL_Color bg_color = terminal_color_from_index(bg_index);
+            if (!last_bg_valid || bg_color.r != last_bg.r || bg_color.g != last_bg.g || bg_color.b != last_bg.b) {
+                SDL_SetRenderDrawColor(renderer->renderer, bg_color.r, bg_color.g, bg_color.b, 255);
+                last_bg = bg_color;
+                last_bg_valid = 1;
+            }
+            SDL_RenderFillRect(renderer->renderer, &cell_rect);
+
+            uint32_t codepoint = cell->codepoint;
+            if (codepoint == 0 || codepoint == ' ') {
+                continue;
+            }
+
+            const GlyphCacheEntry *glyph = get_or_create_glyph(renderer, codepoint);
+            if (!glyph || !glyph->texture) {
+                continue;
+            }
+
+            SDL_Color fg_color = terminal_color_from_index(fg_index);
+            SDL_SetTextureColorMod(glyph->texture, fg_color.r, fg_color.g, fg_color.b);
+            SDL_SetTextureAlphaMod(glyph->texture, fg_color.a);
+
+            SDL_RenderCopy(renderer->renderer, glyph->texture, NULL, &cell_rect);
         }
     }
 
@@ -428,7 +624,7 @@ int main(int argc, char *argv[])
                 } else if (key == SDLK_RETURN) {
                     send_control_character(pty_fd, '\n');
                 } else if (key == SDLK_ESCAPE) {
-                    g_running = 0;
+                    send_control_character(pty_fd, '\x1b');
                 } else if (key == SDLK_TAB) {
                     send_control_character(pty_fd, '\t');
                 } else if (key == SDLK_UP) {

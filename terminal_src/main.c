@@ -780,6 +780,9 @@ static void render_terminal(TerminalRenderer *renderer, const TerminalBuffer *bu
 
     const int rows = terminal_buffer_rows(buffer);
     const int cols = terminal_buffer_cols(buffer);
+    const int cursor_visible = terminal_buffer_cursor_visible(buffer);
+    const int cursor_row = terminal_buffer_cursor_row(buffer);
+    const int cursor_col = terminal_buffer_cursor_col(buffer);
     const int content_left = renderer->content_offset_x + TERMINAL_PADDING;
     const int content_top = renderer->content_offset_y + TERMINAL_PADDING;
 
@@ -810,6 +813,21 @@ static void render_terminal(TerminalRenderer *renderer, const TerminalBuffer *bu
             }
 
             SDL_Color bg_color = terminal_color_from_index(bg_index);
+            SDL_Color fg_color = terminal_color_from_index(fg_index);
+
+            if (cell->dim) {
+                fg_color.r = (Uint8)((int)fg_color.r * 2 / 3);
+                fg_color.g = (Uint8)((int)fg_color.g * 2 / 3);
+                fg_color.b = (Uint8)((int)fg_color.b * 2 / 3);
+            }
+
+            int is_cursor_cell = cursor_visible && row == cursor_row && col == cursor_col;
+            if (is_cursor_cell) {
+                SDL_Color tmp = bg_color;
+                bg_color = fg_color;
+                fg_color = tmp;
+            }
+
             if (!last_bg_valid || bg_color.r != last_bg.r || bg_color.g != last_bg.g || bg_color.b != last_bg.b) {
                 SDL_SetRenderDrawColor(renderer->renderer, bg_color.r, bg_color.g, bg_color.b, 255);
                 last_bg = bg_color;
@@ -827,7 +845,6 @@ static void render_terminal(TerminalRenderer *renderer, const TerminalBuffer *bu
                 continue;
             }
 
-            SDL_Color fg_color = terminal_color_from_index(fg_index);
             SDL_SetTextureColorMod(glyph->texture, fg_color.r, fg_color.g, fg_color.b);
             SDL_SetTextureAlphaMod(glyph->texture, fg_color.a);
 

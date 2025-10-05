@@ -15,16 +15,48 @@ static TerminalCell *cell_at(TerminalBuffer *buffer, int row, int col)
     return &buffer->cells[row * buffer->cols + col];
 }
 
-static void clear_cell(TerminalCell *cell, uint8_t fg, uint8_t bg)
+static void fill_cell(TerminalCell *cell,
+                      uint32_t codepoint,
+                      uint8_t fg,
+                      uint8_t bg,
+                      uint8_t bold,
+                      uint8_t inverse,
+                      uint8_t dim)
 {
     if (!cell) {
         return;
     }
-    cell->codepoint = ' ';
+
+    cell->codepoint = codepoint;
     cell->fg = fg;
     cell->bg = bg;
-    cell->bold = 0;
-    cell->inverse = 0;
+    cell->bold = bold;
+    cell->inverse = inverse;
+    cell->dim = dim;
+}
+
+static void clear_cell_default(TerminalBuffer *buffer, TerminalCell *cell)
+{
+    if (!buffer || !cell) {
+        return;
+    }
+
+    fill_cell(cell, ' ', buffer->default_fg, buffer->default_bg, 0, 0, 0);
+}
+
+static void clear_cell_current(TerminalBuffer *buffer, TerminalCell *cell)
+{
+    if (!buffer || !cell) {
+        return;
+    }
+
+    fill_cell(cell,
+              ' ',
+              buffer->current_fg,
+              buffer->current_bg,
+              buffer->current_bold,
+              buffer->current_inverse,
+              buffer->current_dim);
 }
 
 static void reset_attributes(TerminalBuffer *buffer)
@@ -33,6 +65,7 @@ static void reset_attributes(TerminalBuffer *buffer)
     buffer->current_bg = buffer->default_bg;
     buffer->current_bold = 0;
     buffer->current_inverse = 0;
+    buffer->current_dim = 0;
 }
 
 static void clear_row(TerminalBuffer *buffer, int row)
@@ -42,7 +75,7 @@ static void clear_row(TerminalBuffer *buffer, int row)
     }
 
     for (int col = 0; col < buffer->cols; ++col) {
-        clear_cell(cell_at(buffer, row, col), buffer->default_fg, buffer->default_bg);
+        clear_cell_default(buffer, cell_at(buffer, row, col));
     }
 }
 
@@ -74,6 +107,7 @@ static void store_primary_state(TerminalBuffer *buffer)
     buffer->primary_bg = buffer->current_bg;
     buffer->primary_bold = buffer->current_bold;
     buffer->primary_inverse = buffer->current_inverse;
+    buffer->primary_dim = buffer->current_dim;
     buffer->primary_cursor_visible = buffer->cursor_visible;
 }
 
@@ -91,6 +125,7 @@ static void restore_primary_state(TerminalBuffer *buffer)
     buffer->current_bg = buffer->primary_bg;
     buffer->current_bold = buffer->primary_bold;
     buffer->current_inverse = buffer->primary_inverse;
+    buffer->current_dim = buffer->primary_dim;
     buffer->cursor_visible = buffer->primary_cursor_visible;
 }
 
@@ -108,10 +143,11 @@ static void store_alternate_state(TerminalBuffer *buffer)
     buffer->alternate_bg = buffer->current_bg;
     buffer->alternate_bold = buffer->current_bold;
     buffer->alternate_inverse = buffer->current_inverse;
+    buffer->alternate_dim = buffer->current_dim;
     buffer->alternate_cursor_visible = buffer->cursor_visible;
 }
 
-static void clear_line_range(TerminalBuffer *buffer, int row, int start_col, int end_col)
+static void erase_line_range(TerminalBuffer *buffer, int row, int start_col, int end_col, int use_current_attrs)
 {
     if (!buffer || row < 0 || row >= buffer->rows) {
         return;
@@ -124,8 +160,17 @@ static void clear_line_range(TerminalBuffer *buffer, int row, int start_col, int
         end_col = buffer->cols - 1;
     }
 
+    if (start_col > end_col) {
+        return;
+    }
+
     for (int col = start_col; col <= end_col; ++col) {
-        clear_cell(cell_at(buffer, row, col), buffer->default_fg, buffer->default_bg);
+        TerminalCell *cell = cell_at(buffer, row, col);
+        if (use_current_attrs) {
+            clear_cell_current(buffer, cell);
+        } else {
+            clear_cell_default(buffer, cell);
+        }
     }
 }
 
@@ -197,9 +242,25 @@ static void scroll_up(TerminalBuffer *buffer, int lines)
         clear_row(buffer, row);
     }
 
-    buffer->cursor_row -= lines;
-    if (buffer->cursor_row < 0) {
-        buffer->cursor_row = 0;
+}
+
+static void scroll_down(TerminalBuffer *buffer, int lines)
+{
+    if (!buffer || lines <= 0) {
+        return;
+    }
+
+    if (lines > buffer->rows) {
+        lines = buffer->rows;
+    }
+
+    size_t row_size = (size_t)buffer->cols * sizeof(TerminalCell);
+    memmove(buffer->cells + (lines * buffer->cols),
+            buffer->cells,
+            row_size * (buffer->rows - lines));
+
+    for (int row = 0; row < lines; ++row) {
+        clear_row(buffer, row);
     }
 }
 
@@ -224,11 +285,7 @@ static void advance_tab(TerminalBuffer *buffer)
     while (buffer->cursor_row < buffer->rows && buffer->cursor_col < next) {
         TerminalCell *cell = cell_at(buffer, buffer->cursor_row, buffer->cursor_col);
         if (cell) {
-            cell->codepoint = ' ';
-            cell->fg = buffer->current_fg;
-            cell->bg = buffer->current_bg;
-            cell->bold = buffer->current_bold;
-            cell->inverse = buffer->current_inverse;
+            clear_cell_current(buffer, cell);
         }
         buffer->cursor_col++;
         if (buffer->cursor_col >= buffer->cols) {
@@ -250,11 +307,13 @@ static void write_codepoint(TerminalBuffer *buffer, uint32_t codepoint)
 
     TerminalCell *cell = cell_at(buffer, buffer->cursor_row, buffer->cursor_col);
     if (cell) {
-        cell->codepoint = codepoint;
-        cell->fg = buffer->current_fg;
-        cell->bg = buffer->current_bg;
-        cell->bold = buffer->current_bold;
-        cell->inverse = buffer->current_inverse;
+        fill_cell(cell,
+                  codepoint,
+                  buffer->current_fg,
+                  buffer->current_bg,
+                  buffer->current_bold,
+                  buffer->current_inverse,
+                  buffer->current_dim);
     }
 
     buffer->cursor_col++;
@@ -283,13 +342,20 @@ static void apply_sgr_parameter(TerminalBuffer *buffer, int param)
         return;
     }
 
-    if (param == 1) {
+    if (param == 1 || param == 21) {
         buffer->current_bold = 1;
+        buffer->current_dim = 0;
         return;
     }
 
     if (param == 22) {
         buffer->current_bold = 0;
+        buffer->current_dim = 0;
+        return;
+    }
+
+    if (param == 2) {
+        buffer->current_dim = 1;
         return;
     }
 
@@ -441,6 +507,27 @@ static void handle_dec_private_mode(TerminalBuffer *buffer, int set)
 static void handle_csi_final(TerminalBuffer *buffer, char final)
 {
     switch (final) {
+    case '@': { // Insert blank characters
+        int amount = csi_param_or_default(buffer, 0, 1);
+        if (amount <= 0) {
+            break;
+        }
+        if (amount > buffer->cols - buffer->cursor_col) {
+            amount = buffer->cols - buffer->cursor_col;
+        }
+
+        int move = buffer->cols - buffer->cursor_col - amount;
+        if (move > 0) {
+            memmove(cell_at(buffer, buffer->cursor_row, buffer->cursor_col + amount),
+                    cell_at(buffer, buffer->cursor_row, buffer->cursor_col),
+                    (size_t)move * sizeof(TerminalCell));
+        }
+
+        for (int i = 0; i < amount; ++i) {
+            clear_cell_current(buffer, cell_at(buffer, buffer->cursor_row, buffer->cursor_col + i));
+        }
+        break;
+    }
     case 'A': { // Cursor up
         int amount = csi_param_or_default(buffer, 0, 1);
         buffer->cursor_row -= amount;
@@ -473,6 +560,36 @@ static void handle_csi_final(TerminalBuffer *buffer, char final)
         }
         break;
     }
+    case 'E': { // Cursor next line
+        int amount = csi_param_or_default(buffer, 0, 1);
+        buffer->cursor_row += amount;
+        if (buffer->cursor_row >= buffer->rows) {
+            buffer->cursor_row = buffer->rows - 1;
+        }
+        buffer->cursor_col = 0;
+        break;
+    }
+    case 'F': { // Cursor previous line
+        int amount = csi_param_or_default(buffer, 0, 1);
+        buffer->cursor_row -= amount;
+        if (buffer->cursor_row < 0) {
+            buffer->cursor_row = 0;
+        }
+        buffer->cursor_col = 0;
+        break;
+    }
+    case 'G': { // Cursor horizontal absolute
+        int col = csi_param_or_default(buffer, 0, 1);
+        buffer->cursor_col = col - 1;
+        ensure_cursor_in_bounds(buffer);
+        break;
+    }
+    case 'd': { // Vertical position absolute
+        int row = csi_param_or_default(buffer, 0, 1);
+        buffer->cursor_row = row - 1;
+        ensure_cursor_in_bounds(buffer);
+        break;
+    }
     case 'H':
     case 'f': { // Cursor position
         int row = csi_param_or_default(buffer, 0, 1);
@@ -482,17 +599,27 @@ static void handle_csi_final(TerminalBuffer *buffer, char final)
         ensure_cursor_in_bounds(buffer);
         break;
     }
+    case 'S': { // Scroll up
+        int amount = csi_param_or_default(buffer, 0, 1);
+        scroll_up(buffer, amount);
+        break;
+    }
+    case 'T': { // Scroll down
+        int amount = csi_param_or_default(buffer, 0, 1);
+        scroll_down(buffer, amount);
+        break;
+    }
     case 'J': { // Erase in display
         int mode = csi_param_or_default(buffer, 0, 0);
         if (mode == 2) {
             clear_screen(buffer);
         } else if (mode == 0) {
-            clear_line_range(buffer, buffer->cursor_row, buffer->cursor_col, buffer->cols - 1);
+            erase_line_range(buffer, buffer->cursor_row, buffer->cursor_col, buffer->cols - 1, 1);
             for (int row = buffer->cursor_row + 1; row < buffer->rows; ++row) {
                 clear_row(buffer, row);
             }
         } else if (mode == 1) {
-            clear_line_range(buffer, buffer->cursor_row, 0, buffer->cursor_col);
+            erase_line_range(buffer, buffer->cursor_row, 0, buffer->cursor_col, 1);
             for (int row = 0; row < buffer->cursor_row; ++row) {
                 clear_row(buffer, row);
             }
@@ -502,9 +629,9 @@ static void handle_csi_final(TerminalBuffer *buffer, char final)
     case 'K': { // Erase in line
         int mode = csi_param_or_default(buffer, 0, 0);
         if (mode == 0) {
-            clear_line_range(buffer, buffer->cursor_row, buffer->cursor_col, buffer->cols - 1);
+            erase_line_range(buffer, buffer->cursor_row, buffer->cursor_col, buffer->cols - 1, 1);
         } else if (mode == 1) {
-            clear_line_range(buffer, buffer->cursor_row, 0, buffer->cursor_col);
+            erase_line_range(buffer, buffer->cursor_row, 0, buffer->cursor_col, 1);
         } else if (mode == 2) {
             clear_row(buffer, buffer->cursor_row);
         }
@@ -568,13 +695,13 @@ static void handle_csi_final(TerminalBuffer *buffer, char final)
                     cell_at(buffer, buffer->cursor_row, buffer->cursor_col + amount),
                     (size_t)remaining * sizeof(TerminalCell));
         }
-        clear_line_range(buffer, buffer->cursor_row, buffer->cols - amount, buffer->cols - 1);
+        erase_line_range(buffer, buffer->cursor_row, buffer->cols - amount, buffer->cols - 1, 1);
         break;
     }
     case 'X': { // Erase characters
         int amount = csi_param_or_default(buffer, 0, 1);
-        clear_line_range(buffer, buffer->cursor_row, buffer->cursor_col,
-                         buffer->cursor_col + amount - 1);
+        erase_line_range(buffer, buffer->cursor_row, buffer->cursor_col,
+                         buffer->cursor_col + amount - 1, 1);
         break;
     }
     case 's': { // Save cursor position
@@ -898,14 +1025,17 @@ void terminal_buffer_destroy(TerminalBuffer *buffer)
     buffer->primary_bg = buffer->default_bg;
     buffer->primary_bold = 0;
     buffer->primary_inverse = 0;
+    buffer->primary_dim = 0;
     buffer->alternate_fg = buffer->default_fg;
     buffer->alternate_bg = buffer->default_bg;
     buffer->alternate_bold = 0;
     buffer->alternate_inverse = 0;
+    buffer->alternate_dim = 0;
     buffer->current_fg = buffer->default_fg;
     buffer->current_bg = buffer->default_bg;
     buffer->current_bold = 0;
     buffer->current_inverse = 0;
+    buffer->current_dim = 0;
     buffer->cols = 0;
     buffer->rows = 0;
     buffer->cursor_col = 0;
@@ -958,5 +1088,33 @@ int terminal_buffer_cursor_visible(const TerminalBuffer *buffer)
         return 1;
     }
     return buffer->cursor_visible;
+}
+
+int terminal_buffer_cursor_row(const TerminalBuffer *buffer)
+{
+    if (!buffer) {
+        return 0;
+    }
+    if (buffer->cursor_row < 0) {
+        return 0;
+    }
+    if (buffer->cursor_row >= buffer->rows) {
+        return buffer->rows > 0 ? buffer->rows - 1 : 0;
+    }
+    return buffer->cursor_row;
+}
+
+int terminal_buffer_cursor_col(const TerminalBuffer *buffer)
+{
+    if (!buffer) {
+        return 0;
+    }
+    if (buffer->cursor_col < 0) {
+        return 0;
+    }
+    if (buffer->cursor_col >= buffer->cols) {
+        return buffer->cols > 0 ? buffer->cols - 1 : 0;
+    }
+    return buffer->cursor_col;
 }
 

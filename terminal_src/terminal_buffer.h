@@ -10,6 +10,7 @@ typedef struct {
     uint8_t bg;
     uint8_t bold;
     uint8_t inverse;
+    uint8_t dim;
 } TerminalCell;
 
 typedef struct {
@@ -38,16 +39,19 @@ typedef struct {
     uint8_t primary_bg;
     uint8_t primary_bold;
     uint8_t primary_inverse;
+    uint8_t primary_dim;
     uint8_t alternate_fg;
     uint8_t alternate_bg;
     uint8_t alternate_bold;
     uint8_t alternate_inverse;
+    uint8_t alternate_dim;
     uint8_t default_fg;
     uint8_t default_bg;
     uint8_t current_fg;
     uint8_t current_bg;
     uint8_t current_bold;
     uint8_t current_inverse;
+    uint8_t current_dim;
     size_t max_history_lines;
 
     enum {
@@ -74,6 +78,8 @@ const TerminalCell *terminal_buffer_cell(const TerminalBuffer *buffer, int row, 
 int terminal_buffer_rows(const TerminalBuffer *buffer);
 int terminal_buffer_cols(const TerminalBuffer *buffer);
 int terminal_buffer_cursor_visible(const TerminalBuffer *buffer);
+int terminal_buffer_cursor_row(const TerminalBuffer *buffer);
+int terminal_buffer_cursor_col(const TerminalBuffer *buffer);
 
 
 #endif /* TERMINAL_BUFFER_H */

@@ -261,37 +261,6 @@ static GlyphCacheEntry *find_glyph(TerminalRenderer *renderer, uint32_t codepoin
     return NULL;
 }
 
-static int encode_utf8(uint32_t codepoint, char *buffer)
-{
-    if (codepoint <= 0x7F) {
-        buffer[0] = (char)codepoint;
-        buffer[1] = '\0';
-        return 1;
-    }
-    if (codepoint <= 0x7FF) {
-        buffer[0] = (char)(0xC0 | ((codepoint >> 6) & 0x1F));
-        buffer[1] = (char)(0x80 | (codepoint & 0x3F));
-        buffer[2] = '\0';
-        return 2;
-    }
-    if (codepoint <= 0xFFFF) {
-        buffer[0] = (char)(0xE0 | ((codepoint >> 12) & 0x0F));
-        buffer[1] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
-        buffer[2] = (char)(0x80 | (codepoint & 0x3F));
-        buffer[3] = '\0';
-        return 3;
-    }
-    if (codepoint <= 0x10FFFF) {
-        buffer[0] = (char)(0xF0 | ((codepoint >> 18) & 0x07));
-        buffer[1] = (char)(0x80 | ((codepoint >> 12) & 0x3F));
-        buffer[2] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
-        buffer[3] = (char)(0x80 | (codepoint & 0x3F));
-        buffer[4] = '\0';
-        return 4;
-    }
-    return 0;
-}
-
 static GlyphCacheEntry *cache_glyph(TerminalRenderer *renderer, uint32_t codepoint)
 {
     if (!renderer) {

@@ -60,6 +60,57 @@ static void clear_screen(TerminalBuffer *buffer)
     buffer->cursor_col = 0;
 }
 
+static void store_primary_state(TerminalBuffer *buffer)
+{
+    if (!buffer) {
+        return;
+    }
+
+    buffer->primary_cursor_row = buffer->cursor_row;
+    buffer->primary_cursor_col = buffer->cursor_col;
+    buffer->primary_saved_row = buffer->saved_row;
+    buffer->primary_saved_col = buffer->saved_col;
+    buffer->primary_fg = buffer->current_fg;
+    buffer->primary_bg = buffer->current_bg;
+    buffer->primary_bold = buffer->current_bold;
+    buffer->primary_inverse = buffer->current_inverse;
+    buffer->primary_cursor_visible = buffer->cursor_visible;
+}
+
+static void restore_primary_state(TerminalBuffer *buffer)
+{
+    if (!buffer) {
+        return;
+    }
+
+    buffer->cursor_row = buffer->primary_cursor_row;
+    buffer->cursor_col = buffer->primary_cursor_col;
+    buffer->saved_row = buffer->primary_saved_row;
+    buffer->saved_col = buffer->primary_saved_col;
+    buffer->current_fg = buffer->primary_fg;
+    buffer->current_bg = buffer->primary_bg;
+    buffer->current_bold = buffer->primary_bold;
+    buffer->current_inverse = buffer->primary_inverse;
+    buffer->cursor_visible = buffer->primary_cursor_visible;
+}
+
+static void store_alternate_state(TerminalBuffer *buffer)
+{
+    if (!buffer) {
+        return;
+    }
+
+    buffer->alternate_cursor_row = buffer->cursor_row;
+    buffer->alternate_cursor_col = buffer->cursor_col;
+    buffer->alternate_saved_row = buffer->saved_row;
+    buffer->alternate_saved_col = buffer->saved_col;
+    buffer->alternate_fg = buffer->current_fg;
+    buffer->alternate_bg = buffer->current_bg;
+    buffer->alternate_bold = buffer->current_bold;
+    buffer->alternate_inverse = buffer->current_inverse;
+    buffer->alternate_cursor_visible = buffer->cursor_visible;
+}
+
 static void clear_line_range(TerminalBuffer *buffer, int row, int start_col, int end_col)
 {
     if (!buffer || row < 0 || row >= buffer->rows) {
@@ -100,15 +151,11 @@ static void switch_to_primary_screen(TerminalBuffer *buffer)
         return;
     }
 
-    buffer->alternate_cursor_row = buffer->cursor_row;
-    buffer->alternate_cursor_col = buffer->cursor_col;
+    store_alternate_state(buffer);
     buffer->cells = buffer->primary_cells;
     buffer->using_alternate_screen = 0;
-    buffer->cursor_row = buffer->primary_cursor_row;
-    buffer->cursor_col = buffer->primary_cursor_col;
+    restore_primary_state(buffer);
     ensure_cursor_in_bounds(buffer);
-    buffer->primary_cursor_row = buffer->cursor_row;
-    buffer->primary_cursor_col = buffer->cursor_col;
 }
 
 static void switch_to_alternate_screen(TerminalBuffer *buffer)
@@ -121,13 +168,17 @@ static void switch_to_alternate_screen(TerminalBuffer *buffer)
         return;
     }
 
-    buffer->primary_cursor_row = buffer->cursor_row;
-    buffer->primary_cursor_col = buffer->cursor_col;
+    store_primary_state(buffer);
     buffer->cells = buffer->alternate_cells;
     buffer->using_alternate_screen = 1;
+    buffer->cursor_row = 0;
+    buffer->cursor_col = 0;
+    buffer->saved_row = 0;
+    buffer->saved_col = 0;
+    reset_attributes(buffer);
+    buffer->cursor_visible = 1;
     clear_screen(buffer);
-    buffer->alternate_cursor_row = buffer->cursor_row;
-    buffer->alternate_cursor_col = buffer->cursor_col;
+    store_alternate_state(buffer);
 }
 
 static void scroll_up(TerminalBuffer *buffer, int lines)
@@ -778,6 +829,8 @@ int terminal_buffer_init(TerminalBuffer *buffer, int cols, int rows, size_t max_
     buffer->cells = buffer->primary_cells;
     buffer->using_alternate_screen = 0;
     buffer->cursor_visible = 1;
+    buffer->primary_cursor_visible = 1;
+    buffer->alternate_cursor_visible = 1;
     buffer->default_fg = 15;
     buffer->default_bg = 0;
     buffer->cursor_row = 0;
@@ -786,8 +839,12 @@ int terminal_buffer_init(TerminalBuffer *buffer, int cols, int rows, size_t max_
     buffer->saved_col = 0;
     buffer->primary_cursor_row = 0;
     buffer->primary_cursor_col = 0;
+    buffer->primary_saved_row = 0;
+    buffer->primary_saved_col = 0;
     buffer->alternate_cursor_row = 0;
     buffer->alternate_cursor_col = 0;
+    buffer->alternate_saved_row = 0;
+    buffer->alternate_saved_col = 0;
     buffer->osc_active = 0;
     buffer->osc_escape = 0;
     buffer->parse_state = TERMINAL_PARSE_STATE_NORMAL;
@@ -795,10 +852,23 @@ int terminal_buffer_init(TerminalBuffer *buffer, int cols, int rows, size_t max_
     reset_csi_state(buffer);
     reset_utf8_decoder(buffer);
     clear_screen(buffer);
+    store_primary_state(buffer);
+
     TerminalCell *previous_cells = buffer->cells;
+    int previous_using_alternate = buffer->using_alternate_screen;
     buffer->cells = buffer->alternate_cells;
+    buffer->using_alternate_screen = 1;
+    buffer->cursor_row = 0;
+    buffer->cursor_col = 0;
+    buffer->saved_row = 0;
+    buffer->saved_col = 0;
+    reset_attributes(buffer);
+    buffer->cursor_visible = 1;
     clear_screen(buffer);
+    store_alternate_state(buffer);
     buffer->cells = previous_cells;
+    buffer->using_alternate_screen = previous_using_alternate;
+    restore_primary_state(buffer);
     return 0;
 }
 
@@ -814,10 +884,28 @@ void terminal_buffer_destroy(TerminalBuffer *buffer)
     buffer->cells = NULL;
     buffer->using_alternate_screen = 0;
     buffer->cursor_visible = 1;
+    buffer->primary_cursor_visible = 1;
+    buffer->alternate_cursor_visible = 1;
     buffer->primary_cursor_row = 0;
     buffer->primary_cursor_col = 0;
+    buffer->primary_saved_row = 0;
+    buffer->primary_saved_col = 0;
     buffer->alternate_cursor_row = 0;
     buffer->alternate_cursor_col = 0;
+    buffer->alternate_saved_row = 0;
+    buffer->alternate_saved_col = 0;
+    buffer->primary_fg = buffer->default_fg;
+    buffer->primary_bg = buffer->default_bg;
+    buffer->primary_bold = 0;
+    buffer->primary_inverse = 0;
+    buffer->alternate_fg = buffer->default_fg;
+    buffer->alternate_bg = buffer->default_bg;
+    buffer->alternate_bold = 0;
+    buffer->alternate_inverse = 0;
+    buffer->current_fg = buffer->default_fg;
+    buffer->current_bg = buffer->default_bg;
+    buffer->current_bold = 0;
+    buffer->current_inverse = 0;
     buffer->cols = 0;
     buffer->rows = 0;
     buffer->cursor_col = 0;

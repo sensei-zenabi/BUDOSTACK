@@ -25,7 +25,7 @@ and efficient resource management.
 To successfully run BUDOSTACK, **Debian** based Linux distributions
 are recommended. They provide the "sudo apt install" as default, which
 is used e.g. in the setup.sh shell script to install applications 
-utilized by BUDOSTACK to execute it's apps and commands. During the  
+utilized by BUDOSTACK to execute it's apps and commands. During the 
 development of BUDOSTACK, it has been tested with following distros:
 - Ubuntu
 - Kubuntu

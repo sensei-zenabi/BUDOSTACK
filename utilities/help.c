@@ -20,8 +20,8 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("Note! Setting up BUDOSTACK for your console:\n");
     printf("\n");
-    printf("      1. Install and take into use: fonts/Ac437_ATI_8x8.ttf\n");
-    printf("      2. Adjust your console font and view to display 118 columns x 66 rows\n");
+    printf("      1. Take into use the font: Ac437_ATI_8x8.ttf installed by setup.sh\n");
+    printf("      2. Adjust your console font size and view to display 118cols x 66rows\n");
     printf("      3. Run _TEST and verify the result\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");

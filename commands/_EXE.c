@@ -157,22 +157,6 @@ static int resolve_child_path(const char *command, const char *base, char *resol
     return -1;
 }
 
-static void write_char_at(int x, int y, unsigned char ch, int *last_bg) {
-    int color;
-    if (termbg_get(x, y, &color)) {
-        if (*last_bg != color) {
-            printf("\033[48;5;%dm", color);
-            *last_bg = color;
-        }
-    } else if (*last_bg != -1) {
-        printf("\033[49m");
-        *last_bg = -1;
-    }
-
-    printf("\033[%d;%dH", y + 1, x + 1);
-    fputc(ch, stdout);
-}
-
 static void reset_background(int *last_bg) {
     if (*last_bg != -1) {
         printf("\033[49m");
@@ -180,52 +164,128 @@ static void reset_background(int *last_bg) {
     }
 }
 
+static void apply_background(int x, int y, int *last_bg) {
+    int color;
+    if (termbg_get(x, y, &color)) {
+        if (*last_bg != color) {
+            printf("\033[48;5;%dm", color);
+            *last_bg = color;
+        }
+    } else {
+        reset_background(last_bg);
+    }
+}
+
+static void move_cursor(int x, int y) {
+    printf("\033[%d;%dH", y + 1, x + 1);
+}
+
+static void flush_chunk(const unsigned char *chunk,
+                        size_t length,
+                        int origin_x,
+                        int origin_y,
+                        int *current_x,
+                        int *current_y,
+                        int *last_bg) {
+    if (length == 0)
+        return;
+
+    move_cursor(origin_x + *current_x, origin_y + *current_y);
+
+    for (size_t i = 0; i < length; ++i) {
+        apply_background(origin_x + *current_x, origin_y + *current_y, last_bg);
+        fputc(chunk[i], stdout);
+        (*current_x)++;
+    }
+}
+
 static int process_output(int fd, int origin_x, int origin_y) {
-    char buffer[4096];
+    unsigned char read_buffer[4096];
+    unsigned char chunk[1024];
+    size_t chunk_len = 0;
     int current_x = 0;
     int current_y = 0;
     int last_bg = -1;
+    int csi_state = 0; /* 0=none,1=after ESC,2=in CSI */
 
     for (;;) {
-        ssize_t nread = read(fd, buffer, sizeof(buffer));
+        ssize_t nread = read(fd, read_buffer, sizeof(read_buffer));
         if (nread > 0) {
             for (ssize_t i = 0; i < nread; ++i) {
-                unsigned char ch = (unsigned char)buffer[i];
+                unsigned char ch = read_buffer[i];
+
+                if (csi_state == 1) {
+                    /* ESC has been read; check if this begins a CSI sequence */
+                    if (ch == '[') {
+                        csi_state = 2;
+                    } else {
+                        csi_state = 0;
+                    }
+                    continue;
+                } else if (csi_state == 2) {
+                    if (ch >= 0x40 && ch <= 0x7E)
+                        csi_state = 0;
+                    continue;
+                }
+
                 switch (ch) {
+                    case '\x1b':
+                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
+                        chunk_len = 0;
+                        reset_background(&last_bg);
+                        csi_state = 1;
+                        break;
                     case '\r':
+                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
+                        chunk_len = 0;
                         current_x = 0;
                         reset_background(&last_bg);
                         break;
                     case '\n':
+                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
+                        chunk_len = 0;
                         current_x = 0;
                         current_y++;
                         reset_background(&last_bg);
                         break;
                     case '\t': {
+                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
+                        chunk_len = 0;
                         int spaces = 8 - (current_x % 8);
                         if (spaces == 0)
                             spaces = 8;
-                        for (int s = 0; s < spaces; ++s) {
-                            write_char_at(origin_x + current_x, origin_y + current_y, ' ', &last_bg);
-                            current_x++;
+                        while (spaces > 0) {
+                            int emit = spaces > (int)sizeof(chunk) ? (int)sizeof(chunk) : spaces;
+                            memset(chunk, ' ', (size_t)emit);
+                            flush_chunk(chunk, (size_t)emit, origin_x, origin_y, &current_x, &current_y, &last_bg);
+                            spaces -= emit;
                         }
+                        chunk_len = 0;
                         break;
                     }
                     case '\b':
+                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
+                        chunk_len = 0;
                         if (current_x > 0)
                             current_x--;
                         reset_background(&last_bg);
                         break;
                     default:
-                        if (ch < 0x20 && ch != 0x1b) {
+                        if (ch < 0x20) {
                             /* Skip other control characters */
                             break;
                         }
-                        write_char_at(origin_x + current_x, origin_y + current_y, ch, &last_bg);
-                        current_x++;
+
+                        chunk[chunk_len++] = ch;
+                        if (chunk_len == sizeof(chunk)) {
+                            flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
+                            chunk_len = 0;
+                        }
                         break;
                 }
             }
+            flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
+            chunk_len = 0;
             fflush(stdout);
         } else if (nread == 0) {
             break;

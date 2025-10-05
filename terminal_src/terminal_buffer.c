@@ -94,6 +94,42 @@ static void ensure_cursor_in_bounds(TerminalBuffer *buffer)
     }
 }
 
+static void switch_to_primary_screen(TerminalBuffer *buffer)
+{
+    if (!buffer || buffer->using_alternate_screen == 0) {
+        return;
+    }
+
+    buffer->alternate_cursor_row = buffer->cursor_row;
+    buffer->alternate_cursor_col = buffer->cursor_col;
+    buffer->cells = buffer->primary_cells;
+    buffer->using_alternate_screen = 0;
+    buffer->cursor_row = buffer->primary_cursor_row;
+    buffer->cursor_col = buffer->primary_cursor_col;
+    ensure_cursor_in_bounds(buffer);
+    buffer->primary_cursor_row = buffer->cursor_row;
+    buffer->primary_cursor_col = buffer->cursor_col;
+}
+
+static void switch_to_alternate_screen(TerminalBuffer *buffer)
+{
+    if (!buffer || buffer->using_alternate_screen) {
+        return;
+    }
+
+    if (!buffer->alternate_cells) {
+        return;
+    }
+
+    buffer->primary_cursor_row = buffer->cursor_row;
+    buffer->primary_cursor_col = buffer->cursor_col;
+    buffer->cells = buffer->alternate_cells;
+    buffer->using_alternate_screen = 1;
+    clear_screen(buffer);
+    buffer->alternate_cursor_row = buffer->cursor_row;
+    buffer->alternate_cursor_col = buffer->cursor_col;
+}
+
 static void scroll_up(TerminalBuffer *buffer, int lines)
 {
     if (!buffer || lines <= 0) {
@@ -296,6 +332,61 @@ static int csi_param_or_default(const TerminalBuffer *buffer, int index, int def
     return buffer->csi_params[index];
 }
 
+static void handle_dec_private_mode(TerminalBuffer *buffer, int set)
+{
+    if (!buffer) {
+        return;
+    }
+
+    int count = buffer->csi_param_count;
+    if (count == 0) {
+        count = 1;
+    }
+
+    for (int i = 0; i < count; ++i) {
+        int param = (buffer->csi_param_count > 0) ? buffer->csi_params[i] : -1;
+        if (param == -1) {
+            param = 0;
+        }
+
+        switch (param) {
+        case 25:
+            buffer->cursor_visible = set ? 1 : 0;
+            break;
+        case 47:
+        case 1047:
+        case 1049:
+            if (set) {
+                if (param == 1049) {
+                    buffer->saved_row = buffer->cursor_row;
+                    buffer->saved_col = buffer->cursor_col;
+                }
+                switch_to_alternate_screen(buffer);
+            } else {
+                switch_to_primary_screen(buffer);
+                if (param == 1049) {
+                    buffer->cursor_row = buffer->saved_row;
+                    buffer->cursor_col = buffer->saved_col;
+                    ensure_cursor_in_bounds(buffer);
+                }
+            }
+            break;
+        case 1048:
+            if (set) {
+                buffer->saved_row = buffer->cursor_row;
+                buffer->saved_col = buffer->cursor_col;
+            } else {
+                buffer->cursor_row = buffer->saved_row;
+                buffer->cursor_col = buffer->saved_col;
+                ensure_cursor_in_bounds(buffer);
+            }
+            break;
+        default:
+            break;
+        }
+    }
+}
+
 static void handle_csi_final(TerminalBuffer *buffer, char final)
 {
     switch (final) {
@@ -448,6 +539,12 @@ static void handle_csi_final(TerminalBuffer *buffer, char final)
     }
     case 'm':
         handle_sgr(buffer);
+        break;
+    case 'h':
+    case 'l':
+        if (buffer->csi_private) {
+            handle_dec_private_mode(buffer, final == 'h');
+        }
         break;
     default:
         break;
@@ -665,17 +762,32 @@ int terminal_buffer_init(TerminalBuffer *buffer, int cols, int rows, size_t max_
     buffer->cols = cols;
     buffer->rows = rows;
     buffer->max_history_lines = max_history_lines;
-    buffer->cells = calloc((size_t)buffer->cols * (size_t)buffer->rows, sizeof(TerminalCell));
-    if (!buffer->cells) {
+    size_t cell_count = (size_t)buffer->cols * (size_t)buffer->rows;
+    buffer->primary_cells = calloc(cell_count, sizeof(TerminalCell));
+    if (!buffer->primary_cells) {
         return -1;
     }
 
+    buffer->alternate_cells = calloc(cell_count, sizeof(TerminalCell));
+    if (!buffer->alternate_cells) {
+        free(buffer->primary_cells);
+        buffer->primary_cells = NULL;
+        return -1;
+    }
+
+    buffer->cells = buffer->primary_cells;
+    buffer->using_alternate_screen = 0;
+    buffer->cursor_visible = 1;
     buffer->default_fg = 15;
     buffer->default_bg = 0;
     buffer->cursor_row = 0;
     buffer->cursor_col = 0;
     buffer->saved_row = 0;
     buffer->saved_col = 0;
+    buffer->primary_cursor_row = 0;
+    buffer->primary_cursor_col = 0;
+    buffer->alternate_cursor_row = 0;
+    buffer->alternate_cursor_col = 0;
     buffer->osc_active = 0;
     buffer->osc_escape = 0;
     buffer->parse_state = TERMINAL_PARSE_STATE_NORMAL;
@@ -683,6 +795,10 @@ int terminal_buffer_init(TerminalBuffer *buffer, int cols, int rows, size_t max_
     reset_csi_state(buffer);
     reset_utf8_decoder(buffer);
     clear_screen(buffer);
+    TerminalCell *previous_cells = buffer->cells;
+    buffer->cells = buffer->alternate_cells;
+    clear_screen(buffer);
+    buffer->cells = previous_cells;
     return 0;
 }
 
@@ -691,8 +807,17 @@ void terminal_buffer_destroy(TerminalBuffer *buffer)
     if (!buffer) {
         return;
     }
-    free(buffer->cells);
+    free(buffer->primary_cells);
+    free(buffer->alternate_cells);
+    buffer->primary_cells = NULL;
+    buffer->alternate_cells = NULL;
     buffer->cells = NULL;
+    buffer->using_alternate_screen = 0;
+    buffer->cursor_visible = 1;
+    buffer->primary_cursor_row = 0;
+    buffer->primary_cursor_col = 0;
+    buffer->alternate_cursor_row = 0;
+    buffer->alternate_cursor_col = 0;
     buffer->cols = 0;
     buffer->rows = 0;
     buffer->cursor_col = 0;
@@ -737,5 +862,13 @@ int terminal_buffer_rows(const TerminalBuffer *buffer)
 int terminal_buffer_cols(const TerminalBuffer *buffer)
 {
     return buffer ? buffer->cols : 0;
+}
+
+int terminal_buffer_cursor_visible(const TerminalBuffer *buffer)
+{
+    if (!buffer) {
+        return 1;
+    }
+    return buffer->cursor_visible;
 }
 

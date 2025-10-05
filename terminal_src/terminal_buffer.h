@@ -13,6 +13,8 @@ typedef struct {
 } TerminalCell;
 
 typedef struct {
+    TerminalCell *primary_cells;
+    TerminalCell *alternate_cells;
     TerminalCell *cells;
     int cols;
     int rows;
@@ -20,6 +22,12 @@ typedef struct {
     int cursor_col;
     int saved_row;
     int saved_col;
+    int primary_cursor_row;
+    int primary_cursor_col;
+    int alternate_cursor_row;
+    int alternate_cursor_col;
+    int using_alternate_screen;
+    int cursor_visible;
     uint8_t default_fg;
     uint8_t default_bg;
     uint8_t current_fg;
@@ -51,6 +59,7 @@ int terminal_buffer_append(TerminalBuffer *buffer, const char *data, size_t leng
 const TerminalCell *terminal_buffer_cell(const TerminalBuffer *buffer, int row, int col);
 int terminal_buffer_rows(const TerminalBuffer *buffer);
 int terminal_buffer_cols(const TerminalBuffer *buffer);
+int terminal_buffer_cursor_visible(const TerminalBuffer *buffer);
 
 
 #endif /* TERMINAL_BUFFER_H */

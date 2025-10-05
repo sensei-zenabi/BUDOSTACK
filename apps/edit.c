@@ -343,21 +343,30 @@ int editorRowByteIndexToCx(EditorLine *row, int byte_index) {
 void abAppendHighlighted(struct abuf *ab, const char *s, int avail) {
     int width = 0;
     const char *p = s;
-    while (*p && width < avail) {
+    while (*p) {
         if (*p == '\x1b') {
             const char *start = p++;
-            /* Consume the rest of the escape sequence */
-            while (*p && (*p < '@' || *p > '~'))
+            if (*p) {
+                /* Skip the first character after ESC (e.g. '[' in CSI sequences). */
                 p++;
-            if (*p) p++;
+                while (*p && !(*p >= '@' && *p <= '~'))
+                    p++;
+                if (*p)
+                    p++;
+            }
             abAppend(ab, start, p - start);
         } else {
             wchar_t wc;
             size_t bytes = mbrtowc(&wc, p, MB_CUR_MAX, NULL);
-            if (bytes == (size_t)-1 || bytes == (size_t)-2) bytes = 1;
+            if (bytes == (size_t)-1 || bytes == (size_t)-2)
+                bytes = 1;
             int w = wcwidth(wc);
-            if (w < 0) w = 0;
-            if (width + w > avail) break;
+            if (w < 0)
+                w = 0;
+            if (width + w > avail) {
+                p += bytes;
+                continue;
+            }
             abAppend(ab, p, bytes);
             width += w;
             p += bytes;

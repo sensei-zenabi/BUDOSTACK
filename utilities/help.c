@@ -18,8 +18,11 @@ int main(int argc, char *argv[]) {
     printf("Contact email:   budostack@gmail.com\n");
     printf("License:         GPLv2\n");
     printf("\n");
-    printf("Note! All BUDOSTACK programs have been optimized for 8x8 square fonts.\n");
-    printf("      Built-in fonts are provided in the ./fonts/ folder (.psf + .ttf).\n");
+    printf("Note! Setting up BUDOSTACK for your console:\n");
+    printf("\n");
+    printf("      1. Install and take into use: fonts/Ac437_ATI_8x8.ttf\n");
+    printf("      2. Adjust your console font and view to display 118 columns x 66 rows\n");
+    printf("      3. Run _TEST and verify the result\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     printf("                           - GENERAL INFORMATION -\n");

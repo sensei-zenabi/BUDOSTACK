@@ -38,10 +38,11 @@ development of BUDOSTACK, it has been tested with following distros:
 4. Then type "help"
 
 ## How to Run Tasks?
-Nodes are being built using the proprietary TASK language. Example
-nodes can be found from the "tasks" -folder and instructions from
-TASK language can be seen by typing "runtask -help" within BUDOSTACK.
+TASK language is a proprietary BASIC like langauge built for BUDOSTACK
+that enables users to develop their own programs using the built-in
+applications, commands and utilities. Type 'runtask -help' to find out
+more.
 <br><br>
-Below is an example how to start a node:
-- ./budostack code      (when starting from linux terminal)
-- runtask code.task (when starting from within BUDOSTACK)
+Below is an example how to start a TASK script:
+- ./budostack script.task      (when starting from linux terminal)
+- runtask script.task          (when starting from within BUDOSTACK)

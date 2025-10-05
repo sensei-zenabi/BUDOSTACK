@@ -1,13 +1,13 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic
-SDL2_CFLAGS ?= $(shell pkg-config --cflags sdl2 SDL2_ttf 2>/dev/null)
-SDL2_LIBS ?= $(shell pkg-config --libs sdl2 SDL2_ttf 2>/dev/null)
+SDL2_CFLAGS ?= $(shell pkg-config --cflags sdl2 2>/dev/null)
+SDL2_LIBS ?= $(shell pkg-config --libs sdl2 2>/dev/null)
 ifeq ($(SDL2_CFLAGS),)
 SDL2_CFLAGS = -I/usr/include/SDL2 -D_REENTRANT
 endif
 ifeq ($(SDL2_LIBS),)
-SDL2_LIBS = -lSDL2 -lSDL2_ttf
+SDL2_LIBS = -lSDL2
 endif
 CFLAGS += $(SDL2_CFLAGS)
 LDFLAGS = -lasound -lm -pthread

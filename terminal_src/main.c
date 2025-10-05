@@ -1,5 +1,7 @@
 #define _XOPEN_SOURCE 700
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_ttf.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -18,7 +20,8 @@
 
 #include "terminal_buffer.h"
 
-#define TERMINAL_FONT_PATH "fonts/pcw8x8.psf"
+#define TERMINAL_FONT_TTF_PATH "fonts/ModernDOS8x8.ttf"
+#define TERMINAL_FONT_PSF_PATH "fonts/pcw8x8.psf"
 #define TERMINAL_MAX_LINES 2048
 #define TERMINAL_READ_CHUNK 4096
 #define TERMINAL_PADDING 0
@@ -38,13 +41,23 @@ typedef struct {
     int height;
 } GlyphCacheEntry;
 
+typedef enum {
+    TERMINAL_FONT_FORMAT_NONE = 0,
+    TERMINAL_FONT_FORMAT_PSF,
+    TERMINAL_FONT_FORMAT_TTF
+} TerminalFontFormat;
+
 typedef struct {
+    TerminalFontFormat format;
     uint32_t glyph_count;
     uint32_t glyph_bytes;
     uint32_t width;
     uint32_t height;
     uint32_t bytes_per_row;
     uint8_t *data;
+    TTF_Font *ttf_font;
+    int ascent;
+    int line_skip;
 } TerminalFont;
 
 typedef struct {
@@ -68,6 +81,7 @@ typedef struct {
     int window_height;
     float scale_x;
     float scale_y;
+    int ttf_initialized;
     GlyphCacheEntry *glyph_cache;
     size_t glyph_cache_count;
     size_t glyph_cache_capacity;
@@ -121,8 +135,61 @@ static void terminal_font_destroy(TerminalFont *font)
         return;
     }
 
+    if (font->format == TERMINAL_FONT_FORMAT_TTF && font->ttf_font) {
+        TTF_CloseFont(font->ttf_font);
+        font->ttf_font = NULL;
+    }
     free(font->data);
     memset(font, 0, sizeof(*font));
+}
+
+static int terminal_font_load_ttf(const char *path, TerminalFont *font)
+{
+    if (!path || !font) {
+        return -1;
+    }
+
+    terminal_font_destroy(font);
+
+    TTF_Font *ttf = TTF_OpenFont(path, 16);
+    if (!ttf) {
+        return -1;
+    }
+
+    font->format = TERMINAL_FONT_FORMAT_TTF;
+    font->ttf_font = ttf;
+    font->glyph_count = 0;
+    font->glyph_bytes = 0;
+    font->bytes_per_row = 0;
+    font->data = NULL;
+    font->ascent = TTF_FontAscent(ttf);
+    font->line_skip = TTF_FontLineSkip(ttf);
+
+    int font_height = TTF_FontHeight(ttf);
+    if (font->line_skip <= 0) {
+        font->line_skip = font_height;
+    }
+    if (font->ascent <= 0) {
+        font->ascent = font_height;
+    }
+    if (font_height <= 0) {
+        font_height = font->line_skip > 0 ? font->line_skip : (int)TERMINAL_BASE_CHAR_HEIGHT;
+    }
+
+    font->height = (uint32_t)(font->line_skip > 0 ? font->line_skip : font_height);
+
+    int minx = 0;
+    int maxx = 0;
+    int miny = 0;
+    int maxy = 0;
+    int advance = 0;
+    if (TTF_GlyphMetrics32(ttf, (Uint32)'M', &minx, &maxx, &miny, &maxy, &advance) == 0 && advance > 0) {
+        font->width = (uint32_t)advance;
+    } else {
+        font->width = (uint32_t)font_height;
+    }
+
+    return 0;
 }
 
 static int terminal_font_load_psf(const char *path, TerminalFont *font)
@@ -131,7 +198,7 @@ static int terminal_font_load_psf(const char *path, TerminalFont *font)
         return -1;
     }
 
-    memset(font, 0, sizeof(*font));
+    terminal_font_destroy(font);
 
     FILE *fp = fopen(path, "rb");
     if (!fp) {
@@ -200,12 +267,16 @@ static int terminal_font_load_psf(const char *path, TerminalFont *font)
 
     fclose(fp);
 
+    font->format = TERMINAL_FONT_FORMAT_PSF;
     font->glyph_count = length;
     font->glyph_bytes = glyph_bytes;
     font->width = width;
     font->height = height;
     font->bytes_per_row = (width + 7u) / 8u;
     font->data = data;
+    font->ttf_font = NULL;
+    font->ascent = (int)height;
+    font->line_skip = (int)height;
     return 0;
 }
 
@@ -277,7 +348,39 @@ static GlyphCacheEntry *cache_glyph(TerminalRenderer *renderer, uint32_t codepoi
     entry->width = renderer->char_width;
     entry->height = renderer->line_height;
 
-    if (codepoint == 0 || !renderer->font.data) {
+    if (codepoint == 0) {
+        return entry;
+    }
+
+    if (renderer->font.format == TERMINAL_FONT_FORMAT_TTF && renderer->font.ttf_font) {
+        Uint32 glyph_codepoint = (Uint32)codepoint;
+        if (!TTF_GlyphIsProvided32(renderer->font.ttf_font, glyph_codepoint)) {
+            glyph_codepoint = (Uint32)'?';
+            if (!TTF_GlyphIsProvided32(renderer->font.ttf_font, glyph_codepoint)) {
+                glyph_codepoint = (Uint32)' ';
+            }
+        }
+
+        SDL_Color white = {255, 255, 255, 255};
+        SDL_Surface *surface = TTF_RenderGlyph32_Blended(renderer->font.ttf_font, glyph_codepoint, white);
+        if (!surface) {
+            return entry;
+        }
+
+        SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer->renderer, surface);
+        entry->width = surface->w;
+        entry->height = surface->h;
+        SDL_FreeSurface(surface);
+        if (!texture) {
+            return entry;
+        }
+
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        entry->texture = texture;
+        return entry;
+    }
+
+    if (!renderer->font.data || renderer->font.format != TERMINAL_FONT_FORMAT_PSF) {
         return entry;
     }
 
@@ -399,21 +502,43 @@ static int init_renderer(TerminalRenderer *renderer)
         return -1;
     }
 
+    renderer->ttf_initialized = 0;
     renderer->glyph_cache = NULL;
     renderer->glyph_cache_count = 0;
     renderer->glyph_cache_capacity = 0;
 
-    if (terminal_font_load_psf(TERMINAL_FONT_PATH, &renderer->font) == -1) {
-        fprintf(stderr, "Failed to load PSF font '%s'\n", TERMINAL_FONT_PATH);
-        SDL_Quit();
-        return -1;
+    int font_loaded = 0;
+    if (TTF_Init() == 0) {
+        renderer->ttf_initialized = 1;
+        if (terminal_font_load_ttf(TERMINAL_FONT_TTF_PATH, &renderer->font) == 0) {
+            font_loaded = 1;
+        } else {
+            fprintf(stderr, "Failed to load TTF font '%s': %s\n", TERMINAL_FONT_TTF_PATH, TTF_GetError());
+            terminal_font_destroy(&renderer->font);
+            TTF_Quit();
+            renderer->ttf_initialized = 0;
+        }
+    } else {
+        fprintf(stderr, "TTF_Init failed: %s\n", TTF_GetError());
+    }
+
+    if (!font_loaded) {
+        if (terminal_font_load_psf(TERMINAL_FONT_PSF_PATH, &renderer->font) == -1) {
+            fprintf(stderr, "Failed to load PSF font '%s'\n", TERMINAL_FONT_PSF_PATH);
+            SDL_Quit();
+            if (renderer->ttf_initialized) {
+                TTF_Quit();
+                renderer->ttf_initialized = 0;
+            }
+            return -1;
+        }
     }
 
     renderer->cols = TERMINAL_DEFAULT_COLS;
     renderer->rows = TERMINAL_DEFAULT_ROWS;
     renderer->char_width = renderer->font.width > 0 ? (int)renderer->font.width : (int)TERMINAL_BASE_CHAR_WIDTH;
     renderer->char_height = renderer->font.height > 0 ? (int)renderer->font.height : (int)TERMINAL_BASE_CHAR_HEIGHT;
-    renderer->line_height = renderer->char_height;
+    renderer->line_height = renderer->font.line_skip > 0 ? renderer->font.line_skip : renderer->char_height;
     renderer->scale_x = 1.0f;
     renderer->scale_y = 1.0f;
 
@@ -500,6 +625,10 @@ static void destroy_renderer(TerminalRenderer *renderer)
     SDL_StopTextInput();
     destroy_glyph_cache(renderer);
     terminal_font_destroy(&renderer->font);
+    if (renderer->ttf_initialized) {
+        TTF_Quit();
+        renderer->ttf_initialized = 0;
+    }
     if (renderer->renderer) {
         SDL_DestroyRenderer(renderer->renderer);
         renderer->renderer = NULL;
@@ -570,6 +699,64 @@ static int send_bytes(int pty_fd, const char *data, size_t length)
 static int send_control_character(int pty_fd, char control_character)
 {
     return send_bytes(pty_fd, &control_character, 1);
+}
+
+static int handle_control_keydown(const SDL_KeyboardEvent *key_event, int pty_fd)
+{
+    if (!key_event) {
+        return 0;
+    }
+
+    const SDL_Keymod mods = key_event->keysym.mod;
+    if (!(mods & KMOD_CTRL)) {
+        return 0;
+    }
+
+    SDL_Keycode key = key_event->keysym.sym;
+
+    if (key >= SDLK_a && key <= SDLK_z) {
+        char control = (char)(key - SDLK_a + 1);
+        send_control_character(pty_fd, control);
+        return 1;
+    }
+
+    int sym = (int)key;
+    if (sym >= 0 && sym < 128) {
+        char ascii = (char)sym;
+        switch (ascii) {
+        case '2':
+        case '@':
+            ascii = '@';
+            break;
+        case '6':
+        case '^':
+            ascii = '^';
+            break;
+        case '-':
+        case '_':
+            ascii = '_';
+            break;
+        case '/':
+        case '?':
+            ascii = '?';
+            break;
+        case '`':
+            ascii = '@';
+            break;
+        default:
+            break;
+        }
+
+        if (ascii >= 'a' && ascii <= 'z') {
+            ascii = (char)toupper((unsigned char)ascii);
+        }
+
+        char control = (char)(ascii & 0x1F);
+        send_control_character(pty_fd, control);
+        return 1;
+    }
+
+    return 0;
 }
 
 static int send_text(int pty_fd, const char *text)
@@ -723,18 +910,18 @@ int main(int argc, char *argv[])
                 g_running = 0;
                 break;
             case SDL_KEYDOWN: {
+                if (handle_control_keydown(&event.key, pty_fd)) {
+                    break;
+                }
+
                 SDL_Keycode key = event.key.keysym.sym;
                 const SDL_Keymod mods = event.key.keysym.mod;
 
-                if ((mods & KMOD_CTRL) && key == SDLK_c) {
-                    send_control_character(pty_fd, '\003');
-                } else if ((mods & KMOD_CTRL) && key == SDLK_d) {
-                    send_control_character(pty_fd, '\004');
-                } else if ((mods & KMOD_CTRL) && key == SDLK_l) {
-                    send_control_character(pty_fd, '\f');
+                if ((mods & KMOD_SHIFT) && key == SDLK_TAB) {
+                    send_escape_sequence(pty_fd, "\x1b[Z");
                 } else if (key == SDLK_BACKSPACE) {
                     send_control_character(pty_fd, '\b');
-                } else if (key == SDLK_RETURN) {
+                } else if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
                     send_control_character(pty_fd, '\n');
                 } else if (key == SDLK_ESCAPE) {
                     send_control_character(pty_fd, '\x1b');
@@ -756,6 +943,10 @@ int main(int argc, char *argv[])
                     send_escape_sequence(pty_fd, "\x1b[5~");
                 } else if (key == SDLK_PAGEDOWN) {
                     send_escape_sequence(pty_fd, "\x1b[6~");
+                } else if (key == SDLK_INSERT) {
+                    send_escape_sequence(pty_fd, "\x1b[2~");
+                } else if (key == SDLK_DELETE) {
+                    send_escape_sequence(pty_fd, "\x1b[3~");
                 }
                 break;
             }

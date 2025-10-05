@@ -5,6 +5,11 @@
 #   that has taken it's inspiration from languages like BASIC. The aim
 #   was to re-create the joy of simple proramming and easy automation
 #   without the need to learn modern software engineering jargon.
+#
+# ToDo:
+# - _GETCOL = gets cursor column number
+# - _GETROW = gets cursor row number
+# - Use above to move demos dynamically to correct position
 
 @START
 RUN cls
@@ -17,8 +22,8 @@ SET $VAR2 = 0
 RUN _IMAGE -x 0 -y 0 -file tasks/assets/bg_blue.bmp
 RUN _BEEP -C6 -250
 @MENUSCREEN
-RUN _RECT -x 20 -y 4 -width 40 -height 3 -color 1
-RUN _TEXT -x 25 -y 5 -text TASK LANGUAGE DEMONSTRATION
+RUN _RECT -x 40 -y 4 -width 40 -height 3 -color 256
+RUN _TEXT -x 46 -y 5 -text TASK LANGUAGE DEMONSTRATION
 PRINT "\n\n\n"
 RUN _BAR -x 4 -y 8 -title Loading: -progress $VAR2 -color 256
 IF $VAR2 < 100
@@ -34,30 +39,27 @@ ELSE
 WAIT 1000
 
 # Demo 1
-RUN cls
-PRINT "\nNow I will list folder content...\n"
+RUN _TEXT -x 4 -y 14 -text "Now I will list folder content..."
 WAIT 1000
-RUN list
+RUN _EXE -x 4 -y 16 -- list
 WAIT 2500
-RUN cls
 
 # Demo 2
-PRINT "\nHere are the hardware stats...\n"
+RUN _TEXT -x 4 -y 36 -text "Here are the hardware stats..."
 WAIT 2000
-RUN stats
-RUN cls
+RUN _EXE -x 4 -y 38 -- stats
+WAIT 4000
 
 # Demo 3
-PRINT "\nHere is a demo of using external command _HELLO with RUN and storing the stdout:\n"
+RUN _TEXT -x 4 -y 47 -text "Here is a demo of capturing command output with RUN and storing the stdout:"
 WAIT 2500
 RUN _HELLO TO $VAR1
-PRINT "\n>> stdout gave: " + $VAR1 + "\n\n"
+PRINT "\n>> _HELLO stdout gave: " + $VAR1 + "\n\n"
 WAIT 5000
-RUN cls
 
 # Demo 4
-RUN _BAR -title Progress: -progress 100 -color 256
-PRINT "\nPress SPACE to start the demo again with GOTO...\n"
+RUN _BAR -x 4 -y 50 -title Progress: -progress 100 -color 256
+RUN _TEXT -x 4 -y 52 -text "Press SPACE to start the demo again with GOTO..."
 RUN _KEYS TO $VAR2
 IF $VAR2 == 4
   GOTO @START

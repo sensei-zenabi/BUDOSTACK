@@ -36,7 +36,7 @@ int espeak_enable = 1;
  */
 char base_directory[PATH_MAX] = {0};
 
-/* Global dynamic list to store realtime commands loaded from apps/ folder. */
+/* Global dynamic list to store realtime commands loaded from apps/ and commands/ folders. */
 char **realtime_commands = NULL;
 int realtime_command_count = 0;
 
@@ -47,53 +47,80 @@ int realtime_command_count = 0;
 static int g_argc;
 static char **g_argv;
 
-/* load_realtime_commands()
- *
- * This function scans the "apps/" directory (relative to the base_directory) and
- * adds the name of each executable file found to the realtime_commands list.
- */
-void load_realtime_commands(void) {
-    char apps_path[PATH_MAX];
-    if (snprintf(apps_path, sizeof(apps_path), "%s/apps", base_directory) >= (int)sizeof(apps_path)) {
+static int realtime_command_exists(const char *command_name) {
+    for (int i = 0; i < realtime_command_count; i++) {
+        if (strcmp(realtime_commands[i], command_name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int add_realtime_command(const char *command_name) {
+    if (realtime_command_exists(command_name)) {
+        return 0;
+    }
+
+    char **new_list = realloc(realtime_commands, (realtime_command_count + 1) * sizeof(char *));
+    if (!new_list) {
+        perror("realloc");
+        return -1;
+    }
+    realtime_commands = new_list;
+
+    realtime_commands[realtime_command_count] = strdup(command_name);
+    if (!realtime_commands[realtime_command_count]) {
+        perror("strdup");
+        return -1;
+    }
+    realtime_command_count++;
+    return 0;
+}
+
+static void load_realtime_commands_from_dir(const char *relative_dir) {
+    char target_path[PATH_MAX];
+    if (snprintf(target_path, sizeof(target_path), "%s/%s", base_directory, relative_dir) >= (int)sizeof(target_path)) {
         perror("snprintf");
         return;
     }
-    DIR *dir = opendir(apps_path);
+
+    DIR *dir = opendir(target_path);
     if (!dir) {
         perror("opendir");
         return;
     }
-    
+
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
-        /* Skip the special entries "." and ".." */
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
             continue;
-        
-        /* Construct the full path to the file */
+        }
+
         char full_path[PATH_MAX];
-        if (snprintf(full_path, sizeof(full_path), "%s/%s", apps_path, entry->d_name) >= (int)sizeof(full_path))
+        if (snprintf(full_path, sizeof(full_path), "%s/%s", target_path, entry->d_name) >= (int)sizeof(full_path)) {
             continue;
-        
-        /* Check if it's a regular file and executable */
+        }
+
         struct stat sb;
         if (stat(full_path, &sb) == 0 && S_ISREG(sb.st_mode) && access(full_path, X_OK) == 0) {
-            realtime_commands = realloc(realtime_commands, (realtime_command_count + 1) * sizeof(char *));
-            if (!realtime_commands) {
-                perror("realloc");
+            if (add_realtime_command(entry->d_name) == -1) {
                 closedir(dir);
                 return;
             }
-            realtime_commands[realtime_command_count] = strdup(entry->d_name);
-            if (!realtime_commands[realtime_command_count]) {
-                perror("strdup");
-                closedir(dir);
-                return;
-            }
-            realtime_command_count++;
         }
     }
+
     closedir(dir);
+}
+
+/* load_realtime_commands()
+ *
+ * This function scans the "apps/" and "commands/" directories (relative to the base_directory)
+ * and adds the name of each executable file found to the realtime_commands list.
+ */
+void load_realtime_commands(void) {
+    load_realtime_commands_from_dir("apps");
+    load_realtime_commands_from_dir("commands");
 }
 
 /* free_realtime_commands()

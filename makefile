@@ -9,7 +9,15 @@ endif
 ifeq ($(SDL2_LIBS),)
 SDL2_LIBS = -lSDL2
 endif
-CFLAGS += $(SDL2_CFLAGS)
+SDL2_TTF_CFLAGS ?= $(shell pkg-config --cflags SDL2_ttf 2>/dev/null)
+SDL2_TTF_LIBS ?= $(shell pkg-config --libs SDL2_ttf 2>/dev/null)
+ifeq ($(SDL2_TTF_CFLAGS),)
+SDL2_TTF_CFLAGS =
+endif
+ifeq ($(SDL2_TTF_LIBS),)
+SDL2_TTF_LIBS = -lSDL2_ttf
+endif
+CFLAGS += $(SDL2_CFLAGS) $(SDL2_TTF_CFLAGS)
 LDFLAGS = -lasound -lm -pthread
 
 # --------------------------------------------------------------------
@@ -65,7 +73,7 @@ $(TARGET): $(NON_COMMAND_OBJECTS) $(LIB_OBJS)
 $(TERMINAL_TARGET): $(TERMINAL_OBJS)
 	@mkdir -p $(BIN_DIR)
 	@echo "Linking $@..."
-	$(CC) $(TERMINAL_OBJS) $(LDFLAGS) $(SDL2_LIBS) -lutil -o $@
+	$(CC) $(TERMINAL_OBJS) $(LDFLAGS) $(SDL2_LIBS) $(SDL2_TTF_LIBS) -lutil -o $@
 
 # For each executable, link its corresponding object file with the lib objects.
 $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS)

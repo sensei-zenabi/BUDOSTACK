@@ -16,14 +16,17 @@
 #include <unistd.h>
 #include <math.h>
 
+#include <SDL2/SDL_ttf.h>
+
 #include "terminal_buffer.h"
 
-#define TERMINAL_FONT_PATH "fonts/pcw8x8.psf"
+#define TERMINAL_FONT_PATH "fonts/ModernDOS8x8.ttf"
+#define TERMINAL_FONT_POINT_SIZE 8
 #define TERMINAL_MAX_LINES 2048
 #define TERMINAL_READ_CHUNK 4096
 #define TERMINAL_PADDING 0
 #define TERMINAL_DEFAULT_COLS 80
-#define TERMINAL_DEFAULT_ROWS 25
+#define TERMINAL_DEFAULT_ROWS 50
 #define TERMINAL_TARGET_WIDTH 320
 #define TERMINAL_TARGET_HEIGHT 200
 #define TERMINAL_FALLBACK_WIDTH 640
@@ -39,12 +42,12 @@ typedef struct {
 } GlyphCacheEntry;
 
 typedef struct {
-    uint32_t glyph_count;
-    uint32_t glyph_bytes;
-    uint32_t width;
-    uint32_t height;
-    uint32_t bytes_per_row;
-    uint8_t *data;
+    TTF_Font *handle;
+    int width;
+    int height;
+    int line_skip;
+    int ascent;
+    int descent;
 } TerminalFont;
 
 typedef struct {
@@ -74,6 +77,7 @@ typedef struct {
 } TerminalRenderer;
 
 static int g_running = 1;
+static int g_ttf_initialized = 0;
 
 static SDL_Color terminal_color_from_index(uint8_t index)
 {
@@ -121,91 +125,54 @@ static void terminal_font_destroy(TerminalFont *font)
         return;
     }
 
-    free(font->data);
-    memset(font, 0, sizeof(*font));
+    if (font->handle) {
+        TTF_CloseFont(font->handle);
+        font->handle = NULL;
+    }
+
+    font->width = 0;
+    font->height = 0;
+    font->line_skip = 0;
+    font->ascent = 0;
+    font->descent = 0;
 }
 
-static int terminal_font_load_psf(const char *path, TerminalFont *font)
+static int terminal_font_load_ttf(const char *path, int point_size, TerminalFont *font)
 {
-    if (!path || !font) {
+    if (!path || !font || point_size <= 0) {
         return -1;
     }
 
     memset(font, 0, sizeof(*font));
 
-    FILE *fp = fopen(path, "rb");
-    if (!fp) {
+    TTF_Font *ttf = TTF_OpenFont(path, point_size);
+    if (!ttf) {
         return -1;
     }
 
-    uint32_t header[8];
-    size_t read_count = fread(header, sizeof(uint32_t), 8, fp);
-    if (read_count != 8) {
-        fclose(fp);
-        return -1;
+    TTF_SetFontHinting(ttf, TTF_HINTING_MONO);
+    TTF_SetFontKerning(ttf, 0);
+
+    font->handle = ttf;
+    font->ascent = TTF_FontAscent(ttf);
+    font->descent = TTF_FontDescent(ttf);
+    font->height = TTF_FontHeight(ttf);
+    font->line_skip = TTF_FontLineSkip(ttf);
+
+    if (font->height <= 0) {
+        font->height = point_size;
+    }
+    if (font->line_skip <= 0) {
+        font->line_skip = font->height;
     }
 
-    uint32_t magic = header[0];
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-    magic = SDL_Swap32(magic);
-#endif
-    const uint32_t PSF2_MAGIC = 0x864ab572u;
-    if (magic != PSF2_MAGIC) {
-        fclose(fp);
-        return -1;
+    int advance = 0;
+    if (TTF_GlyphMetrics32(ttf, 'M', NULL, NULL, NULL, NULL, &advance) == 0 && advance > 0) {
+        font->width = advance;
+    } else {
+        font->width = font->height;
     }
 
-    uint32_t version = header[1];
-    (void)version;
-    uint32_t header_size = header[2];
-    uint32_t flags = header[3];
-    uint32_t length = header[4];
-    uint32_t glyph_bytes = header[5];
-    uint32_t height = header[6];
-    uint32_t width = header[7];
-
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-    header_size = SDL_Swap32(header_size);
-    flags = SDL_Swap32(flags);
-    length = SDL_Swap32(length);
-    glyph_bytes = SDL_Swap32(glyph_bytes);
-    height = SDL_Swap32(height);
-    width = SDL_Swap32(width);
-#endif
-
-    (void)flags;
-
-    if (length == 0 || glyph_bytes == 0 || width == 0 || height == 0) {
-        fclose(fp);
-        return -1;
-    }
-
-    if (fseek(fp, (long)header_size, SEEK_SET) != 0) {
-        fclose(fp);
-        return -1;
-    }
-
-    size_t total_bytes = (size_t)length * (size_t)glyph_bytes;
-    uint8_t *data = malloc(total_bytes);
-    if (!data) {
-        fclose(fp);
-        return -1;
-    }
-
-    if (fread(data, 1, total_bytes, fp) != total_bytes) {
-        free(data);
-        fclose(fp);
-        return -1;
-    }
-
-    fclose(fp);
-
-    font->glyph_count = length;
-    font->glyph_bytes = glyph_bytes;
-    font->width = width;
-    font->height = height;
-    font->bytes_per_row = (width + 7u) / 8u;
-    font->data = data;
     return 0;
 }
 
@@ -277,49 +244,105 @@ static GlyphCacheEntry *cache_glyph(TerminalRenderer *renderer, uint32_t codepoi
     entry->width = renderer->char_width;
     entry->height = renderer->line_height;
 
-    if (codepoint == 0 || !renderer->font.data) {
+    if (codepoint == 0 || !renderer->font.handle) {
         return entry;
     }
 
-    uint32_t glyph_index = codepoint;
-    if (glyph_index >= renderer->font.glyph_count) {
-        glyph_index = '?';
-        if (glyph_index >= renderer->font.glyph_count) {
-            glyph_index = 0;
+    Uint32 glyph_code = codepoint;
+    if (!TTF_GlyphIsProvided32(renderer->font.handle, glyph_code)) {
+        glyph_code = '?';
+        if (!TTF_GlyphIsProvided32(renderer->font.handle, glyph_code)) {
+            glyph_code = ' ';
         }
     }
 
-    const uint8_t *glyph_data = renderer->font.data + (size_t)glyph_index * renderer->font.glyph_bytes;
-    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, renderer->font.width, renderer->font.height, 32, SDL_PIXELFORMAT_RGBA32);
-    if (!surface) {
+    if (glyph_code == ' ') {
         return entry;
     }
 
-    uint32_t *pixels = (uint32_t *)surface->pixels;
-    const uint32_t pitch_pixels = (uint32_t)(surface->pitch / sizeof(uint32_t));
-    for (uint32_t row = 0; row < renderer->font.height; ++row) {
-        const uint8_t *row_data = glyph_data + row * renderer->font.bytes_per_row;
-        for (uint32_t col = 0; col < renderer->font.width; ++col) {
-            uint8_t mask = (uint8_t)(0x80u >> (col % 8u));
-            uint8_t byte = row_data[col / 8u];
-            uint32_t pixel = 0x00000000u;
-            if (byte & mask) {
-                pixel = 0xFFFFFFFFu;
-            }
-            pixels[row * pitch_pixels + col] = pixel;
-        }
+    int minx = 0;
+    int maxx = 0;
+    int miny = 0;
+    int maxy = 0;
+    int advance = 0;
+    if (TTF_GlyphMetrics32(renderer->font.handle, glyph_code, &minx, &maxx, &miny, &maxy, &advance) != 0) {
+        return entry;
+    }
+    (void)advance;
+
+    const int cell_width = renderer->font.width > 0 ? renderer->font.width : renderer->char_width;
+    const int cell_height = renderer->font.line_skip > 0 ? renderer->font.line_skip : renderer->line_height;
+    SDL_Surface *cell_surface = SDL_CreateRGBSurfaceWithFormat(0, cell_width, cell_height, 32, SDL_PIXELFORMAT_RGBA32);
+    if (!cell_surface) {
+        return entry;
     }
 
-    SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer->renderer, surface);
-    SDL_FreeSurface(surface);
+    SDL_SetSurfaceBlendMode(cell_surface, SDL_BLENDMODE_NONE);
+    SDL_FillRect(cell_surface, NULL, SDL_MapRGBA(cell_surface->format, 0, 0, 0, 0));
+
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Surface *glyph_surface = TTF_RenderGlyph32_Blended(renderer->font.handle, glyph_code, white);
+    if (!glyph_surface) {
+        SDL_FreeSurface(cell_surface);
+        return entry;
+    }
+
+    SDL_SetSurfaceBlendMode(glyph_surface, SDL_BLENDMODE_BLEND);
+
+    SDL_Rect dest_rect;
+    dest_rect.x = minx;
+    int baseline = renderer->font.ascent;
+    if (baseline <= 0) {
+        baseline = cell_height;
+    }
+    if (baseline > cell_height) {
+        baseline = cell_height;
+    }
+
+    dest_rect.y = baseline - maxy;
+    dest_rect.w = glyph_surface->w;
+    dest_rect.h = glyph_surface->h;
+
+    SDL_Rect src_rect = {0, 0, glyph_surface->w, glyph_surface->h};
+
+    if (dest_rect.x < 0) {
+        src_rect.x = -dest_rect.x;
+        dest_rect.w -= src_rect.x;
+        dest_rect.x = 0;
+    }
+    if (dest_rect.y < 0) {
+        src_rect.y = -dest_rect.y;
+        dest_rect.h -= src_rect.y;
+        dest_rect.y = 0;
+    }
+    if (dest_rect.x + dest_rect.w > cell_surface->w) {
+        dest_rect.w = cell_surface->w - dest_rect.x;
+    }
+    if (dest_rect.y + dest_rect.h > cell_surface->h) {
+        dest_rect.h = cell_surface->h - dest_rect.y;
+    }
+
+    if (dest_rect.w <= 0 || dest_rect.h <= 0) {
+        SDL_FreeSurface(glyph_surface);
+        SDL_FreeSurface(cell_surface);
+        return entry;
+    }
+    src_rect.w = dest_rect.w;
+    src_rect.h = dest_rect.h;
+
+    SDL_BlitSurface(glyph_surface, &src_rect, cell_surface, &dest_rect);
+    SDL_FreeSurface(glyph_surface);
+
+    SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer->renderer, cell_surface);
+    SDL_FreeSurface(cell_surface);
     if (!texture) {
         return entry;
     }
 
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     entry->texture = texture;
-    entry->width = renderer->font.width;
-    entry->height = renderer->font.height;
+    entry->width = cell_width;
+    entry->height = cell_height;
     return entry;
 }
 
@@ -403,17 +426,26 @@ static int init_renderer(TerminalRenderer *renderer)
     renderer->glyph_cache_count = 0;
     renderer->glyph_cache_capacity = 0;
 
-    if (terminal_font_load_psf(TERMINAL_FONT_PATH, &renderer->font) == -1) {
-        fprintf(stderr, "Failed to load PSF font '%s'\n", TERMINAL_FONT_PATH);
+    if (TTF_Init() == -1) {
+        fprintf(stderr, "TTF_Init failed: %s\n", TTF_GetError());
+        SDL_Quit();
+        return -1;
+    }
+    g_ttf_initialized = 1;
+
+    if (terminal_font_load_ttf(TERMINAL_FONT_PATH, TERMINAL_FONT_POINT_SIZE, &renderer->font) == -1) {
+        fprintf(stderr, "Failed to load font '%s': %s\n", TERMINAL_FONT_PATH, TTF_GetError());
+        TTF_Quit();
+        g_ttf_initialized = 0;
         SDL_Quit();
         return -1;
     }
 
     renderer->cols = TERMINAL_DEFAULT_COLS;
     renderer->rows = TERMINAL_DEFAULT_ROWS;
-    renderer->char_width = renderer->font.width > 0 ? (int)renderer->font.width : (int)TERMINAL_BASE_CHAR_WIDTH;
-    renderer->char_height = renderer->font.height > 0 ? (int)renderer->font.height : (int)TERMINAL_BASE_CHAR_HEIGHT;
-    renderer->line_height = renderer->char_height;
+    renderer->char_width = renderer->font.width > 0 ? renderer->font.width : (int)TERMINAL_BASE_CHAR_WIDTH;
+    renderer->char_height = renderer->font.height > 0 ? renderer->font.height : (int)TERMINAL_BASE_CHAR_HEIGHT;
+    renderer->line_height = renderer->font.line_skip > 0 ? renderer->font.line_skip : renderer->char_height;
     renderer->scale_x = 1.0f;
     renderer->scale_y = 1.0f;
 
@@ -433,6 +465,10 @@ static int init_renderer(TerminalRenderer *renderer)
     if (!renderer->window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         terminal_font_destroy(&renderer->font);
+        if (g_ttf_initialized) {
+            TTF_Quit();
+            g_ttf_initialized = 0;
+        }
         SDL_Quit();
         return -1;
     }
@@ -444,6 +480,10 @@ static int init_renderer(TerminalRenderer *renderer)
         fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
         SDL_DestroyWindow(renderer->window);
         terminal_font_destroy(&renderer->font);
+        if (g_ttf_initialized) {
+            TTF_Quit();
+            g_ttf_initialized = 0;
+        }
         SDL_Quit();
         return -1;
     }
@@ -454,19 +494,31 @@ static int init_renderer(TerminalRenderer *renderer)
     const float scale_x = (float)renderer->target_width /
         (float)(renderer->cols * renderer->font.width);
     const float scale_y = (float)renderer->target_height /
-        (float)(renderer->rows * renderer->font.height);
+        (float)(renderer->rows * renderer->font.line_skip);
 
-    renderer->scale_x = scale_x > 0.0f ? scale_x : 1.0f;
-    renderer->scale_y = scale_y > 0.0f ? scale_y : 1.0f;
+    float uniform_scale = scale_x;
+    if (uniform_scale <= 0.0f || (scale_y > 0.0f && scale_y < uniform_scale)) {
+        uniform_scale = scale_y;
+    }
+    if (uniform_scale <= 0.0f) {
+        uniform_scale = 1.0f;
+    }
+
+    renderer->scale_x = uniform_scale;
+    renderer->scale_y = uniform_scale;
 
     renderer->char_width = (int)lroundf(renderer->font.width * renderer->scale_x);
-    renderer->line_height = (int)lroundf(renderer->font.height * renderer->scale_y);
+    renderer->line_height = (int)lroundf(renderer->font.line_skip * renderer->scale_y);
     if (renderer->char_width <= 0) {
-        renderer->char_width = (int)renderer->font.width;
+        renderer->char_width = renderer->font.width > 0 ? renderer->font.width : 1;
     }
     if (renderer->line_height <= 0) {
-        renderer->line_height = (int)renderer->font.height;
+        renderer->line_height = renderer->font.line_skip > 0 ? renderer->font.line_skip : 1;
     }
+
+    renderer->char_height = renderer->line_height;
+    renderer->logical_width = renderer->cols * renderer->char_width + TERMINAL_PADDING * 2;
+    renderer->logical_height = renderer->rows * renderer->line_height + TERMINAL_PADDING * 2;
 
     renderer->content_width = renderer->char_width * renderer->cols + TERMINAL_PADDING * 2;
     renderer->content_height = renderer->line_height * renderer->rows + TERMINAL_PADDING * 2;
@@ -494,6 +546,10 @@ static void destroy_renderer(TerminalRenderer *renderer)
     SDL_StopTextInput();
     destroy_glyph_cache(renderer);
     terminal_font_destroy(&renderer->font);
+    if (g_ttf_initialized) {
+        TTF_Quit();
+        g_ttf_initialized = 0;
+    }
     if (renderer->renderer) {
         SDL_DestroyRenderer(renderer->renderer);
         renderer->renderer = NULL;

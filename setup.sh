@@ -34,6 +34,10 @@ PACKAGES=(
     "git"				# Mandatory: general requirement
     "tmux"				# Optional: only for nodes, could be removed?
     "zip"				# Mandatory: commands: unpack, pack
+    "pkg-config"			# Required: pkg-config for SDL2 detection during build
+    "libasound2-dev"                 # Required: ALSA development files for budostack audio
+    "libsdl2-dev"                       # Required: SDL2 headers for the graphical terminal
+    "libsdl2-ttf-dev"                   # Required: SDL2_ttf headers for the graphical terminal
     "espeak"			# Optional: Speech assist
 )
 
@@ -134,9 +138,13 @@ main() {
     echo "All requested packages have been processed."
         echo ""
         echo "Building BUDOSTACK..."
-	make clean
-	make
-	echo "BUDOSTACK setup finished successfully!"
+        make clean
+        make
+        if [ -x "./terminal" ]; then
+            echo ""
+            echo "Graphical terminal ready. Launch it with ./terminal"
+        fi
+        echo "BUDOSTACK setup finished successfully!"
 }
 
 # Execute main if the script is run directly.

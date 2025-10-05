@@ -34,8 +34,9 @@ development of BUDOSTACK, it has been tested with following distros:
 ## How to Install and Run?
 1. Checkout the repo
 2. Run the ./setup.sh shell script
-3. Type "./budostack -f" for fast start
-4. Then type "help"
+3. Launch the SDL2 terminal frontend with `./terminal` (runs Budostack full screen)
+4. Or start the CLI directly with `./budostack -f` for a fast boot
+5. Then type "help"
 
 ## How to Run Tasks?
 Nodes are being built using the proprietary TASK language. Example

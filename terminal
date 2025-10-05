@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Wrapper to launch the SDL2 Budostack terminal frontend.
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$SCRIPT_DIR"
+BINARY_PATH="$REPO_ROOT/bin/terminal"
+if [ ! -x "$BINARY_PATH" ]; then
+    echo "Error: $BINARY_PATH not found. Please run 'make bin/terminal' or './setup.sh' first." >&2
+    exit 1
+fi
+cd "$REPO_ROOT"
+exec "$BINARY_PATH" "$@"

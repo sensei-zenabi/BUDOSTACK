@@ -20,10 +20,9 @@
  *  - If your terminal supports 256 colors, colors are hinted via ANSI.
  */
 
-#include <strings.h>  // for strcasecmp
-
 #define _POSIX_C_SOURCE 200809L
 
+#include <strings.h>  // for strcasecmp
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>

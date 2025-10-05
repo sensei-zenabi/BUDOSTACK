@@ -1,8 +1,13 @@
 # Compiled object files
 *.o
 
-# Main compiled binary
+# Main compiled binaries
 budostack
+bin/terminal
+
+# Terminal build artifacts
+terminal_src/*.o
+bin/
 
 # In the commands directory, ignore everything except source files
 commands/*

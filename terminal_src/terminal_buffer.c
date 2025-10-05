@@ -137,6 +137,7 @@ int terminal_buffer_init(TerminalBuffer *buffer, size_t max_lines)
     buffer->count = 0;
     buffer->capacity = 0;
     buffer->max_lines = max_lines;
+    buffer->pending_carriage_return = 0;
 
     if (push_line(buffer) == -1) {
         terminal_buffer_destroy(buffer);
@@ -160,6 +161,7 @@ void terminal_buffer_destroy(TerminalBuffer *buffer)
     buffer->count = 0;
     buffer->capacity = 0;
     buffer->max_lines = 0;
+    buffer->pending_carriage_return = 0;
 }
 
 static int new_line(TerminalBuffer *buffer)
@@ -198,12 +200,25 @@ int terminal_buffer_append(TerminalBuffer *buffer, const char *data, size_t leng
         char c = data[i];
         TerminalLine *line = &buffer->lines[buffer->count - 1];
 
-        switch (c) {
-        case '\r':
+        if (buffer->pending_carriage_return) {
+            if (c == '\n') {
+                buffer->pending_carriage_return = 0;
+                if (new_line(buffer) == -1) {
+                    return -1;
+                }
+                continue;
+            }
+
+            buffer->pending_carriage_return = 0;
             line->length = 0;
             if (line->text) {
                 line->text[0] = '\0';
             }
+        }
+
+        switch (c) {
+        case '\r':
+            buffer->pending_carriage_return = 1;
             break;
         case '\n':
             if (new_line(buffer) == -1) {

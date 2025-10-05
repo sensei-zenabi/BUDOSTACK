@@ -14,6 +14,7 @@ typedef struct {
     size_t count;
     size_t capacity;
     size_t max_lines;
+    int pending_carriage_return;
 } TerminalBuffer;
 
 int terminal_buffer_init(TerminalBuffer *buffer, size_t max_lines);

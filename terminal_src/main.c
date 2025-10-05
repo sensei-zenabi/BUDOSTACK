@@ -18,7 +18,7 @@
 #include "terminal_buffer.h"
 
 #define TERMINAL_FONT_PATH "fonts/ModernDOS8x8.ttf"
-#define TERMINAL_FONT_SIZE 18
+#define TERMINAL_FONT_SIZE 36
 #define TERMINAL_MAX_LINES 2048
 #define TERMINAL_READ_CHUNK 4096
 #define TERMINAL_PADDING 12

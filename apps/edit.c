@@ -206,6 +206,7 @@ void disableRawMode(void);
 void enableRawMode(void);
 int editorReadKey(void);
 int getWindowSize(int *rows, int *cols);
+void editorHandleResize(void);
 void editorRefreshScreen(void);
 int getRowNumWidth(void);
 int editorDisplayWidth(const char *s);
@@ -336,6 +337,49 @@ int editorRowByteIndexToCx(EditorLine *row, int byte_index) {
         index += bytes;
     }
     return cx;
+}
+
+void editorHandleResize(void) {
+    int rows, cols;
+    if (getWindowSize(&rows, &cols) == -1)
+        return;
+    if (rows == E.screenrows && cols == E.screencols)
+        return;
+
+    E.screenrows = rows;
+    E.screencols = cols;
+    E.textrows = E.screenrows - 3;
+    if (E.textrows < 1)
+        E.textrows = 1;
+
+    if (E.rowoff > E.numrows - E.textrows)
+        E.rowoff = E.numrows - E.textrows;
+    if (E.rowoff < 0)
+        E.rowoff = 0;
+    if (E.cy < E.rowoff)
+        E.rowoff = E.cy;
+    if (E.cy >= E.rowoff + E.textrows)
+        E.rowoff = E.cy - E.textrows + 1;
+
+    int rn_width = getRowNumWidth();
+    int text_width = E.screencols - rn_width - 1;
+    if (text_width < 1)
+        text_width = 1;
+
+    if (E.coloff > E.cx)
+        E.coloff = E.cx;
+    if (E.cy < E.numrows) {
+        int row_width = editorDisplayWidth(E.row[E.cy].chars);
+        int max_coloff = row_width - text_width + 1;
+        if (max_coloff < 0)
+            max_coloff = 0;
+        if (E.coloff > max_coloff)
+            E.coloff = max_coloff;
+    }
+    if (E.cx >= E.coloff + text_width)
+        E.coloff = E.cx - text_width + 1;
+    if (E.coloff < 0)
+        E.coloff = 0;
 }
 
 /* Append a highlighted line to the buffer, respecting the available width.
@@ -559,10 +603,13 @@ void editorDrawShortcutBar(struct abuf *ab) {
 
 /*** Modified Screen Refresh Routine ***/
 void editorRefreshScreen(void) {
+    editorHandleResize();
     update_syntax();
     struct abuf ab = ABUF_INIT;
     int rn_width = getRowNumWidth();
     E.textrows = E.screenrows - 3;                // space for top bar + two bottom bars
+    if (E.textrows < 1)
+        E.textrows = 1;
     abAppend(&ab, "\x1b[?25l", 6);
     abAppend(&ab, "\x1b[H", 3);
     editorDrawTopBar(&ab);                        // draw time/date
@@ -766,6 +813,7 @@ void enableRawMode(void) {
 
 /*** Input Processing ***/
 void editorProcessKeypress(void) {
+    editorHandleResize();
     int c = editorReadKey();
     static int last_key_was_vertical = 0;
 

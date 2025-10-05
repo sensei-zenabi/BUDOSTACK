@@ -96,7 +96,7 @@ static void get_terminal_size(int *rows, int *cols) {
 
 /* -------- Image data -------- */
 
-static int img_w = 64, img_h = 48;
+static int img_w = 118, img_h = 63;
 static uint8_t pixels[MAX_W * MAX_H]; // Each = 0..TOTAL_COLORS-1 color index, or EMPTY
 
 static int cursor_x = 0, cursor_y = 0;
@@ -736,20 +736,20 @@ static void render(void){
     int cols_now; get_terminal_size(&rows,&cols_now);
     for (int i=curcol;i<cols_now;i++) write(STDOUT_FILENO, " ", 1);
 
-	// Draw viewport
-	for (int ry = 0; ry < draw_rows; ry++) {
-	    write(STDOUT_FILENO, "\r\n", 2);
-	    int y = view_y + ry;
+    // Draw viewport
+    for (int ry = 0; ry < draw_rows; ry++) {
+        write(STDOUT_FILENO, "\r\n", 2);
+        int y = view_y + ry;
 
-	    for (int rx = 0; rx < draw_cols; rx++) {
-	        int x = view_x + rx;
-	        int in_bounds = (x >= 0 && x < img_w && y >= 0 && y < img_h);
+        for (int rx = 0; rx < draw_cols; rx++) {
+            int x = view_x + rx;
+            int in_bounds = (x >= 0 && x < img_w && y >= 0 && y < img_h);
 
-	        if (!in_bounds) {
-	            // Outside the image area: print space (no dot, no color)
-	            write(STDOUT_FILENO, " ", 1);
-	            continue;
-	        }
+            if (!in_bounds) {
+                // Outside the image area: print space (no dot, no color)
+                write(STDOUT_FILENO, " ", 1);
+                continue;
+            }
 
                 uint8_t idx = pixels[y * img_w + x];
 

@@ -11,6 +11,9 @@ DESCRIPTION:
 
 */
 
+#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
+
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -19,6 +22,10 @@ DESCRIPTION:
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 #include "../lib/termbg.h"
 
@@ -43,6 +50,111 @@ static int parse_int(const char *value, const char *name, int *out) {
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: _EXE -x <col> -y <row> [--] <command> [args...]\n");
+}
+
+static const char *get_base_dir(const char *argv0) {
+    static char cached[PATH_MAX];
+    static int initialized = 0;
+
+    if (!initialized) {
+        initialized = 1;
+
+        const char *env = getenv("BUDOSTACK_BASE");
+        if (env && env[0] != '\0') {
+            if (!realpath(env, cached)) {
+                strncpy(cached, env, sizeof(cached) - 1);
+                cached[sizeof(cached) - 1] = '\0';
+            }
+        } else if (argv0 && argv0[0] != '\0') {
+            char exe_path[PATH_MAX];
+            if (!realpath(argv0, exe_path)) {
+                ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+                if (len >= 0) {
+                    exe_path[len] = '\0';
+                } else {
+                    exe_path[0] = '\0';
+                }
+            }
+
+            if (exe_path[0] != '\0') {
+                char *slash = strrchr(exe_path, '/');
+                if (slash) {
+                    *slash = '\0';
+                    slash = strrchr(exe_path, '/');
+                    if (slash) {
+                        *slash = '\0';
+                        strncpy(cached, exe_path, sizeof(cached) - 1);
+                        cached[sizeof(cached) - 1] = '\0';
+                    }
+                }
+            }
+        }
+    }
+
+    return cached[0] ? cached : NULL;
+}
+
+static int build_from_base(const char *base, const char *suffix, char *buffer, size_t size) {
+    if (!suffix || !*suffix || !buffer || size == 0)
+        return -1;
+
+    if (suffix[0] == '/') {
+        if (snprintf(buffer, size, "%s", suffix) >= (int)size)
+            return -1;
+        return 0;
+    }
+
+    if (base && base[0] != '\0') {
+        size_t len = strlen(base);
+        const char *fmt = (len > 0 && base[len - 1] == '/') ? "%s%s" : "%s/%s";
+        if (snprintf(buffer, size, fmt, base, suffix) >= (int)size)
+            return -1;
+    } else {
+        if (snprintf(buffer, size, "%s", suffix) >= (int)size)
+            return -1;
+    }
+
+    return 0;
+}
+
+static int resolve_child_path(const char *command, const char *base, char *resolved, size_t size) {
+    static const char *search_dirs[] = {"apps", "commands", "utilities"};
+
+    if (!command || !*command || !resolved || size == 0)
+        return -1;
+
+    if (strchr(command, '/')) {
+        char candidate[PATH_MAX];
+        if (build_from_base(base, command, candidate, sizeof(candidate)) != 0)
+            return -1;
+        if (access(candidate, X_OK) != 0)
+            return -1;
+        if (!realpath(candidate, resolved)) {
+            strncpy(resolved, candidate, size - 1);
+            resolved[size - 1] = '\0';
+        }
+        return 0;
+    }
+
+    for (size_t i = 0; i < sizeof(search_dirs) / sizeof(search_dirs[0]); ++i) {
+        char suffix[PATH_MAX];
+        if (snprintf(suffix, sizeof(suffix), "%s/%s", search_dirs[i], command) >= (int)sizeof(suffix))
+            continue;
+
+        char candidate[PATH_MAX];
+        if (build_from_base(base, suffix, candidate, sizeof(candidate)) != 0)
+            continue;
+        if (access(candidate, X_OK) != 0)
+            continue;
+
+        if (!realpath(candidate, resolved)) {
+            strncpy(resolved, candidate, size - 1);
+            resolved[size - 1] = '\0';
+        }
+        return 0;
+    }
+
+    return -1;
 }
 
 static void write_char_at(int x, int y, unsigned char ch, int *last_bg) {
@@ -187,6 +299,12 @@ int main(int argc, char *argv[]) {
     }
 
     char **child_argv = &argv[command_index];
+    const char *base_dir = get_base_dir(argv[0]);
+    char resolved_path[PATH_MAX];
+    int have_resolved_path = 0;
+
+    if (resolve_child_path(child_argv[0], base_dir, resolved_path, sizeof(resolved_path)) == 0)
+        have_resolved_path = 1;
 
     if (pipe(pipefd) != 0) {
         perror("_EXE: pipe");
@@ -208,7 +326,10 @@ int main(int argc, char *argv[]) {
         close(pipefd[0]);
         close(pipefd[1]);
 
-        execvp(child_argv[0], child_argv);
+        if (have_resolved_path)
+            execv(resolved_path, child_argv);
+        else
+            execvp(child_argv[0], child_argv);
         perror("_EXE: execvp");
         _exit(EXIT_FAILURE);
     }

@@ -180,32 +180,35 @@ static void move_cursor(int x, int y) {
     printf("\033[%d;%dH", y + 1, x + 1);
 }
 
-static void flush_chunk(const unsigned char *chunk,
-                        size_t length,
-                        int origin_x,
-                        int origin_y,
-                        int *current_x,
-                        int *current_y,
-                        int *last_bg) {
-    if (length == 0)
-        return;
+static void render_char(unsigned char ch,
+                       int origin_x,
+                       int origin_y,
+                       int *current_x,
+                       int *current_y,
+                       int *last_bg,
+                       int *cursor_synced) {
+    if (*current_x < 0)
+        *current_x = 0;
+    if (*current_y < 0)
+        *current_y = 0;
 
-    move_cursor(origin_x + *current_x, origin_y + *current_y);
-
-    for (size_t i = 0; i < length; ++i) {
-        apply_background(origin_x + *current_x, origin_y + *current_y, last_bg);
-        fputc(chunk[i], stdout);
-        (*current_x)++;
+    if (!*cursor_synced) {
+        move_cursor(origin_x + *current_x, origin_y + *current_y);
+        *cursor_synced = 1;
     }
+
+    apply_background(origin_x + *current_x, origin_y + *current_y, last_bg);
+    fputc((int)ch, stdout);
+    if (*current_x < INT_MAX)
+        (*current_x)++;
 }
 
 static int process_output(int fd, int origin_x, int origin_y) {
     unsigned char read_buffer[4096];
-    unsigned char chunk[1024];
-    size_t chunk_len = 0;
     int current_x = 0;
     int current_y = 0;
     int last_bg = -1;
+    int cursor_synced = 0;
     int csi_state = 0; /* 0=none,1=after ESC,2=in CSI */
 
     for (;;) {
@@ -230,45 +233,34 @@ static int process_output(int fd, int origin_x, int origin_y) {
 
                 switch (ch) {
                     case '\x1b':
-                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
-                        chunk_len = 0;
                         reset_background(&last_bg);
+                        cursor_synced = 0;
                         csi_state = 1;
                         break;
                     case '\r':
-                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
-                        chunk_len = 0;
                         current_x = 0;
                         reset_background(&last_bg);
+                        cursor_synced = 0;
                         break;
                     case '\n':
-                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
-                        chunk_len = 0;
                         current_x = 0;
                         current_y++;
                         reset_background(&last_bg);
+                        cursor_synced = 0;
                         break;
                     case '\t': {
-                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
-                        chunk_len = 0;
                         int spaces = 8 - (current_x % 8);
-                        if (spaces == 0)
+                        if (spaces <= 0)
                             spaces = 8;
-                        while (spaces > 0) {
-                            int emit = spaces > (int)sizeof(chunk) ? (int)sizeof(chunk) : spaces;
-                            memset(chunk, ' ', (size_t)emit);
-                            flush_chunk(chunk, (size_t)emit, origin_x, origin_y, &current_x, &current_y, &last_bg);
-                            spaces -= emit;
-                        }
-                        chunk_len = 0;
+                        for (int s = 0; s < spaces; ++s)
+                            render_char(' ', origin_x, origin_y, &current_x, &current_y, &last_bg, &cursor_synced);
                         break;
                     }
                     case '\b':
-                        flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
-                        chunk_len = 0;
                         if (current_x > 0)
                             current_x--;
                         reset_background(&last_bg);
+                        cursor_synced = 0;
                         break;
                     default:
                         if (ch < 0x20) {
@@ -276,16 +268,10 @@ static int process_output(int fd, int origin_x, int origin_y) {
                             break;
                         }
 
-                        chunk[chunk_len++] = ch;
-                        if (chunk_len == sizeof(chunk)) {
-                            flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
-                            chunk_len = 0;
-                        }
+                        render_char(ch, origin_x, origin_y, &current_x, &current_y, &last_bg, &cursor_synced);
                         break;
                 }
             }
-            flush_chunk(chunk, chunk_len, origin_x, origin_y, &current_x, &current_y, &last_bg);
-            chunk_len = 0;
             fflush(stdout);
         } else if (nread == 0) {
             break;

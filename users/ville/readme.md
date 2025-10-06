@@ -2,6 +2,19 @@
 
 This is my development diary for BUDOSTACK. Hope you'll enjoy it! Newest post is always on top.
 
+### Sunday, 6th of October 2025 ###
+
+Spent the past weeks turning BUDOSTACK into a richer framework. Paint finally feels like a flagship app: 
+the canvas scales, cursor pops, brightness toggles, and the fill/resize/scroll tools cooperate with a 
+spruced up menu bar and image loading straight from disk. Flood fill even understands diagonals now.
+I reworked the asset pipeline with dedicated folders, trimmed fonts down to a curated system set, 
+and then introduced crisp 8x8 variants with corrected aspect ratios. Runtask grew as well — RUN can 
+pass variables, wait on commands, capture stdout, and even launch arbitrary executables while honoring 
+the base path. Alongside that I restored the commands catalog, lifted helpers into utilities, and 
+hardened path resolution so everything behaves no matter where BUDOSTACK starts. Documentation caught 
+up with the chaos: refreshed readme guides, setup instructions, and an AGENTS brief to keep future 
+Codex sessions honest.
+
 ### Friday, 22nd of August 2025 ###
 
 Learnt a lot about compiler flags today as while optimizing the makefile introduced unnecessary

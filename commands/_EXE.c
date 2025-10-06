@@ -94,6 +94,29 @@ static const char *get_base_dir(const char *argv0) {
     return cached[0] ? cached : NULL;
 }
 
+static void ensure_bg_state_path(const char *base_dir) {
+    const char *bg_env = getenv("BUDOSTACK_BG_STATE");
+    if (bg_env && bg_env[0] != '\0')
+        return;
+
+    char candidate[PATH_MAX];
+    const char *home = getenv("HOME");
+
+    if (home && home[0] != '\0') {
+        int written = snprintf(candidate, sizeof(candidate), "%s/.budostack/bg_state.txt", home);
+        if (written > 0 && written < (int)sizeof(candidate) && access(candidate, F_OK) == 0) {
+            if (setenv("BUDOSTACK_BG_STATE", candidate, 1) == 0)
+                return;
+        }
+    }
+
+    if (base_dir && base_dir[0] != '\0') {
+        int written = snprintf(candidate, sizeof(candidate), "%s/.budostack/bg_state.txt", base_dir);
+        if (written > 0 && written < (int)sizeof(candidate) && access(candidate, F_OK) == 0)
+            setenv("BUDOSTACK_BG_STATE", candidate, 1);
+    }
+}
+
 static int build_from_base(const char *base, const char *suffix, char *buffer, size_t size) {
     if (!suffix || !*suffix || !buffer || size == 0)
         return -1;
@@ -362,6 +385,8 @@ int main(int argc, char *argv[]) {
     const char *base_dir = get_base_dir(argv[0]);
     char resolved_path[PATH_MAX];
     int have_resolved_path = 0;
+
+    ensure_bg_state_path(base_dir);
 
     if (resolve_child_path(child_argv[0], base_dir, resolved_path, sizeof(resolved_path)) == 0)
         have_resolved_path = 1;

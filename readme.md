@@ -5,8 +5,8 @@
 Check out development blog from [HERE](https://sensei-zenabi.github.io/suoranta/index.html)
 
 ### Motive:
-Fun little nostalgic project to explore AI capabilities in producing
-code via e.g. CODEX github integration.
+_Fun little nostalgic project to explore AI capabilities in producing
+code via e.g. CODEX github integration._
 
 ### Licence:
 BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 

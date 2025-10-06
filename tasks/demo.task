@@ -18,6 +18,13 @@ RUN cls
 SET $VAR1 = "n"
 SET $VAR2 = 0
 
+# Display budostacker
+RUN cls
+RUN _IMAGE -x 0 -y 2 -file tasks/assets/budostacker.bmp
+RUN _TEXT -x 45 -y 65 -text "PRESS ANY KEY TO CONTINUE"
+RUN _KEYS
+RUN cls
+
 # Display the start menu
 RUN _IMAGE -x 0 -y 0 -file tasks/assets/bg_blue.bmp
 RUN _BEEP -C6 -250

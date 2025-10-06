@@ -25,6 +25,8 @@ maximum focus and efficiency on basic primitives of computing,
 such as file manipulation, text editing, command-line interactions, 
 and efficient resource management.
 
+< screenshots here >
+
 ## Dependencies
 To successfully run BUDOSTACK, **Debian** based Linux distributions
 are recommended. They provide the "sudo apt install" as default, which

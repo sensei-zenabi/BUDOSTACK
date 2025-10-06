@@ -1,8 +1,12 @@
 # BUDOSTACK - The Martial Art of Software
-**Programmed by:** Ville Suoranta, by using OpenAI tools.<br>
+**Programmed by:** Ville Suoranta<br>
 **Status:** Early Access (in development)
 
 Check out development blog from [HERE](https://sensei-zenabi.github.io/suoranta/index.html)
+
+### Motive:
+Fun little nostalgic project to explore AI capabilities in producing
+code via e.g. CODEX github integration.
 
 ### Licence:
 BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 

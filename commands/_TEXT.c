@@ -92,6 +92,8 @@ int main(int argc, char *argv[]) {
             text = NULL;
             size_t text_len = 0;
 
+            int suppress_space = 0;
+
             for (; i < argc; ++i) {
                 int is_option = 0;
                 if (argv[i][0] == '-') {
@@ -108,27 +110,44 @@ int main(int argc, char *argv[]) {
                     is_option = 0;
                 }
 
+                if (strcmp(argv[i], "+") == 0) {
+                    if (suppress_space) {
+                        fprintf(stderr, "_TEXT: consecutive '+' tokens in -text\n");
+                        goto cleanup;
+                    }
+                    suppress_space = 1;
+                    continue;
+                }
+
                 size_t arg_len = strlen(argv[i]);
-                size_t new_len = text_len + arg_len + (text_len > 0 ? 1 : 0);
+                int need_space = text_len > 0 && suppress_space == 0;
+                size_t new_len = text_len + arg_len + (need_space ? 1 : 0);
                 char *new_text = realloc(text, new_len + 1);
                 if (new_text == NULL) {
                     fprintf(stderr, "_TEXT: memory allocation failed for -text\n");
                     free(text);
+                    text = NULL;
                     goto cleanup;
                 }
 
                 text = new_text;
-                if (text_len > 0) {
+                if (need_space) {
                     text[text_len] = ' ';
                     ++text_len;
                 }
                 memcpy(text + text_len, argv[i], arg_len);
                 text_len += arg_len;
                 text[text_len] = '\0';
+                suppress_space = 0;
             }
 
             if (text == NULL) {
                 fprintf(stderr, "_TEXT: missing value for -text\n");
+                goto cleanup;
+            }
+
+            if (suppress_space) {
+                fprintf(stderr, "_TEXT: dangling '+' in -text value\n");
                 goto cleanup;
             }
         } else if (strcmp(argv[i], "-color") == 0) {

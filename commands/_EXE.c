@@ -164,9 +164,24 @@ static void reset_background(int *last_bg) {
     }
 }
 
+static int fetch_background_color(int x, int y, int *color_out) {
+    int color;
+
+    if (!termbg_get(x, y, &color))
+        return 0;
+
+    if (color < 0 || color > 255)
+        return 0;
+
+    if (color_out)
+        *color_out = color;
+    return 1;
+}
+
 static void apply_background(int x, int y, int *last_bg) {
     int color;
-    if (termbg_get(x, y, &color)) {
+
+    if (fetch_background_color(x, y, &color)) {
         if (*last_bg != color) {
             printf("\033[48;5;%dm", color);
             *last_bg = color;
@@ -185,18 +200,13 @@ static void render_char(unsigned char ch,
                        int origin_y,
                        int *current_x,
                        int *current_y,
-                       int *last_bg,
-                       int *cursor_synced) {
+                       int *last_bg) {
     if (*current_x < 0)
         *current_x = 0;
     if (*current_y < 0)
         *current_y = 0;
 
-    if (!*cursor_synced) {
-        move_cursor(origin_x + *current_x, origin_y + *current_y);
-        *cursor_synced = 1;
-    }
-
+    move_cursor(origin_x + *current_x, origin_y + *current_y);
     apply_background(origin_x + *current_x, origin_y + *current_y, last_bg);
     fputc((int)ch, stdout);
     if (*current_x < INT_MAX)
@@ -208,7 +218,6 @@ static int process_output(int fd, int origin_x, int origin_y) {
     int current_x = 0;
     int current_y = 0;
     int last_bg = -1;
-    int cursor_synced = 0;
     int csi_state = 0; /* 0=none,1=after ESC,2=in CSI */
 
     for (;;) {
@@ -234,33 +243,29 @@ static int process_output(int fd, int origin_x, int origin_y) {
                 switch (ch) {
                     case '\x1b':
                         reset_background(&last_bg);
-                        cursor_synced = 0;
                         csi_state = 1;
                         break;
                     case '\r':
                         current_x = 0;
                         reset_background(&last_bg);
-                        cursor_synced = 0;
                         break;
                     case '\n':
                         current_x = 0;
                         current_y++;
                         reset_background(&last_bg);
-                        cursor_synced = 0;
                         break;
                     case '\t': {
                         int spaces = 8 - (current_x % 8);
                         if (spaces <= 0)
                             spaces = 8;
                         for (int s = 0; s < spaces; ++s)
-                            render_char(' ', origin_x, origin_y, &current_x, &current_y, &last_bg, &cursor_synced);
+                            render_char(' ', origin_x, origin_y, &current_x, &current_y, &last_bg);
                         break;
                     }
                     case '\b':
                         if (current_x > 0)
                             current_x--;
                         reset_background(&last_bg);
-                        cursor_synced = 0;
                         break;
                     default:
                         if (ch < 0x20) {
@@ -268,7 +273,7 @@ static int process_output(int fd, int origin_x, int origin_y) {
                             break;
                         }
 
-                        render_char(ch, origin_x, origin_y, &current_x, &current_y, &last_bg, &cursor_synced);
+                        render_char(ch, origin_x, origin_y, &current_x, &current_y, &last_bg);
                         break;
                 }
             }

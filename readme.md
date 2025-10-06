@@ -2,7 +2,7 @@
 **Programmed by:** Ville Suoranta<br>
 **Status:** Early Access (in development)
 
-Check out development blog from [HERE](https://sensei-zenabi.github.io/suoranta/index.html)
+→ Check out development blog from [HERE](https://sensei-zenabi.github.io/suoranta/index.html)
 
 ### Motive:
 _Fun little nostalgic project to explore AI capabilities in producing

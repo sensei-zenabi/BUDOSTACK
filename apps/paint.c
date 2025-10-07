@@ -180,8 +180,20 @@ static int rgb_to_ansi256(uint8_t r, uint8_t g, uint8_t b) {
 }
 
 static uint8_t apply_brightness(uint8_t value, float factor) {
-    int adjusted = (int)(value * factor + 0.5f);
-    return clamp_u8(adjusted);
+    float adjusted;
+
+    if (factor <= 1.0f) {
+        adjusted = (float)value * factor;
+    } else {
+        float blend = factor - 1.0f;
+        if (blend > 1.0f) {
+            blend = 1.0f;
+        }
+        adjusted = (float)value + (255.0f - (float)value) * blend;
+    }
+
+    int rounded = (int)(adjusted + 0.5f);
+    return clamp_u8(rounded);
 }
 
 static void init_palettes(void) {

@@ -1062,6 +1062,60 @@ static void expand_argv_variables(char **argv, int argc, int line, int debug) {
     }
 }
 
+static bool token_matches_keywords(const char *token,
+                                   const char *const *keywords,
+                                   size_t keyword_count,
+                                   char **resolved_out) {
+    if (resolved_out) {
+        *resolved_out = NULL;
+    }
+    if (!token) {
+        return false;
+    }
+
+    for (size_t i = 0; i < keyword_count; ++i) {
+        if (equals_ignore_case(token, keywords[i])) {
+            return true;
+        }
+    }
+
+    if (token[0] != '$') {
+        return false;
+    }
+
+    char name[64];
+    if (!parse_variable_name_token(token, name, sizeof(name))) {
+        return false;
+    }
+
+    Variable *var = find_variable(name, false);
+    Value value = variable_to_value(var);
+    char *resolved = value_to_string(&value);
+    if (!resolved) {
+        resolved = xstrdup("");
+    }
+
+    bool match = false;
+    for (size_t i = 0; i < keyword_count; ++i) {
+        if (equals_ignore_case(resolved, keywords[i])) {
+            match = true;
+            break;
+        }
+    }
+
+    if (match) {
+        if (resolved_out) {
+            *resolved_out = resolved;
+        } else {
+            free(resolved);
+        }
+    } else {
+        free(resolved);
+    }
+
+    return match;
+}
+
 /* Resolve executable path:
    - If argv0 contains '/', use as-is.
    - Else try "apps/argv0", then "commands/argv0", then "utilities/argv0".
@@ -1659,23 +1713,34 @@ int main(int argc, char *argv[]) {
             size_t captured_cap = 0;
 
             if (argcnt > 0) {
-                if (equals_ignore_case(argv_heap[0], "BLOCKING")) {
+                static const char *blocking_kw[] = { "BLOCKING" };
+                static const char *nonblocking_kw[] = { "NONBLOCKING", "NON-BLOCKING" };
+                char *resolved = NULL;
+
+                if (token_matches_keywords(argv_heap[0], blocking_kw, 1, &resolved)) {
                     blocking_mode = true;
+                    if (resolved) {
+                        free(resolved);
+                    }
                     free(argv_heap[0]);
                     for (int i = 1; i < argcnt; ++i) {
                         argv_heap[i - 1] = argv_heap[i];
                     }
                     argv_heap[argcnt - 1] = NULL;
                     argcnt--;
-                } else if (equals_ignore_case(argv_heap[0], "NONBLOCKING") ||
-                           equals_ignore_case(argv_heap[0], "NON-BLOCKING")) {
+                } else if (token_matches_keywords(argv_heap[0], nonblocking_kw, 2, &resolved)) {
                     blocking_mode = false;
+                    if (resolved) {
+                        free(resolved);
+                    }
                     free(argv_heap[0]);
                     for (int i = 1; i < argcnt; ++i) {
                         argv_heap[i - 1] = argv_heap[i];
                     }
                     argv_heap[argcnt - 1] = NULL;
                     argcnt--;
+                } else if (resolved) {
+                    free(resolved);
                 }
             }
 
@@ -1685,29 +1750,40 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
-            if (argcnt >= 3 && equals_ignore_case(argv_heap[argcnt - 2], "TO")) {
-                char name[64];
-                if (!parse_variable_name_token(argv_heap[argcnt - 1], name, sizeof(name))) {
-                    fprintf(stderr, "RUN: invalid variable name after TO at line %d\n", script[pc].source_line);
-                    free_argv(argv_heap);
-                    continue;
-                }
-                capture_var = find_variable(name, true);
-                if (!capture_var) {
-                    free_argv(argv_heap);
-                    continue;
-                }
-                capture_output = true;
-                free(argv_heap[argcnt - 1]);
-                free(argv_heap[argcnt - 2]);
-                argv_heap[argcnt - 2] = NULL;
-                argv_heap[argcnt - 1] = NULL;
-                argcnt -= 2;
-                argv_heap[argcnt] = NULL;
-                if (argcnt <= 0) {
-                    fprintf(stderr, "RUN: missing executable before TO at line %d\n", script[pc].source_line);
-                    free_argv(argv_heap);
-                    continue;
+            if (argcnt >= 3) {
+                static const char *to_kw[] = { "TO" };
+                char *resolved_to = NULL;
+                int to_index = argcnt - 2;
+
+                if (token_matches_keywords(argv_heap[to_index], to_kw, 1, &resolved_to)) {
+                    if (resolved_to) {
+                        free(resolved_to);
+                    }
+                    char name[64];
+                    if (!parse_variable_name_token(argv_heap[argcnt - 1], name, sizeof(name))) {
+                        fprintf(stderr, "RUN: invalid variable name after TO at line %d\n", script[pc].source_line);
+                        free_argv(argv_heap);
+                        continue;
+                    }
+                    capture_var = find_variable(name, true);
+                    if (!capture_var) {
+                        free_argv(argv_heap);
+                        continue;
+                    }
+                    capture_output = true;
+                    free(argv_heap[argcnt - 1]);
+                    free(argv_heap[to_index]);
+                    argv_heap[to_index] = NULL;
+                    argv_heap[argcnt - 1] = NULL;
+                    argcnt -= 2;
+                    argv_heap[argcnt] = NULL;
+                    if (argcnt <= 0) {
+                        fprintf(stderr, "RUN: missing executable before TO at line %d\n", script[pc].source_line);
+                        free_argv(argv_heap);
+                        continue;
+                    }
+                } else if (resolved_to) {
+                    free(resolved_to);
                 }
             }
 

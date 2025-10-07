@@ -124,7 +124,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("/* BUDOSTACK Developer Tools */\n");
     printf("\n");
-    printf("  compile  : Universal C compile command. Type 'compile -help'.\n");
+    printf("  compile  : Build a standalone binary from a TASK script. Type 'compile -help'.\n");
     printf("\n");
     printf("/* BUDOSTACK Programming Commands */\n");
     printf("\n");

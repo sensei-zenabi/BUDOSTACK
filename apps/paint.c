@@ -159,10 +159,18 @@ static uint8_t clamp_u8(int v) {
 }
 
 static int component_to_level(uint8_t v) {
-    int level = (v * 5 + 127) / 255;
-    if (level < 0) level = 0;
-    if (level > 5) level = 5;
-    return level;
+    static const uint8_t steps[6] = {0, 95, 135, 175, 215, 255};
+    int best_level = 0;
+    int best_diff = 256;
+    for (int i = 0; i < 6; i++) {
+        int diff = (int)v - (int)steps[i];
+        if (diff < 0) diff = -diff;
+        if (diff < best_diff || (diff == best_diff && i < best_level)) {
+            best_level = i;
+            best_diff = diff;
+        }
+    }
+    return best_level;
 }
 
 static int rgb_to_ansi256(uint8_t r, uint8_t g, uint8_t b) {
@@ -888,9 +896,15 @@ static int ensure_cursor_visible_for_area(int draw_rows, int draw_cols) {
 
 static void set_color_ansi(const Color *color){
 #if USE_ANSI_COLOR
-    if (!color) { write(STDOUT_FILENO, "\x1b[39m", 5); return; }
+    if (!color) {
+        write(STDOUT_FILENO, "\x1b[39m", 5);
+        return;
+    }
     char seq[32];
-    int n = snprintf(seq, sizeof(seq), "\x1b[38;5;%dm", color->term256);
+    int n = snprintf(seq, sizeof(seq), "\x1b[38;2;%u;%u;%um",
+                     (unsigned int)color->r,
+                     (unsigned int)color->g,
+                     (unsigned int)color->b);
     write(STDOUT_FILENO, seq, n);
 #else
     (void)color;
@@ -904,7 +918,10 @@ static void set_bg_color_ansi(const Color *color){
         return;
     }
     char seq[32];
-    int n = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", color->term256);
+    int n = snprintf(seq, sizeof(seq), "\x1b[48;2;%u;%u;%um",
+                     (unsigned int)color->r,
+                     (unsigned int)color->g,
+                     (unsigned int)color->b);
     write(STDOUT_FILENO, seq, n);
 }
 

@@ -36,6 +36,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <time.h>
+#include <poll.h>
 
 #define MAX_W 320
 #define MAX_H 200
@@ -73,7 +74,7 @@ static void enable_raw_mode(void) {
     raw.c_cflag |= (CS8);
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
     raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 1; // 100ms
+    raw.c_cc[VTIME] = 0;
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
     // Hide cursor
     write(STDOUT_FILENO, "\x1b[?25l", 6);
@@ -103,6 +104,17 @@ static int cursor_x = 0, cursor_y = 0;
 static int view_x = 0, view_y = 0;
 static int dirty = 0; // unsaved changes
 static int fill_color_pending = 0;
+
+// Forward declarations for functions defined later in the file
+static void paint_at_cursor(uint8_t color_idx);
+static void flood_fill_at_cursor(uint8_t color_idx);
+static void save_dialog(void);
+static void load_dialog(void);
+static void new_image_dialog(void);
+static void resize_canvas_dialog(void);
+static int undo_action(void);
+static int redo_action(void);
+static void prompt(const char *msg, char *out, size_t cap);
 
 /* Palette: 26 entries mapped to letters A..Z (RGB 0..255) */
 typedef struct { uint8_t r,g,b; char letter; const char *name; int term256; } Color;
@@ -495,34 +507,230 @@ enum {
     KEY_BACKSPACE=127, KEY_DELETE=1005
 };
 
-static int read_key(void){
-    char c;
-    int n = read(STDIN_FILENO, &c, 1);
-    if (n == 0) return KEY_NONE;
-    unsigned char uc = (unsigned char)c;
-    if (uc == 27) { // ESC sequence?
-        char seq[3];
-        if (read(STDIN_FILENO, &seq[0], 1) == 0) return KEY_ESC;
-        if (read(STDIN_FILENO, &seq[1], 1) == 0) return KEY_ESC;
-        if (seq[0] == '[') {
-            if (seq[1] >= 'A' && seq[1] <= 'D') {
-                switch (seq[1]) {
-                    case 'A': return KEY_UP;
-                    case 'B': return KEY_DOWN;
-                    case 'C': return KEY_RIGHT;
-                    case 'D': return KEY_LEFT;
-                }
-            } else if (seq[1] == '3') {
-                char t;
-                if (read(STDIN_FILENO, &t, 1) && t=='~') return KEY_DELETE;
-            }
-        }
+static int decode_pending_key(const unsigned char *buf, size_t len, size_t *consumed) {
+    if (len == 0) {
+        *consumed = 0;
         return KEY_NONE;
     }
-    // Map Ctrl+key
-    if (uc <= 31) return uc; // Ctrl-A..Ctrl-_
-    if (uc == 127) return KEY_BACKSPACE;
-    return uc; // regular ASCII
+
+    unsigned char c = buf[0];
+    if (c == 27) {
+        if (len == 1) {
+            int available = 0;
+            if (ioctl(STDIN_FILENO, FIONREAD, &available) == -1) {
+                available = 0;
+            }
+            if (available == 0) {
+                *consumed = 1;
+                return KEY_ESC;
+            }
+            *consumed = 0;
+            return KEY_NONE;
+        }
+        if (buf[1] != '[') {
+            *consumed = 1;
+            return KEY_ESC;
+        }
+        if (len < 3) {
+            *consumed = 0;
+            return KEY_NONE;
+        }
+        switch (buf[2]) {
+            case 'A':
+                *consumed = 3;
+                return KEY_UP;
+            case 'B':
+                *consumed = 3;
+                return KEY_DOWN;
+            case 'C':
+                *consumed = 3;
+                return KEY_RIGHT;
+            case 'D':
+                *consumed = 3;
+                return KEY_LEFT;
+            case '3':
+                if (len >= 4 && buf[3] == '~') {
+                    *consumed = 4;
+                    return KEY_DELETE;
+                }
+                break;
+            default:
+                break;
+        }
+        // Unknown or incomplete sequence; consume the ESC to avoid stalling.
+        *consumed = 1;
+        return KEY_NONE;
+    }
+
+    *consumed = 1;
+    if (c <= 31) return c; // Ctrl-A..Ctrl-_
+    if (c == 127) return KEY_BACKSPACE;
+    return c;
+}
+
+static int read_key(void) {
+    static unsigned char pending[64];
+    static size_t pending_len = 0;
+
+    for (;;) {
+        size_t consumed = 0;
+        int key = decode_pending_key(pending, pending_len, &consumed);
+        if (consumed > 0) {
+            if (consumed < pending_len) {
+                memmove(pending, pending + consumed, pending_len - consumed);
+            }
+            pending_len -= consumed;
+            if (key != KEY_NONE) {
+                return key;
+            }
+            continue;
+        }
+
+        if (pending_len == sizeof(pending)) {
+            pending_len = 0;
+        }
+
+        ssize_t n = read(STDIN_FILENO, pending + pending_len, sizeof(pending) - pending_len);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return KEY_NONE;
+            }
+            die("read");
+        }
+        if (n == 0) {
+            return KEY_NONE;
+        }
+        pending_len += (size_t)n;
+    }
+}
+
+static int handle_key_event(int key, int *running) {
+    if (key == KEY_NONE) {
+        return 0;
+    }
+
+    int need_render = 0;
+
+    if (fill_color_pending) {
+        if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')) {
+            char up = (char)toupper(key);
+            int idx = up - 'A';
+            if (idx >= 0 && idx < PALETTE_COLORS) {
+                uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
+                flood_fill_at_cursor(color_idx);
+                need_render = 1;
+            }
+        }
+        fill_color_pending = 0;
+        return 1;
+    }
+
+    switch (key) {
+        case KEY_UP:
+            if (cursor_y > 0) {
+                cursor_y--;
+                need_render = 1;
+            }
+            break;
+        case KEY_DOWN:
+            if (cursor_y < img_h - 1) {
+                cursor_y++;
+                need_render = 1;
+            }
+            break;
+        case KEY_LEFT:
+            if (cursor_x > 0) {
+                cursor_x--;
+                need_render = 1;
+            }
+            break;
+        case KEY_RIGHT:
+            if (cursor_x < img_w - 1) {
+                cursor_x++;
+                need_render = 1;
+            }
+            break;
+
+        case KEY_BACKSPACE:
+        case KEY_DELETE:
+            paint_at_cursor(EMPTY);
+            need_render = 1;
+            break;
+
+        case '1':
+            set_current_palette_variant(0);
+            need_render = 1;
+            break;
+        case '2':
+            set_current_palette_variant(1);
+            need_render = 1;
+            break;
+        case '3':
+            set_current_palette_variant(2);
+            need_render = 1;
+            break;
+        case '4':
+            set_current_palette_variant(3);
+            need_render = 1;
+            break;
+        case '5':
+            set_current_palette_variant(4);
+            need_render = 1;
+            break;
+
+        case 19: /* Ctrl+S */
+            save_dialog();
+            need_render = 1;
+            break;
+        case 15: /* Ctrl+O */
+            load_dialog();
+            need_render = 1;
+            break;
+        case 14: /* Ctrl+N */
+            new_image_dialog();
+            need_render = 1;
+            break;
+        case 18: /* Ctrl+R */
+            resize_canvas_dialog();
+            need_render = 1;
+            break;
+        case 26: /* Ctrl+Z */
+            undo_action();
+            need_render = 1;
+            break;
+        case 25: /* Ctrl+Y */
+            redo_action();
+            need_render = 1;
+            break;
+        case 6:  /* Ctrl+F */
+            fill_color_pending = 1;
+            need_render = 1;
+            break;
+        case 17: /* Ctrl+Q */
+            if (dirty) {
+                char ans[8];
+                prompt("Unsaved changes. Save? (y/n) ", ans, sizeof(ans));
+                if (ans[0] == 'y' || ans[0] == 'Y') {
+                    save_dialog();
+                }
+            }
+            *running = 0;
+            break;
+
+        default:
+            if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')) {
+                char up = (char)toupper(key);
+                int idx = up - 'A';
+                if (idx >= 0 && idx < PALETTE_COLORS) {
+                    uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
+                    paint_at_cursor(color_idx);
+                    need_render = 1;
+                }
+            }
+            break;
+    }
+
+    return need_render;
 }
 
 /* -------- UI / Rendering -------- */
@@ -969,70 +1177,38 @@ int main(int argc, char **argv){
     }
 
     int running = 1;
-    while (running){
-        render();
+    int need_render = 1;
+    while (running) {
+        if (need_render) {
+            render();
+            need_render = 0;
+        }
+
         int key = read_key();
-        if (key == KEY_NONE) continue;
-
-        if (fill_color_pending) {
-            if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')) {
-                char up = (char)toupper(key);
-                int idx = up - 'A';
-                if (idx >=0 && idx < PALETTE_COLORS){
-                    uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
-                    flood_fill_at_cursor(color_idx);
+        if (key == KEY_NONE) {
+            struct pollfd pfd;
+            pfd.fd = STDIN_FILENO;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            int ret = poll(&pfd, 1, 16);
+            if (ret < 0) {
+                if (errno == EINTR) {
+                    continue;
                 }
-                fill_color_pending = 0;
-                continue;
+                die("poll");
             }
-            fill_color_pending = 0;
+            continue;
         }
 
-        switch (key) {
-            case KEY_UP:    if (cursor_y > 0) cursor_y--; break;
-            case KEY_DOWN:  if (cursor_y < img_h-1) cursor_y++; break;
-            case KEY_LEFT:  if (cursor_x > 0) cursor_x--; break;
-            case KEY_RIGHT: if (cursor_x < img_w-1) cursor_x++; break;
-
-            case KEY_BACKSPACE:
-            case KEY_DELETE:
-                paint_at_cursor(EMPTY);
+        do {
+            if (handle_key_event(key, &running)) {
+                need_render = 1;
+            }
+            if (!running) {
                 break;
-
-            case '1': set_current_palette_variant(0); break;
-            case '2': set_current_palette_variant(1); break;
-            case '3': set_current_palette_variant(2); break;
-            case '4': set_current_palette_variant(3); break;
-            case '5': set_current_palette_variant(4); break;
-
-            // Ctrl shortcuts
-            case 19: /* Ctrl+S */ save_dialog(); break;
-            case 15: /* Ctrl+O */ load_dialog(); break;
-            case 14: /* Ctrl+N */ new_image_dialog(); break;
-            case 18: /* Ctrl+R */ resize_canvas_dialog(); break;
-            case 26: /* Ctrl+Z */ undo_action(); break;
-            case 25: /* Ctrl+Y */ redo_action(); break;
-            case 6:  /* Ctrl+F */ fill_color_pending = 1; break;
-            case 17: /* Ctrl+Q */
-                if (dirty){
-                    char ans[8];
-                    prompt("Unsaved changes. Save? (y/n) ", ans, sizeof(ans));
-                    if (ans[0]=='y' || ans[0]=='Y') save_dialog();
-                }
-                running = 0; break;
-
-            default:
-                // Letters A-Z map to palette indices 0..25 within the active brightness set
-                if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')){
-                    char up = (char)toupper(key);
-                    int idx = up - 'A';
-                    if (idx >=0 && idx < PALETTE_COLORS){
-                        uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
-                        paint_at_cursor(color_idx);
-                    }
-                }
-                break;
-        }
+            }
+            key = read_key();
+        } while (key != KEY_NONE);
     }
 
     clear_screen();

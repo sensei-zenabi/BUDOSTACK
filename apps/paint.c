@@ -36,6 +36,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <time.h>
+#include <poll.h>
 
 #define MAX_W 320
 #define MAX_H 200
@@ -73,7 +74,7 @@ static void enable_raw_mode(void) {
     raw.c_cflag |= (CS8);
     raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
     raw.c_cc[VMIN] = 0;
-    raw.c_cc[VTIME] = 1; // 100ms
+    raw.c_cc[VTIME] = 0;
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) die("tcsetattr");
     // Hide cursor
     write(STDOUT_FILENO, "\x1b[?25l", 6);
@@ -103,6 +104,19 @@ static int cursor_x = 0, cursor_y = 0;
 static int view_x = 0, view_y = 0;
 static int dirty = 0; // unsaved changes
 static int fill_color_pending = 0;
+
+// Forward declarations for functions defined later in the file
+static int paint_at_cursor(uint8_t color_idx);
+static void flood_fill_at_cursor(uint8_t color_idx);
+static void save_dialog(void);
+static void load_dialog(void);
+static void new_image_dialog(void);
+static void resize_canvas_dialog(void);
+static int undo_action(void);
+static int redo_action(void);
+static void prompt(const char *msg, char *out, size_t cap);
+static int refresh_cursor_cell_partial(void);
+static int update_cursor_partial(int old_x, int old_y);
 
 /* Palette: 26 entries mapped to letters A..Z (RGB 0..255) */
 typedef struct { uint8_t r,g,b; char letter; const char *name; int term256; } Color;
@@ -495,34 +509,261 @@ enum {
     KEY_BACKSPACE=127, KEY_DELETE=1005
 };
 
-static int read_key(void){
-    char c;
-    int n = read(STDIN_FILENO, &c, 1);
-    if (n == 0) return KEY_NONE;
-    unsigned char uc = (unsigned char)c;
-    if (uc == 27) { // ESC sequence?
-        char seq[3];
-        if (read(STDIN_FILENO, &seq[0], 1) == 0) return KEY_ESC;
-        if (read(STDIN_FILENO, &seq[1], 1) == 0) return KEY_ESC;
-        if (seq[0] == '[') {
-            if (seq[1] >= 'A' && seq[1] <= 'D') {
-                switch (seq[1]) {
-                    case 'A': return KEY_UP;
-                    case 'B': return KEY_DOWN;
-                    case 'C': return KEY_RIGHT;
-                    case 'D': return KEY_LEFT;
-                }
-            } else if (seq[1] == '3') {
-                char t;
-                if (read(STDIN_FILENO, &t, 1) && t=='~') return KEY_DELETE;
-            }
-        }
+static int decode_pending_key(const unsigned char *buf, size_t len, size_t *consumed) {
+    if (len == 0) {
+        *consumed = 0;
         return KEY_NONE;
     }
-    // Map Ctrl+key
-    if (uc <= 31) return uc; // Ctrl-A..Ctrl-_
-    if (uc == 127) return KEY_BACKSPACE;
-    return uc; // regular ASCII
+
+    unsigned char c = buf[0];
+    if (c == 27) {
+        if (len == 1) {
+            int available = 0;
+            if (ioctl(STDIN_FILENO, FIONREAD, &available) == -1) {
+                available = 0;
+            }
+            if (available == 0) {
+                *consumed = 1;
+                return KEY_ESC;
+            }
+            *consumed = 0;
+            return KEY_NONE;
+        }
+        if (buf[1] != '[') {
+            *consumed = 1;
+            return KEY_ESC;
+        }
+        if (len < 3) {
+            *consumed = 0;
+            return KEY_NONE;
+        }
+        switch (buf[2]) {
+            case 'A':
+                *consumed = 3;
+                return KEY_UP;
+            case 'B':
+                *consumed = 3;
+                return KEY_DOWN;
+            case 'C':
+                *consumed = 3;
+                return KEY_RIGHT;
+            case 'D':
+                *consumed = 3;
+                return KEY_LEFT;
+            case '3':
+                if (len >= 4 && buf[3] == '~') {
+                    *consumed = 4;
+                    return KEY_DELETE;
+                }
+                break;
+            default:
+                break;
+        }
+        // Unknown or incomplete sequence; consume the ESC to avoid stalling.
+        *consumed = 1;
+        return KEY_NONE;
+    }
+
+    *consumed = 1;
+    if (c <= 31) return c; // Ctrl-A..Ctrl-_
+    if (c == 127) return KEY_BACKSPACE;
+    return c;
+}
+
+static int read_key(void) {
+    static unsigned char pending[64];
+    static size_t pending_len = 0;
+
+    for (;;) {
+        size_t consumed = 0;
+        int key = decode_pending_key(pending, pending_len, &consumed);
+        if (consumed > 0) {
+            if (consumed < pending_len) {
+                memmove(pending, pending + consumed, pending_len - consumed);
+            }
+            pending_len -= consumed;
+            if (key != KEY_NONE) {
+                return key;
+            }
+            continue;
+        }
+
+        if (pending_len == sizeof(pending)) {
+            pending_len = 0;
+        }
+
+        ssize_t n = read(STDIN_FILENO, pending + pending_len, sizeof(pending) - pending_len);
+        if (n < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return KEY_NONE;
+            }
+            die("read");
+        }
+        if (n == 0) {
+            return KEY_NONE;
+        }
+        pending_len += (size_t)n;
+    }
+}
+
+static int handle_key_event(int key, int *running) {
+    if (key == KEY_NONE) {
+        return 0;
+    }
+
+    int need_render = 0;
+
+    if (fill_color_pending) {
+        int require_full = 0;
+        if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')) {
+            char up = (char)toupper(key);
+            int idx = up - 'A';
+            if (idx >= 0 && idx < PALETTE_COLORS) {
+                uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
+                flood_fill_at_cursor(color_idx);
+                require_full = 1;
+            }
+        }
+        fill_color_pending = 0;
+        if (require_full) {
+            return 1;
+        }
+        if (!refresh_cursor_cell_partial()) {
+            return 1;
+        }
+        return 0;
+    }
+
+    switch (key) {
+        case KEY_UP:
+            if (cursor_y > 0) {
+                int old_x = cursor_x;
+                int old_y = cursor_y;
+                cursor_y--;
+                if (!update_cursor_partial(old_x, old_y)) {
+                    need_render = 1;
+                }
+            }
+            break;
+        case KEY_DOWN:
+            if (cursor_y < img_h - 1) {
+                int old_x = cursor_x;
+                int old_y = cursor_y;
+                cursor_y++;
+                if (!update_cursor_partial(old_x, old_y)) {
+                    need_render = 1;
+                }
+            }
+            break;
+        case KEY_LEFT:
+            if (cursor_x > 0) {
+                int old_x = cursor_x;
+                int old_y = cursor_y;
+                cursor_x--;
+                if (!update_cursor_partial(old_x, old_y)) {
+                    need_render = 1;
+                }
+            }
+            break;
+        case KEY_RIGHT:
+            if (cursor_x < img_w - 1) {
+                int old_x = cursor_x;
+                int old_y = cursor_y;
+                cursor_x++;
+                if (!update_cursor_partial(old_x, old_y)) {
+                    need_render = 1;
+                }
+            }
+            break;
+
+        case KEY_BACKSPACE:
+        case KEY_DELETE:
+            if (paint_at_cursor(EMPTY)) {
+                if (!refresh_cursor_cell_partial()) {
+                    need_render = 1;
+                }
+            }
+            break;
+
+        case '1':
+            set_current_palette_variant(0);
+            need_render = 1;
+            break;
+        case '2':
+            set_current_palette_variant(1);
+            need_render = 1;
+            break;
+        case '3':
+            set_current_palette_variant(2);
+            need_render = 1;
+            break;
+        case '4':
+            set_current_palette_variant(3);
+            need_render = 1;
+            break;
+        case '5':
+            set_current_palette_variant(4);
+            need_render = 1;
+            break;
+
+        case 19: /* Ctrl+S */
+            save_dialog();
+            need_render = 1;
+            break;
+        case 15: /* Ctrl+O */
+            load_dialog();
+            need_render = 1;
+            break;
+        case 14: /* Ctrl+N */
+            new_image_dialog();
+            need_render = 1;
+            break;
+        case 18: /* Ctrl+R */
+            resize_canvas_dialog();
+            need_render = 1;
+            break;
+        case 26: /* Ctrl+Z */
+            undo_action();
+            need_render = 1;
+            break;
+        case 25: /* Ctrl+Y */
+            redo_action();
+            need_render = 1;
+            break;
+        case 6:  /* Ctrl+F */
+            fill_color_pending = 1;
+            if (!refresh_cursor_cell_partial()) {
+                need_render = 1;
+            }
+            break;
+        case 17: /* Ctrl+Q */
+            if (dirty) {
+                char ans[8];
+                prompt("Unsaved changes. Save? (y/n) ", ans, sizeof(ans));
+                if (ans[0] == 'y' || ans[0] == 'Y') {
+                    save_dialog();
+                }
+            }
+            *running = 0;
+            break;
+
+        default:
+            if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')) {
+                char up = (char)toupper(key);
+                int idx = up - 'A';
+                if (idx >= 0 && idx < PALETTE_COLORS) {
+                    uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
+                    if (paint_at_cursor(color_idx)) {
+                        if (!refresh_cursor_cell_partial()) {
+                            need_render = 1;
+                        }
+                    }
+                }
+            }
+            break;
+    }
+
+    return need_render;
 }
 
 /* -------- UI / Rendering -------- */
@@ -603,6 +844,34 @@ static void draw_status_lines(int cols) {
     write(STDOUT_FILENO, line2, write_len2);
     for (int i = write_len2; i < max_len; i++) write(STDOUT_FILENO, " ", 1);
     write(STDOUT_FILENO, "\x1b[0m", 4);
+}
+
+static int ensure_cursor_visible_for_area(int draw_rows, int draw_cols) {
+    int old_view_x = view_x;
+    int old_view_y = view_y;
+
+    if (cursor_x < view_x) view_x = cursor_x;
+    if (cursor_y < view_y) view_y = cursor_y;
+
+    if (draw_cols > 0 && cursor_x >= view_x + draw_cols) {
+        view_x = cursor_x - draw_cols + 1;
+    }
+    if (draw_rows > 0 && cursor_y >= view_y + draw_rows) {
+        view_y = cursor_y - draw_rows + 1;
+    }
+
+    if (view_x < 0) view_x = 0;
+    if (view_y < 0) view_y = 0;
+
+    int max_view_x = img_w - draw_cols;
+    if (max_view_x < 0) max_view_x = 0;
+    if (view_x > max_view_x) view_x = max_view_x;
+
+    int max_view_y = img_h - draw_rows;
+    if (max_view_y < 0) max_view_y = 0;
+    if (view_y > max_view_y) view_y = max_view_y;
+
+    return (view_x != old_view_x) || (view_y != old_view_y);
 }
 
 static void set_color_ansi(const Color *color){
@@ -693,6 +962,89 @@ static void draw_cell(uint8_t idx, int highlight){
     reset_ansi_colors();
 }
 
+typedef struct {
+    int rows;
+    int cols;
+    int draw_rows;
+    int draw_cols;
+} ScreenLayout;
+
+static int compute_screen_layout(ScreenLayout *layout) {
+    get_terminal_size(&layout->rows, &layout->cols);
+    if (layout->rows < 5 || layout->cols <= 0) {
+        return 0;
+    }
+    layout->draw_rows = layout->rows - 3;
+    layout->draw_cols = layout->cols;
+    if (layout->draw_rows <= 0 || layout->draw_cols <= 0) {
+        return 0;
+    }
+    return 1;
+}
+
+static int cell_visible_in_layout(const ScreenLayout *layout, int x, int y) {
+    if (layout->draw_cols <= 0 || layout->draw_rows <= 0) {
+        return 0;
+    }
+    return x >= view_x && x < view_x + layout->draw_cols &&
+           y >= view_y && y < view_y + layout->draw_rows;
+}
+
+static void move_terminal_to(int row, int col) {
+    if (row < 1) row = 1;
+    if (col < 1) col = 1;
+    char seq[32];
+    int len = snprintf(seq, sizeof(seq), "\x1b[%d;%dH", row, col);
+    write(STDOUT_FILENO, seq, len);
+}
+
+static void draw_cell_at_layout(int x, int y, int highlight) {
+    int term_row = (y - view_y) + 2;
+    int term_col = (x - view_x) + 1;
+    move_terminal_to(term_row, term_col);
+    uint8_t idx = pixels[y * img_w + x];
+    draw_cell(idx, highlight);
+}
+
+static void redraw_status_from_layout(const ScreenLayout *layout) {
+    move_terminal_to(layout->draw_rows + 2, 1);
+    draw_status_lines(layout->cols);
+}
+
+static int refresh_cursor_cell_partial(void) {
+    ScreenLayout layout;
+    if (!compute_screen_layout(&layout)) {
+        return 0;
+    }
+    if (ensure_cursor_visible_for_area(layout.draw_rows, layout.draw_cols)) {
+        return 0;
+    }
+    if (!cell_visible_in_layout(&layout, cursor_x, cursor_y)) {
+        return 0;
+    }
+    draw_cell_at_layout(cursor_x, cursor_y, 1);
+    redraw_status_from_layout(&layout);
+    return 1;
+}
+
+static int update_cursor_partial(int old_x, int old_y) {
+    ScreenLayout layout;
+    if (!compute_screen_layout(&layout)) {
+        return 0;
+    }
+    if (ensure_cursor_visible_for_area(layout.draw_rows, layout.draw_cols)) {
+        return 0;
+    }
+    if (!cell_visible_in_layout(&layout, old_x, old_y) ||
+        !cell_visible_in_layout(&layout, cursor_x, cursor_y)) {
+        return 0;
+    }
+    draw_cell_at_layout(old_x, old_y, 0);
+    draw_cell_at_layout(cursor_x, cursor_y, 1);
+    redraw_status_from_layout(&layout);
+    return 1;
+}
+
 static void render(void){
     int rows, cols;
     get_terminal_size(&rows, &cols);
@@ -701,22 +1053,7 @@ static void render(void){
     int draw_rows = rows - 3; // palette line + two status/help lines
     int draw_cols = cols;
 
-    // Clamp view to ensure cursor visible
-    if (cursor_x < view_x) view_x = cursor_x;
-    if (cursor_y < view_y) view_y = cursor_y;
-    if (cursor_x >= view_x + draw_cols) view_x = cursor_x - draw_cols + 1;
-    if (cursor_y >= view_y + draw_rows) view_y = cursor_y - draw_rows + 1;
-
-    if (view_x < 0) view_x = 0;
-    if (view_y < 0) view_y = 0;
-
-    int max_view_x = img_w - draw_cols;
-    if (max_view_x < 0) max_view_x = 0;
-    if (view_x > max_view_x) view_x = max_view_x;
-
-    int max_view_y = img_h - draw_rows;
-    if (max_view_y < 0) max_view_y = 0;
-    if (view_y > max_view_y) view_y = max_view_y;
+    ensure_cursor_visible_for_area(draw_rows, draw_cols);
 
     // Clear & move home
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -751,11 +1088,10 @@ static void render(void){
                 continue;
             }
 
-                uint8_t idx = pixels[y * img_w + x];
-
-                draw_cell(idx, x == cursor_x && y == cursor_y);
-            }
+            uint8_t idx = pixels[y * img_w + x];
+            draw_cell(idx, x == cursor_x && y == cursor_y);
         }
+    }
 
     write(STDOUT_FILENO, "\r\n", 2);
     // Status + help lines
@@ -873,14 +1209,15 @@ static void load_dialog(void){
     }
 }
 
-static void paint_at_cursor(uint8_t color_idx){
-    if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return;
-    if (color_idx != EMPTY && color_idx >= TOTAL_COLORS) return;
+static int paint_at_cursor(uint8_t color_idx){
+    if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return 0;
+    if (color_idx != EMPTY && color_idx >= TOTAL_COLORS) return 0;
     uint8_t *p = &pixels[cursor_y*img_w + cursor_x];
-    if (*p == color_idx) return; // no-op
+    if (*p == color_idx) return 0; // no-op
     push_change(cursor_x, cursor_y, *p, color_idx);
     *p = color_idx;
     dirty = 1;
+    return 1;
 }
 
 static void flood_fill_at_cursor(uint8_t color_idx){
@@ -969,70 +1306,38 @@ int main(int argc, char **argv){
     }
 
     int running = 1;
-    while (running){
-        render();
+    int need_render = 1;
+    while (running) {
+        if (need_render) {
+            render();
+            need_render = 0;
+        }
+
         int key = read_key();
-        if (key == KEY_NONE) continue;
-
-        if (fill_color_pending) {
-            if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')) {
-                char up = (char)toupper(key);
-                int idx = up - 'A';
-                if (idx >=0 && idx < PALETTE_COLORS){
-                    uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
-                    flood_fill_at_cursor(color_idx);
+        if (key == KEY_NONE) {
+            struct pollfd pfd;
+            pfd.fd = STDIN_FILENO;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            int ret = poll(&pfd, 1, 16);
+            if (ret < 0) {
+                if (errno == EINTR) {
+                    continue;
                 }
-                fill_color_pending = 0;
-                continue;
+                die("poll");
             }
-            fill_color_pending = 0;
+            continue;
         }
 
-        switch (key) {
-            case KEY_UP:    if (cursor_y > 0) cursor_y--; break;
-            case KEY_DOWN:  if (cursor_y < img_h-1) cursor_y++; break;
-            case KEY_LEFT:  if (cursor_x > 0) cursor_x--; break;
-            case KEY_RIGHT: if (cursor_x < img_w-1) cursor_x++; break;
-
-            case KEY_BACKSPACE:
-            case KEY_DELETE:
-                paint_at_cursor(EMPTY);
+        do {
+            if (handle_key_event(key, &running)) {
+                need_render = 1;
+            }
+            if (!running) {
                 break;
-
-            case '1': set_current_palette_variant(0); break;
-            case '2': set_current_palette_variant(1); break;
-            case '3': set_current_palette_variant(2); break;
-            case '4': set_current_palette_variant(3); break;
-            case '5': set_current_palette_variant(4); break;
-
-            // Ctrl shortcuts
-            case 19: /* Ctrl+S */ save_dialog(); break;
-            case 15: /* Ctrl+O */ load_dialog(); break;
-            case 14: /* Ctrl+N */ new_image_dialog(); break;
-            case 18: /* Ctrl+R */ resize_canvas_dialog(); break;
-            case 26: /* Ctrl+Z */ undo_action(); break;
-            case 25: /* Ctrl+Y */ redo_action(); break;
-            case 6:  /* Ctrl+F */ fill_color_pending = 1; break;
-            case 17: /* Ctrl+Q */
-                if (dirty){
-                    char ans[8];
-                    prompt("Unsaved changes. Save? (y/n) ", ans, sizeof(ans));
-                    if (ans[0]=='y' || ans[0]=='Y') save_dialog();
-                }
-                running = 0; break;
-
-            default:
-                // Letters A-Z map to palette indices 0..25 within the active brightness set
-                if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')){
-                    char up = (char)toupper(key);
-                    int idx = up - 'A';
-                    if (idx >=0 && idx < PALETTE_COLORS){
-                        uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
-                        paint_at_cursor(color_idx);
-                    }
-                }
-                break;
-        }
+            }
+            key = read_key();
+        } while (key != KEY_NONE);
     }
 
     clear_screen();

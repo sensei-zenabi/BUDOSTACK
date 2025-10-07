@@ -26,6 +26,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <signal.h>
+#include <termios.h>
 #include <threads.h> // thrd_sleep
 #include <unistd.h>
 #include <sys/wait.h>
@@ -137,6 +138,118 @@ static bool equals_ignore_case(const char *a, const char *b) {
 static void sigint_handler(int signum) {
     (void)signum;
     stop = 1;
+}
+
+static int query_cursor_position(long *out_row, long *out_col) {
+    if (!out_row || !out_col) {
+        return -1;
+    }
+
+    struct termios original;
+    if (tcgetattr(STDIN_FILENO, &original) == -1) {
+        perror("_GETPOS: tcgetattr");
+        return -1;
+    }
+
+    struct termios raw = original;
+    raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == -1) {
+        perror("_GETPOS: tcsetattr");
+        return -1;
+    }
+
+    int saved_errno = 0;
+    int rc = -1;
+
+    const char query[] = "\033[6n";
+    size_t offset = 0;
+    while (offset < sizeof(query) - 1) {
+        ssize_t written = write(STDOUT_FILENO, query + offset, (sizeof(query) - 1) - offset);
+        if (written < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("_GETPOS: write");
+            goto restore;
+        }
+        offset += (size_t)written;
+    }
+
+    if (fflush(stdout) == EOF) {
+        perror("_GETPOS: fflush");
+        goto restore;
+    }
+
+    char response[64];
+    size_t index = 0;
+    while (index < sizeof(response) - 1) {
+        char ch;
+        ssize_t result = read(STDIN_FILENO, &ch, 1);
+        if (result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("_GETPOS: read");
+            goto restore;
+        }
+        if (result == 0) {
+            fprintf(stderr, "_GETPOS: unexpected EOF while reading cursor position\n");
+            goto restore;
+        }
+        response[index++] = ch;
+        if (ch == 'R') {
+            break;
+        }
+    }
+
+    if (index == sizeof(response) - 1 && response[index - 1] != 'R') {
+        fprintf(stderr, "_GETPOS: cursor response too long\n");
+        goto restore;
+    }
+
+    response[index] = '\0';
+
+    if (index < 3 || response[0] != '\033' || response[1] != '[') {
+        fprintf(stderr, "_GETPOS: invalid cursor response '%s'\n", response);
+        goto restore;
+    }
+
+    char *endptr = NULL;
+    errno = 0;
+    long row = strtol(response + 2, &endptr, 10);
+    if (errno != 0 || endptr == response + 2 || *endptr != ';') {
+        fprintf(stderr, "_GETPOS: failed to parse row from response '%s'\n", response);
+        goto restore;
+    }
+
+    const char *col_start = endptr + 1;
+    errno = 0;
+    long col = strtol(col_start, &endptr, 10);
+    if (errno != 0 || endptr == col_start || *endptr != 'R') {
+        fprintf(stderr, "_GETPOS: failed to parse column from response '%s'\n", response);
+        goto restore;
+    }
+
+    if (row <= 0 || col <= 0) {
+        fprintf(stderr, "_GETPOS: invalid row (%ld) or column (%ld)\n", row, col);
+        goto restore;
+    }
+
+    *out_row = row;
+    *out_col = col;
+    rc = 0;
+
+restore:
+    saved_errno = errno;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &original) == -1) {
+        perror("_GETPOS: tcsetattr restore");
+        rc = -1;
+    }
+    errno = saved_errno;
+    return rc;
 }
 
 static Variable *find_variable(const char *name, bool create) {
@@ -1634,6 +1747,39 @@ int main(int argc, char *argv[]) {
             }
 
             expand_argv_variables(argv_heap, argcnt, script[pc].source_line, debug);
+
+            if (capture_output && blocking_mode && argcnt > 0) {
+                bool handled = false;
+                if (equals_ignore_case(argv_heap[0], "_GETROW") ||
+                    equals_ignore_case(argv_heap[0], "_GETCOL")) {
+                    long row = 0;
+                    long col = 0;
+                    if (query_cursor_position(&row, &col) == 0) {
+                        Value value;
+                        memset(&value, 0, sizeof(value));
+                        value.type = VALUE_INT;
+                        if (equals_ignore_case(argv_heap[0], "_GETCOL")) {
+                            value.int_val = col;
+                            value.float_val = (double)col;
+                        } else {
+                            value.int_val = row;
+                            value.float_val = (double)row;
+                        }
+                        assign_variable(capture_var, &value);
+                        free_value(&value);
+                    } else if (debug) {
+                        fprintf(stderr, "RUN: failed to query cursor position at line %d\n",
+                                script[pc].source_line);
+                    }
+                    handled = true;
+                }
+
+                if (handled) {
+                    free_argv(argv_heap);
+                    note_branch_progress(if_stack, &if_sp);
+                    continue;
+                }
+            }
 
             // Resolve executable path
             char resolved[PATH_MAX];

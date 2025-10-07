@@ -20,6 +20,9 @@
 *   gcc -std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -o runtask apps/runtask.c
 */
 
+#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +42,7 @@
 #define MAX_LABELS 256
 
 static char *xstrdup(const char *s);
+static void set_initial_argv0(const char *argv0);
 
 typedef enum {
     VALUE_UNSET = 0,
@@ -81,6 +85,19 @@ typedef struct {
 // Global flag to signal termination (set by SIGINT handler)
 volatile sig_atomic_t stop = 0;
 
+static char initial_argv0[PATH_MAX];
+
+static void set_initial_argv0(const char *argv0) {
+    if (!argv0) {
+        initial_argv0[0] = '\0';
+        return;
+    }
+
+    if (snprintf(initial_argv0, sizeof(initial_argv0), "%s", argv0) >= (int)sizeof(initial_argv0)) {
+        initial_argv0[sizeof(initial_argv0) - 1] = '\0';
+    }
+}
+
 static const char *get_base_dir(void) {
     static char cached[PATH_MAX];
     static int initialized = 0;
@@ -89,8 +106,57 @@ static const char *get_base_dir(void) {
         initialized = 1;
         const char *env = getenv("BUDOSTACK_BASE");
         if (env && env[0] != '\0') {
-            strncpy(cached, env, sizeof(cached) - 1);
-            cached[sizeof(cached) - 1] = '\0';
+            if (!realpath(env, cached)) {
+                strncpy(cached, env, sizeof(cached) - 1);
+                cached[sizeof(cached) - 1] = '\0';
+            }
+        } else {
+            char resolved[PATH_MAX];
+            const char *source = NULL;
+
+            if (initial_argv0[0] != '\0' && realpath(initial_argv0, resolved)) {
+                source = resolved;
+            } else {
+                ssize_t len = readlink("/proc/self/exe", resolved, sizeof(resolved) - 1);
+                if (len >= 0) {
+                    resolved[len] = '\0';
+                    source = resolved;
+                } else if (initial_argv0[0] != '\0') {
+                    strncpy(resolved, initial_argv0, sizeof(resolved) - 1);
+                    resolved[sizeof(resolved) - 1] = '\0';
+                    source = resolved;
+                }
+            }
+
+            if (source) {
+                strncpy(cached, source, sizeof(cached) - 1);
+                cached[sizeof(cached) - 1] = '\0';
+                char *last_slash = strrchr(cached, '/');
+                if (last_slash) {
+                    *last_slash = '\0';
+                    char *component = strrchr(cached, '/');
+                    if (component) {
+                        const char *name = component + 1;
+                        if (strcmp(name, "apps") == 0 || strcmp(name, "commands") == 0 ||
+                            strcmp(name, "utilities") == 0 || strcmp(name, "games") == 0) {
+                            if (component == cached) {
+                                cached[0] = '/';
+                                cached[1] = '\0';
+                            } else {
+                                *component = '\0';
+                            }
+                        }
+                    }
+                }
+            } else {
+                cached[0] = '\0';
+            }
+
+            if (cached[0] != '\0') {
+                if (setenv("BUDOSTACK_BASE", cached, 1) != 0) {
+                    perror("setenv BUDOSTACK_BASE");
+                }
+            }
         }
     }
 
@@ -1128,6 +1194,15 @@ static int resolve_exec_path(const char *argv0, char *resolved, size_t size) {
 
 int main(int argc, char *argv[]) {
     signal(SIGINT, sigint_handler);
+
+    set_initial_argv0((argc > 0) ? argv[0] : NULL);
+
+    const char *base_dir = get_base_dir();
+    if (base_dir && base_dir[0] != '\0') {
+        if (chdir(base_dir) != 0) {
+            fprintf(stderr, "Warning: failed to change directory to '%s': %s\n", base_dir, strerror(errno));
+        }
+    }
 
     if (argc >= 2 && strcmp(argv[1], "-help") == 0) {
         print_help();

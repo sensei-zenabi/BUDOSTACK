@@ -43,7 +43,7 @@ IF $VAR2 < 100
 WAIT 1000
 
 # List Folder Content Demo
-RUN _TEXT -x 4 -y 12 -text "CURRENT FOLDER CONTENT:"
+RUN _TEXT -x 4 -y 12 -text "ROOT FOLDER CONTENT:"
 WAIT 1000
 RUN _EXE -x 4 -y 14 -- list
 WAIT 2500

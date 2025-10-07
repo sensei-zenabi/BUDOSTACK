@@ -106,7 +106,7 @@ static int dirty = 0; // unsaved changes
 static int fill_color_pending = 0;
 
 // Forward declarations for functions defined later in the file
-static void paint_at_cursor(uint8_t color_idx);
+static int paint_at_cursor(uint8_t color_idx);
 static void flood_fill_at_cursor(uint8_t color_idx);
 static void save_dialog(void);
 static void load_dialog(void);
@@ -115,6 +115,8 @@ static void resize_canvas_dialog(void);
 static int undo_action(void);
 static int redo_action(void);
 static void prompt(const char *msg, char *out, size_t cap);
+static int refresh_cursor_cell_partial(void);
+static int update_cursor_partial(int old_x, int old_y);
 
 /* Palette: 26 entries mapped to letters A..Z (RGB 0..255) */
 typedef struct { uint8_t r,g,b; char letter; const char *name; int term256; } Color;
@@ -612,49 +614,75 @@ static int handle_key_event(int key, int *running) {
     int need_render = 0;
 
     if (fill_color_pending) {
+        int require_full = 0;
         if ((key >= 'A' && key <= 'Z') || (key >= 'a' && key <= 'z')) {
             char up = (char)toupper(key);
             int idx = up - 'A';
             if (idx >= 0 && idx < PALETTE_COLORS) {
                 uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
                 flood_fill_at_cursor(color_idx);
-                need_render = 1;
+                require_full = 1;
             }
         }
         fill_color_pending = 0;
-        return 1;
+        if (require_full) {
+            return 1;
+        }
+        if (!refresh_cursor_cell_partial()) {
+            return 1;
+        }
+        return 0;
     }
 
     switch (key) {
         case KEY_UP:
             if (cursor_y > 0) {
+                int old_x = cursor_x;
+                int old_y = cursor_y;
                 cursor_y--;
-                need_render = 1;
+                if (!update_cursor_partial(old_x, old_y)) {
+                    need_render = 1;
+                }
             }
             break;
         case KEY_DOWN:
             if (cursor_y < img_h - 1) {
+                int old_x = cursor_x;
+                int old_y = cursor_y;
                 cursor_y++;
-                need_render = 1;
+                if (!update_cursor_partial(old_x, old_y)) {
+                    need_render = 1;
+                }
             }
             break;
         case KEY_LEFT:
             if (cursor_x > 0) {
+                int old_x = cursor_x;
+                int old_y = cursor_y;
                 cursor_x--;
-                need_render = 1;
+                if (!update_cursor_partial(old_x, old_y)) {
+                    need_render = 1;
+                }
             }
             break;
         case KEY_RIGHT:
             if (cursor_x < img_w - 1) {
+                int old_x = cursor_x;
+                int old_y = cursor_y;
                 cursor_x++;
-                need_render = 1;
+                if (!update_cursor_partial(old_x, old_y)) {
+                    need_render = 1;
+                }
             }
             break;
 
         case KEY_BACKSPACE:
         case KEY_DELETE:
-            paint_at_cursor(EMPTY);
-            need_render = 1;
+            if (paint_at_cursor(EMPTY)) {
+                if (!refresh_cursor_cell_partial()) {
+                    need_render = 1;
+                }
+            }
             break;
 
         case '1':
@@ -704,7 +732,9 @@ static int handle_key_event(int key, int *running) {
             break;
         case 6:  /* Ctrl+F */
             fill_color_pending = 1;
-            need_render = 1;
+            if (!refresh_cursor_cell_partial()) {
+                need_render = 1;
+            }
             break;
         case 17: /* Ctrl+Q */
             if (dirty) {
@@ -723,8 +753,11 @@ static int handle_key_event(int key, int *running) {
                 int idx = up - 'A';
                 if (idx >= 0 && idx < PALETTE_COLORS) {
                     uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
-                    paint_at_cursor(color_idx);
-                    need_render = 1;
+                    if (paint_at_cursor(color_idx)) {
+                        if (!refresh_cursor_cell_partial()) {
+                            need_render = 1;
+                        }
+                    }
                 }
             }
             break;
@@ -811,6 +844,34 @@ static void draw_status_lines(int cols) {
     write(STDOUT_FILENO, line2, write_len2);
     for (int i = write_len2; i < max_len; i++) write(STDOUT_FILENO, " ", 1);
     write(STDOUT_FILENO, "\x1b[0m", 4);
+}
+
+static int ensure_cursor_visible_for_area(int draw_rows, int draw_cols) {
+    int old_view_x = view_x;
+    int old_view_y = view_y;
+
+    if (cursor_x < view_x) view_x = cursor_x;
+    if (cursor_y < view_y) view_y = cursor_y;
+
+    if (draw_cols > 0 && cursor_x >= view_x + draw_cols) {
+        view_x = cursor_x - draw_cols + 1;
+    }
+    if (draw_rows > 0 && cursor_y >= view_y + draw_rows) {
+        view_y = cursor_y - draw_rows + 1;
+    }
+
+    if (view_x < 0) view_x = 0;
+    if (view_y < 0) view_y = 0;
+
+    int max_view_x = img_w - draw_cols;
+    if (max_view_x < 0) max_view_x = 0;
+    if (view_x > max_view_x) view_x = max_view_x;
+
+    int max_view_y = img_h - draw_rows;
+    if (max_view_y < 0) max_view_y = 0;
+    if (view_y > max_view_y) view_y = max_view_y;
+
+    return (view_x != old_view_x) || (view_y != old_view_y);
 }
 
 static void set_color_ansi(const Color *color){
@@ -901,6 +962,89 @@ static void draw_cell(uint8_t idx, int highlight){
     reset_ansi_colors();
 }
 
+typedef struct {
+    int rows;
+    int cols;
+    int draw_rows;
+    int draw_cols;
+} ScreenLayout;
+
+static int compute_screen_layout(ScreenLayout *layout) {
+    get_terminal_size(&layout->rows, &layout->cols);
+    if (layout->rows < 5 || layout->cols <= 0) {
+        return 0;
+    }
+    layout->draw_rows = layout->rows - 3;
+    layout->draw_cols = layout->cols;
+    if (layout->draw_rows <= 0 || layout->draw_cols <= 0) {
+        return 0;
+    }
+    return 1;
+}
+
+static int cell_visible_in_layout(const ScreenLayout *layout, int x, int y) {
+    if (layout->draw_cols <= 0 || layout->draw_rows <= 0) {
+        return 0;
+    }
+    return x >= view_x && x < view_x + layout->draw_cols &&
+           y >= view_y && y < view_y + layout->draw_rows;
+}
+
+static void move_terminal_to(int row, int col) {
+    if (row < 1) row = 1;
+    if (col < 1) col = 1;
+    char seq[32];
+    int len = snprintf(seq, sizeof(seq), "\x1b[%d;%dH", row, col);
+    write(STDOUT_FILENO, seq, len);
+}
+
+static void draw_cell_at_layout(int x, int y, int highlight) {
+    int term_row = (y - view_y) + 2;
+    int term_col = (x - view_x) + 1;
+    move_terminal_to(term_row, term_col);
+    uint8_t idx = pixels[y * img_w + x];
+    draw_cell(idx, highlight);
+}
+
+static void redraw_status_from_layout(const ScreenLayout *layout) {
+    move_terminal_to(layout->draw_rows + 2, 1);
+    draw_status_lines(layout->cols);
+}
+
+static int refresh_cursor_cell_partial(void) {
+    ScreenLayout layout;
+    if (!compute_screen_layout(&layout)) {
+        return 0;
+    }
+    if (ensure_cursor_visible_for_area(layout.draw_rows, layout.draw_cols)) {
+        return 0;
+    }
+    if (!cell_visible_in_layout(&layout, cursor_x, cursor_y)) {
+        return 0;
+    }
+    draw_cell_at_layout(cursor_x, cursor_y, 1);
+    redraw_status_from_layout(&layout);
+    return 1;
+}
+
+static int update_cursor_partial(int old_x, int old_y) {
+    ScreenLayout layout;
+    if (!compute_screen_layout(&layout)) {
+        return 0;
+    }
+    if (ensure_cursor_visible_for_area(layout.draw_rows, layout.draw_cols)) {
+        return 0;
+    }
+    if (!cell_visible_in_layout(&layout, old_x, old_y) ||
+        !cell_visible_in_layout(&layout, cursor_x, cursor_y)) {
+        return 0;
+    }
+    draw_cell_at_layout(old_x, old_y, 0);
+    draw_cell_at_layout(cursor_x, cursor_y, 1);
+    redraw_status_from_layout(&layout);
+    return 1;
+}
+
 static void render(void){
     int rows, cols;
     get_terminal_size(&rows, &cols);
@@ -909,22 +1053,7 @@ static void render(void){
     int draw_rows = rows - 3; // palette line + two status/help lines
     int draw_cols = cols;
 
-    // Clamp view to ensure cursor visible
-    if (cursor_x < view_x) view_x = cursor_x;
-    if (cursor_y < view_y) view_y = cursor_y;
-    if (cursor_x >= view_x + draw_cols) view_x = cursor_x - draw_cols + 1;
-    if (cursor_y >= view_y + draw_rows) view_y = cursor_y - draw_rows + 1;
-
-    if (view_x < 0) view_x = 0;
-    if (view_y < 0) view_y = 0;
-
-    int max_view_x = img_w - draw_cols;
-    if (max_view_x < 0) max_view_x = 0;
-    if (view_x > max_view_x) view_x = max_view_x;
-
-    int max_view_y = img_h - draw_rows;
-    if (max_view_y < 0) max_view_y = 0;
-    if (view_y > max_view_y) view_y = max_view_y;
+    ensure_cursor_visible_for_area(draw_rows, draw_cols);
 
     // Clear & move home
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -959,11 +1088,10 @@ static void render(void){
                 continue;
             }
 
-                uint8_t idx = pixels[y * img_w + x];
-
-                draw_cell(idx, x == cursor_x && y == cursor_y);
-            }
+            uint8_t idx = pixels[y * img_w + x];
+            draw_cell(idx, x == cursor_x && y == cursor_y);
         }
+    }
 
     write(STDOUT_FILENO, "\r\n", 2);
     // Status + help lines
@@ -1081,14 +1209,15 @@ static void load_dialog(void){
     }
 }
 
-static void paint_at_cursor(uint8_t color_idx){
-    if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return;
-    if (color_idx != EMPTY && color_idx >= TOTAL_COLORS) return;
+static int paint_at_cursor(uint8_t color_idx){
+    if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return 0;
+    if (color_idx != EMPTY && color_idx >= TOTAL_COLORS) return 0;
     uint8_t *p = &pixels[cursor_y*img_w + cursor_x];
-    if (*p == color_idx) return; // no-op
+    if (*p == color_idx) return 0; // no-op
     push_change(cursor_x, cursor_y, *p, color_idx);
     *p = color_idx;
     dirty = 1;
+    return 1;
 }
 
 static void flood_fill_at_cursor(uint8_t color_idx){

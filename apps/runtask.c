@@ -390,6 +390,28 @@ static bool parse_variable_name_token(const char *token, char *out, size_t size)
     return true;
 }
 
+static bool parse_variable_name_inline(const char *start, size_t *consumed, char *out, size_t size) {
+    if (!start || !out || size == 0) {
+        return false;
+    }
+    size_t len = 0;
+    if (!isalnum((unsigned char)start[len]) && start[len] != '_') {
+        return false;
+    }
+    while (start[len] && (isalnum((unsigned char)start[len]) || start[len] == '_')) {
+        if (len + 1 >= size) {
+            return false;
+        }
+        out[len] = start[len];
+        len++;
+    }
+    out[len] = '\0';
+    if (consumed) {
+        *consumed = len;
+    }
+    return len > 0;
+}
+
 static ValueType detect_numeric_type(const char *token, long long *out_int, double *out_float) {
     if (!token || !*token) {
         return VALUE_UNSET;
@@ -957,30 +979,86 @@ static void free_argv(char **argv) {
     free(argv);
 }
 
+static char *expand_token_variables(const char *token, int line, int debug) {
+    if (!token) {
+        return xstrdup("");
+    }
+
+    size_t cap = strlen(token) + 1;
+    size_t len = 0;
+    char *output = (char *)malloc(cap);
+    if (!output) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
+    const char *p = token;
+    while (*p) {
+        if (*p == '$') {
+            char name[64];
+            size_t consumed = 0;
+            if (parse_variable_name_inline(p + 1, &consumed, name, sizeof(name))) {
+                Variable *var = find_variable(name, false);
+                Value value = variable_to_value(var);
+                char *replacement = value_to_string(&value);
+                if (!replacement) {
+                    replacement = xstrdup("");
+                }
+                size_t rep_len = strlen(replacement);
+                while (len + rep_len + 1 > cap) {
+                    cap *= 2;
+                    char *tmp = (char *)realloc(output, cap);
+                    if (!tmp) {
+                        perror("realloc");
+                        free(output);
+                        free(replacement);
+                        exit(EXIT_FAILURE);
+                    }
+                    output = tmp;
+                }
+                memcpy(output + len, replacement, rep_len);
+                len += rep_len;
+                free(replacement);
+                p += 1 + consumed;
+                continue;
+            }
+            if (debug && p == token) {
+                fprintf(stderr, "RUN: invalid variable reference '%s' at line %d\n", token, line);
+            }
+        }
+
+        if (len + 2 > cap) {
+            cap *= 2;
+            char *tmp = (char *)realloc(output, cap);
+            if (!tmp) {
+                perror("realloc");
+                free(output);
+                exit(EXIT_FAILURE);
+            }
+            output = tmp;
+        }
+        output[len++] = *p++;
+    }
+
+    output[len] = '\0';
+    return output;
+}
+
 static void expand_argv_variables(char **argv, int argc, int line, int debug) {
     if (!argv) {
         return;
     }
     for (int i = 0; i < argc; ++i) {
         char *token = argv[i];
-        if (!token || token[0] != '$') {
+        if (!token) {
             continue;
         }
-        char name[64];
-        if (!parse_variable_name_token(token, name, sizeof(name))) {
-            if (debug) {
-                fprintf(stderr, "RUN: invalid variable reference '%s' at line %d\n", token, line);
-            }
-            continue;
-        }
-        Variable *var = find_variable(name, false);
-        Value value = variable_to_value(var);
-        char *replacement = value_to_string(&value);
-        if (!replacement) {
-            replacement = xstrdup("");
+        char *expanded = expand_token_variables(token, line, debug);
+        if (!expanded) {
+            expanded = xstrdup("");
         }
         free(argv[i]);
-        argv[i] = replacement;
+        argv[i] = expanded;
     }
 }
 

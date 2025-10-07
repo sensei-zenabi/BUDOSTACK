@@ -5,7 +5,7 @@
 * - CMD removed.
 * - RUN executes an app by name from ./apps/, ./commands/, or ./utilities. Blocking is
 *   the default; prepend BLOCKING or NONBLOCKING to control the run mode explicitly.
-*   Arguments are passed as-is.
+*   Arguments undergo variable expansion (e.g., $VAR and ${VAR}) before exec.
 * - RUN optionally supports `TO $VAR` to capture stdout into a variable (type auto-detected).
 * - If RUN's first token contains '/', it's treated as an explicit path and executed directly.
 * - Fixed argv lifetime: arguments are now heap-allocated (no static buffers). RUN reliably
@@ -53,6 +53,8 @@ typedef struct {
     char *str_val;
     bool owns_string;
 } Value;
+
+static char *value_to_string(const Value *value);
 
 typedef struct {
     char name[64];
@@ -368,6 +370,14 @@ static bool parse_token(const char **p, char **out, bool *quoted, const char *de
     return true;
 }
 
+static bool is_var_name_char(char c) {
+    return (bool)(isalnum((unsigned char)c) || c == '_');
+}
+
+static bool is_var_name_start(char c) {
+    return is_var_name_char(c);
+}
+
 static bool parse_variable_name_token(const char *token, char *out, size_t size) {
     if (!token || token[0] != '$') {
         return false;
@@ -388,6 +398,130 @@ static bool parse_variable_name_token(const char *token, char *out, size_t size)
     }
     out[len] = '\0';
     return true;
+}
+
+static char *expand_token_variables(const char *token, int line, int debug) {
+    if (!token) {
+        return NULL;
+    }
+
+    const char *cursor = token;
+    bool had_variable = false;
+    size_t cap = strlen(token) + 1;
+    size_t len = 0;
+    char *out = (char *)malloc(cap);
+    if (!out) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+
+    while (*cursor) {
+        if (*cursor == '$') {
+            const char *start = cursor + 1;
+            char name_buf[64];
+            size_t name_len = 0;
+            bool overflow = false;
+            if (*start == '{') {
+                start++;
+                while (*start && *start != '}') {
+                    if (!is_var_name_char(*start)) {
+                        break;
+                    }
+                    if (name_len + 1 >= sizeof(name_buf)) {
+                        overflow = true;
+                        break;
+                    }
+                    name_buf[name_len++] = *start++;
+                }
+                if (overflow) {
+                    if (debug) {
+                        fprintf(stderr, "RUN: variable name too long in '%s' at line %d\n", token, line);
+                    }
+                    goto literal_dollar;
+                }
+                if (*start == '}') {
+                    cursor = start + 1;
+                } else {
+                    if (debug) {
+                        fprintf(stderr, "RUN: invalid variable reference in '%s' at line %d\n", token, line);
+                    }
+                    goto literal_dollar;
+                }
+            } else {
+                const char *walk = start;
+                if (!is_var_name_start(*walk)) {
+                    goto literal_dollar;
+                }
+                while (*walk && is_var_name_char(*walk)) {
+                    if (name_len + 1 >= sizeof(name_buf)) {
+                        overflow = true;
+                        break;
+                    }
+                    name_buf[name_len++] = *walk++;
+                }
+                if (overflow) {
+                    if (debug) {
+                        fprintf(stderr, "RUN: variable name too long in '%s' at line %d\n", token, line);
+                    }
+                    goto literal_dollar;
+                }
+                cursor = walk;
+            }
+
+            if (name_len == 0) {
+                goto literal_dollar;
+            }
+            name_buf[name_len] = '\0';
+
+            had_variable = true;
+            Variable *var = find_variable(name_buf, false);
+            Value value = variable_to_value(var);
+            char *replacement = value_to_string(&value);
+            if (!replacement) {
+                replacement = xstrdup("");
+            }
+            size_t rep_len = strlen(replacement);
+            if (len + rep_len + 1 > cap) {
+                while (len + rep_len + 1 > cap) {
+                    cap *= 2;
+                }
+                char *tmp = (char *)realloc(out, cap);
+                if (!tmp) {
+                    perror("realloc");
+                    free(out);
+                    free(replacement);
+                    exit(EXIT_FAILURE);
+                }
+                out = tmp;
+            }
+            memcpy(out + len, replacement, rep_len);
+            len += rep_len;
+            free(replacement);
+            continue;
+        }
+
+literal_dollar:
+        if (len + 2 > cap) {
+            while (len + 2 > cap) {
+                cap *= 2;
+            }
+            char *tmp = (char *)realloc(out, cap);
+            if (!tmp) {
+                perror("realloc");
+                free(out);
+                exit(EXIT_FAILURE);
+            }
+            out = tmp;
+        }
+        out[len++] = *cursor++;
+    }
+
+    out[len] = '\0';
+    if (!had_variable) {
+        free(out);
+        return NULL;
+    }
+    return out;
 }
 
 static ValueType detect_numeric_type(const char *token, long long *out_int, double *out_float) {
@@ -765,12 +899,13 @@ static void print_help(void) {
     printf("  INPUT $VAR         : Read a line from stdin into $VAR (numbers auto-detected)\n");
     printf("  IF <lhs> op <rhs>  : Compare values. Use ELSE for an alternate branch.\n");
     printf("  PRINT expr         : Print literals and variables (use '+' to concatenate).\n");
-    printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
+    printf("  WAIT value         : Waits for <value> milliseconds (supports variables)\n");
     printf("  GOTO @label        : Jumps to the line marked with @label\n");
     printf("  RUN [BLOCKING|NONBLOCKING] <cmd [args...]>:\n");
     printf("                       Executes an executable from ./apps, ./commands, or ./utilities.\n");
     printf("                       Default is BLOCKING. If the command contains '/', it's executed as given.\n");
     printf("                       Append 'TO $VAR' to capture stdout into $VAR (blocking mode only).\n");
+    printf("                       $VAR and ${VAR} sequences expand using task variables.\n");
     printf("  CLEAR              : Clears the screen\n\n");
     printf("Usage:\n");
     printf("  ./runtask taskfile [-d]\n\n");
@@ -963,24 +1098,15 @@ static void expand_argv_variables(char **argv, int argc, int line, int debug) {
     }
     for (int i = 0; i < argc; ++i) {
         char *token = argv[i];
-        if (!token || token[0] != '$') {
+        if (!token) {
             continue;
         }
-        char name[64];
-        if (!parse_variable_name_token(token, name, sizeof(name))) {
-            if (debug) {
-                fprintf(stderr, "RUN: invalid variable reference '%s' at line %d\n", token, line);
-            }
+        char *expanded = expand_token_variables(token, line, debug);
+        if (!expanded) {
             continue;
-        }
-        Variable *var = find_variable(name, false);
-        Value value = variable_to_value(var);
-        char *replacement = value_to_string(&value);
-        if (!replacement) {
-            replacement = xstrdup("");
         }
         free(argv[i]);
-        argv[i] = replacement;
+        argv[i] = expanded;
     }
 }
 
@@ -1487,12 +1613,40 @@ int main(int argc, char *argv[]) {
 		    note_branch_progress(if_stack, &if_sp);
         }
         else if (strncmp(command, "WAIT", 4) == 0) {
-            int ms;
-            if (sscanf(command, "WAIT %d", &ms) == 1) {
-                delay_ms(ms);
-            } else if (debug) {
-                fprintf(stderr, "WAIT: invalid format at %d: %s\n", script[pc].source_line, command);
+            const char *cursor = command + 4;
+            Value wait_value;
+            memset(&wait_value, 0, sizeof(wait_value));
+
+            if (!parse_value_token(&cursor, &wait_value, "", script[pc].source_line, debug)) {
+                if (debug) {
+                    fprintf(stderr, "WAIT: invalid value at %d: %s\n", script[pc].source_line, command);
+                }
+            } else {
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+                if (*cursor != '\0' && debug) {
+                    fprintf(stderr, "WAIT: unexpected trailing characters at %d: %s\n", script[pc].source_line, command);
+                }
+
+                double delay = 0.0;
+                if (!value_as_double(&wait_value, &delay)) {
+                    if (debug) {
+                        fprintf(stderr, "WAIT: value is not numeric at %d: %s\n", script[pc].source_line, command);
+                    }
+                } else {
+                    if (delay < 0.0) {
+                        delay = 0.0;
+                    }
+                    if (delay > (double)INT_MAX) {
+                        delay = (double)INT_MAX;
+                    }
+                    int ms = (int)llround(delay);
+                    delay_ms(ms);
+                }
             }
+
+            free_value(&wait_value);
             note_branch_progress(if_stack, &if_sp);
         }
         else if (strncmp(command, "GOTO", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {

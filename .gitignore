@@ -5,19 +5,26 @@
 budostack
 
 # In the commands directory, ignore everything except source files
-commands/*
-!commands/*.c
-!commands/*.h
 apps/*
 !apps/*.c
 !apps/*.h
 !apps/*.ini
+commands/*
+!commands/*.c
+!commands/*.h
+games/*
+!games/*.c
+!games/*.h
 lib/*
 !lib/*.c
 !lib/*.h
 tasks/*
 !tasks/*.task
 !tasks/*.md
+utilities/*
+!utilities/*.c
+!utilities/*.h
+
 
 # Backup files and temporary files
 *~

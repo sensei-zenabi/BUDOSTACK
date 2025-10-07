@@ -957,6 +957,59 @@ static void free_argv(char **argv) {
     free(argv);
 }
 
+static bool token_to_value(const char *token, Value *out, int line, int debug) {
+    if (!token || !out) {
+        return false;
+    }
+
+    Value result;
+    memset(&result, 0, sizeof(result));
+
+    if (token[0] == '$') {
+        char name[64];
+        if (!parse_variable_name_token(token, name, sizeof(name))) {
+            if (debug) {
+                fprintf(stderr, "Line %d: invalid variable reference '%s'\n", line, token);
+            }
+            return false;
+        }
+        Variable *var = find_variable(name, false);
+        result = variable_to_value(var);
+        if (result.type == VALUE_UNSET) {
+            result.int_val = 0;
+            result.float_val = 0.0;
+            result.str_val = NULL;
+            result.owns_string = false;
+        }
+        *out = result;
+        return true;
+    }
+
+    long long iv = 0;
+    double fv = 0.0;
+    ValueType vt = detect_numeric_type(token, &iv, &fv);
+    if (vt == VALUE_INT) {
+        result.type = VALUE_INT;
+        result.int_val = iv;
+        result.float_val = (double)iv;
+        result.owns_string = false;
+        result.str_val = NULL;
+    } else if (vt == VALUE_FLOAT) {
+        result.type = VALUE_FLOAT;
+        result.float_val = fv;
+        result.int_val = (long long)fv;
+        result.owns_string = false;
+        result.str_val = NULL;
+    } else {
+        result.type = VALUE_STRING;
+        result.str_val = xstrdup(token);
+        result.owns_string = true;
+    }
+
+    *out = result;
+    return true;
+}
+
 static void expand_argv_variables(char **argv, int argc, int line, int debug) {
     if (!argv) {
         return;
@@ -966,22 +1019,39 @@ static void expand_argv_variables(char **argv, int argc, int line, int debug) {
         if (!token || token[0] != '$') {
             continue;
         }
-        char name[64];
-        if (!parse_variable_name_token(token, name, sizeof(name))) {
-            if (debug) {
-                fprintf(stderr, "RUN: invalid variable reference '%s' at line %d\n", token, line);
-            }
+
+        Value value;
+        if (!token_to_value(token, &value, line, debug)) {
             continue;
         }
-        Variable *var = find_variable(name, false);
-        Value value = variable_to_value(var);
+
         char *replacement = value_to_string(&value);
         if (!replacement) {
             replacement = xstrdup("");
         }
+
         free(argv[i]);
         argv[i] = replacement;
+        free_value(&value);
     }
+}
+
+static char **split_args_with_values(const char *cmdline, int *out_argc, int line, int debug) {
+    int argcnt = 0;
+    char **argv_heap = split_args_heap(cmdline, &argcnt);
+    if (!argv_heap) {
+        if (out_argc) {
+            *out_argc = 0;
+        }
+        return NULL;
+    }
+    if (argcnt > 0) {
+        expand_argv_variables(argv_heap, argcnt, line, debug);
+    }
+    if (out_argc) {
+        *out_argc = argcnt;
+    }
+    return argv_heap;
 }
 
 /* Resolve executable path:
@@ -1487,12 +1557,44 @@ int main(int argc, char *argv[]) {
 		    note_branch_progress(if_stack, &if_sp);
         }
         else if (strncmp(command, "WAIT", 4) == 0) {
-            int ms;
-            if (sscanf(command, "WAIT %d", &ms) == 1) {
-                delay_ms(ms);
-            } else if (debug) {
-                fprintf(stderr, "WAIT: invalid format at %d: %s\n", script[pc].source_line, command);
+            const char *cursor = command + 4;
+            Value wait_value;
+            memset(&wait_value, 0, sizeof(wait_value));
+            if (!parse_value_token(&cursor, &wait_value, NULL, script[pc].source_line, debug)) {
+                if (debug) {
+                    fprintf(stderr, "WAIT: invalid or missing value at %d: %s\n", script[pc].source_line, command);
+                }
+                note_branch_progress(if_stack, &if_sp);
+                continue;
             }
+
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "WAIT: unexpected characters at %d: %s\n", script[pc].source_line, command);
+            }
+
+            double ms_double = 0.0;
+            bool numeric = value_as_double(&wait_value, &ms_double);
+            if (!numeric) {
+                if (debug) {
+                    fprintf(stderr, "WAIT: value is not numeric at %d\n", script[pc].source_line);
+                }
+                free_value(&wait_value);
+                note_branch_progress(if_stack, &if_sp);
+                continue;
+            }
+
+            long long ms_ll = llround(ms_double);
+            if (ms_ll < 0) {
+                ms_ll = 0;
+            }
+            if (ms_ll > INT_MAX) {
+                ms_ll = INT_MAX;
+            }
+            delay_ms((int)ms_ll);
+            free_value(&wait_value);
             note_branch_progress(if_stack, &if_sp);
         }
         else if (strncmp(command, "GOTO", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {
@@ -1566,7 +1668,7 @@ int main(int argc, char *argv[]) {
 
             // Tokenize to argv[] (heap-based)
             int argcnt = 0;
-            char **argv_heap = split_args_heap(cmdline, &argcnt);
+            char **argv_heap = split_args_with_values(cmdline, &argcnt, script[pc].source_line, debug);
             if (argcnt <= 0) {
                 if (debug) fprintf(stderr, "RUN: failed to parse command at line %d\n", script[pc].source_line);
                 free_argv(argv_heap);
@@ -1632,8 +1734,6 @@ int main(int argc, char *argv[]) {
                     continue;
                 }
             }
-
-            expand_argv_variables(argv_heap, argcnt, script[pc].source_line, debug);
 
             // Resolve executable path
             char resolved[PATH_MAX];

@@ -17,7 +17,9 @@ RUN cls
 # Initialize variables
 SET $VAR1 = "n"
 SET $VAR2 = 0
+SET $VAR3 = 0
 
+@PAGE1
 # Display budostacker
 RUN cls
 RUN _IMAGE -x 0 -y 2 -file tasks/assets/budostacker.bmp
@@ -25,6 +27,7 @@ RUN _TEXT -x 45 -y 65 -text "PRESS ANY KEY TO CONTINUE"
 RUN _KEYS
 RUN cls
 
+@PAGE2
 # Display the start menu
 RUN _IMAGE -x 0 -y 0 -file tasks/assets/bg_blue.bmp
 RUN _BEEP -C6 -250
@@ -37,32 +40,38 @@ IF $VAR2 < 100
   SET $VAR2 = $VAR2 + 10
   RUN _WAIT 500
   GOTO @MENUSCREEN
-RUN _TEXT -x 4 -y 10 -text "Do you want to exit? [y/n]: "
-INPUT $VAR1
-IF $VAR1 == "y"
-  GOTO @END
-ELSE
-  RUN _TEXT -x 4 -y 12 -text "Great! Let's continue the demo!"
 WAIT 1000
 
 # List Folder Content Demo
-RUN _TEXT -x 4 -y 14 -text "CURRENT FOLDER CONTENT:"
+RUN _TEXT -x 4 -y 12 -text "CURRENT FOLDER CONTENT:"
 WAIT 1000
-RUN _EXE -x 4 -y 16 -- list
+RUN _EXE -x 4 -y 14 -- list
 WAIT 2500
+RUN _GETROW TO $VAR3
+SET $VAR3 = $VAR3 + 1
+IF $VAR3 > 58
+  GOTO @PAGE3
 
 # Hardware Statistics Demo
-RUN _TEXT -x 4 -y 37 -text "HADWARE STATISTICS:"
+RUN _TEXT -x 4 -y $VAR3 -text "HARDWARE STATISTICS:"
 WAIT 2000
-RUN _EXE -x 4 -y 39 -- stats
+SET $VAR3 = $VAR3 + 2
+RUN _EXE -x 4 -y $VAR3 -- stats
 WAIT 4000
+RUN _GETROW TO $VAR3
+SET $VAR3 = $VAR3 + 1
+IF $VAR3 > 58
+  GOTO @PAGE3
 
 # Capturing STDOUT Demo
-RUN _TEXT -x 4 -y 49 -text "CAPTURING STDOUT FROM COMMAND:"
+RUN _TEXT -x 4 -y $VAR3 -text "CAPTURING STDOUT FROM COMMAND:"
 WAIT 2500
 RUN _HELLO TO $VAR1
-RUN _TEXT -x 4 -y 51 -text ">> _HELLO stdout gave: " + $VAR1
+SET $VAR3 = $VAR3 + 2
+RUN _TEXT -x 4 -y $VAR3 -text ">> _HELLO stdout gave: " + $VAR1
 WAIT 5000
+IF $VAR3 > 58
+  GOTO @PAGE3
 
 # Waiting for Space
 RUN _TEXT -x 4 -y 58 -text "Press SPACE to continue..."
@@ -71,6 +80,7 @@ IF $VAR2 == 4
   RUN _IMAGE -x 0 -y 0 -file tasks/assets/bg_blue.bmp
   WAIT 1000
   
+@PAGE3  
 # Solar Demo
 RUN _TEXT -x 4 -y 5 -text "LOCATION OF FIRST FOUR PLANETS IN SOLAR SYSTEM:"
 RUN _EXE -x 4 -y 7 -- solar 4
@@ -80,7 +90,7 @@ WAIT 5000
 RUN _TEXT -x 4 -y 58 -text "Press SPACE to continue..."
 RUN _KEYS TO $VAR2
 
-# Exit
 @END
+# Exit
 RUN cls
 

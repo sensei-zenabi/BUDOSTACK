@@ -37,6 +37,7 @@
 #include <ctype.h>
 #include <time.h>
 #include <poll.h>
+#include <math.h>
 
 #define MAX_W 320
 #define MAX_H 200
@@ -187,34 +188,27 @@ static int rgb_to_ansi256(uint8_t r, uint8_t g, uint8_t b) {
     return 16 + 36 * ri + 6 * gi + bi;
 }
 
+// Drop-in replacement (sRGB ≈ 2.2 gamma)
 static uint8_t apply_brightness(uint8_t value, float factor) {
-    float adjusted;
-
-    if (factor <= 1.0f) {
-        adjusted = (float)value * factor;
-    } else {
-        float blend = factor - 1.0f;
-        if (blend > 1.0f) {
-            blend = 1.0f;
-        }
-        adjusted = (float)value + (255.0f - (float)value) * blend;
-    }
-
-    int rounded = (int)(adjusted + 0.5f);
-    return clamp_u8(rounded);
+    float x = value / 255.0f;
+    // sRGB to linear
+    float lin = powf(x, 2.2f);
+    // scale in linear light
+    lin = fminf(fmaxf(lin * factor, 0.0f), 1.0f);
+    // linear back to sRGB
+    float srgb = powf(lin, 1.0f/2.2f);
+    int out = (int)(srgb * 255.0f + 0.5f);
+    return clamp_u8(out);
 }
 
 static void init_palettes(void) {
     static int initialized = 0;
     if (initialized) return;
-    const float factors[PALETTE_VARIANTS] = {0.6f, 0.8f, 1.0f, 1.2f, 1.4f};
+    const float factors[PALETTE_VARIANTS] = {0.15f, 0.3f, 0.45f, 0.8f, 1.25};
     for (int variant = 0; variant < PALETTE_VARIANTS; variant++) {
         for (int i = 0; i < PALETTE_COLORS; i++) {
             Color c = base_palette[i];
-            if (variant == 2) {
-                palettes[variant][i] = c;
-                continue;
-            }
+            // Always apply factor; palette 3 uses 1.00 so it's identical to base
             c.r = apply_brightness(base_palette[i].r, factors[variant]);
             c.g = apply_brightness(base_palette[i].g, factors[variant]);
             c.b = apply_brightness(base_palette[i].b, factors[variant]);
@@ -224,6 +218,7 @@ static void init_palettes(void) {
     }
     initialized = 1;
 }
+
 
 static inline const Color *color_from_variant(int variant, int color_index) {
     init_palettes();

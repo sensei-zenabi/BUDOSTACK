@@ -139,16 +139,13 @@ int main(int argc, char *argv[]) {
     unsigned int seed = (unsigned int)time(NULL) ^ (unsigned int)getpid();
     srand(seed);
 
-    printf("Rolling %ud%u...\n", count, sides);
-
     unsigned int total = 0U;
     for (unsigned int i = 0U; i < count; ++i) {
         unsigned int roll = roll_die(sides);
         total += roll;
-        printf("  Roll %u: %u\n", i + 1U, roll);
     }
 
-    printf("Total: %u\n", total);
+    printf("%u\n", total);
     return 0;
 }
 

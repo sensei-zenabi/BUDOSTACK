@@ -24,6 +24,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 #include <sys/wait.h>   /* for waitpid */
+#include <sys/stat.h>
+#include <errno.h>
 
 // If PATH_MAX is not defined, define it.
 #ifndef PATH_MAX
@@ -125,11 +127,29 @@ void login() {
         return;
     }
 
+    // Build the base users directory and ensure it exists.
+    char users_root[PATH_MAX];
+    if (snprintf(users_root, sizeof(users_root), "%s/users", cwd) >= (int)sizeof(users_root)) {
+        fprintf(stderr, "path too long\n");
+        return;
+    }
+
+    if (mkdir(users_root, 0775) != 0 && errno != EEXIST) {
+        perror("mkdir");
+        return;
+    }
+
     // Build the target directory relative to the current directory.
     // This path will be: "<current_dir>/users/<username>"
     char new_path[PATH_MAX];
-    if (snprintf(new_path, sizeof(new_path), "%s/users/%s", cwd, username) >= (int)sizeof(new_path)) {
+    if (snprintf(new_path, sizeof(new_path), "%s/%s", users_root, username) >= (int)sizeof(new_path)) {
         fprintf(stderr, "path too long\n");
+        return;
+    }
+
+    if (mkdir(new_path, 0775) != 0 && errno != EEXIST) {
+        perror("mkdir");
+        printf("Unable to create directory %s\n", new_path);
         return;
     }
 

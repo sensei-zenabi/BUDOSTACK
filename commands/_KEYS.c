@@ -44,7 +44,11 @@ int main(void) {
     }
 
     struct termios raw = g_original_termios;
-    raw.c_lflag &= ~(ICANON | ECHO);
+    /* Disable canonical mode, echo and signal generation so that control
+     * characters such as CTRL+C are delivered as ordinary bytes instead of
+     * terminating the process. This keeps the rest of Budostack running even if
+     * the user mashes CTRL+C while waiting for a key press. */
+    raw.c_lflag &= ~(ICANON | ECHO | ISIG);
     raw.c_iflag &= ~(IXON | ICRNL);
     raw.c_oflag &= ~(OPOST);
     raw.c_cc[VMIN] = 0;
@@ -69,7 +73,9 @@ int main(void) {
 
         int value = 0;
 
-        if (ch == '\n' || ch == '\r') {
+        if (ch == 3) {
+            value = 10; /* Treat CTRL+C the same as Escape */
+        } else if (ch == '\n' || ch == '\r') {
             value = 3; /* Enter */
         } else if (ch == '\t') {
             value = 5; /* Tab */

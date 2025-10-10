@@ -66,6 +66,7 @@ static int read_key(void);
 static void update_status(const char *fmt, ...);
 static int component_to_level(uint8_t v);
 static int pixel_to_ansi256(const Pixel *pixel);
+static int cursor_contrast_color(const Pixel *pixel);
 static void draw_map_area(int map_rows);
 static void draw_info_bars(int map_rows);
 static void draw_interface(void);
@@ -270,6 +271,17 @@ static int pixel_to_ansi256(const Pixel *pixel) {
     return 16 + 36 * ri + 6 * gi + bi;
 }
 
+static int cursor_contrast_color(const Pixel *pixel) {
+    if (pixel == NULL) {
+        return 231;
+    }
+    int luminance = (299 * (int)pixel->r + 587 * (int)pixel->g + 114 * (int)pixel->b) / 1000;
+    if (luminance > 128) {
+        return 16;
+    }
+    return 231;
+}
+
 static void draw_map_area(int map_rows) {
     for (int row = 0; row < map_rows; ++row) {
         int screen_row = row + 1;
@@ -283,7 +295,8 @@ static void draw_map_area(int map_rows) {
                 unsigned char overlay = g_map.overlay[(size_t)map_y * (size_t)g_map.width + (size_t)map_x];
                 dprintf(STDOUT_FILENO, "\x1b[48;5;%dm", color);
                 if (map_x == g_cursor_x && map_y == g_cursor_y) {
-                    dprintf(STDOUT_FILENO, "\x1b[38;5;16m\x1b[1m+");
+                    int cursor_color = cursor_contrast_color(px);
+                    dprintf(STDOUT_FILENO, "\x1b[38;5;%dm\x1b[1m+", cursor_color);
                 } else if (overlay != 0U) {
                     dprintf(STDOUT_FILENO, "\x1b[38;5;231m\x1b[1m%c", overlay);
                 } else {

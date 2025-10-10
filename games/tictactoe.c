@@ -9,20 +9,20 @@
 #define INF 1000000000
 
 static void init_board(char board[BOARD_SIZE][BOARD_SIZE]);
-static void print_board(const char board[BOARD_SIZE][BOARD_SIZE]);
-static char check_winner(const char board[BOARD_SIZE][BOARD_SIZE]);
-static int board_full(const char board[BOARD_SIZE][BOARD_SIZE]);
+static void print_board(char board[BOARD_SIZE][BOARD_SIZE]);
+static char check_winner(char board[BOARD_SIZE][BOARD_SIZE]);
+static int board_full(char board[BOARD_SIZE][BOARD_SIZE]);
 static int prompt_mode(void);
 static int prompt_first_player(void);
 static void human_turn(char board[BOARD_SIZE][BOARD_SIZE], char player);
 static void cpu_turn(char board[BOARD_SIZE][BOARD_SIZE], char ai_marker, char human_marker);
-static int evaluate_board(const char board[BOARD_SIZE][BOARD_SIZE], char ai_marker, char human_marker);
+static int evaluate_board(char board[BOARD_SIZE][BOARD_SIZE], char ai_marker, char human_marker);
 static int minimax(char board[BOARD_SIZE][BOARD_SIZE], int depth, int alpha, int beta,
                    char current_player, char ai_marker, char human_marker, int empties,
                    int *best_row, int *best_col);
-static int collect_moves(const char board[BOARD_SIZE][BOARD_SIZE], int moves[][2]);
+static int collect_moves(char board[BOARD_SIZE][BOARD_SIZE], int moves[][2]);
 static void sort_moves_by_proximity(int moves[][2], int count);
-static int remaining_spaces(const char board[BOARD_SIZE][BOARD_SIZE]);
+static int remaining_spaces(char board[BOARD_SIZE][BOARD_SIZE]);
 
 int main(void) {
     char board[BOARD_SIZE][BOARD_SIZE];
@@ -93,7 +93,7 @@ static void init_board(char board[BOARD_SIZE][BOARD_SIZE]) {
     }
 }
 
-static void print_board(const char board[BOARD_SIZE][BOARD_SIZE]) {
+static void print_board(char board[BOARD_SIZE][BOARD_SIZE]) {
     printf("   ");
     for (int c = 0; c < BOARD_SIZE; ++c) {
         printf(" %d  ", c + 1);
@@ -203,7 +203,7 @@ static void human_turn(char board[BOARD_SIZE][BOARD_SIZE], char player) {
     }
 }
 
-static int remaining_spaces(const char board[BOARD_SIZE][BOARD_SIZE]) {
+static int remaining_spaces(char board[BOARD_SIZE][BOARD_SIZE]) {
     int count = 0;
     for (int r = 0; r < BOARD_SIZE; ++r) {
         for (int c = 0; c < BOARD_SIZE; ++c) {
@@ -251,7 +251,7 @@ static void cpu_turn(char board[BOARD_SIZE][BOARD_SIZE], char ai_marker, char hu
     }
 }
 
-static int board_full(const char board[BOARD_SIZE][BOARD_SIZE]) {
+static int board_full(char board[BOARD_SIZE][BOARD_SIZE]) {
     for (int r = 0; r < BOARD_SIZE; ++r) {
         for (int c = 0; c < BOARD_SIZE; ++c) {
             if (board[r][c] == ' ') {
@@ -262,7 +262,7 @@ static int board_full(const char board[BOARD_SIZE][BOARD_SIZE]) {
     return 1;
 }
 
-static char check_winner(const char board[BOARD_SIZE][BOARD_SIZE]) {
+static char check_winner(char board[BOARD_SIZE][BOARD_SIZE]) {
     const int directions[4][2] = {
         {1, 0},
         {0, 1},
@@ -303,7 +303,7 @@ static char check_winner(const char board[BOARD_SIZE][BOARD_SIZE]) {
     return '\0';
 }
 
-static int evaluate_board(const char board[BOARD_SIZE][BOARD_SIZE], char ai_marker, char human_marker) {
+static int evaluate_board(char board[BOARD_SIZE][BOARD_SIZE], char ai_marker, char human_marker) {
     char winner = check_winner(board);
     if (winner == ai_marker) {
         return 1000000;
@@ -423,7 +423,7 @@ static int minimax(char board[BOARD_SIZE][BOARD_SIZE], int depth, int alpha, int
     return best_value;
 }
 
-static int collect_moves(const char board[BOARD_SIZE][BOARD_SIZE], int moves[][2]) {
+static int collect_moves(char board[BOARD_SIZE][BOARD_SIZE], int moves[][2]) {
     int count = 0;
     for (int r = 0; r < BOARD_SIZE; ++r) {
         for (int c = 0; c < BOARD_SIZE; ++c) {

@@ -101,6 +101,7 @@ int main(int argc, char *argv[]) {
     printf("/* Other */\n");
     printf("\n");
     printf("  assist   : Interactive assistant that provides various utilities.\n");
+    printf("  dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.\n");
     printf("  paint    : ASCII paint application to edit bitmaps.\n");    
     printf("  psfedit  : Font editor for .psf fonts used in linux TTY.\n");
     printf("  signal   : Signal generator. Type 'signal' for help.\n");

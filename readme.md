@@ -25,6 +25,8 @@ maximum focus and efficiency on basic primitives of computing,
 such as file manipulation, text editing, command-line interactions, 
 and efficient resource management.
 
+I prefer running BUDOSTACK with [cool-retro-term](https://github.com/Swordfish90/cool-retro-term)
+
 | ![shot1](screenshots/login.png) | ![shot2](screenshots/demo.png) | ![shot3](screenshots/help.png) | ![shot4](screenshots/paint.png) |
 |:---------------------------:|:---------------------------:|:---------------------------:|:---------------------------:|
 

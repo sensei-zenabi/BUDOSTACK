@@ -126,7 +126,10 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  compile  : Build a standalone binary from a TASK script. Type 'compile -help'.\n");
     printf("\n");
-    printf("/* BUDOSTACK Programming Commands */\n");
+    printf("/* BUDOSTACK Example TASK Programs */\n");
+    printf("\n");
+    printf("  runtask demo.task    : TASK language demo\n");
+    printf("  runtask screen.task  : Screen calibration TASK\n");
     printf("\n");
     printf("=============================================================================\n");
 

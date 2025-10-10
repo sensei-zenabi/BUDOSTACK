@@ -1,0 +1,9 @@
+RUN cls
+PRINT "\n- SCREEN CALIBRATION TASK -\n\n"
+PRINT "\nTo exit the program, press CTRL+C"
+PRINT "\nPress any key to start"
+RUN _KEYS
+@START
+RUN _TEST
+WAIT 1000
+GOTO @START 

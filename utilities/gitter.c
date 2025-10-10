@@ -14,6 +14,7 @@ int main() {
     printf("\n");
     printf("================== GITTER - I remember so you don't have to!  ================\n");
     printf("\n");
+    printf("  git log --name-only         : display commits and related files\n\n");
     printf("  git commit -m 'message'     : make a commit with message\n\n");
     printf("  git commit -m 'closes #nn'  : close issue with commit message\n\n");
     printf("  git fetch origin            : fetch available branches\n\n");

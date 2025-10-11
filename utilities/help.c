@@ -117,8 +117,9 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("/* List of Games */\n");
     printf("\n");
-    printf("  invaders : A space invaders clone tailored to terminal.\n");
-    printf("  snake    : A snake clone, reminence from the good old Nokia days.\n");
+    printf("  invaders : Space invaders clone tailored to terminal.\n");
+    printf("  snake    : Snake clone, reminence from the good old Nokia days.\n");
+    printf("  tictactoe: Classic tictactoe, but with bigger game area.\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n"); 
     printf("                              - FOR DEVELOPERS -\n");

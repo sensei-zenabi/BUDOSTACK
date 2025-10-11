@@ -81,46 +81,6 @@ void printlogo(void) {
 //
 // This version does not rely on any external global variables.
 void login() {
-    char username[100];
-    // char password[100];
-
-    // Prompt for username.
-    printf("\n\nEnter username: ");
-    if (fgets(username, sizeof(username), stdin) != NULL) {
-        // Remove the trailing newline, if present.
-        size_t i = 0;
-        while (username[i] != '\0') {
-            if (username[i] == '\n') {
-                username[i] = '\0';
-                break;
-            }
-            i++;
-        }
-    }
-    // If no username provided, default to "default".
-    if (username[0] == '\0') {
-        snprintf(username, sizeof(username), "default");
-    }
-
-    /*
-    // Prompt for password (mock-up; input is not hidden).
-    printf("Enter password: ");
-    if (fgets(password, sizeof(password), stdin) != NULL) {
-        size_t i = 0;
-        while (password[i] != '\0') {
-            if (password[i] == '\n') {
-                password[i] = '\0';
-                break;
-            }
-            i++;
-        }
-    }
-    */ 
-    
-    // For demonstration, assume password verification is successful.
-    printf("Login successful. Welcome, %s!\n", username);
-
-    // Get the current working directory.
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) == NULL) {
         perror("getcwd");
@@ -139,27 +99,113 @@ void login() {
         return;
     }
 
-    // Build the target directory relative to the current directory.
-    // This path will be: "<current_dir>/users/<username>"
-    char new_path[PATH_MAX];
-    if (snprintf(new_path, sizeof(new_path), "%s/%s", users_root, username) >= (int)sizeof(new_path)) {
-        fprintf(stderr, "path too long\n");
-        return;
+    for (;;) {
+        char username[100] = {0};
+        // char password[100];
+
+        // Prompt for username.
+        printf("\n\nEnter username: ");
+        if (fgets(username, sizeof(username), stdin) == NULL) {
+            return;
+        }
+
+        // Remove the trailing newline, if present.
+        size_t i = 0;
+        while (username[i] != '\0') {
+            if (username[i] == '\n') {
+                username[i] = '\0';
+                break;
+            }
+            i++;
+        }
+
+        // If no username provided, default to "default".
+        if (username[0] == '\0') {
+            snprintf(username, sizeof(username), "default");
+        }
+
+        /*
+        // Prompt for password (mock-up; input is not hidden).
+        printf("Enter password: ");
+        if (fgets(password, sizeof(password), stdin) != NULL) {
+            size_t i = 0;
+            while (password[i] != '\0') {
+                if (password[i] == '\n') {
+                    password[i] = '\0';
+                    break;
+                }
+                i++;
+            }
+        }
+        */
+
+        char new_path[PATH_MAX];
+        if (snprintf(new_path, sizeof(new_path), "%s/%s", users_root, username) >= (int)sizeof(new_path)) {
+            fprintf(stderr, "path too long\n");
+            continue;
+        }
+
+        struct stat sb;
+        int user_dir_exists = 0;
+        if (stat(new_path, &sb) == 0) {
+            if (S_ISDIR(sb.st_mode)) {
+                user_dir_exists = 1;
+            } else {
+                fprintf(stderr, "%s exists and is not a directory.\n", new_path);
+                continue;
+            }
+        }
+
+        if (!user_dir_exists) {
+            int create_dir = 0;
+            for (;;) {
+                char response[16];
+                printf("User directory '%s' does not exist. Create it? (y/n): ", username);
+                if (fgets(response, sizeof(response), stdin) == NULL) {
+                    return;
+                }
+
+                size_t len = strcspn(response, "\n");
+                response[len] = '\0';
+
+                size_t pos = 0;
+                while (response[pos] == ' ' || response[pos] == '\t') {
+                    pos++;
+                }
+
+                if (response[pos] == 'y' || response[pos] == 'Y') {
+                    create_dir = 1;
+                    break;
+                }
+                if (response[pos] == 'n' || response[pos] == 'N') {
+                    create_dir = 0;
+                    break;
+                }
+
+                printf("Please answer 'y' or 'n'.\n");
+            }
+
+            if (!create_dir) {
+                continue;
+            }
+
+            if (mkdir(new_path, 0775) != 0 && errno != EEXIST) {
+                perror("mkdir");
+                printf("Unable to create directory %s\n", new_path);
+                continue;
+            }
+        }
+
+        if (chdir(new_path) != 0) {
+            perror("chdir");
+            printf("Unable to change directory to %s\n", new_path);
+            continue;
+        }
+
+        printf("Login successful. Welcome, %s!\n", username);
+        break;
     }
 
-    if (mkdir(new_path, 0775) != 0 && errno != EEXIST) {
-        perror("mkdir");
-        printf("Unable to create directory %s\n", new_path);
-        return;
-    }
-
-    // Attempt to change the current working directory.
-    if (chdir(new_path) != 0) {
-        perror("chdir");
-        printf("Unable to change directory to %s\n", new_path);
-    } else {
-        //printf("Current directory changed to %s\n", new_path);
-    }
 }
 
 /* say: speak the given text via espeak if available.

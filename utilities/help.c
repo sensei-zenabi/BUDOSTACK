@@ -130,6 +130,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("/* BUDOSTACK Example TASK Programs */\n");
     printf("\n");
+    printf("  autoexec.task        : Determines what happens before BUDOSTACK login screen\n");
     printf("  runtask demo.task    : TASK language demo\n");
     printf("  runtask screen.task  : Screen calibration TASK\n");
     printf("\n");

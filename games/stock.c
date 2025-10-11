@@ -15,6 +15,7 @@
 #define MAX_INPUT 128
 #define TIP_HISTORY_WINDOW 8
 #define SAVE_FILE "stockmanager.sav"
+#define INITIAL_HISTORY_DAYS 14
 
 typedef struct {
     char symbol[6];
@@ -133,16 +134,40 @@ static void format_date(int day_index, char *out, size_t out_size) {
     snprintf(out, out_size, "%04d-%02d-%02d", year, month + 1, day);
 }
 
+static double seasonal_component(const Stock *stock, int day_index);
+static double gaussian_noise(GameState *state, double scale);
+
+static void seed_stock_history(Stock *stock, GameState *state, int warmup_days) {
+    if(warmup_days < 1)
+        warmup_days = 1;
+    if(warmup_days >= MAX_DAYS)
+        warmup_days = MAX_DAYS - 1;
+    int start_day = -warmup_days;
+    double initial_variation = (lcg_rand(state) - 0.5) * 2.0 * stock->def.volatility;
+    double price = stock->def.base_price * (1.0 + initial_variation);
+    if(price < 1.0)
+        price = stock->def.base_price * 0.6;
+    stock->history_len = 0;
+    for(int day = start_day; day <= 0 && stock->history_len < MAX_DAYS; ++day) {
+        if(day > start_day) {
+            double drift = stock->def.growth_bias;
+            double seasonal = seasonal_component(stock, day);
+            double noise = gaussian_noise(state, stock->def.volatility * 0.9);
+            double change = drift + seasonal + noise;
+            change = clamp(change, -0.18, 0.18);
+            price *= 1.0 + change;
+            if(price < 0.5)
+                price = 0.5;
+        }
+        stock->price_history[stock->history_len++] = price;
+    }
+}
+
 static void initialise_stock(Stock *stock, const StockDefinition *def, GameState *state) {
     stock->def = *def;
-    stock->history_len = 0;
     stock->shares_owned = 0;
     stock->avg_cost_basis = 0.0;
-    double initial_variation = (lcg_rand(state) - 0.5) * 2.0 * stock->def.volatility;
-    double initial_price = stock->def.base_price * (1.0 + initial_variation);
-    if(initial_price < 1.0)
-        initial_price = stock->def.base_price * 0.6;
-    stock->price_history[stock->history_len++] = initial_price;
+    seed_stock_history(stock, state, INITIAL_HISTORY_DAYS);
 }
 
 static void reset_game(GameState *state, Stock *stocks, size_t stock_count) {
@@ -309,7 +334,7 @@ static double portfolio_value(const Stock *stocks, size_t stock_count) {
 }
 
 static void sparkline(const Stock *stock, char *out, size_t out_size, size_t window) {
-    const char gradient[] = " .:-=+*#%@";
+    const char gradient[] = ".:-=+*#%@";
     size_t grad_len = strlen(gradient) - 1;
     if(window == 0 || out_size == 0) {
         if(out_size > 0)

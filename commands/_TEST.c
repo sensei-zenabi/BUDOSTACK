@@ -5,6 +5,7 @@
 
 #define TARGET_COLS 118
 #define TARGET_ROWS 66
+#define TEXT_BAR_ROWS 2
 
 int main() {
     struct winsize w;
@@ -29,12 +30,26 @@ int main() {
     // Clear the screen
     printf("\033[2J\033[H");
 
-    // Print 66 rows of 117 dots
-    for (int r = 0; r < TARGET_ROWS; r++) {
-        for (int c = 0; c < TARGET_COLS - 1; c++) { // 117 columns
-            printf(".");
+    const int grid_rows = TARGET_ROWS - TEXT_BAR_ROWS;
+    const int content_rows = grid_rows > 0 ? grid_rows - 1 : 0;
+
+    for (int r = 0; r < content_rows; r++) {
+        char row_digit = (char)('0' + (r % 10));
+        putchar(row_digit);
+        for (int c = 1; c < TARGET_COLS; c++) {
+            putchar('.');
         }
-        printf("\n");
+        putchar('\n');
+    }
+
+    if (grid_rows > 0) {
+        char bottom_row_digit = (char)('0' + ((grid_rows - 1) % 10));
+        putchar(bottom_row_digit);
+        for (int c = 1; c < TARGET_COLS; c++) {
+            char col_digit = (char)('0' + ((c - 1) % 10));
+            putchar(col_digit);
+        }
+        putchar('\n');
     }
 
     // Print terminal size info on the next line (row 67)
@@ -43,4 +58,3 @@ int main() {
 
     return 0;
 }
-

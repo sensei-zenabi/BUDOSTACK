@@ -18,6 +18,9 @@ int main(int argc, char *argv[]) {
     printf("Contact email:   budostack@gmail.com\n");
     printf("License:         GPLv2\n");
     printf("\n");
+    printf("  You can use, modify, and sell GPLv2 software freely, but if you distribute\n");
+    printf("  it, you must provide the source code and keep it under the same license.\n");
+    printf("\n");
     printf("Note! Setting up BUDOSTACK for your console:\n");
     printf("\n");
     printf("      1. Take into use the font: ModernDOS8x8.ttf installed by setup.sh\n");

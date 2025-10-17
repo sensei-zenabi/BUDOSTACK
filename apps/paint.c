@@ -1,7 +1,7 @@
 /*
  * paint.c — keyboard-only terminal pixel editor (ASCII), single-file C
  * Features:
- *  - New / Load / Save (BMP 24-bit uncompressed; optional PPM P6)
+ *  - New / Load / Save (BMP 24-bit uncompressed, PNG, optional PPM P6)
  *  - Undo (Ctrl+Z), Redo (Ctrl+Y)
  *  - Arrow-keys move cursor, auto-scrolling viewport
  *  - A–Z paints with 26-color palette; Backspace/Delete erases
@@ -14,7 +14,7 @@
  * Run:     ./paint
  *
  * Notes:
- *  - PNG is not implemented (needs external libs). Use BMP or PPM.
+ *  - PNG reader/writer supports 8-bit RGB, non-interlaced images.
  *  - BMP reader/writer supports 24-bit uncompressed, bottom-up, BI_RGB.
  *  - ASCII display prints the letter for the color; '.' means empty.
  *  - If your terminal supports 256 colors, colors are hinted via ANSI.
@@ -38,6 +38,7 @@
 #include <time.h>
 #include <poll.h>
 #include <math.h>
+#include <limits.h>
 
 #define MAX_W 320
 #define MAX_H 200
@@ -389,6 +390,178 @@ typedef struct {
 } BMPINFOHEADER;
 #pragma pack(pop)
 
+static uint8_t nearest_palette_index(uint8_t r, uint8_t g, uint8_t b) {
+    int best = 0;
+    int bestd = INT_MAX;
+    for (int i = 0; i < TOTAL_COLORS; i++) {
+        const Color *c = color_from_index((uint8_t)i);
+        if (!c) continue;
+        int dr = (int)r - (int)c->r;
+        int dg = (int)g - (int)c->g;
+        int db = (int)b - (int)c->b;
+        int d = dr * dr + dg * dg + db * db;
+        if (d < bestd) {
+            bestd = d;
+            best = i;
+        }
+    }
+    return (uint8_t)best;
+}
+
+static uint32_t crc32_update(uint32_t crc, const uint8_t *data, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (int bit = 0; bit < 8; bit++) {
+            if (crc & 1U) {
+                crc = (crc >> 1) ^ 0xEDB88320U;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    return crc;
+}
+
+static uint32_t crc32_chunk(const uint8_t type[4], const uint8_t *data, size_t len) {
+    uint32_t crc = crc32_update(0xFFFFFFFFU, type, 4);
+    if (len > 0 && data) {
+        crc = crc32_update(crc, data, len);
+    }
+    return crc ^ 0xFFFFFFFFU;
+}
+
+static uint32_t adler32(const uint8_t *data, size_t len) {
+    const uint32_t MOD = 65521U;
+    uint32_t s1 = 1U;
+    uint32_t s2 = 0U;
+    const uint8_t *p = data;
+    size_t remaining = len;
+    while (remaining > 0) {
+        size_t block = remaining > 5552U ? 5552U : remaining;
+        remaining -= block;
+        for (size_t i = 0; i < block; i++) {
+            s1 += p[i];
+            if (s1 >= MOD) s1 -= MOD;
+            s2 += s1;
+            if (s2 >= MOD) s2 -= MOD;
+        }
+        p += block;
+    }
+    return (s2 << 16) | s1;
+}
+
+static int write_u32_be(FILE *f, uint32_t v) {
+    uint8_t buf[4];
+    buf[0] = (uint8_t)((v >> 24) & 0xFFU);
+    buf[1] = (uint8_t)((v >> 16) & 0xFFU);
+    buf[2] = (uint8_t)((v >> 8) & 0xFFU);
+    buf[3] = (uint8_t)(v & 0xFFU);
+    if (fwrite(buf, 1, 4, f) != 4) return -1;
+    return 0;
+}
+
+static int write_chunk(FILE *f, const char type[4], const uint8_t *data, size_t len) {
+    if (len > UINT32_MAX) return -1;
+    uint8_t type_bytes[4];
+    for (int i = 0; i < 4; i++) type_bytes[i] = (uint8_t)type[i];
+    if (write_u32_be(f, (uint32_t)len) != 0) return -1;
+    if (fwrite(type_bytes, 1, 4, f) != 4) return -1;
+    if (len > 0 && data) {
+        if (fwrite(data, 1, len, f) != len) return -1;
+    }
+    uint32_t crc = crc32_chunk(type_bytes, data, len);
+    if (write_u32_be(f, crc) != 0) return -1;
+    return 0;
+}
+
+static int make_zlib_stored(const uint8_t *data, size_t len, uint8_t **out_buf, size_t *out_len) {
+    size_t blocks = len / 65535U + 1U;
+    size_t alloc = 2U + blocks * 5U + len + 4U;
+    uint8_t *buf = malloc(alloc);
+    if (!buf) return -1;
+    buf[0] = 0x78U;
+    buf[1] = 0x01U;
+    size_t pos = 2U;
+    if (len == 0) {
+        buf[pos++] = 1U;
+        buf[pos++] = 0U;
+        buf[pos++] = 0U;
+        buf[pos++] = 0xFFU;
+        buf[pos++] = 0xFFU;
+    } else {
+        size_t remaining = len;
+        size_t offset = 0U;
+        while (remaining > 0) {
+            size_t chunk = remaining > 65535U ? 65535U : remaining;
+            remaining -= chunk;
+            uint8_t final = remaining == 0 ? 1U : 0U;
+            buf[pos++] = final;
+            uint16_t l = (uint16_t)chunk;
+            buf[pos++] = (uint8_t)(l & 0xFFU);
+            buf[pos++] = (uint8_t)(l >> 8);
+            uint16_t nl = (uint16_t)(~l);
+            buf[pos++] = (uint8_t)(nl & 0xFFU);
+            buf[pos++] = (uint8_t)(nl >> 8);
+            memcpy(&buf[pos], data + offset, chunk);
+            pos += chunk;
+            offset += chunk;
+        }
+    }
+    uint32_t ad = adler32(data, len);
+    buf[pos++] = (uint8_t)((ad >> 24) & 0xFFU);
+    buf[pos++] = (uint8_t)((ad >> 16) & 0xFFU);
+    buf[pos++] = (uint8_t)((ad >> 8) & 0xFFU);
+    buf[pos++] = (uint8_t)(ad & 0xFFU);
+    *out_buf = buf;
+    *out_len = pos;
+    return 0;
+}
+
+static int zlib_decompress_stored(const uint8_t *data, size_t len, uint8_t *out, size_t expected_len) {
+    if (len < 6) return -1;
+    uint8_t cmf = data[0];
+    uint8_t flg = data[1];
+    if ((cmf & 0x0F) != 8U) return -1;
+    if (((cmf >> 4) & 0x0F) > 7U) return -1;
+    uint16_t check = (uint16_t)((cmf << 8) | flg);
+    if (check % 31U != 0U) return -1;
+    if (flg & 0x20U) return -1;
+    size_t pos = 2U;
+    size_t out_pos = 0U;
+    int final_seen = 0;
+    while (pos < len - 4U) {
+        uint8_t header = data[pos++];
+        uint8_t bfinal = header & 1U;
+        uint8_t btype = (header >> 1) & 0x03U;
+        if (btype != 0U) return -1;
+        if (header != bfinal) return -1;
+        if (pos + 4U > len) return -1;
+        uint16_t l = (uint16_t)(data[pos] | ((uint16_t)data[pos + 1] << 8));
+        uint16_t nl = (uint16_t)(data[pos + 2] | ((uint16_t)data[pos + 3] << 8));
+        if ((uint16_t)(l ^ nl) != 0xFFFFU) return -1;
+        pos += 4U;
+        if (pos + l > len) return -1;
+        if (out_pos + l > expected_len) return -1;
+        memcpy(out + out_pos, data + pos, l);
+        out_pos += l;
+        pos += l;
+        if (bfinal) {
+            final_seen = 1;
+            break;
+        }
+    }
+    if (!final_seen) return -1;
+    if (len - pos != 4U) return -1;
+    uint32_t stored_adler = ((uint32_t)data[pos] << 24) |
+                            ((uint32_t)data[pos + 1] << 16) |
+                            ((uint32_t)data[pos + 2] << 8) |
+                            (uint32_t)data[pos + 3];
+    uint32_t computed_adler = adler32(out, out_pos);
+    if (stored_adler != computed_adler) return -1;
+    if (out_pos != expected_len) return -1;
+    return 0;
+}
+
 static int save_ppm(const char *path){
     init_palettes();
     FILE *f = fopen(path, "wb");
@@ -458,9 +631,87 @@ static int save_bmp(const char *path){
     return 0;
 }
 
+static int save_png(const char *path){
+    init_palettes();
+    FILE *f = fopen(path, "wb");
+    if (!f) return -1;
+    static const uint8_t signature[8] = {137U, 80U, 78U, 71U, 13U, 10U, 26U, 10U};
+    if (fwrite(signature, 1, sizeof(signature), f) != sizeof(signature)) {
+        fclose(f);
+        return -1;
+    }
+
+    uint32_t width = (uint32_t)img_w;
+    uint32_t height = (uint32_t)img_h;
+    uint8_t ihdr[13];
+    ihdr[0] = (uint8_t)((width >> 24) & 0xFFU);
+    ihdr[1] = (uint8_t)((width >> 16) & 0xFFU);
+    ihdr[2] = (uint8_t)((width >> 8) & 0xFFU);
+    ihdr[3] = (uint8_t)(width & 0xFFU);
+    ihdr[4] = (uint8_t)((height >> 24) & 0xFFU);
+    ihdr[5] = (uint8_t)((height >> 16) & 0xFFU);
+    ihdr[6] = (uint8_t)((height >> 8) & 0xFFU);
+    ihdr[7] = (uint8_t)(height & 0xFFU);
+    ihdr[8] = 8U;  // bit depth
+    ihdr[9] = 2U;  // color type RGB
+    ihdr[10] = 0U; // compression method
+    ihdr[11] = 0U; // filter method
+    ihdr[12] = 0U; // interlace method
+    if (write_chunk(f, "IHDR", ihdr, sizeof(ihdr)) != 0) {
+        fclose(f);
+        return -1;
+    }
+
+    size_t row_size = (size_t)img_w * 3U + 1U;
+    size_t raw_size = row_size * (size_t)img_h;
+    uint8_t *raw = malloc(raw_size);
+    if (!raw && raw_size > 0) {
+        fclose(f);
+        return -1;
+    }
+    for (int y = 0; y < img_h; y++) {
+        uint8_t *row = raw + (size_t)y * row_size;
+        row[0] = 0U; // filter type 0
+        for (int x = 0; x < img_w; x++) {
+            uint8_t idx = pixels[y * img_w + x];
+            uint8_t r = 0U, g = 0U, b = 0U;
+            if (idx != EMPTY) {
+                const Color *c = color_from_index(idx);
+                if (c) { r = c->r; g = c->g; b = c->b; }
+            }
+            size_t base = 1U + (size_t)x * 3U;
+            row[base] = r;
+            row[base + 1U] = g;
+            row[base + 2U] = b;
+        }
+    }
+
+    uint8_t *zbuf = NULL;
+    size_t zlen = 0;
+    int rc = make_zlib_stored(raw, raw_size, &zbuf, &zlen);
+    free(raw);
+    if (rc != 0) {
+        fclose(f);
+        return -1;
+    }
+    if (write_chunk(f, "IDAT", zbuf, zlen) != 0) {
+        free(zbuf);
+        fclose(f);
+        return -1;
+    }
+    free(zbuf);
+    if (write_chunk(f, "IEND", NULL, 0) != 0) {
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+    return 0;
+}
+
 static int save_image(const char *path){
     size_t n = strlen(path);
     if (n>=4 && strcasecmp(path+n-4, ".bmp")==0) return save_bmp(path);
+    if (n>=4 && strcasecmp(path+n-4, ".png")==0) return save_png(path);
     if (n>=4 && strcasecmp(path+n-4, ".ppm")==0) return save_ppm(path);
     // default to BMP if unknown extension
     return save_bmp(path);
@@ -491,20 +742,7 @@ static int load_bmp(const char *path){
         for (int x = 0; x < w; x++) {
             int b = fgetc(f), g = fgetc(f), r = fgetc(f);
             if (b==EOF || g==EOF || r==EOF) { fclose(f); return -1; }
-            // Map to nearest palette index
-            int best = -1;
-            int bestd = 1<<30;
-            for (int i=0;i<TOTAL_COLORS;i++){
-                const Color *c = color_from_index((uint8_t)i);
-                if (!c) continue;
-                int dr = (int)r - (int)c->r;
-                int dg = (int)g - (int)c->g;
-                int db = (int)b - (int)c->b;
-                int d = dr*dr + dg*dg + db*db;
-                if (d < bestd) { bestd = d; best = i; }
-            }
-            if (best < 0) best = 0;
-            pixels[y*w + x] = (uint8_t)best;
+            pixels[y*w + x] = nearest_palette_index((uint8_t)r, (uint8_t)g, (uint8_t)b);
         }
         for (int p=0;p<padding;p++) fgetc(f);
     }
@@ -514,6 +752,159 @@ static int load_bmp(const char *path){
     undo_top = redo_top = 0;
     dirty = 0;
     return 0;
+}
+
+static int load_png(const char *path){
+    init_palettes();
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    static const uint8_t signature[8] = {137U, 80U, 78U, 71U, 13U, 10U, 26U, 10U};
+    uint8_t sig[8];
+    if (fread(sig, 1, sizeof(sig), f) != sizeof(sig)) {
+        fclose(f);
+        return -1;
+    }
+    if (memcmp(sig, signature, sizeof(sig)) != 0) {
+        fclose(f);
+        return -1;
+    }
+
+    uint8_t *idat = NULL;
+    size_t idat_size = 0;
+    uint8_t *raw = NULL;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint8_t bit_depth = 0;
+    uint8_t color_type = 0;
+    uint8_t compression = 0;
+    uint8_t filter = 0;
+    uint8_t interlace = 0;
+    int saw_ihdr = 0;
+    int saw_idat = 0;
+    int saw_iend = 0;
+
+    while (!saw_iend) {
+        uint8_t lenbuf[4];
+        if (fread(lenbuf, 1, 4, f) != 4) {
+            goto png_fail;
+        }
+        uint32_t length = ((uint32_t)lenbuf[0] << 24) |
+                          ((uint32_t)lenbuf[1] << 16) |
+                          ((uint32_t)lenbuf[2] << 8) |
+                          (uint32_t)lenbuf[3];
+        uint8_t typebuf[4];
+        if (fread(typebuf, 1, 4, f) != 4) goto png_fail;
+        uint8_t *chunk_data = NULL;
+        if (length > 0) {
+            chunk_data = malloc(length);
+            if (!chunk_data) goto png_fail;
+            if (fread(chunk_data, 1, length, f) != length) {
+                free(chunk_data);
+                goto png_fail;
+            }
+        }
+        uint8_t crcbuf[4];
+        if (fread(crcbuf, 1, 4, f) != 4) {
+            free(chunk_data);
+            goto png_fail;
+        }
+        uint32_t stored_crc = ((uint32_t)crcbuf[0] << 24) |
+                              ((uint32_t)crcbuf[1] << 16) |
+                              ((uint32_t)crcbuf[2] << 8) |
+                              (uint32_t)crcbuf[3];
+        uint32_t crc = crc32_chunk(typebuf, chunk_data, length);
+        if (crc != stored_crc) {
+            free(chunk_data);
+            goto png_fail;
+        }
+
+        if (memcmp(typebuf, "IHDR", 4) == 0) {
+            if (length != 13 || saw_ihdr) {
+                free(chunk_data);
+                goto png_fail;
+            }
+            width = ((uint32_t)chunk_data[0] << 24) |
+                    ((uint32_t)chunk_data[1] << 16) |
+                    ((uint32_t)chunk_data[2] << 8) |
+                    (uint32_t)chunk_data[3];
+            height = ((uint32_t)chunk_data[4] << 24) |
+                     ((uint32_t)chunk_data[5] << 16) |
+                     ((uint32_t)chunk_data[6] << 8) |
+                     (uint32_t)chunk_data[7];
+            bit_depth = chunk_data[8];
+            color_type = chunk_data[9];
+            compression = chunk_data[10];
+            filter = chunk_data[11];
+            interlace = chunk_data[12];
+            saw_ihdr = 1;
+        } else if (memcmp(typebuf, "IDAT", 4) == 0) {
+            if (!saw_ihdr) {
+                free(chunk_data);
+                goto png_fail;
+            }
+            if (length > 0) {
+                uint8_t *newbuf = realloc(idat, idat_size + length);
+                if (!newbuf) {
+                    free(chunk_data);
+                    goto png_fail;
+                }
+                idat = newbuf;
+                memcpy(idat + idat_size, chunk_data, length);
+                idat_size += length;
+            }
+            saw_idat = 1;
+        } else if (memcmp(typebuf, "IEND", 4) == 0) {
+            saw_iend = 1;
+        }
+        free(chunk_data);
+    }
+
+    if (!saw_ihdr || !saw_idat || !saw_iend) goto png_fail;
+    if (idat_size == 0) goto png_fail;
+    if (width == 0 || height == 0 || width > (uint32_t)MAX_W || height > (uint32_t)MAX_H) goto png_fail;
+    if (bit_depth != 8 || color_type != 2 || compression != 0 || filter != 0 || interlace != 0) goto png_fail;
+
+    size_t row_size = (size_t)width * 3U + 1U;
+    size_t expected = row_size * (size_t)height;
+    raw = malloc(expected);
+    if (!raw) goto png_fail;
+    if (zlib_decompress_stored(idat, idat_size, raw, expected) != 0) goto png_fail;
+
+    for (uint32_t y = 0; y < height; y++) {
+        const uint8_t *row = raw + (size_t)y * row_size;
+        if (row[0] != 0U) goto png_fail;
+        const uint8_t *src = row + 1U;
+        for (uint32_t x = 0; x < width; x++) {
+            uint8_t r = src[x * 3U];
+            uint8_t g = src[x * 3U + 1U];
+            uint8_t b = src[x * 3U + 2U];
+            size_t dst = (size_t)y * (size_t)width + (size_t)x;
+            pixels[dst] = nearest_palette_index(r, g, b);
+        }
+    }
+
+    img_w = (int)width;
+    img_h = (int)height;
+    cursor_x = cursor_y = view_x = view_y = 0;
+    undo_top = redo_top = 0;
+    dirty = 0;
+    free(raw);
+    free(idat);
+    fclose(f);
+    return 0;
+
+png_fail:
+    free(raw);
+    free(idat);
+    fclose(f);
+    return -1;
+}
+
+static int load_image(const char *path){
+    size_t n = strlen(path);
+    if (n>=4 && strcasecmp(path+n-4, ".bmp")==0) return load_bmp(path);
+    if (n>=4 && strcasecmp(path+n-4, ".png")==0) return load_png(path);
+    return load_bmp(path);
 }
 
 /* -------- Input handling -------- */
@@ -1219,16 +1610,16 @@ static void resize_canvas_dialog(void){
 
 static void save_dialog(void){
     char path[512];
-    prompt("Save as (.bmp / .ppm): ", path, sizeof(path));
+    prompt("Save as (.bmp / .png / .ppm): ", path, sizeof(path));
     if (path[0]=='\0') return;
     if (save_image(path)==0) dirty=0;
 }
 
 static void load_dialog(void){
     char path[512];
-    prompt("Load BMP file: ", path, sizeof(path));
+    prompt("Load image (.bmp / .png): ", path, sizeof(path));
     if (path[0]=='\0') return;
-    if (load_bmp(path)!=0){
+    if (load_image(path)!=0){
         // message on status line briefly
     }
 }

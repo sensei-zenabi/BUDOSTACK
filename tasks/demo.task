@@ -5,34 +5,42 @@
 #   that has taken it's inspiration from languages like BASIC. The aim
 #   was to re-create the joy of simple proramming and easy automation
 #   without the need to learn modern software engineering jargon.
-#
-# ToDo:
-# - _GETCOL = gets cursor column number
-# - _GETROW = gets cursor row number
-# - Use above to move demos dynamically to correct position
 
 @START
 RUN cls
 
 # Initialize variables
+SET $SCREEN_HEIGHT = 0
+SET $SCREEN_WIDTH = 0
+SET $LOGO_X = 0
+SET $LOGO_Y = 0
 SET $VAR1 = "n"
 SET $VAR2 = 0
 SET $VAR3 = 0
 
+# Query screen width and height for later use
+RUN _GETHEIGHT to $SCREEN_HEIGHT
+RUN _GETWIDTH to $SCREEN_WIDTH
+RUN _CALC floor($SCREEN_WIDTH / 3.3) to $LOGO_X
+RUN _CALC floor($SCREEN_HEIGHT / 6.5) to $LOGO_Y
+PRINT $LOGO_X
+PRINT $LOGO_Y
+
 @PAGE1
-# Display budostacker
+# Display BUDOSTACK logo
 RUN cls
-RUN _IMAGE -x 0 -y 2 -file tasks/assets/budostacker.bmp
-RUN _TEXT -x 45 -y 65 -text "PRESS ANY KEY TO CONTINUE"
+RUN _IMAGE -x $LOGO_X -y $LOGO_Y -file ./icon.png
+RUN _TEXT -x 45 -y 65 -text "PRESS ANY KEY TO CONTINUE" -color 15
+# BUG: the text for some reason gets gray background??
 RUN _KEYS
 RUN cls
 
 @PAGE2
 # Display the start menu
-RUN _IMAGE -x 0 -y 0 -file tasks/assets/bg_blue.bmp
+RUN _RECT -x 0 -y 0 -width $SCREEN_WIDTH -height $SCREEN_HEIGHT -color 12 -fill on
+RUN _RECT -x 2 -y 2 -width $SCREEN_WIDTH-4 -height $SCREEN_HEIGHT-4 -color 15 -fill off
 RUN _BEEP -C6 -250
 @MENUSCREEN
-RUN _RECT -x 40 -y 4 -width 40 -height 3 -color 256
 RUN _TEXT -x 46 -y 5 -text TASK LANGUAGE DEMONSTRATION
 PRINT "\n\n\n"
 RUN _BAR -x 4 -y 8 -title Loading: -progress $VAR2 -color 256
@@ -77,7 +85,8 @@ IF $VAR3 > 58
 RUN _TEXT -x 4 -y 58 -text "Press SPACE to continue..."
 RUN _KEYS TO $VAR2
 IF $VAR2 == 4
-  RUN _IMAGE -x 0 -y 0 -file tasks/assets/bg_blue.bmp
+  RUN _RECT -x 0 -y 0 -width $SCREEN_WIDTH -height $SCREEN_HEIGHT -color 12 -fill on
+  RUN _RECT -x 2 -y 2 -width $SCREEN_WIDTH-4 -height $SCREEN_HEIGHT-4 -color 15 -fill off
   WAIT 1000
   
 @PAGE3  

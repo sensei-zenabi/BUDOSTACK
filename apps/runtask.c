@@ -1137,6 +1137,183 @@ static void free_argv(char **argv) {
     free(argv);
 }
 
+typedef struct {
+    const char *cursor;
+} InlineMathParser;
+
+static void inline_math_skip_ws(InlineMathParser *parser) {
+    if (!parser) {
+        return;
+    }
+    while (parser->cursor && isspace((unsigned char)*parser->cursor)) {
+        parser->cursor++;
+    }
+}
+
+static bool inline_math_parse_expression(InlineMathParser *parser, double *out);
+
+static bool inline_math_parse_number(InlineMathParser *parser, double *out) {
+    if (!parser || !out) {
+        return false;
+    }
+    inline_math_skip_ws(parser);
+    if (!parser->cursor) {
+        return false;
+    }
+    errno = 0;
+    char *endptr = NULL;
+    double value = strtod(parser->cursor, &endptr);
+    if (errno != 0 || endptr == parser->cursor) {
+        return false;
+    }
+    parser->cursor = endptr;
+    *out = value;
+    return true;
+}
+
+static bool inline_math_parse_factor(InlineMathParser *parser, double *out) {
+    if (!parser || !out) {
+        return false;
+    }
+    inline_math_skip_ws(parser);
+    if (!parser->cursor) {
+        return false;
+    }
+    char ch = *parser->cursor;
+    if (ch == '+') {
+        parser->cursor++;
+        return inline_math_parse_factor(parser, out);
+    }
+    if (ch == '-') {
+        parser->cursor++;
+        if (!inline_math_parse_factor(parser, out)) {
+            return false;
+        }
+        *out = -*out;
+        return true;
+    }
+    if (ch == '(') {
+        parser->cursor++;
+        if (!inline_math_parse_expression(parser, out)) {
+            return false;
+        }
+        inline_math_skip_ws(parser);
+        if (*parser->cursor != ')') {
+            return false;
+        }
+        parser->cursor++;
+        return true;
+    }
+    return inline_math_parse_number(parser, out);
+}
+
+static bool inline_math_parse_term(InlineMathParser *parser, double *out) {
+    if (!inline_math_parse_factor(parser, out)) {
+        return false;
+    }
+    while (1) {
+        inline_math_skip_ws(parser);
+        char op = *parser->cursor;
+        if (op != '*' && op != '/') {
+            break;
+        }
+        parser->cursor++;
+        double rhs = 0.0;
+        if (!inline_math_parse_factor(parser, &rhs)) {
+            return false;
+        }
+        if (op == '*') {
+            *out *= rhs;
+        } else {
+            if (rhs == 0.0) {
+                return false;
+            }
+            *out /= rhs;
+        }
+    }
+    return true;
+}
+
+static bool inline_math_parse_expression(InlineMathParser *parser, double *out) {
+    if (!inline_math_parse_term(parser, out)) {
+        return false;
+    }
+    while (1) {
+        inline_math_skip_ws(parser);
+        char op = *parser->cursor;
+        if (op != '+' && op != '-') {
+            break;
+        }
+        parser->cursor++;
+        double rhs = 0.0;
+        if (!inline_math_parse_term(parser, &rhs)) {
+            return false;
+        }
+        if (op == '+') {
+            *out += rhs;
+        } else {
+            *out -= rhs;
+        }
+    }
+    return true;
+}
+
+static bool inline_math_evaluate(const char *text, double *out) {
+    if (!text || !out) {
+        return false;
+    }
+    InlineMathParser parser = { .cursor = text };
+    if (!inline_math_parse_expression(&parser, out)) {
+        return false;
+    }
+    inline_math_skip_ws(&parser);
+    return *parser.cursor == '\0';
+}
+
+static bool looks_like_math_expression(const char *token) {
+    if (!token || !*token) {
+        return false;
+    }
+    bool has_digit = false;
+    bool has_operator = false;
+    for (const char *p = token; *p; ++p) {
+        unsigned char ch = (unsigned char)*p;
+        if (isdigit(ch)) {
+            has_digit = true;
+            continue;
+        }
+        if (ch == '+' || ch == '-' || ch == '*' || ch == '/') {
+            has_operator = true;
+            continue;
+        }
+        if (ch == '.' || ch == '(' || ch == ')' || isspace(ch)) {
+            continue;
+        }
+        return false;
+    }
+    return has_digit && has_operator;
+}
+
+static char *try_evaluate_math_token(const char *token) {
+    if (!looks_like_math_expression(token)) {
+        return NULL;
+    }
+    double value = 0.0;
+    if (!inline_math_evaluate(token, &value)) {
+        return NULL;
+    }
+    double integral_part = 0.0;
+    double fractional = modf(value, &integral_part);
+    if (fabs(fractional) < 1e-9 && integral_part >= (double)LLONG_MIN && integral_part <= (double)LLONG_MAX) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%lld", (long long)integral_part);
+        return xstrdup(buf);
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%.15g", value);
+    return xstrdup(buf);
+}
+
 static void append_chunk(char **buffer, size_t *length, size_t *capacity, const char *chunk, size_t chunk_len) {
     if (!chunk || chunk_len == 0) {
         return;
@@ -1246,6 +1423,11 @@ static void expand_argv_variables(char **argv, int argc, int line, int debug) {
             }
             free(argv[i]);
             argv[i] = result;
+            char *evaluated = try_evaluate_math_token(argv[i]);
+            if (evaluated) {
+                free(argv[i]);
+                argv[i] = evaluated;
+            }
         } else {
             free(result);
         }

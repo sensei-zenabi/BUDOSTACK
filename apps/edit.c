@@ -12,6 +12,7 @@
 #include <sys/ioctl.h>
 #include <sys/select.h>
 #include <string.h>
+#include <strings.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <time.h>
@@ -270,17 +271,24 @@ void update_syntax(void) {
     }
 }
 
-/* Returns nonzero if the current file is a C source file */
+/* Returns nonzero when the current file should use C-style highlighting.
+   Markdown files opt out and receive the generic highlighter. */
 int is_c_source(void) {
-    if (!E.filename) return 0;
+    if (!E.filename)
+        return 1;
+
     const char *ext = strrchr(E.filename, '.');
-    return (ext && ((strcmp(ext, ".c") == 0) || (strcmp(ext, ".h") == 0)));
+    if (!ext)
+        return 1;
+
+    if (strcasecmp(ext, ".md") == 0 || strcasecmp(ext, ".markdown") == 0)
+        return 0;
+
+    return 1;
 }
 
 int is_other_source(void) {
-    if (!E.filename) return 0;
-    const char *ext = strrchr(E.filename, '.');
-    return (ext && ((strcmp(ext, ".c") != 0) && (strcmp(ext, ".h") != 0)));
+    return !is_c_source();
 }
 
 int getRowNumWidth(void) {

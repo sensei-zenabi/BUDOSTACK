@@ -118,7 +118,7 @@ int main(int argc, char *argv[]) {
     printf("-----------------------------------------------------------------------------\n"); 
     printf("                              - BUILT-IN GAMES -\n");
     printf("\n");
-    printf("/* List of Games */\n");
+    printf("/* Built-In Games */\n");
     printf("\n");
     printf("  invaders : Space invaders clone tailored to terminal.\n");
     printf("  snake    : Snake clone, reminence from the good old Nokia days.\n");
@@ -129,7 +129,10 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("/* BUDOSTACK Developer Tools */\n");
     printf("\n");
-    printf("  compile  : Build a standalone binary from a TASK script. Type 'compile -help'.\n");
+    printf("  compile              : Build a standalone binary from a TASK script.\n"); 
+    printf("                         Type 'compile -help'.\n");
+    printf("  floppycheck          : 'floppycheck ./file or ./folder/' estimates how many\n");
+    printf("                         standard floppy disks the given content will take.\n");
     printf("\n");
     printf("/* BUDOSTACK Example TASK Programs */\n");
     printf("\n");

@@ -35,6 +35,7 @@
 #include <sys/wait.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <limits.h>   // PATH_MAX
 #include <math.h>
 
@@ -1136,30 +1137,118 @@ static void free_argv(char **argv) {
     free(argv);
 }
 
+static void append_chunk(char **buffer, size_t *length, size_t *capacity, const char *chunk, size_t chunk_len) {
+    if (!chunk || chunk_len == 0) {
+        return;
+    }
+
+    size_t needed = *length + chunk_len + 1;
+    if (*capacity < needed) {
+        size_t new_cap = (*capacity == 0) ? needed : *capacity;
+        while (new_cap < needed) {
+            if (new_cap > SIZE_MAX / 2) {
+                new_cap = needed;
+                break;
+            }
+            new_cap *= 2;
+        }
+        char *tmp = (char *)realloc(*buffer, new_cap);
+        if (!tmp) {
+            perror("realloc");
+            free(*buffer);
+            exit(EXIT_FAILURE);
+        }
+        *buffer = tmp;
+        *capacity = new_cap;
+    }
+    memcpy(*buffer + *length, chunk, chunk_len);
+    *length += chunk_len;
+    (*buffer)[*length] = '\0';
+}
+
 static void expand_argv_variables(char **argv, int argc, int line, int debug) {
     if (!argv) {
         return;
     }
     for (int i = 0; i < argc; ++i) {
         char *token = argv[i];
-        if (!token || token[0] != '$') {
+        if (!token) {
             continue;
         }
-        char name[64];
-        if (!parse_variable_name_token(token, name, sizeof(name))) {
-            if (debug) {
-                fprintf(stderr, "RUN: invalid variable reference '%s' at line %d\n", token, line);
+        if (!strchr(token, '$')) {
+            continue;
+        }
+
+        char *result = NULL;
+        size_t res_len = 0;
+        size_t res_cap = 0;
+        const char *cursor = token;
+        bool substituted = false;
+
+        while (*cursor) {
+            const char *dollar = strchr(cursor, '$');
+            if (!dollar) {
+                append_chunk(&result, &res_len, &res_cap, cursor, strlen(cursor));
+                break;
             }
-            continue;
+
+            append_chunk(&result, &res_len, &res_cap, cursor, (size_t)(dollar - cursor));
+
+            const char *name_start = dollar + 1;
+            if (*name_start == '\0') {
+                append_chunk(&result, &res_len, &res_cap, "$", 1);
+                cursor = name_start;
+                continue;
+            }
+
+            size_t name_len = 0;
+            while (isalnum((unsigned char)name_start[name_len]) || name_start[name_len] == '_') {
+                name_len++;
+            }
+
+            if (name_len == 0) {
+                if (debug) {
+                    fprintf(stderr, "RUN: invalid variable reference '%s' at line %d\n", token, line);
+                }
+                append_chunk(&result, &res_len, &res_cap, "$", 1);
+                cursor = name_start;
+                continue;
+            }
+
+            if (name_len >= sizeof(((Variable *)0)->name)) {
+                if (debug) {
+                    fprintf(stderr, "RUN: variable name too long in '%s' at line %d\n", token, line);
+                }
+                append_chunk(&result, &res_len, &res_cap, "$", 1);
+                cursor = name_start;
+                continue;
+            }
+
+            char name[sizeof(((Variable *)0)->name)];
+            memcpy(name, name_start, name_len);
+            name[name_len] = '\0';
+
+            Variable *var = find_variable(name, false);
+            Value value = variable_to_value(var);
+            char *replacement = value_to_string(&value);
+            if (!replacement) {
+                replacement = xstrdup("");
+            }
+            append_chunk(&result, &res_len, &res_cap, replacement, strlen(replacement));
+            free(replacement);
+            substituted = true;
+            cursor = name_start + name_len;
         }
-        Variable *var = find_variable(name, false);
-        Value value = variable_to_value(var);
-        char *replacement = value_to_string(&value);
-        if (!replacement) {
-            replacement = xstrdup("");
+
+        if (substituted) {
+            if (!result) {
+                result = xstrdup("");
+            }
+            free(argv[i]);
+            argv[i] = result;
+        } else {
+            free(result);
         }
-        free(argv[i]);
-        argv[i] = replacement;
     }
 }
 

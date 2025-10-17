@@ -12,6 +12,18 @@
 #include <strings.h>
 #include <stdarg.h>
 
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_NO_THREAD_LOCALS
+#include "stb_image.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
 typedef struct {
     uint8_t r;
     uint8_t g;
@@ -78,6 +90,28 @@ static void set_error(const char *fmt, ...) {
 
 const char *libimage_last_error(void) {
     return g_last_error;
+}
+
+static int has_extension(const char *path, const char *ext) {
+    if (path == NULL || ext == NULL) {
+        return 0;
+    }
+
+    size_t path_len = strlen(path);
+    size_t ext_len = strlen(ext);
+    if (ext_len == 0 || path_len < ext_len) {
+        return 0;
+    }
+
+    const char *path_ext = path + path_len - ext_len;
+    for (size_t i = 0; i < ext_len; ++i) {
+        unsigned char path_ch = (unsigned char)path_ext[i];
+        unsigned char ext_ch = (unsigned char)ext[i];
+        if (tolower(path_ch) != tolower(ext_ch)) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static uint8_t clamp_u8(int v) {
@@ -547,6 +581,109 @@ static LibImageResult render_ppm(const char *path, int origin_x, int origin_y) {
     return LIBIMAGE_SUCCESS;
 }
 
+static LibImageResult render_png(const char *path, int origin_x, int origin_y) {
+    if (!has_extension(path, ".png")) {
+        return LIBIMAGE_UNSUPPORTED_FORMAT;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (fp == NULL) {
+        set_error("Unable to open '%s': %s", path, strerror(errno));
+        return LIBIMAGE_IO_ERROR;
+    }
+
+    unsigned char signature[8];
+    size_t sig_read = fread(signature, 1, sizeof(signature), fp);
+    int read_error = ferror(fp);
+    fclose(fp);
+
+    if (sig_read < sizeof(signature) || read_error != 0) {
+        if (read_error != 0) {
+            set_error("Failed to read PNG header from '%s': %s", path, strerror(errno));
+        } else {
+            set_error("PNG file '%s' is too short", path);
+        }
+        return LIBIMAGE_DATA_ERROR;
+    }
+
+    static const unsigned char expected_signature[8] = {
+        0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'
+    };
+    if (memcmp(signature, expected_signature, sizeof(expected_signature)) != 0) {
+        return LIBIMAGE_UNSUPPORTED_FORMAT;
+    }
+
+    int width = 0;
+    int height = 0;
+    stbi_uc *raw = stbi_load(path, &width, &height, NULL, 4);
+    if (raw == NULL) {
+        const char *reason = stbi_failure_reason();
+        if (reason != NULL && reason[0] != '\0') {
+            set_error("Failed to decode PNG '%s': %s", path, reason);
+        } else {
+            set_error("Failed to decode PNG '%s'", path);
+        }
+        return LIBIMAGE_DATA_ERROR;
+    }
+
+    if (width <= 0 || height <= 0) {
+        stbi_image_free(raw);
+        set_error("Invalid PNG dimensions in '%s'", path);
+        return LIBIMAGE_DATA_ERROR;
+    }
+
+    if (origin_x > INT_MAX - width || origin_y > INT_MAX - height) {
+        stbi_image_free(raw);
+        set_error("Image dimensions exceed terminal limits");
+        return LIBIMAGE_INVALID_ARGUMENT;
+    }
+
+    size_t width_sz = (size_t)width;
+    size_t height_sz = (size_t)height;
+    if (width_sz != 0 && height_sz > SIZE_MAX / width_sz) {
+        stbi_image_free(raw);
+        set_error("PNG dimensions overflow in '%s'", path);
+        return LIBIMAGE_DATA_ERROR;
+    }
+
+    size_t pixel_count = width_sz * height_sz;
+    if (pixel_count > SIZE_MAX / sizeof(Pixel)) {
+        stbi_image_free(raw);
+        set_error("PNG image too large in '%s'", path);
+        return LIBIMAGE_OUT_OF_MEMORY;
+    }
+
+    Pixel *pixels = malloc(pixel_count * sizeof(*pixels));
+    if (pixels == NULL) {
+        stbi_image_free(raw);
+        set_error("Failed to allocate memory for PNG '%s'", path);
+        return LIBIMAGE_OUT_OF_MEMORY;
+    }
+
+    for (size_t i = 0; i < pixel_count; ++i) {
+        size_t idx = i * 4U;
+        uint8_t r = raw[idx + 0];
+        uint8_t g = raw[idx + 1];
+        uint8_t b = raw[idx + 2];
+        uint8_t a = raw[idx + 3];
+        if (a < 255U) {
+            r = (uint8_t)((((uint32_t)r) * (uint32_t)a + 127U) / 255U);
+            g = (uint8_t)((((uint32_t)g) * (uint32_t)a + 127U) / 255U);
+            b = (uint8_t)((((uint32_t)b) * (uint32_t)a + 127U) / 255U);
+        }
+        pixels[i].r = r;
+        pixels[i].g = g;
+        pixels[i].b = b;
+    }
+
+    stbi_image_free(raw);
+
+    render_pixels_at(pixels, width, height, origin_x, origin_y);
+    free(pixels);
+    set_error(NULL);
+    return LIBIMAGE_SUCCESS;
+}
+
 LibImageResult libimage_render_file_at(const char *path, int origin_x, int origin_y) {
     if (path == NULL) {
         set_error("Image path is NULL");
@@ -557,7 +694,15 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return LIBIMAGE_INVALID_ARGUMENT;
     }
 
-    LibImageResult result = render_bmp(path, origin_x, origin_y);
+    LibImageResult result = render_png(path, origin_x, origin_y);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    result = render_bmp(path, origin_x, origin_y);
     if (result == LIBIMAGE_SUCCESS) {
         return LIBIMAGE_SUCCESS;
     }
@@ -573,6 +718,6 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return result;
     }
 
-    set_error("File '%s' is not a supported BMP or PPM image", path);
+    set_error("File '%s' is not a supported PNG, BMP, or PPM image", path);
     return LIBIMAGE_UNSUPPORTED_FORMAT;
 }

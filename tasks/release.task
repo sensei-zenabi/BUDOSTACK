@@ -5,7 +5,7 @@ SET $VERSION = 0
 RUN cls
 RUN _VERSION to $VERSION
 PRINT "\n\n============================ RELEASE NOTES v0.5.0 ===========================\n"
-PRINT "\nGit Repository: https://github.com/sensei-zenabi/BUDOSTACK.git\n"
+PRINT "\n Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git\n"
 PRINT "\n  Releance branch:         main"
 PRINT "\n  Release commit number:   " + $VERSION
 PRINT "\n"

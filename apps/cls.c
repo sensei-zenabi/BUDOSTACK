@@ -67,10 +67,13 @@ int main(void)
         }
     }
 
+    /* Clear the scrollback buffer so previous history is removed as well. */
+    printf("\033[3J");
+
     /* Restore the cursor visibility */
     printf("\033[?25h");
 
-    /* Optionally, move the cursor to home position */
+    /* Move the cursor to home position */
     printf("\033[H");
     fflush(stdout);
 

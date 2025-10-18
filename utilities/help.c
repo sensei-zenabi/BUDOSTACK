@@ -16,10 +16,10 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("Programmed by:   Ville Suoranta\n");
     printf("Contact email:   budostack@gmail.com\n");
-    printf("License:         GPLv2\n");
+    printf("License:         MIT\n");
     printf("\n");
-    printf("  You can use, modify, and sell GPLv2 software freely, but if you distribute\n");
-    printf("  it, you must provide the source code and keep it under the same license.\n");
+    printf("  You can use, modify, distribute, and even sell MIT-licensed software.\n");
+    printf("  Just include the copyright and license notice with any copies.\n");
     printf("\n");
     printf("Note! Setting up BUDOSTACK for your console:\n");
     printf("\n");

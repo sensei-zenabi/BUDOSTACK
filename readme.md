@@ -9,13 +9,16 @@ _Fun little nostalgic project to explore AI capabilities in producing
 code via e.g. CODEX github integration._
 
 ### Licence:
-BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 
-copyleft license, that allows you to:
+BUDOSTACK is distributed under the MIT License. This permissive licence allows
+you to:
 - Run the software for any purpose
 - Study and modify the source code
-- Redistribute copies, both original and modified, provided you will 
-distribute them under the same GPL-2.0 terms and include the source 
-code.
+- Redistribute copies, with or without modifications, provided you include the
+  original copyright and licence notice
+
+Bundled third-party assets retain their original licences:
+- `lib/stb_image.h` — public domain or MIT (per upstream licence header)
+- Fonts under `fonts/` — public domain (see `fonts/LICENSE.txt`)
 
 ## Description:
 A lightweight operating "layer" built atop POSIX-compliant Linux, 

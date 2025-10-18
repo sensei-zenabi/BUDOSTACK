@@ -1,7 +1,7 @@
 /*
  * paint.c — keyboard-only terminal pixel editor (ASCII), single-file C
  * Features:
- *  - New / Load / Save (BMP 24-bit uncompressed; optional PPM P6)
+ *  - New / Load / Save (PNG with transparency, BMP 24-bit uncompressed; optional PPM P6)
  *  - Undo (Ctrl+Z), Redo (Ctrl+Y)
  *  - Arrow-keys move cursor, auto-scrolling viewport
  *  - A–Z paints with 26-color palette; Backspace/Delete erases
@@ -14,7 +14,6 @@
  * Run:     ./paint
  *
  * Notes:
- *  - PNG is not implemented (needs external libs). Use BMP or PPM.
  *  - BMP reader/writer supports 24-bit uncompressed, bottom-up, BI_RGB.
  *  - ASCII display prints the letter for the color; '.' means empty.
  *  - If your terminal supports 256 colors, colors are hinted via ANSI.
@@ -38,6 +37,14 @@
 #include <time.h>
 #include <poll.h>
 #include <math.h>
+#include <limits.h>
+
+#define STBI_ONLY_PNG
+#include "../lib/stb_image.h"
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#define STBIW_ASSERT(x) ((void)0)
+#include "../lib/stb_image_write.h"
 
 #define MAX_W 320
 #define MAX_H 200
@@ -235,6 +242,26 @@ static inline const Color *color_from_index(uint8_t idx) {
     return color_from_variant(variant, color_index);
 }
 
+static uint8_t nearest_palette_index(uint8_t r, uint8_t g, uint8_t b) {
+    init_palettes();
+    int best_index = 0;
+    int best_dist = INT_MAX;
+    for (int i = 0; i < TOTAL_COLORS; i++) {
+        const Color *c = color_from_index((uint8_t)i);
+        if (!c) continue;
+        int dr = (int)r - (int)c->r;
+        int dg = (int)g - (int)c->g;
+        int db = (int)b - (int)c->b;
+        int dist = dr*dr + dg*dg + db*db;
+        if (dist < best_dist) {
+            best_dist = dist;
+            best_index = i;
+            if (dist == 0) break;
+        }
+    }
+    return (uint8_t)best_index;
+}
+
 static void set_current_palette_variant(int variant) {
     init_palettes();
     if (variant < 0) variant = 0;
@@ -409,6 +436,41 @@ static int save_ppm(const char *path){
     return 0;
 }
 
+static int save_png(const char *path){
+    init_palettes();
+    if (img_w <= 0 || img_h <= 0) return -1;
+    if ((size_t)img_w > SIZE_MAX / (size_t)img_h) return -1;
+    size_t total = (size_t)img_w * (size_t)img_h;
+    if (total > SIZE_MAX / 4U) return -1;
+    uint8_t *rgba = malloc(total * 4U);
+    if (!rgba) return -1;
+    for (int y = 0; y < img_h; y++) {
+        for (int x = 0; x < img_w; x++) {
+            size_t idx = (size_t)y * (size_t)img_w + (size_t)x;
+            size_t base = idx * 4U;
+            uint8_t cell = pixels[idx];
+            if (cell == EMPTY) {
+                rgba[base + 0] = 0;
+                rgba[base + 1] = 0;
+                rgba[base + 2] = 0;
+                rgba[base + 3] = 0;
+            } else {
+                const Color *c = color_from_index(cell);
+                uint8_t r = 0, g = 0, b = 0;
+                if (c) { r = c->r; g = c->g; b = c->b; }
+                rgba[base + 0] = r;
+                rgba[base + 1] = g;
+                rgba[base + 2] = b;
+                rgba[base + 3] = 255;
+            }
+        }
+    }
+    int stride = img_w * 4;
+    int ok = stbi_write_png(path, img_w, img_h, 4, rgba, stride);
+    free(rgba);
+    return ok ? 0 : -1;
+}
+
 static int save_bmp(const char *path){
     init_palettes();
     FILE *f = fopen(path, "wb");
@@ -460,6 +522,7 @@ static int save_bmp(const char *path){
 
 static int save_image(const char *path){
     size_t n = strlen(path);
+    if (n>=4 && strcasecmp(path+n-4, ".png")==0) return save_png(path);
     if (n>=4 && strcasecmp(path+n-4, ".bmp")==0) return save_bmp(path);
     if (n>=4 && strcasecmp(path+n-4, ".ppm")==0) return save_ppm(path);
     // default to BMP if unknown extension
@@ -486,25 +549,13 @@ static int load_bmp(const char *path){
     int row_bytes = w * 3;
     int padding = (4 - (row_bytes % 4)) & 3;
 
+    memset(pixels, EMPTY, sizeof(pixels));
     // Read bottom-up
     for (int y = h-1; y >= 0; y--) {
         for (int x = 0; x < w; x++) {
             int b = fgetc(f), g = fgetc(f), r = fgetc(f);
             if (b==EOF || g==EOF || r==EOF) { fclose(f); return -1; }
-            // Map to nearest palette index
-            int best = -1;
-            int bestd = 1<<30;
-            for (int i=0;i<TOTAL_COLORS;i++){
-                const Color *c = color_from_index((uint8_t)i);
-                if (!c) continue;
-                int dr = (int)r - (int)c->r;
-                int dg = (int)g - (int)c->g;
-                int db = (int)b - (int)c->b;
-                int d = dr*dr + dg*dg + db*db;
-                if (d < bestd) { bestd = d; best = i; }
-            }
-            if (best < 0) best = 0;
-            pixels[y*w + x] = (uint8_t)best;
+            pixels[y*w + x] = nearest_palette_index((uint8_t)r, (uint8_t)g, (uint8_t)b);
         }
         for (int p=0;p<padding;p++) fgetc(f);
     }
@@ -514,6 +565,59 @@ static int load_bmp(const char *path){
     undo_top = redo_top = 0;
     dirty = 0;
     return 0;
+}
+
+static int load_png(const char *path){
+    init_palettes();
+    int w = 0, h = 0, comp = 0;
+    unsigned char *data = stbi_load(path, &w, &h, &comp, 4);
+    if (!data) return -1;
+    if (w <= 0 || h <= 0 || w > MAX_W || h > MAX_H) {
+        stbi_image_free(data);
+        return -1;
+    }
+    memset(pixels, EMPTY, sizeof(pixels));
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            size_t idx = (size_t)y * (size_t)w + (size_t)x;
+            size_t base = idx * 4U;
+            uint8_t r = data[base + 0];
+            uint8_t g = data[base + 1];
+            uint8_t b = data[base + 2];
+            uint8_t a = data[base + 3];
+            if (a == 0) {
+                pixels[y*w + x] = EMPTY;
+                continue;
+            }
+            if (a < 255) {
+                r = (uint8_t)((((uint32_t)r) * (uint32_t)a + 127U) / 255U);
+                g = (uint8_t)((((uint32_t)g) * (uint32_t)a + 127U) / 255U);
+                b = (uint8_t)((((uint32_t)b) * (uint32_t)a + 127U) / 255U);
+            }
+            pixels[y*w + x] = nearest_palette_index(r, g, b);
+        }
+    }
+    stbi_image_free(data);
+    img_w = w;
+    img_h = h;
+    cursor_x = cursor_y = view_x = view_y = 0;
+    undo_top = redo_top = 0;
+    dirty = 0;
+    return 0;
+}
+
+static int load_image(const char *path){
+    size_t n = strlen(path);
+    if (n >= 4 && strcasecmp(path+n-4, ".png") == 0) {
+        if (load_png(path) == 0) return 0;
+        return -1;
+    }
+    if (n >= 4 && strcasecmp(path+n-4, ".bmp") == 0) {
+        if (load_bmp(path) == 0) return 0;
+        return -1;
+    }
+    if (load_png(path) == 0) return 0;
+    return load_bmp(path);
 }
 
 /* -------- Input handling -------- */
@@ -1219,16 +1323,16 @@ static void resize_canvas_dialog(void){
 
 static void save_dialog(void){
     char path[512];
-    prompt("Save as (.bmp / .ppm): ", path, sizeof(path));
+    prompt("Save as (.png / .bmp / .ppm): ", path, sizeof(path));
     if (path[0]=='\0') return;
     if (save_image(path)==0) dirty=0;
 }
 
 static void load_dialog(void){
     char path[512];
-    prompt("Load BMP file: ", path, sizeof(path));
+    prompt("Load image (.png / .bmp): ", path, sizeof(path));
     if (path[0]=='\0') return;
-    if (load_bmp(path)!=0){
+    if (load_image(path)!=0){
         // message on status line briefly
     }
 }
@@ -1314,7 +1418,7 @@ int main(int argc, char **argv){
 
     int loaded_from_arg = 0;
     if (argc > 1) {
-        if (load_bmp(argv[1]) == 0) {
+        if (load_image(argv[1]) == 0) {
             loaded_from_arg = 1;
         } else {
             fprintf(stderr, "Failed to load image: %s\n", argv[1]);

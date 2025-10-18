@@ -28,6 +28,7 @@ typedef struct {
     uint8_t r;
     uint8_t g;
     uint8_t b;
+    uint8_t a;
 } Pixel;
 
 typedef struct {
@@ -256,6 +257,11 @@ static void render_pixels_at(const Pixel *pixels, int width, int height, int ori
 
         for (int x = 0; x < width; ++x) {
             const Pixel *p = &pixels[(size_t)y * (size_t)width + (size_t)x];
+            if (p->a < 16) {
+                fputs("\x1b[49m\x1b[39m ", stdout);
+                termbg_set(origin_x + x, origin_y + y, -1);
+                continue;
+            }
             int palette_index = best_palette_match(p->r, p->g, p->b);
             const Color *color = color_from_index(palette_index);
             if (color != NULL) {
@@ -395,6 +401,7 @@ static LibImageResult render_bmp(const char *path, int origin_x, int origin_y) {
             row[x].r = (uint8_t)r;
             row[x].g = (uint8_t)g;
             row[x].b = (uint8_t)b;
+            row[x].a = 255U;
         }
         for (size_t p = 0; p < padding; ++p) {
             if (fgetc(fp) == EOF) {
@@ -563,6 +570,7 @@ static LibImageResult render_ppm(const char *path, int origin_x, int origin_y) {
         pixels[i].r = raw[i * 3 + 0];
         pixels[i].g = raw[i * 3 + 1];
         pixels[i].b = raw[i * 3 + 2];
+        pixels[i].a = 255U;
     }
 
     free(raw);
@@ -674,6 +682,7 @@ static LibImageResult render_png(const char *path, int origin_x, int origin_y) {
         pixels[i].r = r;
         pixels[i].g = g;
         pixels[i].b = b;
+        pixels[i].a = a;
     }
 
     stbi_image_free(raw);

@@ -28,12 +28,13 @@ PACKAGE_MANAGER="apt-get install -y"
 
 # Array of packages to install. Extend this list as needed.
 PACKAGES=(
-	"gcc" 				# Mandatory: commands: 'restart', 'build', etc.
-	"build-essential"	# Mandatory: commands: 'restart', 'build', etc.
-    "curl"				# Optional: apps: 'news' / nodes: gui_webui
-    "git"				# Mandatory: general requirement
-    "zip"				# Mandatory: commands: unpack, pack
-    "espeak"			# Optional: Speech assist
+    "gcc"               # Mandatory: commands: 'restart', 'build', etc.
+    "build-essential"   # Mandatory: commands: 'restart', 'build', etc.
+    "curl"              # Optional: apps: 'news' / nodes: gui_webui
+    "git"               # Mandatory: general requirement
+    "zip"               # Mandatory: commands: unpack, pack
+    "libsdl2-dev"       # Mandatory: for sdl*.c based commands
+    "espeak"            # Optional: Speech assist
 )
 
 # Function: prompt_user
@@ -133,9 +134,9 @@ main() {
     echo "All requested packages have been processed."
         echo ""
         echo "Building BUDOSTACK..."
-	make clean
-	make
-	echo "BUDOSTACK setup finished successfully!"
+    make clean
+    make
+    echo "BUDOSTACK setup finished successfully!"
 }
 
 # Execute main if the script is run directly.

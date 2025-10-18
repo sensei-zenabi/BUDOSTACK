@@ -258,8 +258,18 @@ static void render_pixels_at(const Pixel *pixels, int width, int height, int ori
         for (int x = 0; x < width; ++x) {
             const Pixel *p = &pixels[(size_t)y * (size_t)width + (size_t)x];
             if (p->a < 16) {
-                fputs("\x1b[49m\x1b[39m ", stdout);
-                termbg_set(origin_x + x, origin_y + y, -1);
+                int bg_color = -1;
+                if (termbg_get(origin_x + x, origin_y + y, &bg_color) != 0 && bg_color >= 0) {
+                    char seq[32];
+                    int len = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", bg_color);
+                    if (len > 0) {
+                        fwrite(seq, 1, (size_t)len, stdout);
+                    }
+                    fputs("\x1b[39m ", stdout);
+                    fputs("\x1b[49m", stdout);
+                } else {
+                    fputs("\x1b[49m\x1b[39m ", stdout);
+                }
                 continue;
             }
             int palette_index = best_palette_match(p->r, p->g, p->b);

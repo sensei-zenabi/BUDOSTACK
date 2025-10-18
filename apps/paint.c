@@ -112,6 +112,18 @@ static int cursor_x = 0, cursor_y = 0;
 static int view_x = 0, view_y = 0;
 static int dirty = 0; // unsaved changes
 static int fill_color_pending = 0;
+static char current_file_path[512];
+
+static void set_current_file_path(const char *path) {
+    if (!path || !*path) {
+        current_file_path[0] = '\0';
+        return;
+    }
+    int written = snprintf(current_file_path, sizeof(current_file_path), "%s", path);
+    if (written < 0 || written >= (int)sizeof(current_file_path)) {
+        current_file_path[sizeof(current_file_path) - 1] = '\0';
+    }
+}
 
 // Forward declarations for functions defined later in the file
 static int paint_at_cursor(uint8_t color_idx);
@@ -1281,6 +1293,7 @@ static void new_image_dialog(void){
     cursor_x = cursor_y = view_x = view_y = 0;
     undo_top = redo_top = 0;
     dirty = 0;
+    set_current_file_path(NULL);
 }
 
 static void resize_canvas_dialog(void){
@@ -1322,10 +1335,20 @@ static void resize_canvas_dialog(void){
 }
 
 static void save_dialog(void){
+    if (current_file_path[0] != '\0') {
+        if (save_image(current_file_path) == 0) {
+            dirty = 0;
+        }
+        return;
+    }
+
     char path[512];
     prompt("Save as (.png / .bmp / .ppm): ", path, sizeof(path));
     if (path[0]=='\0') return;
-    if (save_image(path)==0) dirty=0;
+    if (save_image(path)==0) {
+        set_current_file_path(path);
+        dirty=0;
+    }
 }
 
 static void load_dialog(void){
@@ -1334,6 +1357,8 @@ static void load_dialog(void){
     if (path[0]=='\0') return;
     if (load_image(path)!=0){
         // message on status line briefly
+    } else {
+        set_current_file_path(path);
     }
 }
 
@@ -1420,6 +1445,7 @@ int main(int argc, char **argv){
     if (argc > 1) {
         if (load_image(argv[1]) == 0) {
             loaded_from_arg = 1;
+            set_current_file_path(argv[1]);
         } else {
             fprintf(stderr, "Failed to load image: %s\n", argv[1]);
         }

@@ -47,6 +47,7 @@ int main(int argc, char *argv[]) {
     printf("             Supported languages: C/C++, Markup\n");
     printf("  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n");
     printf("             Use 'restart -f' to clean before building.\n");
+    printf("  update   : Update your BUDOSTACK version automatically.\n");     
     printf("\n");
     printf("  Start BUDOSTACK faster: ./budostack -f | Start TASK: ./budostack mytask.task\n");
     printf("\n");
@@ -85,7 +86,6 @@ int main(int argc, char *argv[]) {
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
-    printf("  update   : Create an empty file or update its modification time.\n");  
     printf("  exit     : Exit BUDOSTACK.\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");

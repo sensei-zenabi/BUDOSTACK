@@ -1,0 +1,11 @@
+SET $HEIGHT = 0
+SET $WIDTH = 0
+
+RUN cls
+
+RUN _GETHEIGHT to $HEIGHT
+RUN _GETWIDTH to $WIDTH
+
+RUN _RECT -x 0 -y 0 -height $HEIGHT -width $WIDTH -fill on -color 12
+RUN _DISPLAY -x 10 -y 20 -file tasks/game/character.png
+RUN _DISPLAY -x 30 -y 20 -file tasks/game/door.png

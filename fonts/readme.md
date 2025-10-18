@@ -1,6 +1,3 @@
-The fonts in this folder are acquired from:
-https://www.seasip.info/Unix/PSF/Amstrad/index.html
+All fonts stored into this folder are either Public Domain or CC0.
 
-They are not part of the code that is licensed with GPL-2.0. Instead the website claims them to be example fonts from a Public Domain.
-
-The "public domain" LICENCE.txt file for the fonts can be found from the root of this folder.
+The exact details regarding licensing can be found from LICENSE.txt.

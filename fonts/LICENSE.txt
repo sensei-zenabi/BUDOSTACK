@@ -1,5 +1,8 @@
 Font: pcw8x8.psf
 ===========================
+Source: https://www.seasip.info/Unix/PSF/Amstrad/index.html
+License: N/A, Public Domain
+Date: 18th of October, 2025
 
 These fonts are in the public domain, as stated by the original author. 
 No rights reserved.

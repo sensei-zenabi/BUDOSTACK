@@ -242,6 +242,13 @@ int termbg_save(void) {
     return 0;
 }
 
+void termbg_clear(void) {
+    const char *path = state_path();
+    if (path != NULL && path[0] != '\0')
+        unlink(path);
+    termbg_shutdown();
+}
+
 void termbg_shutdown(void) {
     free(g_entries);
     g_entries = NULL;

@@ -13,6 +13,8 @@
 
 #define _POSIX_C_SOURCE 200112L  // Enable POSIX.1-2001 features
 
+#include "../lib/termbg.h"
+
 #include <stdio.h>
 #include <unistd.h>     // for STDOUT_FILENO
 #include <stdlib.h>
@@ -71,6 +73,8 @@ int main(void)
     /* Optionally, move the cursor to home position */
     printf("\033[H");
     fflush(stdout);
+
+    termbg_clear();
 
     return 0;
 }

@@ -1,11 +1,94 @@
+# Global variables
 SET $HEIGHT = 0
 SET $WIDTH = 0
+SET $GRID = 16
+SET $MOVE = 8
+SET $LEVEL = LEVEL1
+SET $PLAYER_X = 10
+SET $PLAYER_Y = 30
+SET $PLAYER_HP = 10
+SET $ENEMY_X = 90
+SET $ENEMY_Y = 30
+SET $ENEMY_HP = 5
+SET $CALLBACK = none
+SET $ACTION = none
 
+# ------------------- INITIALIZATION -------------------
 RUN cls
-
 RUN _GETHEIGHT to $HEIGHT
 RUN _GETWIDTH to $WIDTH
 
-RUN _RECT -x 0 -y 0 -height $HEIGHT -width $WIDTH -fill on -color 12
-RUN _DISPLAY -x 10 -y 20 -file tasks/game/character.png
-RUN _DISPLAY -x 30 -y 20 -file tasks/game/door.png
+# Screen size check
+IF $HEIGHT < 60
+  PRINT "\nSCREEN HEIGHT LESS THAN 60!"
+  GOTO @EXIT
+  
+IF $WIDTH < 110
+  PRINT "\nSCREEN WIDTH LESS THAN 110!"
+  GOTO @EXIT
+
+# ---------------------- GAMEPLAY ----------------------
+
+
+@LEVEL1
+
+# Erase screen
+RUN _RECT -x 0 -y 0 -height $HEIGHT -width $WIDTH -fill on -color 0
+
+# Draw statistics
+SET $CALLBACK = ONE
+GOTO SUB_STATS
+@ONE
+
+# Draw ground
+SET $CALLBACK = TWO
+GOTO SUB_GROUND
+@TWO
+
+# Draw characters
+RUN _DISPLAY -x $PLAYER_X -y $PLAYER_Y -file tasks/game/character.png
+RUN _DISPLAY -x $ENEMY_X -y $ENEMY_Y -file tasks/game/level1.png
+
+# Process input
+SET $CALLBACK = THREE
+GOTO SUB_INPUT
+@THREE
+
+# Return to active level
+GOTO $LEVEL
+
+
+# End of Application (skipping sub-routines)
+GOTO @EXIT
+
+# -------------------- SUB-ROUTINES --------------------
+
+@SUB_STATS
+RUN _TEXT -x 48 -y 1 -text === DUNGEON ENCOUNTER === -color 15
+RUN _TEXT -x 57 -y 3 -text $LEVEL
+RUN _TEXT -x 1 -y 5 -text Health.....$PLAYER_HP
+RUN _TEXT -x 105 -y 5 -text Health.....$ENEMY_HP
+GOTO $CALLBACK
+
+@SUB_GROUND
+RUN _RECT -x 0 -y 30+$GRID -width 118 -height 18 -color 250 -fill on
+RUN _TEXT -x 1 -y 32+$GRID -text Actions:
+RUN _TEXT -x 1 -y 34+$GRID -text [D] = Move Forward
+RUN _TEXT -x 1 -y 35+$GRID -text [A] = Move Backward
+RUN _TEXT -x 1 -y 40+$GRID -text [Q] = Quit
+GOTO $CALLBACK
+
+@SUB_INPUT
+INPUT $ACTION -wait off
+IF $ACTION == q
+  GOTO EXIT
+IF $ACTION == d
+  SET $PLAYER_X = $PLAYER_X+$MOVE
+IF $ACTION == a
+  SET $PLAYER_X = $PLAYER_X-$MOVE
+GOTO $CALLBACK
+
+# Exit
+@EXIT
+PRINT "\nExiting..."
+

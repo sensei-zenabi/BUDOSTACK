@@ -27,11 +27,11 @@ RUN _CALC floor($SCREEN_HEIGHT / 6.5) to $LOGO_Y
 # Exit program if console size is not sufficient
 IF $SCREEN_HEIGHT < 60
   PRINT "SCREEN HEIGHT NOT ENOUGH!\n"
-  GOTO @END
+  GOTO END
   
 IF $SCREEN_WIDTH < 110
   PRINT "SCREEN WIDTH NOT ENOUGH!\n"
-  GOTO @END
+  GOTO END
 
 @PAGE1
 # Display BUDOSTACK logo
@@ -54,7 +54,7 @@ RUN _BAR -x 4 -y 8 -title Loading: -progress $VAR2 -color 256
 IF $VAR2 < 100
   SET $VAR2 = $VAR2 + 10
   RUN _WAIT 500
-  GOTO @MENUSCREEN
+  GOTO MENUSCREEN
 WAIT 1000
 
 # List Folder Content Demo
@@ -65,7 +65,7 @@ WAIT 2500
 RUN _GETROW TO $VAR3
 SET $VAR3 = $VAR3 + 1
 IF $VAR3 > 58
-  GOTO @PAGE3
+  GOTO PAGE3
 
 # Hardware Statistics Demo
 RUN _TEXT -x 4 -y $VAR3 -text "HARDWARE STATISTICS:"
@@ -76,7 +76,7 @@ WAIT 4000
 RUN _GETROW TO $VAR3
 SET $VAR3 = $VAR3 + 1
 IF $VAR3 > 58
-  GOTO @PAGE3
+  GOTO PAGE3
 
 # Capturing STDOUT Demo
 RUN _TEXT -x 4 -y $VAR3 -text "CAPTURING STDOUT FROM COMMAND:"
@@ -86,7 +86,7 @@ SET $VAR3 = $VAR3 + 2
 RUN _TEXT -x 4 -y $VAR3 -text ">> _HELLO stdout gave: " + $VAR1
 WAIT 5000
 IF $VAR3 > 58
-  GOTO @PAGE3
+  GOTO PAGE3
 
 # Waiting for Space
 RUN _TEXT -x 4 -y 58 -text "Press SPACE to continue..."

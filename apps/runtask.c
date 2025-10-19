@@ -610,7 +610,12 @@ static bool parse_token(const char **p, char **out, bool *quoted, const char *de
         perror("malloc");
         exit(EXIT_FAILURE);
     }
-    while (*s && !isspace((unsigned char)*s) && !is_token_delim(*s, delims)) {
+    while (*s && !isspace((unsigned char)*s)) {
+        if (is_token_delim(*s, delims)) {
+            if (!(len == 0 && (*s == '-' || *s == '+') && s[1] && (isdigit((unsigned char)s[1]) || s[1] == '.' || s[1] == '$'))) {
+                break;
+            }
+        }
         if (len + 1 >= cap) {
             cap *= 2;
             char *tmp = (char *)realloc(buf, cap);
@@ -848,6 +853,64 @@ static bool value_add_inplace(Value *acc, const Value *term) {
     return true;
 }
 
+static bool value_negate(Value *value) {
+    if (!value) {
+        return false;
+    }
+
+    if (value->type == VALUE_INT) {
+        value->int_val = -value->int_val;
+        value->float_val = (double)value->int_val;
+        return true;
+    }
+
+    if (value->type == VALUE_FLOAT) {
+        value->float_val = -value->float_val;
+        value->int_val = (long long)value->float_val;
+        return true;
+    }
+
+    if (value->type == VALUE_STRING && value->str_val) {
+        long long iv = 0;
+        double fv = 0.0;
+        ValueType vt = detect_numeric_type(value->str_val, &iv, &fv);
+        if (vt == VALUE_INT) {
+            if (value->owns_string) {
+                free(value->str_val);
+            }
+            value->owns_string = false;
+            value->str_val = NULL;
+            value->type = VALUE_INT;
+            value->int_val = -iv;
+            value->float_val = (double)value->int_val;
+            return true;
+        }
+        if (vt == VALUE_FLOAT) {
+            if (value->owns_string) {
+                free(value->str_val);
+            }
+            value->owns_string = false;
+            value->str_val = NULL;
+            value->type = VALUE_FLOAT;
+            value->float_val = -fv;
+            value->int_val = (long long)value->float_val;
+            return true;
+        }
+        return false;
+    }
+
+    if (value->type == VALUE_UNSET) {
+        value->type = VALUE_INT;
+        value->int_val = 0;
+        value->float_val = 0.0;
+        value->str_val = NULL;
+        value->owns_string = false;
+        return true;
+    }
+
+    return false;
+}
+
 static bool parse_expression(const char **cursor, Value *out, const char *terminators, int line, int debug) {
     if (!cursor || !out) {
         return false;
@@ -856,38 +919,67 @@ static bool parse_expression(const char **cursor, Value *out, const char *termin
     Value accumulator;
     memset(&accumulator, 0, sizeof(accumulator));
     bool have_term = false;
+    char pending_op = '+';
 
-    const char *delims = "+";
-    char delim_buf[32];
+    const char *delims = "+-";
+    char delim_buf[64];
     if (terminators && *terminators) {
         size_t term_len = strlen(terminators);
-        if (term_len > sizeof(delim_buf) - 2) {
-            term_len = sizeof(delim_buf) - 2;
+        if (term_len > sizeof(delim_buf) - 3) {
+            term_len = sizeof(delim_buf) - 3;
         }
         delim_buf[0] = '+';
-        memcpy(&delim_buf[1], terminators, term_len);
-        delim_buf[term_len + 1] = '\0';
+        delim_buf[1] = '-';
+        memcpy(&delim_buf[2], terminators, term_len);
+        delim_buf[term_len + 2] = '\0';
         delims = delim_buf;
     }
 
     while (1) {
+        while (isspace((unsigned char)**cursor)) {
+            (*cursor)++;
+        }
+
+        char current_op = have_term ? pending_op : '+';
+        if (!have_term && (**cursor == '+' || **cursor == '-')) {
+            current_op = **cursor;
+            (*cursor)++;
+            while (isspace((unsigned char)**cursor)) {
+                (*cursor)++;
+            }
+        }
+
         Value term;
         if (!parse_value_token(cursor, &term, delims, line, debug)) {
             free_value(&accumulator);
             return false;
         }
-        have_term = true;
+
+        if (current_op == '-') {
+            if (!value_negate(&term)) {
+                if (debug) {
+                    fprintf(stderr, "Line %d: unable to apply '-' to value\n", line);
+                }
+                free_value(&term);
+                free_value(&accumulator);
+                return false;
+            }
+        }
+
         if (!value_add_inplace(&accumulator, &term)) {
             free_value(&term);
             free_value(&accumulator);
             return false;
         }
         free_value(&term);
+        have_term = true;
+        pending_op = '+';
 
         while (isspace((unsigned char)**cursor)) {
             (*cursor)++;
         }
-        if (**cursor == '+') {
+        if (**cursor == '+' || **cursor == '-') {
+            pending_op = **cursor;
             (*cursor)++;
             continue;
         }

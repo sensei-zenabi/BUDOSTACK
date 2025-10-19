@@ -946,7 +946,8 @@ static void print_help(void) {
     printf("  IF <lhs> op <rhs>  : Compare values. Use ELSE for an alternate branch.\n");
     printf("  PRINT expr         : Print literals and variables (use '+' to concatenate).\n");
     printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
-    printf("  GOTO @label        : Jumps to the line marked with @label\n");
+    printf("  GOTO label         : Jumps to the line marked with @label\n");
+    printf("                       Accepts literal names or $VAR holding the label\n");
     printf("  RUN [BLOCKING|NONBLOCKING] <cmd [args...]>:\n");
     printf("                       Executes an executable from ./apps, ./commands, or ./utilities.\n");
     printf("                       Default is BLOCKING. If the command contains '/', it's executed as given.\n");
@@ -1959,40 +1960,118 @@ int main(int argc, char *argv[]) {
             while (isspace((unsigned char)*cursor)) {
                 cursor++;
             }
-            if (*cursor != '@') {
-                if (debug) {
-                    fprintf(stderr, "GOTO: expected '@label' at %d: %s\n", script[pc].source_line, command);
-                }
-                note_branch_progress(if_stack, &if_sp);
-                continue;
-            }
-            cursor++;
+
             char label_token[64];
-            size_t len = 0;
-            bool too_long = false;
-            while (*cursor && !isspace((unsigned char)*cursor) && *cursor != ':') {
-                if (len + 1 >= sizeof(label_token)) {
-                    too_long = true;
+            bool label_ok = true;
+            label_token[0] = '\0';
+
+            if (*cursor == '$') {
+                cursor++;
+                char var_name[sizeof(((Variable *)0)->name)];
+                size_t name_len = 0;
+                bool name_too_long = false;
+                while (isalnum((unsigned char)*cursor) || *cursor == '_') {
+                    if (!name_too_long) {
+                        if (name_len + 1 >= sizeof(var_name)) {
+                            name_too_long = true;
+                        } else {
+                            var_name[name_len++] = *cursor;
+                        }
+                    }
                     cursor++;
-                    continue;
                 }
-                label_token[len++] = *cursor++;
+                if (name_len == 0 || name_too_long) {
+                    if (debug) {
+                        fprintf(stderr, "GOTO: invalid variable reference at %d: %s\n", script[pc].source_line, command);
+                    }
+                    label_ok = false;
+                } else if (*cursor != '\0' && !isspace((unsigned char)*cursor) && *cursor != ':') {
+                    if (debug) {
+                        fprintf(stderr, "GOTO: invalid variable reference at %d: %s\n", script[pc].source_line, command);
+                    }
+                    label_ok = false;
+                } else {
+                    var_name[name_len] = '\0';
+                    Variable *var = find_variable(var_name, false);
+                    Value value = variable_to_value(var);
+                    char *resolved = value_to_string(&value);
+                    free_value(&value);
+                    if (!resolved) {
+                        resolved = xstrdup("");
+                    }
+                    char *resolved_raw = resolved;
+                    char *start = resolved_raw;
+                    while (isspace((unsigned char)*start)) {
+                        start++;
+                    }
+                    char *end = start + strlen(start);
+                    while (end > start && isspace((unsigned char)*(end - 1))) {
+                        end--;
+                    }
+                    *end = '\0';
+                    if (start != resolved_raw) {
+                        memmove(resolved_raw, start, (size_t)(end - start + 1));
+                    }
+                    char *label_source = resolved_raw;
+                    if (label_source[0] == '@') {
+                        label_source++;
+                    }
+                    size_t len = strlen(label_source);
+                    if (len == 0) {
+                        if (debug) {
+                            fprintf(stderr, "GOTO: variable '%s' is empty at %d\n", var_name, script[pc].source_line);
+                        }
+                        label_ok = false;
+                    } else if (len >= sizeof(label_token)) {
+                        if (debug) {
+                            fprintf(stderr, "GOTO: label from variable '%s' too long at %d\n", var_name, script[pc].source_line);
+                        }
+                        label_ok = false;
+                    } else {
+                        memcpy(label_token, label_source, len + 1);
+                    }
+                    free(resolved_raw);
+                }
+            } else {
+                if (*cursor == '@') {
+                    cursor++;
+                }
+                if (*cursor == '\0') {
+                    if (debug) {
+                        fprintf(stderr, "GOTO: missing label at %d: %s\n", script[pc].source_line, command);
+                    }
+                    label_ok = false;
+                } else {
+                    size_t len = 0;
+                    bool too_long = false;
+                    while (*cursor && !isspace((unsigned char)*cursor) && *cursor != ':') {
+                        if (len + 1 >= sizeof(label_token)) {
+                            too_long = true;
+                        } else {
+                            label_token[len++] = *cursor;
+                        }
+                        cursor++;
+                    }
+                    label_token[len] = '\0';
+                    if (len == 0) {
+                        if (debug) {
+                            fprintf(stderr, "GOTO: empty label at %d\n", script[pc].source_line);
+                        }
+                        label_ok = false;
+                    } else if (too_long) {
+                        if (debug) {
+                            fprintf(stderr, "GOTO: label too long at %d\n", script[pc].source_line);
+                        }
+                        label_ok = false;
+                    }
+                }
             }
-            label_token[len] = '\0';
-            if (len == 0) {
-                if (debug) {
-                    fprintf(stderr, "GOTO: empty label at %d\n", script[pc].source_line);
-                }
+
+            if (!label_ok) {
                 note_branch_progress(if_stack, &if_sp);
                 continue;
             }
-            if (too_long) {
-                if (debug) {
-                    fprintf(stderr, "GOTO: label too long at %d\n", script[pc].source_line);
-                }
-                note_branch_progress(if_stack, &if_sp);
-                continue;
-            }
+
             if (*cursor == ':') {
                 cursor++;
             }

@@ -32,6 +32,7 @@
 #include <termios.h>
 #include <threads.h> // thrd_sleep
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -317,6 +318,89 @@ restore:
     }
     errno = saved_errno;
     return rc;
+}
+
+static bool read_keypress_sequence(char *buffer, size_t size) {
+    if (!buffer || size == 0) {
+        return false;
+    }
+
+    buffer[0] = '\0';
+
+    struct termios original;
+    if (tcgetattr(STDIN_FILENO, &original) == -1) {
+        perror("INPUT: tcgetattr");
+        return false;
+    }
+
+    struct termios raw = original;
+    raw.c_lflag &= (tcflag_t)~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == -1) {
+        perror("INPUT: tcsetattr");
+        return false;
+    }
+
+    bool success = false;
+    size_t index = 0;
+
+    while (index + 1 < size) {
+        char ch;
+        ssize_t result = read(STDIN_FILENO, &ch, 1);
+        if (result < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("INPUT: read");
+            goto restore;
+        }
+        if (result == 0) {
+            goto restore;
+        }
+        buffer[index++] = ch;
+        success = true;
+        break;
+    }
+
+    if (success) {
+        int pending = 0;
+        if (ioctl(STDIN_FILENO, FIONREAD, &pending) == -1) {
+            pending = 0;
+        }
+        while (pending > 0 && index + 1 < size) {
+            char ch;
+            ssize_t result = read(STDIN_FILENO, &ch, 1);
+            if (result < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                perror("INPUT: read");
+                break;
+            }
+            if (result == 0) {
+                break;
+            }
+            buffer[index++] = ch;
+            pending--;
+            if (pending == 0) {
+                if (ioctl(STDIN_FILENO, FIONREAD, &pending) == -1) {
+                    pending = 0;
+                }
+            }
+        }
+    }
+
+restore:
+    buffer[index] = '\0';
+    int saved_errno = errno;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &original) == -1) {
+        perror("INPUT: tcsetattr restore");
+        success = false;
+    }
+    errno = saved_errno;
+    return success;
 }
 
 static Variable *find_variable(const char *name, bool create) {
@@ -942,7 +1026,8 @@ static void print_help(void) {
     printf("============\n\n");
     printf("Commands:\n");
     printf("  SET $VAR = value   : Store integers, floats, or strings in a variable\n");
-    printf("  INPUT $VAR         : Read a line from stdin into $VAR (numbers auto-detected)\n");
+    printf("  INPUT $VAR [-wait on|off]\n");
+    printf("                      : Read input into $VAR (default waits for Enter; OFF captures first key press)\n");
     printf("  IF <lhs> op <rhs>  : Compare values. Use ELSE for an alternate branch.\n");
     printf("  PRINT expr         : Print literals and variables (use '+' to concatenate).\n");
     printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
@@ -1748,6 +1833,42 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             free(var_token);
+            bool wait_for_enter = true;
+            char *option_token = NULL;
+            bool option_quoted = false;
+            if (parse_token(&cursor, &option_token, &option_quoted, NULL)) {
+                if (option_quoted) {
+                    if (debug) fprintf(stderr, "INPUT: unexpected quoted argument at line %d\n", script[pc].source_line);
+                    free(option_token);
+                    continue;
+                }
+                if (equals_ignore_case(option_token, "-wait")) {
+                    free(option_token);
+                    option_token = NULL;
+                    char *value_token = NULL;
+                    bool value_quoted = false;
+                    if (!parse_token(&cursor, &value_token, &value_quoted, NULL) || value_quoted) {
+                        if (debug) fprintf(stderr, "INPUT: -wait expects ON or OFF at line %d\n", script[pc].source_line);
+                        free(value_token);
+                        continue;
+                    }
+                    if (equals_ignore_case(value_token, "on")) {
+                        wait_for_enter = true;
+                    } else if (equals_ignore_case(value_token, "off")) {
+                        wait_for_enter = false;
+                    } else {
+                        if (debug) fprintf(stderr, "INPUT: -wait expects ON or OFF at line %d\n", script[pc].source_line);
+                        free(value_token);
+                        continue;
+                    }
+                    free(value_token);
+                } else {
+                    if (debug) fprintf(stderr, "INPUT: unexpected argument '%s' at line %d\n", option_token, script[pc].source_line);
+                    free(option_token);
+                    continue;
+                }
+            }
+            free(option_token);
             while (isspace((unsigned char)*cursor)) {
                 cursor++;
             }
@@ -1760,35 +1881,40 @@ int main(int argc, char *argv[]) {
             }
             fflush(stdout);
             char buffer[512];
-            if (!fgets(buffer, sizeof(buffer), stdin)) {
-                if (debug) fprintf(stderr, "INPUT: failed to read input at line %d\n", script[pc].source_line);
-                Value empty = { .type = VALUE_STRING, .str_val = xstrdup(""), .owns_string = true };
-                assign_variable(var, &empty);
-                free_value(&empty);
-            } else {
-                size_t len = strcspn(buffer, "\r\n");
-                buffer[len] = '\0';
-                long long iv = 0;
-                double fv = 0.0;
-                Value val;
-                memset(&val, 0, sizeof(val));
-                ValueType vt = detect_numeric_type(buffer, &iv, &fv);
-                if (vt == VALUE_INT) {
-                    val.type = VALUE_INT;
-                    val.int_val = iv;
-                    val.float_val = (double)iv;
-                } else if (vt == VALUE_FLOAT) {
-                    val.type = VALUE_FLOAT;
-                    val.float_val = fv;
-                    val.int_val = (long long)fv;
+            if (wait_for_enter) {
+                if (!fgets(buffer, sizeof(buffer), stdin)) {
+                    if (debug) fprintf(stderr, "INPUT: failed to read input at line %d\n", script[pc].source_line);
+                    buffer[0] = '\0';
                 } else {
-                    val.type = VALUE_STRING;
-                    val.str_val = xstrdup(buffer);
-                    val.owns_string = true;
+                    size_t len = strcspn(buffer, "\r\n");
+                    buffer[len] = '\0';
                 }
-                assign_variable(var, &val);
-                free_value(&val);
+            } else {
+                if (!read_keypress_sequence(buffer, sizeof(buffer))) {
+                    if (debug) fprintf(stderr, "INPUT: failed to read key press at line %d\n", script[pc].source_line);
+                    buffer[0] = '\0';
+                }
             }
+            long long iv = 0;
+            double fv = 0.0;
+            Value val;
+            memset(&val, 0, sizeof(val));
+            ValueType vt = detect_numeric_type(buffer, &iv, &fv);
+            if (vt == VALUE_INT) {
+                val.type = VALUE_INT;
+                val.int_val = iv;
+                val.float_val = (double)iv;
+            } else if (vt == VALUE_FLOAT) {
+                val.type = VALUE_FLOAT;
+                val.float_val = fv;
+                val.int_val = (long long)fv;
+            } else {
+                val.type = VALUE_STRING;
+                val.str_val = xstrdup(buffer);
+                val.owns_string = true;
+            }
+            assign_variable(var, &val);
+            free_value(&val);
             note_branch_progress(if_stack, &if_sp);
         }
         else if (strncmp(command, "SET", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {

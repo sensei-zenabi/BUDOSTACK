@@ -9,9 +9,11 @@ SET $PLAYER_Y = 30
 SET $PLAYER_HP = 10
 SET $ENEMY_X = 90
 SET $ENEMY_Y = 30
-SET $ENEMY_HP = 5
+SET $ENEMY_HP = 10
 SET $CALLBACK = none
 SET $ACTION = none
+SET $TURN = PLAYER
+SET $DISTANCE = 0
 
 # ------------------- INITIALIZATION -------------------
 RUN cls
@@ -51,7 +53,10 @@ RUN _DISPLAY -x $ENEMY_X -y $ENEMY_Y -file tasks/game/level1.png
 
 # Process input
 SET $CALLBACK = THREE
-GOTO SUB_INPUT
+IF $TURN == PLAYER
+  GOTO SUB_INPUT
+ELSE
+  GOTO SUB_ENEMY
 @THREE
 
 # Return to active level
@@ -66,6 +71,7 @@ GOTO @EXIT
 @SUB_STATS
 RUN _TEXT -x 48 -y 1 -text === DUNGEON ENCOUNTER === -color 15
 RUN _TEXT -x 57 -y 3 -text $LEVEL
+RUN _TEXT -x 54 -y 5 -text TURN: $TURN
 RUN _TEXT -x 1 -y 5 -text Health.....$PLAYER_HP
 RUN _TEXT -x 105 -y 5 -text Health.....$ENEMY_HP
 GOTO $CALLBACK
@@ -86,6 +92,15 @@ IF $ACTION == d
   SET $PLAYER_X = $PLAYER_X+$MOVE
 IF $ACTION == a
   SET $PLAYER_X = $PLAYER_X-$MOVE
+SET $TURN = ENEMY
+GOTO $CALLBACK
+
+@SUB_ENEMY
+WAIT 2000
+RUN _CALC $PLAYER_X - $ENEMY_X to $DISTANCE 
+IF $DISTANCE > $GRID
+  SET $ENEMY_X = $ENEMY_X-$MOVE
+SET $TURN = PLAYER
 GOTO $CALLBACK
 
 # Exit

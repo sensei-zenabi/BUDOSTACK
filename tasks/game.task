@@ -7,9 +7,20 @@ SET $LEVEL = LEVEL1
 SET $PLAYER_X = 10
 SET $PLAYER_Y = 30
 SET $PLAYER_HP = 10
+SET $PLAYER_ATT = 6
+SET $PLAYER_DEF = 12
+SET $PLAYER_STATE = none
+SET $PLAYER_SUB_STATE = none
+SET $PLAYER_ROLL_1 = 0
+SET $PLAYER_ROLL_2 = 0
 SET $ENEMY_X = 90
 SET $ENEMY_Y = 30
 SET $ENEMY_HP = 10
+SET $ENEMY_ATT = 4
+SET $ENEMY_DEF = 14
+SET $ENEMY_STATE = none
+SET $ENEMY_ROLL_1 = 0
+SET $ENEMY_ROLL_2 = 0
 SET $CALLBACK = none
 SET $ACTION = none
 SET $TURN = PLAYER
@@ -47,9 +58,12 @@ SET $CALLBACK = TWO
 GOTO SUB_GROUND
 @TWO
 
-# Draw characters
+# Pre-movement graphics
 RUN _DISPLAY -x $PLAYER_X -y $PLAYER_Y -file tasks/game/character.png
 RUN _DISPLAY -x $ENEMY_X -y $ENEMY_Y -file tasks/game/level1.png
+
+# Pre-movement calculations
+RUN _CALC $ENEMY_X - $PLAYER_X to $DISTANCE 
 
 # Process input
 SET $CALLBACK = THREE
@@ -58,6 +72,11 @@ IF $TURN == PLAYER
 ELSE
   GOTO SUB_ENEMY
 @THREE
+
+# Post-movement calculations
+RUN _CALC $ENEMY_X - $PLAYER_X to $DISTANCE 
+
+# Post-movement graphics
 
 # Return to active level
 GOTO $LEVEL
@@ -73,7 +92,17 @@ RUN _TEXT -x 48 -y 1 -text === DUNGEON ENCOUNTER === -color 15
 RUN _TEXT -x 57 -y 3 -text $LEVEL
 RUN _TEXT -x 54 -y 5 -text TURN: $TURN
 RUN _TEXT -x 1 -y 5 -text Health.....$PLAYER_HP
-RUN _TEXT -x 105 -y 5 -text Health.....$ENEMY_HP
+RUN _TEXT -x 1 -y 6 -text Attack.....$PLAYER_ATT
+RUN _TEXT -x 1 -y 7 -text Defence....$PLAYER_DEF
+RUN _TEXT -x 104 -y 5 -text Health.....$ENEMY_HP
+RUN _TEXT -x 104 -y 6 -text Attack.....$ENEMY_ATT
+RUN _TEXT -x 104 -y 7 -text Defence....$ENEMY_DEF
+IF $PLAYER_STATE == melee_attack
+  RUN _TEXT -x 52 -y 8 -text  Player Roll..$PLAYER_ROLL_1
+  RUN _TEXT -x 52 -y 9 -text Enemy Roll...$ENEMY_ROLL_1
+  IF $PLAYER_SUB_STATE == success
+    PRINT "debug"
+    RUN _TEXT -x 52 -y 11 -text Player Attack..$PLAYER_ROLL_2 
 GOTO $CALLBACK
 
 @SUB_GROUND
@@ -81,23 +110,39 @@ RUN _RECT -x 0 -y 30+$GRID -width 118 -height 18 -color 250 -fill on
 RUN _TEXT -x 1 -y 32+$GRID -text Actions:
 RUN _TEXT -x 1 -y 34+$GRID -text [D] = Move Forward
 RUN _TEXT -x 1 -y 35+$GRID -text [A] = Move Backward
+IF $DISTANCE <= $GRID
+  RUN _TEXT -x 1 -y 36+$GRID -text [S] = Melee Attack
 RUN _TEXT -x 1 -y 40+$GRID -text [Q] = Quit
 GOTO $CALLBACK
 
 @SUB_INPUT
+SET $PLAYER_STATE = none
+SET $PLAYER_SUB_STATE = none
 INPUT $ACTION -wait off
+# Quit game
 IF $ACTION == q
   GOTO EXIT
-IF $ACTION == d
+# Move forward
+IF $ACTION == d AND $DISTANCE > $GRID
   SET $PLAYER_X = $PLAYER_X+$MOVE
+  SET $PLAYER_STATE = forward
+# Move backward
 IF $ACTION == a
   SET $PLAYER_X = $PLAYER_X-$MOVE
+  SET $PLAYER_STATE = backward
+# Melee attack
+IF $ACTION == s AND $DISTANCE <= $GRID
+  SET $PLAYER_STATE = melee_attack
+  RUN _DICE 1d20 to $PLAYER_ROLL_1
+  RUN _DICE 1d20 to $ENEMY_ROLL_1
+  IF $PLAYER_ROLL1 > $ENEMY_ROLL1
+    SET $PLAYER_SUB_STATE = success
+    RUN _DICE 1d6 to $PLAYER_ROLL_2
 SET $TURN = ENEMY
 GOTO $CALLBACK
 
 @SUB_ENEMY
-WAIT 2000
-RUN _CALC $ENEMY_X - $PLAYER_X to $DISTANCE 
+WAIT 500
 IF $DISTANCE > $GRID
   SET $ENEMY_X = $ENEMY_X-$MOVE
 SET $TURN = PLAYER

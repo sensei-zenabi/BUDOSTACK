@@ -1082,6 +1082,163 @@ static bool evaluate_comparison(const Value *lhs, const Value *rhs, const char *
     return true;
 }
 
+static bool match_keyword(const char *cursor, const char *keyword, const char **end_out) {
+    if (!cursor || !keyword) {
+        return false;
+    }
+    size_t len = strlen(keyword);
+    for (size_t i = 0; i < len; ++i) {
+        if (cursor[i] == '\0') {
+            return false;
+        }
+        if (tolower((unsigned char)cursor[i]) != tolower((unsigned char)keyword[i])) {
+            return false;
+        }
+    }
+    char next = cursor[len];
+    if (next != '\0' && !isspace((unsigned char)next)) {
+        return false;
+    }
+    if (end_out) {
+        *end_out = cursor + len;
+    }
+    return true;
+}
+
+static bool parse_comparison_condition(const char **cursor, bool *out, int line, int debug) {
+    if (!cursor || !out) {
+        return false;
+    }
+
+    Value lhs;
+    if (!parse_expression(cursor, &lhs, "<>!=", line, debug)) {
+        return false;
+    }
+
+    while (isspace((unsigned char)**cursor)) {
+        (*cursor)++;
+    }
+
+    char op[3] = { 0 };
+    if ((*cursor)[0] == '=' && (*cursor)[1] == '=') {
+        op[0] = '=';
+        op[1] = '=';
+        (*cursor) += 2;
+    } else if ((*cursor)[0] == '!' && (*cursor)[1] == '=') {
+        op[0] = '!';
+        op[1] = '=';
+        (*cursor) += 2;
+    } else if ((*cursor)[0] == '>' && (*cursor)[1] == '=') {
+        op[0] = '>';
+        op[1] = '=';
+        (*cursor) += 2;
+    } else if ((*cursor)[0] == '<' && (*cursor)[1] == '=') {
+        op[0] = '<';
+        op[1] = '=';
+        (*cursor) += 2;
+    } else if ((*cursor)[0] == '>') {
+        op[0] = '>';
+        (*cursor) += 1;
+    } else if ((*cursor)[0] == '<') {
+        op[0] = '<';
+        (*cursor) += 1;
+    } else {
+        if (debug) {
+            fprintf(stderr, "IF: invalid or missing operator at %d\n", line);
+        }
+        free_value(&lhs);
+        return false;
+    }
+
+    Value rhs;
+    if (!parse_expression(cursor, &rhs, NULL, line, debug)) {
+        free_value(&lhs);
+        return false;
+    }
+
+    bool cond_result = false;
+    if (!evaluate_comparison(&lhs, &rhs, op, &cond_result, line, debug)) {
+        cond_result = false;
+    }
+
+    free_value(&lhs);
+    free_value(&rhs);
+    *out = cond_result;
+    return true;
+}
+
+static bool parse_conjunction_condition(const char **cursor, bool *out, int line, int debug) {
+    if (!cursor || !out) {
+        return false;
+    }
+
+    bool result = false;
+    if (!parse_comparison_condition(cursor, &result, line, debug)) {
+        return false;
+    }
+
+    while (1) {
+        const char *p = *cursor;
+        while (isspace((unsigned char)*p)) {
+            p++;
+        }
+
+        const char *after_keyword = NULL;
+        if (!match_keyword(p, "AND", &after_keyword)) {
+            *cursor = p;
+            break;
+        }
+
+        *cursor = after_keyword;
+        bool rhs = false;
+        if (!parse_comparison_condition(cursor, &rhs, line, debug)) {
+            return false;
+        }
+        result = result && rhs;
+    }
+
+    *out = result;
+    return true;
+}
+
+static bool parse_condition(const char **cursor, bool *out, int line, int debug) {
+    if (!cursor || !out) {
+        return false;
+    }
+
+    bool result = false;
+    if (!parse_conjunction_condition(cursor, &result, line, debug)) {
+        return false;
+    }
+
+    while (1) {
+        const char *p = *cursor;
+        while (isspace((unsigned char)*p)) {
+            p++;
+        }
+
+        const char *after_keyword = NULL;
+        if (!match_keyword(p, "OR", &after_keyword)) {
+            *cursor = p;
+            break;
+        }
+
+        *cursor = after_keyword;
+        bool rhs = false;
+        if (!parse_conjunction_condition(cursor, &rhs, line, debug)) {
+            return false;
+        }
+        result = result || rhs;
+    }
+
+    while (isspace((unsigned char)**cursor)) {
+        (*cursor)++;
+    }
+
+    *out = result;
+    return true;
+}
+
 static void note_branch_progress(IfContext *stack, int *sp) {
     if (!stack || !sp || *sp <= 0) {
         return;
@@ -1120,7 +1277,7 @@ static void print_help(void) {
     printf("  SET $VAR = value   : Store integers, floats, or strings in a variable\n");
     printf("  INPUT $VAR [-wait on|off]\n");
     printf("                      : Read input into $VAR (default waits for Enter; OFF captures first key press)\n");
-    printf("  IF <lhs> op <rhs>  : Compare values. Use ELSE for an alternate branch.\n");
+    printf("  IF <lhs> op <rhs>  : Compare values. Chain conditions with AND/OR. Use ELSE for alternate branch.\n");
     printf("  PRINT expr         : Print literals and variables (use '+' to concatenate).\n");
     printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
     printf("  GOTO label         : Jumps to the line marked with @label\n");
@@ -1831,42 +1988,13 @@ int main(int argc, char *argv[]) {
 
         if (strncmp(command, "IF", 2) == 0 && (command[2] == '\0' || isspace((unsigned char)command[2]))) {
             const char *cursor = command + 2;
-            Value lhs;
-            if (!parse_expression(&cursor, &lhs, "<>!=", script[pc].source_line, debug)) {
-                continue;
-            }
-            while (isspace((unsigned char)*cursor)) {
-                cursor++;
-            }
-            char op[3] = { 0 };
-            if (cursor[0] == '=' && cursor[1] == '=') { op[0] = '='; op[1] = '='; cursor += 2; }
-            else if (cursor[0] == '!' && cursor[1] == '=') { op[0] = '!'; op[1] = '='; cursor += 2; }
-            else if (cursor[0] == '>' && cursor[1] == '=') { op[0] = '>'; op[1] = '='; cursor += 2; }
-            else if (cursor[0] == '<' && cursor[1] == '=') { op[0] = '<'; op[1] = '='; cursor += 2; }
-            else if (cursor[0] == '>') { op[0] = '>'; cursor += 1; }
-            else if (cursor[0] == '<') { op[0] = '<'; cursor += 1; }
-            else {
-                if (debug) fprintf(stderr, "IF: invalid or missing operator at %d\n", script[pc].source_line);
-                free_value(&lhs);
-                continue;
-            }
-            Value rhs;
-            if (!parse_expression(&cursor, &rhs, NULL, script[pc].source_line, debug)) {
-                free_value(&lhs);
-                continue;
-            }
-            while (isspace((unsigned char)*cursor)) {
-                cursor++;
+            bool cond_result = false;
+            if (!parse_condition(&cursor, &cond_result, script[pc].source_line, debug)) {
+                cond_result = false;
             }
             if (*cursor != '\0' && debug) {
                 fprintf(stderr, "IF: unexpected characters at %d\n", script[pc].source_line);
             }
-            bool cond_result = false;
-            if (!evaluate_comparison(&lhs, &rhs, op, &cond_result, script[pc].source_line, debug)) {
-                cond_result = false;
-            }
-            free_value(&lhs);
-            free_value(&rhs);
             if (if_sp >= (int)(sizeof(if_stack) / sizeof(if_stack[0]))) {
                 if (debug) fprintf(stderr, "IF: nesting limit reached at line %d\n", script[pc].source_line);
                 continue;

@@ -18,7 +18,6 @@ struct CommandSpec {
     const char *tool;
     const char *args;
     const char *description;
-    size_t max_lines;
 };
 
 static void print_separator(void) {
@@ -176,18 +175,10 @@ static void stream_command(const struct CommandSpec *spec) {
     }
 
     char buffer[512];
-    size_t line_count = 0;
     bool has_output = false;
     while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
-        if (spec->max_lines == 0 || line_count < spec->max_lines) {
-            fputs(buffer, stdout);
-        }
-        line_count++;
+        fputs(buffer, stdout);
         has_output = true;
-    }
-
-    if (spec->max_lines != 0 && line_count > spec->max_lines) {
-        printf("... (truncated after %zu lines)\n", spec->max_lines);
     }
 
     int status = pclose(pipe);
@@ -272,29 +263,7 @@ static void print_cpu_summary(void) {
         bool fpu = strstr(value, "fpu") != NULL;
         printf("Virtualization: %s\n", virtualization ? "detected" : "not detected");
         printf("Vector/FPU    : %s%s\n", neon ? "NEON " : "", fpu ? "FPU" : (neon ? "" : "not detected"));
-
-        char feature_copy[1024];
-        strncpy(feature_copy, value, sizeof(feature_copy) - 1);
-        feature_copy[sizeof(feature_copy) - 1] = '\0';
-        size_t feature_count = 0;
-        size_t printed = 0;
-        char *saveptr = NULL;
-        for (char *token = strtok_r(feature_copy, " ", &saveptr); token != NULL; token = strtok_r(NULL, " ", &saveptr)) {
-            if (*token == '\0') {
-                continue;
-            }
-            if (printed < 16) {
-                if (printed == 0) {
-                    puts("Key Features:");
-                }
-                printf("  - %s\n", token);
-                printed++;
-            }
-            feature_count++;
-        }
-        if (feature_count > printed) {
-            printf("  ... (%zu additional features)\n", feature_count - printed);
-        }
+        printf("Feature Flags : %s\n", value);
     }
 }
 
@@ -348,10 +317,6 @@ static void print_device_tree_overview(void) {
         }
         printf("  - %s\n", entry->d_name);
         count++;
-        if (count >= 20) {
-            puts("  ... (truncated)");
-            break;
-        }
     }
     if (count == 0) {
         puts("  (no entries found)");
@@ -374,15 +339,8 @@ static void print_filesystem_view(void) {
             continue;
         }
         printf("--- %s ---\n", paths[i]);
-        size_t line = 0;
         while (fgets(buffer, sizeof(buffer), file) != NULL) {
-            if (line < 20) {
-                fputs(buffer, stdout);
-            }
-            line++;
-        }
-        if (line > 20) {
-            puts("... (truncated)");
+            fputs(buffer, stdout);
         }
         puts("");
         fclose(file);
@@ -404,57 +362,49 @@ int main(void) {
             .title = "Processor Topology (lscpu)",
             .tool = "lscpu",
             .args = "",
-            .description = "Detailed CPU layout, caches, and ISA extensions.",
-            .max_lines = 0
+            .description = "Detailed CPU layout, caches, and ISA extensions."
         },
         {
             .title = "Block Devices (lsblk)",
             .tool = "lsblk",
             .args = "-o NAME,SIZE,TYPE,MOUNTPOINT,MODEL",
-            .description = "Storage topology with sizes and mount points.",
-            .max_lines = 0
+            .description = "Storage topology with sizes and mount points."
         },
         {
             .title = "PCI Devices (lspci)",
             .tool = "lspci",
             .args = "-nn",
-            .description = "PCIe peripherals with vendor and device identifiers.",
-            .max_lines = 120
+            .description = "PCIe peripherals with vendor and device identifiers."
         },
         {
             .title = "USB Topology (lsusb)",
             .tool = "lsusb",
             .args = "-t",
-            .description = "USB bus tree with driver information.",
-            .max_lines = 0
+            .description = "USB bus tree with driver information."
         },
         {
             .title = "Network Interfaces (ip)",
             .tool = "ip",
             .args = "-br address",
-            .description = "Network interface summary including IPv4/IPv6 assignments.",
-            .max_lines = 0
+            .description = "Network interface summary including IPv4/IPv6 assignments."
         },
         {
             .title = "Wireless Capabilities (iwconfig)",
             .tool = "iwconfig",
             .args = "",
-            .description = "Wireless PHY status and supported modes.",
-            .max_lines = 0
+            .description = "Wireless PHY status and supported modes."
         },
         {
             .title = "Sensors (sensors)",
             .tool = "sensors",
             .args = "",
-            .description = "Thermal and power telemetry (lm-sensors).",
-            .max_lines = 0
+            .description = "Thermal and power telemetry (lm-sensors)."
         },
         {
             .title = "Loaded Kernel Modules (lsmod)",
             .tool = "lsmod",
             .args = "",
-            .description = "Kernel modules can indicate enabled hardware drivers.",
-            .max_lines = 80
+            .description = "Kernel modules can indicate enabled hardware drivers."
         }
     };
 

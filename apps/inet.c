@@ -2,6 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <stdbool.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <time.h>         // For timestamp display
 #include <termios.h>      // For terminal control
@@ -22,6 +25,219 @@ void print_separator(int width) {
          putchar('-');
     }
     putchar('\n');
+}
+
+static void trim_trailing_whitespace(char *value) {
+    if (value == NULL) {
+        return;
+    }
+    size_t len = strlen(value);
+    while (len > 0 && isspace((unsigned char)value[len - 1])) {
+        value[len - 1] = '\0';
+        len--;
+    }
+}
+
+static int confirm_action(const char *prompt) {
+    char response[8];
+    if (prompt != NULL) {
+        printf("%s", prompt);
+        fflush(stdout);
+    }
+    if (fgets(response, sizeof(response), stdin) == NULL) {
+        return 0;
+    }
+    return response[0] == 'y' || response[0] == 'Y';
+}
+
+static int read_first_line(const char *path, char *buffer, size_t size) {
+    if (path == NULL || buffer == NULL || size == 0) {
+        return -1;
+    }
+    FILE *fp = fopen(path, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+    if (fgets(buffer, (int)size, fp) == NULL) {
+        fclose(fp);
+        buffer[0] = '\0';
+        return -1;
+    }
+    fclose(fp);
+    trim_trailing_whitespace(buffer);
+    return 0;
+}
+
+static int check_iw(void) {
+    return system("command -v iw > /dev/null 2>&1");
+}
+
+static void print_compliance_banner(void) {
+    printf("This tool only inspects your own device statistics.\n");
+    printf("When using it in libraries or other shared spaces, obtain permission before running scans or pings.\n");
+    printf("All optional active probes now require confirmation so you can respect venue policies.\n\n");
+}
+
+static void show_sysfs_info(const char *iface) {
+    char path[128];
+    char value[128];
+
+    snprintf(path, sizeof(path), "/sys/class/net/%s/operstate", iface);
+    if (read_first_line(path, value, sizeof(value)) == 0) {
+        printf("  Link state : %s\n", value);
+    }
+
+    snprintf(path, sizeof(path), "/sys/class/net/%s/carrier", iface);
+    if (read_first_line(path, value, sizeof(value)) == 0) {
+        if (strcmp(value, "1") == 0) {
+            printf("  Carrier    : detected\n");
+        } else if (strcmp(value, "0") == 0) {
+            printf("  Carrier    : not detected\n");
+        } else {
+            printf("  Carrier    : %s\n", value);
+        }
+    }
+
+    snprintf(path, sizeof(path), "/sys/class/net/%s/address", iface);
+    if (read_first_line(path, value, sizeof(value)) == 0) {
+        printf("  MAC addr   : %s\n", value);
+    }
+}
+
+static int read_nmcli_value(const char *device, const char *field, char *out, size_t out_size) {
+    char command[256];
+    if (snprintf(command, sizeof(command), "nmcli -g %s device show %s 2>/dev/null", field, device) >= (int)sizeof(command)) {
+        return -1;
+    }
+    FILE *fp = popen(command, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+    if (fgets(out, (int)out_size, fp) == NULL) {
+        pclose(fp);
+        out[0] = '\0';
+        return -1;
+    }
+    pclose(fp);
+    trim_trailing_whitespace(out);
+    return out[0] == '\0' ? -1 : 0;
+}
+
+static void show_wireless_info(const char *iface) {
+    if (check_iw() != 0) {
+        printf("  Wireless link info unavailable (iw not installed).\n");
+        return;
+    }
+    char command[256];
+    if (snprintf(command, sizeof(command), "iw dev %s link 2>/dev/null", iface) >= (int)sizeof(command)) {
+        return;
+    }
+    FILE *fp = popen(command, "r");
+    if (fp == NULL) {
+        return;
+    }
+    char line[256];
+    bool printed_header = false;
+    while (fgets(line, sizeof(line), fp)) {
+        trim_trailing_whitespace(line);
+        if (line[0] == '\0') {
+            continue;
+        }
+        if (!printed_header) {
+            printf("  Wireless link info:\n");
+            printed_header = true;
+        }
+        printf("    %s\n", line);
+    }
+    pclose(fp);
+    if (!printed_header) {
+        printf("  Wireless link info: interface is not associated.\n");
+    }
+}
+
+static void show_nmcli_device_details(const char *iface) {
+    char state[128];
+    char connection[256];
+    char address[256];
+    char gateway[128];
+    char dns[256];
+
+    if (read_nmcli_value(iface, "GENERAL.STATE", state, sizeof(state)) != 0) {
+        snprintf(state, sizeof(state), "Unavailable");
+    }
+    if (read_nmcli_value(iface, "GENERAL.CONNECTION", connection, sizeof(connection)) != 0) {
+        snprintf(connection, sizeof(connection), "None");
+    }
+    if (read_nmcli_value(iface, "IP4.ADDRESS", address, sizeof(address)) != 0) {
+        snprintf(address, sizeof(address), "None");
+    }
+    if (read_nmcli_value(iface, "IP4.GATEWAY", gateway, sizeof(gateway)) != 0) {
+        snprintf(gateway, sizeof(gateway), "None");
+    }
+    if (read_nmcli_value(iface, "IP4.DNS", dns, sizeof(dns)) != 0) {
+        snprintf(dns, sizeof(dns), "None");
+    }
+
+    printf("  NM state   : %s\n", state);
+    printf("  Connection : %s\n", connection);
+    printf("  IPv4 addr  : %s\n", address);
+    printf("  Gateway    : %s\n", gateway);
+    printf("  DNS        : %s\n", dns);
+}
+
+int check_nmcli(void);
+
+static void show_connection_details(void) {
+    if (check_nmcli() != 0) {
+        printf("'nmcli' is required to show connection details.\n");
+        return;
+    }
+
+    FILE *fp = popen("nmcli -t -f DEVICE,TYPE,STATE device status 2>/dev/null", "r");
+    if (fp == NULL) {
+        printf("Unable to query device status.\n");
+        return;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), fp)) {
+        trim_trailing_whitespace(line);
+        if (line[0] == '\0') {
+            continue;
+        }
+        char *token = strtok(line, ":");
+        if (token == NULL) {
+            continue;
+        }
+        char device[64];
+        snprintf(device, sizeof(device), "%s", token);
+
+        token = strtok(NULL, ":");
+        if (token == NULL) {
+            continue;
+        }
+        char type[64];
+        snprintf(type, sizeof(type), "%s", token);
+
+        token = strtok(NULL, ":");
+        if (token == NULL) {
+            continue;
+        }
+        char state[64];
+        snprintf(state, sizeof(state), "%s", token);
+
+        printf("\nInterface: %s (%s)\n", device, type);
+        printf("  Reported state: %s\n", state);
+        show_sysfs_info(device);
+        show_nmcli_device_details(device);
+
+        if (strcasecmp(type, "wifi") == 0 || strcasecmp(type, "802-11-wireless") == 0) {
+            show_wireless_info(device);
+        }
+    }
+
+    pclose(fp);
+    printf("\nReminder: These details are limited to your own interfaces and do not inspect other patrons' traffic.\n");
 }
 
 // Structure to store network interface statistics from /proc/net/dev
@@ -123,11 +339,18 @@ int check_adapters(void) {
 /*
  * check_connectivity
  *
- * Tests internet connectivity by pinging 8.8.8.8.
+ * Tests internet connectivity by pinging the provided host.
  * Returns 0 if successful, nonzero otherwise.
  */
-int check_connectivity(void) {
-    return system("ping -c 1 8.8.8.8 > /dev/null 2>&1");
+int check_connectivity(const char *host) {
+    if (host == NULL || host[0] == '\0') {
+        return -1;
+    }
+    char command[256];
+    if (snprintf(command, sizeof(command), "ping -c 1 %s > /dev/null 2>&1", host) >= (int)sizeof(command)) {
+        return -1;
+    }
+    return system(command);
 }
 
 /*
@@ -152,11 +375,24 @@ void run_diagnostics(void) {
          printf("Diagnostic: No network adapters detected. Check drivers or physical connections.\n");
     }
     
-    // Check for internet connectivity
-    if (check_connectivity() == 0) {
-         printf("Diagnostic: Internet connectivity is working (ping to 8.8.8.8 successful).\n");
+    if (confirm_action("Run a single ping test (y/N)? ")) {
+         char host[MAX_INPUT];
+         printf("Enter host to ping (default 8.8.8.8): ");
+         if (fgets(host, sizeof(host), stdin) == NULL) {
+             host[0] = '\0';
+         }
+         trim_trailing_whitespace(host);
+         if (host[0] == '\0') {
+             snprintf(host, sizeof(host), "8.8.8.8");
+         }
+
+         if (check_connectivity(host) == 0) {
+             printf("Diagnostic: Internet connectivity is working (ping to %s successful).\n", host);
+         } else {
+             printf("Diagnostic: Internet connectivity test to %s failed. Check your network connection and venue policies.\n", host);
+         }
     } else {
-         printf("Diagnostic: Internet connectivity test failed. Check your network connection and router/modem.\n");
+         printf("Diagnostic: Connectivity test skipped to avoid unsolicited traffic.\n");
     }
     
     printf("--- End of Diagnostics ---\n");
@@ -172,17 +408,18 @@ void run_diagnostics(void) {
  *  - Shows detailed additional metrics per interface.
  *  - Each interface’s histogram bar is scaled based on its own maximum observed throughput.
  *  - Horizontal separator lines are printed to match the table widths.
+ *  - Optionally logs snapshots to a CSV file when provided.
  *  - Exits when the user presses the plain 'q' key.
  *
  * Design rationale:
  * We configure the terminal in non-canonical mode and use select() to wait for user input or a timeout.
  * Pressing the 'q' key will break out of the monitoring loop.
  */
-void monitor_mode(int interval) {
+void monitor_mode(int interval, FILE *log_fp) {
     if (interval <= 0) {
         interval = 1;  // Ensure a valid interval
     }
-    
+
     // Save current terminal settings and switch to non-canonical mode.
     struct termios old_tio, new_tio;
     if (tcgetattr(STDIN_FILENO, &old_tio) == -1) {
@@ -212,17 +449,22 @@ void monitor_mode(int interval) {
     
     MaxStats max_stats[MAX_INTERFACES] = {0};
     int max_stats_count = 0;
-    
+    int header_written = 0;
+
     NetDevStats prev[MAX_INTERFACES] = {0}, curr[MAX_INTERFACES] = {0};
     unsigned long rx_rates[MAX_INTERFACES] = {0};
     unsigned long tx_rates[MAX_INTERFACES] = {0};
-    
+
     int prev_count = read_netdev_stats(prev, MAX_INTERFACES);
     if (prev_count < 0) {
          printf("Error: Unable to read network statistics.\n");
          goto cleanup;
     }
-    
+
+    if (log_fp != NULL) {
+         printf("Passive CSV logging is active. Measurements are stored locally only.\n");
+    }
+
     while (1) {
          // Use select() to wait for either input or the refresh timeout.
          fd_set readfds;
@@ -294,10 +536,10 @@ void monitor_mode(int interval) {
          // Display current timestamp.
          time_t now = time(NULL);
          printf("Updated: %s", ctime(&now)); // ctime() adds a newline
-         
+
          printf("Network Monitoring Mode (refresh every %d second(s)). Press 'q' to exit.\n", interval);
          print_separator(TABLE1_WIDTH);
-         
+
          // Main table header.
          printf("%-6s %8s %8s %10s %10s %8s %8s %8s %8s %8s %8s\n",
                 "IFACE", "RX/s", "TX/s", "RXTot", "TXTOT", "RXpkts", "TXpkts",
@@ -444,7 +686,31 @@ void monitor_mode(int interval) {
              printf("Aggregate RX Drops : %.2f%%, TX Drops : %.2f%%\n", agg_rx_dp_percent, agg_tx_dp_percent);
          }
          print_separator(TABLE1_WIDTH);
-         
+
+         if (log_fp != NULL) {
+             if (!header_written) {
+                 fprintf(log_fp, "timestamp,interface,rx_bytes_per_sec,tx_bytes_per_sec,rx_total,tx_total\n");
+                 header_written = 1;
+             }
+             char timestamp[32] = "unknown";
+             struct tm *tm_info = localtime(&now);
+             if (tm_info != NULL) {
+                 if (strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", tm_info) == 0) {
+                     snprintf(timestamp, sizeof(timestamp), "unknown");
+                 }
+             }
+             for (int i = 0; i < curr_count; i++) {
+                 fprintf(log_fp, "%s,%s,%lu,%lu,%lu,%lu\n",
+                         timestamp,
+                         curr[i].name,
+                         rx_rates[i],
+                         tx_rates[i],
+                         curr[i].rx_bytes,
+                         curr[i].tx_bytes);
+             }
+             fflush(log_fp);
+         }
+
          // Update previous statistics for the next interval.
          prev_count = curr_count;
          for (int i = 0; i < curr_count; i++) {
@@ -462,6 +728,8 @@ int main(void) {
     char input[MAX_INPUT];
     int choice;
 
+    print_compliance_banner();
+
     while (1) {
         // Display the interactive menu.
         printf("\n--- Network Manager ---\n");
@@ -470,7 +738,8 @@ int main(void) {
         printf("3. Disconnect from the current wireless network\n");
         printf("4. Run diagnostics\n");
         printf("5. Monitoring mode\n");
-        printf("6. Exit\n");
+        printf("6. Show current connection details\n");
+        printf("7. Exit\n");
         printf("Enter your choice: ");
         
         if (fgets(input, sizeof(input), stdin) == NULL) {
@@ -482,6 +751,10 @@ int main(void) {
         switch (choice) {
             case 1:
                 // List available wireless networks using nmcli.
+                if (!confirm_action("This action may trigger a Wi-Fi scan. Proceed? (y/N): ")) {
+                    printf("Scan cancelled to respect venue policies.\n");
+                    break;
+                }
                 printf("Searching for available wireless networks...\n");
                 if (system("nmcli device wifi list") != 0) {
                     printf("Command failed.\n");
@@ -493,6 +766,7 @@ int main(void) {
                 char password[MAX_INPUT];
                 char command[256];
 
+                printf("Only join networks you are authorized to use.\n");
                 printf("Enter SSID: ");
                 if (fgets(ssid, sizeof(ssid), stdin) == NULL) break;
                 ssid[strcspn(ssid, "\n")] = '\0';
@@ -512,13 +786,29 @@ int main(void) {
                 }
                 break;
             }
-            case 3:
-                // Disconnect from the current wireless network (assumes interface is wlan0).
-                printf("Disconnecting from current wireless network...\n");
-                if (system("nmcli device disconnect wlan0") != 0) {
+            case 3: {
+                // Disconnect from the current wireless network.
+                char device[64];
+                char command[256];
+                printf("Enter device to disconnect (default wlan0): ");
+                if (fgets(device, sizeof(device), stdin) == NULL) {
+                    snprintf(device, sizeof(device), "wlan0");
+                } else {
+                    trim_trailing_whitespace(device);
+                    if (device[0] == '\0') {
+                        snprintf(device, sizeof(device), "wlan0");
+                    }
+                }
+                if (snprintf(command, sizeof(command), "nmcli device disconnect '%s'", device) >= (int)sizeof(command)) {
+                    printf("Device name too long.\n");
+                    break;
+                }
+                printf("Disconnecting interface %s...\n", device);
+                if (system(command) != 0) {
                     printf("Disconnect command failed.\n");
                 }
                 break;
+            }
             case 4:
                 // Run diagnostics.
                 run_diagnostics();
@@ -527,6 +817,9 @@ int main(void) {
                 // Prompt the user for a refresh interval (in seconds) before entering monitoring mode.
                 char interval_str[MAX_INPUT];
                 int interval;
+                FILE *log_fp = NULL;
+                char log_path[256];
+
                 printf("Enter refresh interval in seconds (default 1): ");
                 if (fgets(interval_str, sizeof(interval_str), stdin) != NULL) {
                     interval = atoi(interval_str);
@@ -535,10 +828,37 @@ int main(void) {
                 } else {
                     interval = 1;
                 }
-                monitor_mode(interval);
+
+                if (confirm_action("Enable passive CSV logging for this session? (y/N): ")) {
+                    printf("Enter log file path (default inet_log.csv): ");
+                    if (fgets(log_path, sizeof(log_path), stdin) == NULL) {
+                        snprintf(log_path, sizeof(log_path), "inet_log.csv");
+                    } else {
+                        trim_trailing_whitespace(log_path);
+                        if (log_path[0] == '\0') {
+                            snprintf(log_path, sizeof(log_path), "inet_log.csv");
+                        }
+                    }
+                    log_fp = fopen(log_path, "a");
+                    if (log_fp == NULL) {
+                        perror("fopen");
+                    } else {
+                        printf("Logging interface counters to %s.\n", log_path);
+                    }
+                }
+
+                monitor_mode(interval, log_fp);
+
+                if (log_fp != NULL) {
+                    fclose(log_fp);
+                    printf("Saved passive log to %s.\n", log_path);
+                }
                 break;
             }
             case 6:
+                show_connection_details();
+                break;
+            case 7:
                 // Exit the application.
                 printf("Exiting...\n");
                 return 0;

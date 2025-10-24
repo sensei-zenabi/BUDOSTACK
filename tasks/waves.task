@@ -1,0 +1,44 @@
+# Global variables
+SET $VALUE = 0
+SET $TIME = 0
+SET $INCREMENT = 0.01
+SET $AMPLITUDE = 20
+SET $END_TIME = 1
+SET $X = 1
+SET $Y = 0
+SET $HEIGHT = 0
+SET $STATE = 1
+SET $COLOR = 1
+
+# Code
+
+RUN _GETHEIGHT to $HEIGHT 
+
+RUN cls
+PRINT "\n- - - SIN() and COS() PLOTTING DEMO - - -\n"
+PRINT "\nCreated by: Ville Suoranta\n"
+
+
+@START
+IF $STATE == 1
+  RUN _CALC sin(2*pi*$TIME) to $VALUE
+IF $STATE == 2
+  RUN _CALC cos(2*pi*$TIME) to $VALUE
+RUN _CALC floor($HEIGHT/2 + $VALUE * $AMPLITUDE) to $Y
+RUN _RECT -x $X -y $Y -height 1 -width 1 -color $COLOR
+SET $TIME = $TIME + $INCREMENT
+SET $X = $X + 1
+WAIT 20
+IF $STATE > 2
+  GOTO @END
+IF $TIME < $END_TIME
+  GOTO @START
+ELSE
+  SET $STATE = $STATE + 1
+  SET $COLOR = $COLOR + 1
+  SET $TIME = 0
+  SET $X = 1
+  GOTO @START
+@END
+RUN _TEXT -x 1 -y $HEIGHT-2 -text "Demo finished!"
+PRINT "\n"

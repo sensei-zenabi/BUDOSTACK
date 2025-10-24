@@ -150,6 +150,7 @@ int main(int argc, char *argv[]) {
     printf("  demo.task            : TASK language demo\n");
     printf("  screen.task          : Screen calibration TASK\n");
     printf("  release.task         : Used to generate release notes\n");
+    printf("  waves.task           : Demonstration how to plot basic math\n");
     printf("\n");
     printf("=============================================================================\n");
 

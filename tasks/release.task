@@ -11,6 +11,7 @@ INPUT $TAG
 PRINT "\nEnter baseline release tag ('none' if no baseline): "
 INPUT $TAG_OLD
 RUN cls
+#RUN _LOG -state on -file release_note.txt (not supported yet)
 PRINT "\n\n=============================== RELEASE NOTES ===============================\n"
 PRINT "\n Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git\n"
 PRINT "\n  Releance branch:         main"
@@ -26,3 +27,4 @@ IF $TAG_OLD == none
   RUN git --no-pager log --name-only
 ELSE
   RUN git --no-pager log --name-only $TAG_OLD..HEAD
+#RUN _LOG -state off -file release_note.txt (not supported yet)

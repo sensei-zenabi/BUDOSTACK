@@ -56,6 +56,8 @@ static int raw_mode_enabled = 0;
 static char *line_buffer = NULL;
 static size_t line_capacity = 0;
 
+static void ensure_line_capacity(int columns);
+
 static void disable_raw_mode(void)
 {
     if (!raw_mode_enabled) {

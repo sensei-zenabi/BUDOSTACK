@@ -23,6 +23,8 @@ typedef struct {
     char *options[MAX_OPTIONS];
     int param_count;
     int opt_count;
+    char *redirect_path;
+    int redirect_append;
 } CommandStruct;
 
 void parse_input(const char *input, CommandStruct *cmd);

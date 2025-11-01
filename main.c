@@ -343,6 +343,10 @@ int execute_command_with_paging(CommandStruct *cmd) {
      * - The "-nopaging" flag is provided, or
      * - The command is in the realtime command list loaded from apps/ folder.
      */
+    if (cmd->redirect_path) {
+        return execute_command(cmd);
+    }
+
     if (nopaging || is_realtime_command(cmd->command)) {
         return execute_command(cmd);
     }

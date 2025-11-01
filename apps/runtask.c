@@ -3,8 +3,9 @@
 *
 * Changes in this version:
 * - CMD removed.
-* - RUN executes an app by name from ./apps/, ./commands/, or ./utilities. Blocking is
-*   the default; prepend BLOCKING or NONBLOCKING to control the run mode explicitly.
+* - RUN executes an app by name from ./apps/, ./commands/, or ./utilities, and falls
+*   back to PATH-resolved system commands if none of those match. Blocking is the
+*   default; prepend BLOCKING or NONBLOCKING to control the run mode explicitly.
 *   Arguments are passed as-is.
 * - RUN optionally supports `TO $VAR` to capture stdout into a variable (type auto-detected).
 * - If RUN's first token contains '/', it's treated as an explicit path and executed directly.
@@ -1284,6 +1285,7 @@ static void print_help(void) {
     printf("                       Accepts literal names or $VAR holding the label\n");
     printf("  RUN [BLOCKING|NONBLOCKING] <cmd [args...]>:\n");
     printf("                       Executes an executable from ./apps, ./commands, or ./utilities.\n");
+    printf("                       Falls back to PATH-resolved system commands when no internal match exists.\n");
     printf("                       Default is BLOCKING. If the command contains '/', it's executed as given.\n");
     printf("                       Append 'TO $VAR' to capture stdout into $VAR (blocking mode only).\n");
     printf("  CLEAR              : Clears the screen\n\n");
@@ -1291,7 +1293,8 @@ static void print_help(void) {
     printf("  ./runtask taskfile [-d]\n\n");
     printf("Notes:\n");
     printf("- Task files are loaded from 'tasks/' automatically (e.g., tasks/demo.task)\n");
-    printf("- Place your executables in ./apps, ./commands, or ./utilities and make them executable.\n\n");
+    printf("- Place your executables in ./apps, ./commands, or ./utilities and make them executable.\n");
+    printf("- External commands available in PATH are also accepted.\n\n");
     printf("Compilation:\n");
     printf("  gcc -std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -o runtask apps/runtask.c\n\n");
 }
@@ -2463,6 +2466,9 @@ int main(int argc, char *argv[]) {
             char *captured_output = NULL;
             size_t captured_len = 0;
             size_t captured_cap = 0;
+            bool use_execvp = false;
+            bool explicit_path_requested = false;
+            char resolved[PATH_MAX];
 
             if (argcnt > 0) {
                 if (equals_ignore_case(argv_heap[0], "BLOCKING")) {
@@ -2519,6 +2525,10 @@ int main(int argc, char *argv[]) {
 
             expand_argv_variables(argv_heap, argcnt, script[pc].source_line, debug);
 
+            if (argcnt > 0) {
+                explicit_path_requested = strchr(argv_heap[0], '/') != NULL;
+            }
+
             if (capture_output && blocking_mode && argcnt > 0) {
                 bool handled = false;
                 if (equals_ignore_case(argv_heap[0], "_GETROW") ||
@@ -2552,20 +2562,20 @@ int main(int argc, char *argv[]) {
                 }
             }
 
-            // Resolve executable path
-            char resolved[PATH_MAX];
-            if (resolve_exec_path(argv_heap[0], resolved, sizeof(resolved)) != 0) {
-                fprintf(stderr, "RUN: executable not found or not executable: %s (searched apps/, commands/, utilities/)\n", argv_heap[0]);
+            // Resolve executable path for internal commands; fall back to system PATH.
+            if (resolve_exec_path(argv_heap[0], resolved, sizeof(resolved)) == 0) {
+                free(argv_heap[0]);
+                argv_heap[0] = xstrdup(resolved);
+            } else if (!explicit_path_requested) {
+                use_execvp = true;
+            } else {
+                fprintf(stderr, "RUN: executable not found or not executable: %s\n", argv_heap[0]);
                 free_argv(argv_heap);
                 continue;
             }
 
-            // Replace argv[0] with a heap copy of the resolved path
-            free(argv_heap[0]);
-            argv_heap[0] = xstrdup(resolved);
-
             if (debug) {
-                fprintf(stderr, "RUN: execv %s", argv_heap[0]);
+                fprintf(stderr, "RUN: %s %s", use_execvp ? "execvp" : "execv", argv_heap[0]);
                 for (int i = 1; i < argcnt; ++i) fprintf(stderr, " [%s]", argv_heap[i]);
                 if (capture_output) fprintf(stderr, " -> TO $%s", capture_var ? capture_var->name : "?");
                 fprintf(stderr, " (%s)\n", blocking_mode ? "blocking" : "non-blocking");
@@ -2593,8 +2603,13 @@ int main(int argc, char *argv[]) {
                         _exit(EXIT_FAILURE);
                     }
                     if (gpid == 0) {
-                        execv(argv_heap[0], argv_heap);
-                        perror("execv");
+                        if (use_execvp) {
+                            execvp(argv_heap[0], argv_heap);
+                            perror("execvp");
+                        } else {
+                            execv(argv_heap[0], argv_heap);
+                            perror("execv");
+                        }
                         _exit(EXIT_FAILURE);
                     }
                     _exit(EXIT_SUCCESS);
@@ -2639,8 +2654,13 @@ int main(int argc, char *argv[]) {
                     }
                     close(pipefd[1]);
                 }
-                execv(argv_heap[0], argv_heap);
-                perror("execv");
+                if (use_execvp) {
+                    execvp(argv_heap[0], argv_heap);
+                    perror("execvp");
+                } else {
+                    execv(argv_heap[0], argv_heap);
+                    perror("execv");
+                }
                 _exit(EXIT_FAILURE);
             } else {
                 if (capture_output) {

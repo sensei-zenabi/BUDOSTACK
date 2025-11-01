@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <locale.h>
+#include <limits.h>
 #include <math.h>
 #include <poll.h>
 #include <stdint.h>
@@ -186,6 +187,18 @@ static int reallocate_history(struct analyzer_state *state, size_t new_capacity)
     return 0;
 }
 
+static size_t compute_history_capacity(int rows)
+{
+    if (rows <= 4) {
+        return 0;
+    }
+    size_t visible_rows = (size_t)(rows - 4);
+    if (visible_rows > SIZE_MAX / 2) {
+        return SIZE_MAX;
+    }
+    return visible_rows * 2;
+}
+
 static void fft_transform(struct complex_sample *buffer, size_t n)
 {
     if (n <= 1) {
@@ -325,9 +338,9 @@ static void draw_waterfall_row(const struct analyzer_state *state,
     int use_log_frequency,
     int use_log_amplitude)
 {
-    printf("\x1b[0m\x1b[2K");
+    printf("\r\x1b[0m\x1b[2K");
     if (columns <= 0 || state->bin_count == 0) {
-        printf("\n");
+        printf("\r\n");
         return;
     }
 
@@ -352,7 +365,7 @@ static void draw_waterfall_row(const struct analyzer_state *state,
     if (prev_color != -1) {
         printf("\x1b[0m");
     }
-    printf("\n");
+    printf("\r\n");
 }
 
 static void format_frequency_label(double frequency, char *buffer, size_t capacity)
@@ -384,9 +397,9 @@ static void draw_frequency_axis_baseline(const struct analyzer_state *state,
     int use_log_frequency,
     unsigned int sample_rate)
 {
-    printf("\x1b[0m\x1b[2K");
+    printf("\r\x1b[0m\x1b[2K");
     if (columns <= 0) {
-        printf("\n");
+        printf("\r\n");
         return;
     }
     ensure_line_capacity(columns);
@@ -406,7 +419,7 @@ static void draw_frequency_axis_baseline(const struct analyzer_state *state,
         line_buffer[column] = '+';
     }
     line_buffer[columns] = '\0';
-    printf("%s\n", line_buffer);
+    printf("%s\r\n", line_buffer);
     (void)state;
     (void)use_log_frequency;
     (void)sample_rate;
@@ -417,9 +430,9 @@ static void draw_frequency_axis_labels(const struct analyzer_state *state,
     int use_log_frequency,
     unsigned int sample_rate)
 {
-    printf("\x1b[2K");
+    printf("\r\x1b[0m\x1b[2K");
     if (columns <= 0) {
-        printf("\n");
+        printf("\r\n");
         return;
     }
     ensure_line_capacity(columns);
@@ -477,7 +490,7 @@ static void draw_frequency_axis_labels(const struct analyzer_state *state,
         first_label = 0;
     }
     line_buffer[columns] = '\0';
-    printf("%s\n", line_buffer);
+    printf("%s\r\n", line_buffer);
 }
 
 static void push_history(struct analyzer_state *state, const double *magnitudes)
@@ -513,10 +526,10 @@ static void ensure_line_capacity(int columns)
 
 static void write_padded_line(const char *text, int columns, int newline)
 {
-    printf("\x1b[0m\x1b[2K");
+    printf("\r\x1b[0m\x1b[2K");
     if (columns <= 0) {
         if (newline) {
-            printf("\n");
+            printf("\r\n");
         }
         return;
     }
@@ -534,7 +547,7 @@ static void write_padded_line(const char *text, int columns, int newline)
     }
     line_buffer[columns] = '\0';
     if (newline) {
-        printf("%s\n", line_buffer);
+        printf("%s\r\n", line_buffer);
     } else {
         printf("%s", line_buffer);
     }
@@ -584,7 +597,7 @@ static void draw_ui(const struct analyzer_state *state,
     size_t padding_rows = waterfall_rows > slices_available ? waterfall_rows - slices_available : 0;
 
     for (size_t i = 0; i < padding_rows; ++i) {
-        printf("\x1b[2K\n");
+        printf("\r\x1b[2K\r\n");
     }
 
     if (slices_available > 0 && state->history_capacity > 0) {
@@ -727,7 +740,7 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-    size_t desired_history = (rows > 4) ? (size_t)(rows - 4) : 0;
+    size_t desired_history = compute_history_capacity(rows);
     if (reallocate_history(&state, desired_history) != 0) {
         disable_raw_mode();
         snd_pcm_close(pcm_handle);
@@ -771,13 +784,13 @@ int main(void)
         get_terminal_size(&rows, &cols);
         if (cols < 80) {
             printf("\x1b[H\x1b[0m\x1b[J");
-            printf("\x1b[2KSpectrum Analyzer requires at least 80 columns. Current width: %d\n", cols);
-            printf("\x1b[2K\n");
-            printf("\x1b[2KPlease resize the terminal.\n");
-            printf("\x1b[2K");
+            printf("\r\x1b[2KSpectrum Analyzer requires at least 80 columns. Current width: %d\r\n", cols);
+            printf("\r\x1b[2K\r\n");
+            printf("\r\x1b[2KPlease resize the terminal.\r\n");
+            printf("\r\x1b[2K");
             fflush(stdout);
         } else {
-            size_t new_history = (rows > 4) ? (size_t)(rows - 4) : 0;
+            size_t new_history = compute_history_capacity(rows);
             if (new_history != state.history_capacity) {
                 if (reallocate_history(&state, new_history) != 0) {
                     disable_raw_mode();
@@ -841,7 +854,7 @@ int main(void)
                         if (reconfigure_fft(&state, new_fft) != 0) {
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "Failed to resize FFT");
                         } else {
-                            reallocate_history(&state, (rows > 4) ? (size_t)(rows - 4) : 0);
+                            reallocate_history(&state, compute_history_capacity(rows));
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "FFT size increased");
                         }
                     }
@@ -857,7 +870,7 @@ int main(void)
                         if (reconfigure_fft(&state, new_fft) != 0) {
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "Failed to resize FFT");
                         } else {
-                            reallocate_history(&state, (rows > 4) ? (size_t)(rows - 4) : 0);
+                            reallocate_history(&state, compute_history_capacity(rows));
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "FFT size decreased");
                         }
                     }

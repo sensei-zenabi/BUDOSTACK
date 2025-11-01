@@ -116,6 +116,10 @@ int main(int argc, char *argv[]) {
     printf("  inet     : Interactive internet connection manager.\n");    
     printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");    
     printf("\n");
+    printf("/* Engineering */\n");
+    printf("\n");
+    printf("  spectrum : Waterfall spectrum app that uses ALSA driver.\n");
+    printf("\n");
     printf("/* Other */\n");
     printf("\n");
     printf("  dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.\n");

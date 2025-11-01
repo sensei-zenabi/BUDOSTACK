@@ -298,44 +298,97 @@ static double column_to_frequency(const struct analyzer_state *state,
     return bin_width * (double)bin;
 }
 
-static void draw_waterfall_row(const struct analyzer_state *state,
+static double magnitude_to_display_value(const struct analyzer_state *state,
     const double *magnitudes,
+    size_t bin,
+    int use_log_amplitude)
+{
+    if (!magnitudes || state->amplitude_normalizer <= 0.0 || bin >= state->bin_count) {
+        return 0.0;
+    }
+    double amplitude = magnitudes[bin] / state->amplitude_normalizer;
+    if (amplitude < 0.0) {
+        amplitude = 0.0;
+    }
+    if (amplitude > 1.0) {
+        amplitude = 1.0;
+    }
+    if (use_log_amplitude) {
+        return log1p(amplitude * 9.0) / log1p(9.0);
+    }
+    return amplitude;
+}
+
+static void draw_waterfall_half_row(const struct analyzer_state *state,
+    const double *upper_magnitudes,
+    const double *lower_magnitudes,
     int columns,
     int use_log_frequency,
     int use_log_amplitude)
 {
-    static const char block[] = "\xE2\x96\x88";
-    printf("\x1b[2K");
+    printf("\x1b[0m\x1b[2K");
     if (columns <= 0 || state->bin_count == 0) {
         printf("\n");
         return;
     }
 
-    int prev_color = -1;
+    int prev_fg = -1;
+    int prev_bg = -1;
+    int use_upper = upper_magnitudes != NULL;
+    int use_lower = lower_magnitudes != NULL;
+    unsigned char glyph_bytes[3];
+
+    if (use_upper && use_lower) {
+        glyph_bytes[0] = 0xE2;
+        glyph_bytes[1] = 0x96;
+        glyph_bytes[2] = 0x80; /* '▀' */
+    } else if (use_lower) {
+        glyph_bytes[0] = 0xE2;
+        glyph_bytes[1] = 0x96;
+        glyph_bytes[2] = 0x84; /* '▄' */
+    } else if (use_upper) {
+        glyph_bytes[0] = 0xE2;
+        glyph_bytes[1] = 0x96;
+        glyph_bytes[2] = 0x80; /* '▀' */
+    } else {
+        glyph_bytes[0] = ' ';
+        glyph_bytes[1] = '\0';
+        glyph_bytes[2] = '\0';
+    }
+
     for (int col = 0; col < columns; ++col) {
         size_t bin = map_bin(state->bin_count, (size_t)col, (size_t)columns, use_log_frequency);
         if (bin >= state->bin_count) {
             bin = state->bin_count - 1;
         }
-        double amplitude = magnitudes[bin] / state->amplitude_normalizer;
-        if (amplitude < 0.0) {
-            amplitude = 0.0;
+
+        int fg_color = use_upper
+            ? amplitude_to_color(magnitude_to_display_value(state, upper_magnitudes, bin, use_log_amplitude))
+            : 16;
+        int bg_color = use_lower
+            ? amplitude_to_color(magnitude_to_display_value(state, lower_magnitudes, bin, use_log_amplitude))
+            : 16;
+
+        if (glyph_bytes[0] == ' ') {
+            if (prev_fg != -1) {
+                printf("\x1b[0m");
+                prev_fg = -1;
+                prev_bg = -1;
+            }
+            fputc(' ', stdout);
+            continue;
         }
-        if (amplitude > 1.0) {
-            amplitude = 1.0;
+
+        if (fg_color != prev_fg || bg_color != prev_bg) {
+            printf("\x1b[38;5;%dm\x1b[48;5;%dm", fg_color, bg_color);
+            prev_fg = fg_color;
+            prev_bg = bg_color;
         }
-        double display_value = amplitude;
-        if (use_log_amplitude) {
-            display_value = log1p(display_value * 9.0) / log1p(9.0);
-        }
-        int color = amplitude_to_color(display_value);
-        if (color != prev_color) {
-            printf("\x1b[48;5;16m\x1b[38;5;%dm", color);
-            prev_color = color;
-        }
-        fputs(block, stdout);
+
+        fwrite(glyph_bytes, 1, 3, stdout);
     }
-    if (prev_color != -1) {
+
+    if (prev_fg != -1 || prev_bg != -1) {
         printf("\x1b[0m");
     }
     printf("\n");
@@ -565,20 +618,34 @@ static void draw_ui(const struct analyzer_state *state,
     write_padded_line(header_line, columns, 1);
 
     size_t waterfall_rows = rows > 4 ? (size_t)(rows - 4) : 0;
-    size_t available_rows = state->history_count < waterfall_rows ? state->history_count : waterfall_rows;
-    size_t padding_rows = waterfall_rows > available_rows ? waterfall_rows - available_rows : 0;
+    size_t max_slices = waterfall_rows * 2;
+    size_t slices_available = state->history_count < max_slices ? state->history_count : max_slices;
+    size_t data_rows = (slices_available + 1) / 2;
+    size_t padding_rows = waterfall_rows > data_rows ? waterfall_rows - data_rows : 0;
 
     for (size_t i = 0; i < padding_rows; ++i) {
         printf("\x1b[2K\n");
     }
 
-    if (available_rows > 0 && state->history_capacity > 0) {
-        size_t start_index = (state->history_head + state->history_capacity + 1 - available_rows)
+    if (slices_available > 0 && state->history_capacity > 0) {
+        size_t start_index = (state->history_head + state->history_capacity + 1 - slices_available)
             % state->history_capacity;
-        for (size_t r = 0; r < available_rows; ++r) {
-            size_t idx = (start_index + r) % state->history_capacity;
-            const double *row_data = state->history + (idx * state->bin_count);
-            draw_waterfall_row(state, row_data, columns, use_log_frequency, use_log_amplitude);
+        size_t remaining = slices_available;
+
+        if (remaining % 2 != 0) {
+            const double *upper = state->history + (start_index * state->bin_count);
+            draw_waterfall_half_row(state, upper, NULL, columns, use_log_frequency, use_log_amplitude);
+            start_index = (start_index + 1) % state->history_capacity;
+            remaining--;
+        }
+
+        while (remaining >= 2) {
+            const double *upper = state->history + (start_index * state->bin_count);
+            start_index = (start_index + 1) % state->history_capacity;
+            const double *lower = state->history + (start_index * state->bin_count);
+            start_index = (start_index + 1) % state->history_capacity;
+            draw_waterfall_half_row(state, upper, lower, columns, use_log_frequency, use_log_amplitude);
+            remaining -= 2;
         }
     }
 
@@ -709,7 +776,7 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-    size_t desired_history = (rows > 4) ? (size_t)(rows - 4) : 0;
+    size_t desired_history = (rows > 4) ? (size_t)(rows - 4) * 2 : 0;
     if (reallocate_history(&state, desired_history) != 0) {
         disable_raw_mode();
         snd_pcm_close(pcm_handle);
@@ -759,7 +826,7 @@ int main(void)
             printf("\x1b[2K");
             fflush(stdout);
         } else {
-            size_t new_history = (rows > 4) ? (size_t)(rows - 4) : 0;
+            size_t new_history = (rows > 4) ? (size_t)(rows - 4) * 2 : 0;
             if (new_history != state.history_capacity) {
                 if (reallocate_history(&state, new_history) != 0) {
                     disable_raw_mode();
@@ -823,7 +890,7 @@ int main(void)
                         if (reconfigure_fft(&state, new_fft) != 0) {
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "Failed to resize FFT");
                         } else {
-                            reallocate_history(&state, (rows > 4) ? (size_t)(rows - 4) : 0);
+                            reallocate_history(&state, (rows > 4) ? (size_t)(rows - 4) * 2 : 0);
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "FFT size increased");
                         }
                     }
@@ -839,7 +906,7 @@ int main(void)
                         if (reconfigure_fft(&state, new_fft) != 0) {
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "Failed to resize FFT");
                         } else {
-                            reallocate_history(&state, (rows > 4) ? (size_t)(rows - 4) : 0);
+                            reallocate_history(&state, (rows > 4) ? (size_t)(rows - 4) * 2 : 0);
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "FFT size decreased");
                         }
                     }

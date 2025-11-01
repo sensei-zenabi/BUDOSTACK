@@ -85,17 +85,71 @@ static enum archive_type detect_archive_type(const char *basename, size_t *suffi
     return ARCHIVE_UNSUPPORTED;
 }
 
+static int ensure_directory_exists(const char *path) {
+    struct stat st;
+
+    if (stat(path, &st) == 0) {
+        if (S_ISDIR(st.st_mode)) {
+            return 0;
+        }
+
+        errno = ENOTDIR;
+        return -1;
+    }
+
+    if (errno != ENOENT) {
+        return -1;
+    }
+
+    if (mkdir(path, 0755) != 0 && errno != EEXIST) {
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
-    // Check for help or invalid number of arguments
-    if (argc != 2 || strcmp(argv[1], "-help") == 0) {
+    if (argc < 2 || (argc == 2 && strcmp(argv[1], "-help") == 0)) {
         printf("Usage: %s <archive_file>\n", argv[0]);
         printf("Unpacks the archive into a matching directory next to it.\n");
         printf("Supported formats: .zip, .7z, .tar, .tar.gz, .tgz, .tar.bz2, .tar.xz, .tar.zst\n");
-        printf("Quote the archive path if it contains spaces.\n");
+        printf("Archive paths containing spaces may be provided without quotes.\n");
         return 1;
     }
 
-    const char *archive_path = argv[1];
+    char archive_path_buf[1024];
+    const char *archive_path = NULL;
+
+    if (argc == 2) {
+        archive_path = argv[1];
+    } else {
+        size_t remaining = sizeof(archive_path_buf);
+        char *cursor = archive_path_buf;
+
+        for (int i = 1; i < argc; i++) {
+            const char *part = argv[i];
+            size_t part_len = strlen(part);
+            size_t needed = part_len + (i + 1 < argc ? 1 : 0);
+
+            if (needed >= remaining) {
+                fprintf(stderr, "Error: archive path too long\n");
+                return 1;
+            }
+
+            memcpy(cursor, part, part_len);
+            cursor += part_len;
+            remaining -= part_len;
+
+            if (i + 1 < argc) {
+                *cursor = ' ';
+                cursor++;
+                remaining--;
+            }
+        }
+
+        *cursor = '\0';
+        archive_path = archive_path_buf;
+    }
     const char *basename = strrchr(archive_path, '/');
     size_t prefix_len = 0;
     if (basename != NULL) {
@@ -135,7 +189,7 @@ int main(int argc, char *argv[]) {
     memcpy(output_dir + prefix_len, basename, stem_len);
     output_dir[prefix_len + stem_len] = '\0';
 
-    if (mkdir(output_dir, 0755) != 0 && errno != EEXIST) {
+    if (ensure_directory_exists(output_dir) != 0) {
         perror("mkdir");
         return 1;
     }

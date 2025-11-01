@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <limits.h>
 #include <unistd.h>
 #include <termios.h>    // For terminal control (raw mode)
@@ -35,6 +36,165 @@ int espeak_enable = 1;
  * so that relative paths like apps/ can be resolved.
  */
 char base_directory[PATH_MAX] = {0};
+
+static FILE *log_fp = NULL;
+static time_t log_state_mtime = 0;
+static int log_state_initialized = 0;
+static int log_control_ready = 0;
+static char log_control_path[PATH_MAX];
+static int log_bypass = 0;
+
+static void close_log_file(void) {
+    if (log_fp) {
+        fclose(log_fp);
+        log_fp = NULL;
+    }
+}
+
+static const char *get_log_control_path(void) {
+    if (base_directory[0] == '\0') {
+        return NULL;
+    }
+    if (!log_control_ready) {
+        if (snprintf(log_control_path, sizeof(log_control_path),
+                     "%s/.budostack_log_state", base_directory) >= (int)sizeof(log_control_path)) {
+            return NULL;
+        }
+        log_control_ready = 1;
+    }
+    return log_control_path;
+}
+
+static void refresh_log_state(void) {
+    const char *control = get_log_control_path();
+    if (!control) {
+        close_log_file();
+        log_state_initialized = 1;
+        return;
+    }
+
+    struct stat st;
+    if (stat(control, &st) != 0) {
+        close_log_file();
+        log_state_initialized = 1;
+        log_state_mtime = 0;
+        return;
+    }
+
+    if (!log_state_initialized || st.st_mtime != log_state_mtime) {
+        FILE *ctrl = fopen(control, "r");
+        if (!ctrl) {
+            close_log_file();
+            log_state_initialized = 1;
+            log_state_mtime = st.st_mtime;
+            return;
+        }
+        char path[PATH_MAX];
+        if (!fgets(path, sizeof(path), ctrl)) {
+            fclose(ctrl);
+            close_log_file();
+            log_state_initialized = 1;
+            log_state_mtime = st.st_mtime;
+            return;
+        }
+        fclose(ctrl);
+        path[strcspn(path, "\r\n")] = '\0';
+        if (path[0] == '\0') {
+            close_log_file();
+            log_state_initialized = 1;
+            log_state_mtime = st.st_mtime;
+            return;
+        }
+        FILE *fp = fopen(path, "a");
+        if (!fp) {
+            close_log_file();
+            log_state_initialized = 1;
+            log_state_mtime = st.st_mtime;
+            return;
+        }
+        if (log_fp) {
+            fclose(log_fp);
+        }
+        log_fp = fp;
+        log_state_mtime = st.st_mtime;
+        log_state_initialized = 1;
+    }
+}
+
+static void log_append(const char *text) {
+    if (!text || text[0] == '\0') {
+        return;
+    }
+    refresh_log_state();
+    if (!log_fp) {
+        return;
+    }
+    if (fputs(text, log_fp) == EOF) {
+        close_log_file();
+        log_state_initialized = 0;
+        log_state_mtime = 0;
+        return;
+    }
+    fflush(log_fp);
+}
+
+static void log_append_format(const char *fmt, ...) {
+    if (!fmt) {
+        return;
+    }
+    refresh_log_state();
+    if (!log_fp || log_bypass) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    int needed = vsnprintf(NULL, 0, fmt, args);
+    va_end(args);
+    if (needed < 0) {
+        return;
+    }
+
+    size_t size = (size_t)needed + 1;
+    char *buffer = malloc(size);
+    if (!buffer) {
+        return;
+    }
+
+    va_start(args, fmt);
+    vsnprintf(buffer, size, fmt, args);
+    va_end(args);
+
+    if (fputs(buffer, log_fp) == EOF) {
+        free(buffer);
+        close_log_file();
+        log_state_initialized = 0;
+        log_state_mtime = 0;
+        return;
+    }
+    free(buffer);
+    fflush(log_fp);
+}
+
+static void log_append_char(char c) {
+    refresh_log_state();
+    if (!log_fp || log_bypass) {
+        return;
+    }
+    if (fputc(c, log_fp) == EOF) {
+        close_log_file();
+        log_state_initialized = 0;
+        log_state_mtime = 0;
+        return;
+    }
+    fflush(log_fp);
+}
+
+#define LOG_PRINTF(...)               \
+    do {                              \
+        printf(__VA_ARGS__);          \
+        log_append_format(__VA_ARGS__); \
+    } while (0)
 
 /* Global dynamic list to store realtime commands loaded from apps/ and commands/ folders. */
 char **realtime_commands = NULL;
@@ -150,6 +310,7 @@ void delay(double seconds) {
 void delayPrint(const char *str, double delayTime) {
     for (int i = 0; str[i] != '\0'; i++) {
         putchar(str[i]);
+        log_append_char(str[i]);
         fflush(stdout);
         delay(delayTime);
     }
@@ -167,9 +328,9 @@ int search_mode(const char **lines, size_t line_count, const char *query);
 void display_prompt(void) {
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) != NULL)
-        printf("%s$ ", cwd);
+        LOG_PRINTF("%s$ ", cwd);
     else
-        printf("shell$ ");
+        LOG_PRINTF("shell$ ");
 }
 
 /* search_mode remains unchanged from the original implementation. */
@@ -187,7 +348,7 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
     }
     if (match_count == 0) {
         free(matches);
-        printf("No matches found. Press any key to continue...");
+        LOG_PRINTF("No matches found. Press any key to continue...");
         getchar();
         return -1;
     }
@@ -199,21 +360,21 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
     }
     int menu_height = w.ws_row - 1;
     while (1) {
-        printf("\033[H\033[J"); // Clear screen.
+        LOG_PRINTF("\033[H\033[J"); // Clear screen.
         int end = menu_start + menu_height;
         if (end > match_count)
             end = match_count;
         for (int i = menu_start; i < end; i++) {
             if (i == active) {
-                printf("\033[7m"); // Highlight active match.
+                LOG_PRINTF("\033[7m"); // Highlight active match.
             }
-            printf("Line %d: %s", matches[i] + 1, lines[matches[i]]);
+            LOG_PRINTF("Line %d: %s", matches[i] + 1, lines[matches[i]]);
             if (i == active) {
-                printf("\033[0m"); // Reset formatting.
+                LOG_PRINTF("\033[0m"); // Reset formatting.
             }
-            printf("\n");
+            LOG_PRINTF("\n");
         }
-        printf("\nUse Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
+        LOG_PRINTF("\nUse Up/Down arrows to select, Enter to jump, 'q' to cancel.\n");
         fflush(stdout);
         struct termios oldt, newt;
         tcgetattr(STDIN_FILENO, &oldt);
@@ -265,12 +426,12 @@ void pager(const char **lines, size_t line_count) {
         page_height = 10;
     int start = 0;
     while (1) {
-        printf("\033[H\033[J"); // Clear the screen.
+        LOG_PRINTF("\033[H\033[J"); // Clear the screen.
         for (int i = start; i < start + page_height && i < (int)line_count; i++) {
-            printf("%s\n", lines[i]);
+            LOG_PRINTF("%s\n", lines[i]);
         }
-        printf("\nPage %d/%d - Use Up/Down arrows to scroll, 'f' to search, 'q' to quit.",
-               start / page_height + 1, (int)((line_count + page_height - 1) / page_height));
+        LOG_PRINTF("\nPage %d/%d - Use Up/Down arrows to scroll, 'f' to search, 'q' to quit.",
+                   start / page_height + 1, (int)((line_count + page_height - 1) / page_height));
         fflush(stdout);
         struct termios oldt, newt;
         tcgetattr(STDIN_FILENO, &oldt);
@@ -296,7 +457,7 @@ void pager(const char **lines, size_t line_count) {
             }
         } else if (c == 'f') {
             char search[256];
-            printf("\nSearch: ");
+            LOG_PRINTF("\nSearch: ");
             fflush(stdout);
             if (fgets(search, sizeof(search), stdin) != NULL) {
                 search[strcspn(search, "\n")] = '\0';
@@ -308,7 +469,7 @@ void pager(const char **lines, size_t line_count) {
             }
         }
     }
-    printf("\n");
+    LOG_PRINTF("\n");
 }
 
 int is_realtime_command(const char *command) {
@@ -447,7 +608,8 @@ int execute_command_with_paging(CommandStruct *cmd) {
         return (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 127) ? -1 : 0;
     }
     output[total_size] = '\0';
-    
+    log_append(output);
+
     /*
      * Manually split output into lines while preserving empty lines.
      */
@@ -489,11 +651,17 @@ int execute_command_with_paging(CommandStruct *cmd) {
     
     /* If the output fits in one page, print directly; otherwise, page the output. */
     if ((int)current_line <= page_height) {
+        int prev_bypass = log_bypass;
+        log_bypass = 1;
         for (size_t i = 0; i < current_line; i++) {
-            printf("%s\n", lines[i]);
+            LOG_PRINTF("%s\n", lines[i]);
         }
+        log_bypass = prev_bypass;
     } else {
+        int prev_bypass = log_bypass;
+        log_bypass = 1;
         pager((const char **)lines, current_line);
+        log_bypass = prev_bypass;
     }
     free(lines);
     free(output);
@@ -539,6 +707,11 @@ int main(int argc, char *argv[]) {
         }
         snprintf(base_directory, sizeof(base_directory), "%s", source);
         set_base_path(base_directory);
+        close_log_file();
+        log_control_ready = 0;
+        log_state_initialized = 0;
+        log_state_mtime = 0;
+        log_control_path[0] = '\0';
     } else if (argc > 0) {
         int resolved = 0;
         if (realpath(argv[0], exe_path) != NULL) {
@@ -560,6 +733,11 @@ int main(int argc, char *argv[]) {
             if (setenv("BUDOSTACK_BASE", base_directory, 1) != 0) {
                 perror("setenv BUDOSTACK_BASE");
             }
+            close_log_file();
+            log_control_ready = 0;
+            log_state_initialized = 0;
+            log_state_mtime = 0;
+            log_control_path[0] = '\0';
         } else {
             fprintf(stderr, "Warning: unable to resolve executable path; relative commands may fail.\n");
         }
@@ -611,13 +789,13 @@ int main(int argc, char *argv[]) {
             perror("system");
         printlogo();
         login();
-        printf("========================================================================\n");
+        LOG_PRINTF("========================================================================\n");
     }
 
-    printf("\nSYSTEM READY");
+    LOG_PRINTF("\nSYSTEM READY");
     say("system ready");
-    printf("\nType 'help' for command list.");
-    printf("\nType 'exit' to quit.\n\n");
+    LOG_PRINTF("\nType 'help' for command list.");
+    LOG_PRINTF("\nType 'exit' to quit.\n\n");
 
     /* Execute auto_command if set */
     if (auto_command != NULL) {
@@ -634,7 +812,7 @@ int main(int argc, char *argv[]) {
         display_prompt();
         input = read_input();
         if (input == NULL) {
-            printf("\n");
+            LOG_PRINTF("\n");
             break;
         }
         if (input[0] == '\0') {
@@ -668,14 +846,14 @@ int main(int argc, char *argv[]) {
                 int clean_ret = system("make clean");
                 if (clean_ret != 0) {
                     fprintf(stderr, "make clean failed, not restarting.\n");
-                    printf("Press ENTER to continue...");
+                    LOG_PRINTF("Press ENTER to continue...");
                     fflush(stdout);
                     while(getchar() != '\n');
                     continue;
                 }
             }
             int ret = system("make");
-            printf("Press ENTER to continue...");
+            LOG_PRINTF("Press ENTER to continue...");
             fflush(stdout);
             while(getchar() != '\n');
             if (ret != 0) {
@@ -693,10 +871,10 @@ int main(int argc, char *argv[]) {
         	// set say() off / on
 			espeak_enable = !espeak_enable;
 			if (espeak_enable) {
-				printf("Voice assist enabled\n");
+                            LOG_PRINTF("Voice assist enabled\n");
 			}
 			else {
-				printf("Voice assist disabled\n");
+                            LOG_PRINTF("Voice assist disabled\n");
 			}
         	free(input);
         	continue;
@@ -745,7 +923,8 @@ int main(int argc, char *argv[]) {
     
     /* Free the realtime command list resources before exiting */
     free_realtime_commands();
-    
-    printf("Exiting terminal...\n");
+
+    LOG_PRINTF("Exiting terminal...\n");
+    close_log_file();
     return 0;
 }

@@ -18,15 +18,16 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include <math.h>
 
 #define MAX_PARTICIPANTS 4
 #define USERNAME_LEN 32
-#define FRAME_COLS 32
-#define FRAME_ROWS 16
+#define FRAME_COLS 58
+#define FRAME_ROWS 33
 #define FRAME_SIZE (FRAME_COLS * FRAME_ROWS)
 #define DEFAULT_PORT 60080
-#define FRAME_INTERVAL_USEC 200000
-#define RENDER_INTERVAL_USEC 100000
+#define FRAME_INTERVAL_USEC 250000
+#define RENDER_INTERVAL_USEC 250000
 
 enum message_type {
     MSG_JOIN = 1,
@@ -41,7 +42,7 @@ typedef struct {
     int active;
     int muted;
     char username[USERNAME_LEN];
-    char frame[FRAME_SIZE];
+    uint8_t frame[FRAME_SIZE];
 } slot_view_t;
 
 typedef struct {
@@ -86,6 +87,105 @@ typedef struct app_state {
 } app_state_t;
 
 static app_state_t *global_state = NULL;
+
+typedef struct {
+    int fg;
+    int bg;
+    const char *glyph;
+} palette_entry_t;
+
+static const palette_entry_t COLOR_PALETTE[] = {
+    { -1, -1, " " },
+    { -1, 18, " " },
+    { -1, 19, " " },
+    { 223, -1, "\u2588" },
+    { 216, -1, "\u2588" },
+    { 173, -1, "\u2588" },
+    { 94, -1, "\u2588" },
+    { 101, -1, "\u2588" },
+    { 231, -1, "\u2591" },
+    { 68, -1, "\u2588" },
+    { 160, -1, "\u2584" },
+    { 25, -1, "\u2588" },
+    { 31, -1, "\u2588" },
+    { 236, -1, "\u2592" },
+    { 230, -1, "\u2591" },
+    { 197, -1, "\u2580" }
+};
+
+#define PALETTE_SIZE (sizeof(COLOR_PALETTE) / sizeof(COLOR_PALETTE[0]))
+
+static void reset_palette_state(int *fg_state, int *bg_state)
+{
+    if (*fg_state != -1 || *bg_state != -1) {
+        fputs("\033[0m", stdout);
+        *fg_state = -1;
+        *bg_state = -1;
+    }
+}
+
+static void emit_palette_symbol(uint8_t value, int *fg_state, int *bg_state)
+{
+    const palette_entry_t *entry = &COLOR_PALETTE[value % PALETTE_SIZE];
+    if (entry->fg == -1 && entry->bg == -1) {
+        reset_palette_state(fg_state, bg_state);
+        fputs(entry->glyph, stdout);
+        return;
+    }
+    if (entry->fg != *fg_state || entry->bg != *bg_state) {
+        reset_palette_state(fg_state, bg_state);
+        if (entry->bg >= 0) {
+            printf("\033[48;5;%dm", entry->bg);
+            *bg_state = entry->bg;
+        }
+        if (entry->fg >= 0) {
+            printf("\033[38;5;%dm", entry->fg);
+            *fg_state = entry->fg;
+        }
+    }
+    fputs(entry->glyph, stdout);
+}
+
+static void finish_palette_row(int *fg_state, int *bg_state)
+{
+    reset_palette_state(fg_state, bg_state);
+}
+
+static uint8_t ascii_to_palette(char ch)
+{
+    switch (ch) {
+    case ' ': case '\t': case '\r': case '\n':
+        return 0;
+    case '.': case ',':
+        return 14;
+    case ':': case ';':
+        return 13;
+    case '-': case '_':
+        return 10;
+    case '*': case '+':
+        return 4;
+    case '#': case '@':
+        return 6;
+    case '%': case '&':
+        return 7;
+    default:
+        return (uint8_t)((unsigned char)ch % (PALETTE_SIZE - 1)) + 1;
+    }
+}
+
+static unsigned int compute_avatar_variant(const char *username)
+{
+    unsigned int hash = 2166136261u;
+    if (username == NULL) {
+        return hash;
+    }
+    while (*username != '\0') {
+        hash ^= (unsigned char)*username++;
+        hash *= 16777619u;
+    }
+    return hash;
+}
+
 
 static void sleep_for_usecs(long usec)
 {
@@ -134,9 +234,9 @@ static void handle_signal(int sig)
     }
 }
 
-static void fill_blank_frame(char *frame)
+static void fill_blank_frame(uint8_t *frame)
 {
-    memset(frame, ' ', FRAME_SIZE);
+    memset(frame, 0, FRAME_SIZE);
 }
 
 static void initialize_slots(app_state_t *state)
@@ -160,7 +260,7 @@ static void initialize_clients(app_state_t *state)
     }
 }
 
-static void update_slot_frame(app_state_t *state, uint8_t slot, const char *frame)
+static void update_slot_frame(app_state_t *state, uint8_t slot, const uint8_t *frame)
 {
     if (slot >= MAX_PARTICIPANTS) {
         return;
@@ -328,7 +428,7 @@ static int send_existing_frames_to_client(app_state_t *state, int fd)
     return 0;
 }
 
-static void server_broadcast_frame(app_state_t *state, uint8_t slot, const char *frame, int exclude_fd)
+static void server_broadcast_frame(app_state_t *state, uint8_t slot, const uint8_t *frame, int exclude_fd)
 {
     int fds[MAX_PARTICIPANTS];
     size_t count = 0;
@@ -476,7 +576,7 @@ static int server_handle_client_message(app_state_t *state, remote_client_t *cli
         if (header.size != FRAME_SIZE) {
             return -1;
         }
-        char frame[FRAME_SIZE];
+        uint8_t frame[FRAME_SIZE];
         if (read_full(client->fd, frame, FRAME_SIZE) <= 0) {
             return -1;
         }
@@ -630,7 +730,7 @@ static void *client_network_thread(void *arg)
             break;
         }
         if (header.type == MSG_FRAME && header.size == FRAME_SIZE) {
-            char frame[FRAME_SIZE];
+            uint8_t frame[FRAME_SIZE];
             if (read_full(state->socket_fd, frame, FRAME_SIZE) <= 0) {
                 state->running = 0;
                 break;
@@ -686,41 +786,55 @@ static void *client_network_thread(void *arg)
     return NULL;
 }
 
+static void render_frame_row(const uint8_t *frame, int row, int *fg_state, int *bg_state)
+{
+    const uint8_t *line = frame + row * FRAME_COLS;
+    for (int c = 0; c < FRAME_COLS; c++) {
+        emit_palette_symbol(line[c], fg_state, bg_state);
+    }
+}
+
 static void render_grid(const slot_view_t *slots)
 {
     printf("\033[H");
 
     for (int row = 0; row < 2; row++) {
-        for (int col = 0; col < 2; col++) {
-            int idx = row * 2 + col;
-            const slot_view_t *view = &slots[idx];
-            const char *status;
-            if (!view->active) {
-                status = "(offline)";
-            } else if (view->muted) {
-                status = "(muted)";
-            } else {
-                status = "(live)";
-            }
-            printf("Slot %d - %s %s\n", idx, view->username, status);
-        }
+        char left_label[FRAME_COLS + 1];
+        char right_label[FRAME_COLS + 1];
+        int left_idx = row * 2;
+        int right_idx = left_idx + 1;
+        const slot_view_t *left_view = &slots[left_idx];
+        const slot_view_t *right_view = &slots[right_idx];
+        const char *left_status = !left_view->active ? "(offline)" : (left_view->muted ? "(muted)" : "(live)");
+        const char *right_status = !right_view->active ? "(offline)" : (right_view->muted ? "(muted)" : "(live)");
+        snprintf(left_label, sizeof(left_label), "Slot %d - %s %s", left_idx, left_view->username, left_status);
+        snprintf(right_label, sizeof(right_label), "Slot %d - %s %s", right_idx, right_view->username, right_status);
+        printf("%-*s  %-*s\n", FRAME_COLS, left_label, FRAME_COLS, right_label);
     }
 
     for (int r = 0; r < FRAME_ROWS; r++) {
-        const char *left = slots[0].frame + r * FRAME_COLS;
-        const char *right = slots[1].frame + r * FRAME_COLS;
-        fwrite(left, 1, FRAME_COLS, stdout);
+        int fg_state = -1;
+        int bg_state = -1;
+        render_frame_row(slots[0].frame, r, &fg_state, &bg_state);
+        finish_palette_row(&fg_state, &bg_state);
         printf("  ");
-        fwrite(right, 1, FRAME_COLS, stdout);
+        fg_state = -1;
+        bg_state = -1;
+        render_frame_row(slots[1].frame, r, &fg_state, &bg_state);
+        finish_palette_row(&fg_state, &bg_state);
         printf("\n");
     }
     printf("\n");
     for (int r = 0; r < FRAME_ROWS; r++) {
-        const char *left = slots[2].frame + r * FRAME_COLS;
-        const char *right = slots[3].frame + r * FRAME_COLS;
-        fwrite(left, 1, FRAME_COLS, stdout);
+        int fg_state = -1;
+        int bg_state = -1;
+        render_frame_row(slots[2].frame, r, &fg_state, &bg_state);
+        finish_palette_row(&fg_state, &bg_state);
         printf("  ");
-        fwrite(right, 1, FRAME_COLS, stdout);
+        fg_state = -1;
+        bg_state = -1;
+        render_frame_row(slots[3].frame, r, &fg_state, &bg_state);
+        finish_palette_row(&fg_state, &bg_state);
         printf("\n");
     }
 
@@ -743,21 +857,90 @@ static void *render_thread_func(void *arg)
     return NULL;
 }
 
-static void generate_test_pattern(char *frame, size_t tick)
+static void generate_avatar_frame(uint8_t *frame, size_t tick, unsigned int variant_seed)
 {
-    const char *palette = " .:-=+*#%@";
-    size_t palette_len = strlen(palette);
+    double t = (double)tick / 4.0;
+    double center_x = (double)FRAME_COLS / 2.0 + sin(t * 0.12 + (double)(variant_seed % 17)) * ((double)FRAME_COLS / 12.0);
+    double center_y = (double)FRAME_ROWS / 2.0 + cos(t * 0.09 + (double)(variant_seed % 13)) * ((double)FRAME_ROWS / 14.0);
+    double face_rx = (double)FRAME_COLS / 2.6;
+    double face_ry = (double)FRAME_ROWS / 2.4;
+    double shoulders_y = (double)FRAME_ROWS * 0.78;
+    double hair_radius = 1.32;
+    double halo_radius = 1.48;
+    double variant = (double)(variant_seed % 11);
+
     for (int r = 0; r < FRAME_ROWS; r++) {
         for (int c = 0; c < FRAME_COLS; c++) {
-            size_t idx = (size_t)((r + c + (int)tick) % (int)palette_len);
-            frame[r * FRAME_COLS + c] = palette[idx];
+            double dx = ((double)c - center_x) / face_rx;
+            double dy = ((double)r - center_y) / face_ry;
+            double dist = dx * dx + dy * dy;
+            uint8_t color = 0;
+
+            if ((double)r >= shoulders_y) {
+                double wave = sin((double)c / 5.0 + t * 0.35 + variant * 0.15) + cos((double)r / 4.0 + variant * 0.2);
+                color = wave > 0.2 ? 12 : 11;
+            } else if (dist <= 1.0) {
+                double shading = dx * 0.55 + dy * 0.85 + sin(t * 0.15 + variant * 0.1) * 0.2;
+                if (shading < -0.3) {
+                    color = 5;
+                } else if (shading > 0.35) {
+                    color = 3;
+                } else {
+                    color = 4;
+                }
+
+                double nose_dx = ((double)c - center_x) / (face_rx * 0.35);
+                double nose_dy = ((double)r - (center_y + face_ry * 0.05)) / (face_ry * 0.45);
+                double nose_dist = nose_dx * nose_dx + nose_dy * nose_dy;
+                if (nose_dist < 0.18) {
+                    color = 14;
+                }
+
+                double eye_y = center_y - face_ry * 0.22;
+                double eye_rx = face_rx * 0.28;
+                double eye_ry = face_ry * 0.18;
+                double left_eye_dx = ((double)c - (center_x - eye_rx)) / (eye_rx * 0.75);
+                double right_eye_dx = ((double)c - (center_x + eye_rx)) / (eye_rx * 0.75);
+                double eye_dy = ((double)r - eye_y) / (eye_ry * 0.75);
+                double left_eye_dist = left_eye_dx * left_eye_dx + eye_dy * eye_dy;
+                double right_eye_dist = right_eye_dx * right_eye_dx + eye_dy * eye_dy;
+                if (left_eye_dist < 1.0 || right_eye_dist < 1.0) {
+                    if (left_eye_dist < 0.35 || right_eye_dist < 0.35) {
+                        color = 9;
+                    } else {
+                        color = 8;
+                    }
+                }
+
+                double mouth_y = center_y + face_ry * 0.42 + sin(t * 0.08 + variant * 0.07) * 0.08;
+                double mouth_rx = face_rx * 0.45;
+                double mouth_dy = ((double)r - mouth_y) / (face_ry * 0.25);
+                double mouth_dx = ((double)c - center_x) / mouth_rx;
+                if (fabs(mouth_dy) < 0.3 && fabs(mouth_dx) < 1.0) {
+                    color = mouth_dy > 0.05 ? 15 : 10;
+                }
+
+                if (dy > 0.55) {
+                    color = 5;
+                }
+            } else if (dist <= hair_radius) {
+                double hair_wave = sin((double)c * 0.18 + t * 0.4 + variant * 0.25) + cos((double)r * 0.12 + variant * 0.3);
+                color = hair_wave > 0.25 ? 7 : 6;
+            } else if (dist <= halo_radius) {
+                color = 13;
+            } else {
+                double gradient = ((double)r / (double)FRAME_ROWS) + sin(t * 0.05 + (double)c / (double)FRAME_COLS + variant * 0.05) * 0.05;
+                color = gradient > 0.55 ? 1 : 2;
+            }
+
+            frame[r * FRAME_COLS + c] = (uint8_t)(color % PALETTE_SIZE);
         }
     }
 }
 
-static int read_frame_from_file(FILE *fp, char *frame)
+static int read_frame_from_file(FILE *fp, uint8_t *frame)
 {
-    char line[256];
+    char line[512];
     for (int r = 0; r < FRAME_ROWS; r++) {
         if (fgets(line, sizeof(line), fp) == NULL) {
             return -1;
@@ -769,16 +952,16 @@ static int read_frame_from_file(FILE *fp, char *frame)
         }
         for (int c = 0; c < FRAME_COLS; c++) {
             if ((size_t)c < len) {
-                frame[r * FRAME_COLS + c] = line[c];
+                frame[r * FRAME_COLS + c] = ascii_to_palette(line[c]);
             } else {
-                frame[r * FRAME_COLS + c] = ' ';
+                frame[r * FRAME_COLS + c] = 0;
             }
         }
     }
     return 0;
 }
 
-static void send_frame_from_local(app_state_t *state, const char *frame)
+static void send_frame_from_local(app_state_t *state, const uint8_t *frame)
 {
     if (state->is_server) {
         server_broadcast_frame(state, (uint8_t)state->local_slot, frame, -1);
@@ -799,8 +982,9 @@ static void *frame_thread_func(void *arg)
             fprintf(stderr, "Failed to open input file %s\n", state->input_path);
         }
     }
-    char frame[FRAME_SIZE];
+    uint8_t frame[FRAME_SIZE];
     size_t tick = 0;
+    unsigned int variant = compute_avatar_variant(state->username);
 
     while (state->running) {
         if (input != NULL) {
@@ -812,7 +996,7 @@ static void *frame_thread_func(void *arg)
                 break;
             }
         } else {
-            generate_test_pattern(frame, tick++);
+            generate_avatar_frame(frame, tick++, variant);
         }
         update_slot_frame(state, (uint8_t)state->local_slot, frame);
         send_frame_from_local(state, frame);

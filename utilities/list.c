@@ -10,6 +10,8 @@
 #include <errno.h>
 #include <fnmatch.h>
 
+#define NAME_DISPLAY_WIDTH 30
+
 // Global base path used in filter and comparator
 static const char *base_path;
 
@@ -29,6 +31,32 @@ static const char *excluded_extensions[] = {
 static char **matches = NULL;
 static size_t matches_count = 0;
 static size_t matches_capacity = 0;
+
+static void format_display_name(const char *input, char *output, size_t width) {
+    if (width == 0) {
+        if (output != NULL) {
+            output[0] = '\0';
+        }
+        return;
+    }
+
+    size_t len = strlen(input);
+    if (len <= width) {
+        snprintf(output, width + 1, "%s", input);
+        return;
+    }
+
+    if (width <= 3) {
+        memset(output, '.', width);
+        output[width] = '\0';
+        return;
+    }
+
+    size_t copy_len = width - 3;
+    memcpy(output, input, copy_len);
+    memcpy(output + copy_len, "...", 3);
+    output[width] = '\0';
+}
 
 // Convert file mode to a permission string (similar to ls -l output)
 void mode_to_string(mode_t mode, char *str) {
@@ -88,13 +116,17 @@ void print_file_info(const char *filepath, const char *display_name) {
     struct tm *tm_info = localtime(&st.st_mtime);
     strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M", tm_info);
 
+    char formatted_name_buffer[1024];
     if (S_ISDIR(st.st_mode) && strcmp(display_name, ".") != 0 && strcmp(display_name, "..") != 0) {
-        char nameWithSlash[1024];
-        snprintf(nameWithSlash, sizeof(nameWithSlash), "%s/", display_name);
-        printf("%-30s %-11s %-10ld %-20s\n", nameWithSlash, perms, (long)st.st_size, timebuf);
-        return;
+        snprintf(formatted_name_buffer, sizeof(formatted_name_buffer), "%s/", display_name);
+    } else {
+        snprintf(formatted_name_buffer, sizeof(formatted_name_buffer), "%s", display_name);
     }
-    printf("%-30s %-11s %-10ld %-20s\n", display_name, perms, (long)st.st_size, timebuf);
+
+    char truncated_name[NAME_DISPLAY_WIDTH + 1];
+    format_display_name(formatted_name_buffer, truncated_name, NAME_DISPLAY_WIDTH);
+
+    printf("%-*s %-11s %-10ld %-20s\n", NAME_DISPLAY_WIDTH, truncated_name, perms, (long)st.st_size, timebuf);
 }
 
 // List a single directory (non-recursive)
@@ -108,7 +140,7 @@ void list_directory(const char *dir_path) {
     }
 
     printf("\n");
-    printf("%-30s %-11s %-10s %-20s\n", "Filename", "Permissions", "Size", "Last Modified");
+    printf("%-*s %-11s %-10s %-20s\n", NAME_DISPLAY_WIDTH, "Filename", "Permissions", "Size", "Last Modified");
     printf("--------------------------------------------------------------------------------\n");
 
     for (int i = 0; i < n; i++) {
@@ -195,7 +227,7 @@ void list_recursive_search(const char *pattern) {
     qsort(matches, matches_count, sizeof(char*), cmp_str);
 
     printf("Recursive search for files matching pattern '%s':\n", pattern);
-    printf("%-30s %-11s %-10s %-20s\n", "Filename", "Permissions", "Size", "Last Modified");
+    printf("%-*s %-11s %-10s %-20s\n", NAME_DISPLAY_WIDTH, "Filename", "Permissions", "Size", "Last Modified");
     printf("--------------------------------------------------------------------------------\n");
 
     for (size_t i = 0; i < matches_count; i++) {
@@ -275,7 +307,7 @@ int main(int argc, char *argv[]) {
 
     if (file_count > 0) {
         printf("Files:\n");
-        printf("%-30s %-11s %-10s %-20s\n", "Filename", "Permissions", "Size", "Last Modified");
+        printf("%-*s %-11s %-10s %-20s\n", NAME_DISPLAY_WIDTH, "Filename", "Permissions", "Size", "Last Modified");
         printf("--------------------------------------------------------------------------------\n");
         for (int i = 0; i < file_count; i++) {
             print_file_info(file_paths[i], file_paths[i]);

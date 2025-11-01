@@ -262,7 +262,10 @@ static size_t map_bin(size_t bin_count, size_t column, size_t columns, int use_l
 
 static int amplitude_to_color(double value)
 {
-    static const int palette[] = {17, 18, 19, 20, 21, 27, 33, 39, 45, 51, 82, 118, 154, 190, 226};
+    static const int palette[] = {
+        16, 17, 18, 19, 20, 21, 27, 33, 39, 45, 51, 50, 49, 48, 82, 118, 154, 190, 220, 214, 208,
+        202, 196, 199, 201, 207, 213, 219, 225, 231
+    };
     static const size_t palette_len = sizeof(palette) / sizeof(palette[0]);
     if (value < 0.0) {
         value = 0.0;
@@ -300,6 +303,7 @@ static void draw_waterfall_row(const struct analyzer_state *state,
     int use_log_frequency,
     int use_log_amplitude)
 {
+    static const char block[] = "\xE2\x96\x88";
     printf("\x1b[2K");
     if (columns <= 0 || state->bin_count == 0) {
         printf("\n");
@@ -325,10 +329,10 @@ static void draw_waterfall_row(const struct analyzer_state *state,
         }
         int color = amplitude_to_color(display_value);
         if (color != prev_color) {
-            printf("\x1b[48;5;%dm", color);
+            printf("\x1b[48;5;16m\x1b[38;5;%dm", color);
             prev_color = color;
         }
-        putchar(' ');
+        fputs(block, stdout);
     }
     if (prev_color != -1) {
         printf("\x1b[0m");
@@ -372,9 +376,11 @@ static void draw_frequency_axis_baseline(const struct analyzer_state *state,
     }
     ensure_line_capacity(columns);
     memset(line_buffer, '-', (size_t)columns);
-    int tick_count = columns > 120 ? 10 : 6;
+    int tick_count = columns / 12;
     if (tick_count < 2) {
         tick_count = 2;
+    } else if (tick_count > 12) {
+        tick_count = 12;
     }
     for (int i = 0; i <= tick_count; ++i) {
         double fraction = (double)i / (double)tick_count;
@@ -403,9 +409,11 @@ static void draw_frequency_axis_labels(const struct analyzer_state *state,
     }
     ensure_line_capacity(columns);
     memset(line_buffer, ' ', (size_t)columns);
-    int tick_count = columns > 120 ? 10 : 6;
+    int tick_count = columns / 12;
     if (tick_count < 2) {
         tick_count = 2;
+    } else if (tick_count > 12) {
+        tick_count = 12;
     }
     size_t last_end = 0;
     int first_label = 1;
@@ -488,6 +496,35 @@ static void ensure_line_capacity(int columns)
     line_capacity = needed;
 }
 
+static void write_padded_line(const char *text, int columns, int newline)
+{
+    printf("\x1b[0m\x1b[2K");
+    if (columns <= 0) {
+        if (newline) {
+            printf("\n");
+        }
+        return;
+    }
+    ensure_line_capacity(columns);
+    size_t copy_len = 0;
+    if (text && *text) {
+        copy_len = strlen(text);
+        if ((int)copy_len > columns) {
+            copy_len = (size_t)columns;
+        }
+        memcpy(line_buffer, text, copy_len);
+    }
+    if ((int)copy_len < columns) {
+        memset(line_buffer + copy_len, ' ', (size_t)columns - copy_len);
+    }
+    line_buffer[columns] = '\0';
+    if (newline) {
+        printf("%s\n", line_buffer);
+    } else {
+        printf("%s", line_buffer);
+    }
+}
+
 static void draw_ui(const struct analyzer_state *state,
     int rows,
     int columns,
@@ -503,17 +540,28 @@ static void draw_ui(const struct analyzer_state *state,
     ensure_line_capacity(columns);
 
     printf("\x1b[H\x1b[0m\x1b[J");
-    printf("\x1b[2K");
-    printf("Spectrum Analyzer | FFT: %zu | Sample Rate: %u Hz | Freq: %s | Amp: %s | Record: %s",
+    char header_line[512];
+    int header_len = snprintf(header_line,
+        sizeof(header_line),
+        "Spectrum Analyzer | FFT: %zu | Sample Rate: %u Hz | Freq: %s | Amp: %s | Record: %s",
         state->fft_size,
         sample_rate,
         use_log_frequency ? "LOG" : "LIN",
         use_log_amplitude ? "LOG" : "LIN",
         recording ? "ON" : "OFF");
-    if (status && *status) {
-        printf(" | %s", status);
+    if (header_len < 0) {
+        header_line[0] = '\0';
     }
-    printf("\n");
+    if (status && *status) {
+        size_t current_len = strlen(header_line);
+        if (current_len < sizeof(header_line) - 1) {
+            snprintf(header_line + current_len,
+                sizeof(header_line) - current_len,
+                " | %s",
+                status);
+        }
+    }
+    write_padded_line(header_line, columns, 1);
 
     size_t waterfall_rows = rows > 4 ? (size_t)(rows - 4) : 0;
     size_t available_rows = state->history_count < waterfall_rows ? state->history_count : waterfall_rows;
@@ -536,17 +584,18 @@ static void draw_ui(const struct analyzer_state *state,
     draw_frequency_axis_baseline(state, columns, use_log_frequency, sample_rate);
     draw_frequency_axis_labels(state, columns, use_log_frequency, sample_rate);
 
-    printf("\x1b[2K");
-    if (columns <= 0) {
-        fflush(stdout);
-        return;
-    }
-    snprintf(line_buffer, line_capacity, " R:Record[%s]  +/-:FFT %zu  L:Freq(%s)  A:Amp(%s)  Q:Quit",
+    char footer_line[512];
+    int footer_len = snprintf(footer_line,
+        sizeof(footer_line),
+        " R:Record[%s]  +/-:FFT %zu  L:Freq(%s)  A:Amp(%s)  Q:Quit",
         recording ? "ON" : "OFF",
         state->fft_size,
         use_log_frequency ? "LOG" : "LIN",
         use_log_amplitude ? "LOG" : "LIN");
-    printf("%s", line_buffer);
+    if (footer_len < 0) {
+        footer_line[0] = '\0';
+    }
+    write_padded_line(footer_line, columns, 0);
     fflush(stdout);
 }
 
@@ -609,6 +658,7 @@ static void compute_magnitudes(struct analyzer_state *state)
 
 int main(void)
 {
+    setlocale(LC_ALL, "");
     int rows = 0;
     int cols = 0;
     get_terminal_size(&rows, &cols);

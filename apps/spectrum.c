@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <locale.h>
 #include <math.h>
 #include <poll.h>
 #include <stdint.h>

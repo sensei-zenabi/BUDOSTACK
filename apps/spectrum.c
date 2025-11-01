@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <ctype.h>
 #include <errno.h>
 #include <locale.h>
 #include <limits.h>
@@ -53,12 +54,102 @@ struct analyzer_state {
     double amplitude_normalizer;
 };
 
+enum capture_source {
+    CAPTURE_SOURCE_MIC = 0,
+    CAPTURE_SOURCE_STEREO = 1
+};
+
 static struct termios orig_termios;
 static int raw_mode_enabled = 0;
 static char *line_buffer = NULL;
 static size_t line_capacity = 0;
 
 static void ensure_line_capacity(int columns);
+static void set_status(char *status_buffer, size_t status_capacity, int *timeout, const char *message);
+
+static char *duplicate_string(const char *text)
+{
+    if (!text) {
+        return NULL;
+    }
+    char *copy = strdup(text);
+    if (!copy) {
+        fprintf(stderr, "spectrum: unable to allocate memory for device name\n");
+    }
+    return copy;
+}
+
+static int string_contains_case_insensitive(const char *text, const char *pattern)
+{
+    if (!text || !pattern || !*pattern) {
+        return 0;
+    }
+    size_t pattern_len = strlen(pattern);
+    for (const char *p = text; *p; ++p) {
+        size_t i = 0;
+        while (i < pattern_len) {
+            unsigned char hc = (unsigned char)p[i];
+            if (hc == '\0') {
+                break;
+            }
+            unsigned char pc = (unsigned char)pattern[i];
+            if ((unsigned char)tolower(hc) != (unsigned char)tolower(pc)) {
+                break;
+            }
+            ++i;
+        }
+        if (i == pattern_len) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static char *detect_monitor_device(void)
+{
+    void **hints = NULL;
+    char *result = NULL;
+    if (snd_device_name_hint(-1, "pcm", &hints) != 0) {
+        return NULL;
+    }
+
+    for (void **it = hints; *it; ++it) {
+        char *name = snd_device_name_get_hint(*it, "NAME");
+        char *ioid = snd_device_name_get_hint(*it, "IOID");
+        char *desc = snd_device_name_get_hint(*it, "DESC");
+
+        int is_input = (ioid == NULL) || (strcmp(ioid, "Input") == 0);
+        int looks_monitor = 0;
+        if (name && string_contains_case_insensitive(name, "monitor")) {
+            looks_monitor = 1;
+        }
+        if (!looks_monitor && desc && string_contains_case_insensitive(desc, "monitor")) {
+            looks_monitor = 1;
+        }
+        if (!looks_monitor && desc && string_contains_case_insensitive(desc, "loopback")) {
+            looks_monitor = 1;
+        }
+        if (!looks_monitor && desc && string_contains_case_insensitive(desc, "stereo")) {
+            looks_monitor = 1;
+        }
+        if (is_input && looks_monitor && name) {
+            result = duplicate_string(name);
+            if (result) {
+                free(name);
+                free(ioid);
+                free(desc);
+                break;
+            }
+        }
+
+        free(name);
+        free(ioid);
+        free(desc);
+    }
+
+    snd_device_name_free_hint(hints);
+    return result;
+}
 
 static void disable_raw_mode(void)
 {
@@ -559,6 +650,8 @@ static void draw_ui(const struct analyzer_state *state,
     int use_log_frequency,
     int use_log_amplitude,
     int recording,
+    const char *source_label,
+    int source_toggle_available,
     const char *status,
     unsigned int sample_rate)
 {
@@ -569,13 +662,15 @@ static void draw_ui(const struct analyzer_state *state,
 
     printf("\x1b[H\x1b[0m\x1b[J");
     char header_line[512];
+    const char *display_source = source_label ? source_label : "Unknown";
     int header_len = snprintf(header_line,
         sizeof(header_line),
-        "Spectrum Analyzer | FFT: %zu | Sample Rate: %u Hz | Freq: %s | Amp: %s | Record: %s",
+        "Spectrum Analyzer | FFT: %zu | Sample Rate: %u Hz | Freq: %s | Amp: %s | Source: %s | Record: %s",
         state->fft_size,
         sample_rate,
         use_log_frequency ? "LOG" : "LIN",
         use_log_amplitude ? "LOG" : "LIN",
+        display_source,
         recording ? "ON" : "OFF");
     if (header_len < 0) {
         header_line[0] = '\0';
@@ -617,13 +712,15 @@ static void draw_ui(const struct analyzer_state *state,
     draw_frequency_axis_labels(state, columns, use_log_frequency, sample_rate);
 
     char footer_line[512];
+    const char *footer_source = source_toggle_available ? display_source : "n/a";
     int footer_len = snprintf(footer_line,
         sizeof(footer_line),
-        " R:Record[%s]  +/-:FFT %zu  L:Freq(%s)  A:Amp(%s)  Q:Quit",
+        " R:Record[%s]  +/-:FFT %zu  L:Freq(%s)  A:Amp(%s)  S:Source(%s)  Q:Quit",
         recording ? "ON" : "OFF",
         state->fft_size,
         use_log_frequency ? "LOG" : "LIN",
-        use_log_amplitude ? "LOG" : "LIN");
+        use_log_amplitude ? "LOG" : "LIN",
+        footer_source);
     if (footer_len < 0) {
         footer_line[0] = '\0';
     }
@@ -647,6 +744,143 @@ static void set_status(char *status_buffer, size_t status_capacity, int *timeout
     if (timeout) {
         *timeout = 150;
     }
+}
+
+static int open_capture_device(const char *device_name,
+    snd_pcm_t **pcm_handle,
+    unsigned int desired_sample_rate,
+    unsigned int *actual_sample_rate,
+    char *status_buffer,
+    size_t status_capacity,
+    int *status_timeout)
+{
+    if (!device_name || !pcm_handle || !actual_sample_rate) {
+        set_status(status_buffer, status_capacity, status_timeout, "Invalid capture device request");
+        return -1;
+    }
+
+    snd_pcm_t *new_pcm = NULL;
+    int err = snd_pcm_open(&new_pcm, device_name, SND_PCM_STREAM_CAPTURE, 0);
+    if (err < 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to open '%s': %s", device_name, snd_strerror(err));
+        if (status_buffer) {
+            set_status(status_buffer, status_capacity, status_timeout, msg);
+        } else {
+            fprintf(stderr, "spectrum: %s\n", msg);
+        }
+        return -1;
+    }
+
+    snd_pcm_hw_params_t *hw_params = NULL;
+    err = snd_pcm_hw_params_malloc(&hw_params);
+    if (err < 0 || !hw_params) {
+        if (status_buffer) {
+            set_status(status_buffer, status_capacity, status_timeout, "Failed to allocate ALSA hw params");
+        } else {
+            fprintf(stderr, "spectrum: failed to allocate ALSA hw params\n");
+        }
+        snd_pcm_close(new_pcm);
+        return -1;
+    }
+
+    err = snd_pcm_hw_params_any(new_pcm, hw_params);
+    if (err < 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to query device '%s': %s", device_name, snd_strerror(err));
+        snd_pcm_hw_params_free(hw_params);
+        snd_pcm_close(new_pcm);
+        if (status_buffer) {
+            set_status(status_buffer, status_capacity, status_timeout, msg);
+        } else {
+            fprintf(stderr, "spectrum: %s\n", msg);
+        }
+        return -1;
+    }
+
+    err = snd_pcm_hw_params_set_access(new_pcm, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
+    if (err < 0) {
+        snd_pcm_hw_params_free(hw_params);
+        snd_pcm_close(new_pcm);
+        if (status_buffer) {
+            set_status(status_buffer, status_capacity, status_timeout, "Device does not support interleaved capture");
+        } else {
+            fprintf(stderr, "spectrum: device does not support interleaved capture\n");
+        }
+        return -1;
+    }
+
+    err = snd_pcm_hw_params_set_format(new_pcm, hw_params, SND_PCM_FORMAT_S16_LE);
+    if (err < 0) {
+        snd_pcm_hw_params_free(hw_params);
+        snd_pcm_close(new_pcm);
+        if (status_buffer) {
+            set_status(status_buffer, status_capacity, status_timeout, "Device does not support S16_LE format");
+        } else {
+            fprintf(stderr, "spectrum: device does not support S16_LE format\n");
+        }
+        return -1;
+    }
+
+    err = snd_pcm_hw_params_set_channels(new_pcm, hw_params, 1);
+    if (err < 0) {
+        snd_pcm_hw_params_free(hw_params);
+        snd_pcm_close(new_pcm);
+        if (status_buffer) {
+            set_status(status_buffer, status_capacity, status_timeout, "Device does not support mono capture");
+        } else {
+            fprintf(stderr, "spectrum: device does not support mono capture\n");
+        }
+        return -1;
+    }
+
+    unsigned int rate = desired_sample_rate;
+    err = snd_pcm_hw_params_set_rate_near(new_pcm, hw_params, &rate, 0);
+    if (err < 0) {
+        snd_pcm_hw_params_free(hw_params);
+        snd_pcm_close(new_pcm);
+        if (status_buffer) {
+            set_status(status_buffer, status_capacity, status_timeout, "Failed to set capture sample rate");
+        } else {
+            fprintf(stderr, "spectrum: failed to set capture sample rate\n");
+        }
+        return -1;
+    }
+
+    err = snd_pcm_hw_params(new_pcm, hw_params);
+    snd_pcm_hw_params_free(hw_params);
+    if (err < 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to configure '%s': %s", device_name, snd_strerror(err));
+        snd_pcm_close(new_pcm);
+        if (status_buffer) {
+            set_status(status_buffer, status_capacity, status_timeout, msg);
+        } else {
+            fprintf(stderr, "spectrum: %s\n", msg);
+        }
+        return -1;
+    }
+
+    err = snd_pcm_prepare(new_pcm);
+    if (err < 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to prepare '%s': %s", device_name, snd_strerror(err));
+        snd_pcm_close(new_pcm);
+        if (status_buffer) {
+            set_status(status_buffer, status_capacity, status_timeout, msg);
+        } else {
+            fprintf(stderr, "spectrum: %s\n", msg);
+        }
+        return -1;
+    }
+
+    snd_pcm_t *old_handle = *pcm_handle;
+    *pcm_handle = new_pcm;
+    if (old_handle) {
+        snd_pcm_close(old_handle);
+    }
+    *actual_sample_rate = rate;
+    return 0;
 }
 
 static int read_audio_block(snd_pcm_t *pcm, struct analyzer_state *state, char *status_buffer, size_t status_capacity, int *status_timeout)
@@ -688,42 +922,78 @@ static void compute_magnitudes(struct analyzer_state *state)
     }
 }
 
+
 int main(void)
 {
     setlocale(LC_ALL, "");
     int rows = 0;
     int cols = 0;
     get_terminal_size(&rows, &cols);
+    
     if (cols < 80) {
-        fprintf(stderr, "spectrum: terminal width must be at least 80 columns (got %d)\n", cols);
+        fprintf(stderr, "spectrum: terminal width must be at least 80 columns (got %d)\n",
+            cols);
         return EXIT_FAILURE;
     }
 
-    enable_raw_mode();
-    clear_screen();
-
+    int exit_code = EXIT_FAILURE;
+    char *mic_device_name = NULL;
+    char *stereo_device_name = NULL;
     snd_pcm_t *pcm_handle = NULL;
-    int err = snd_pcm_open(&pcm_handle, "default", SND_PCM_STREAM_CAPTURE, 0);
-    if (err < 0) {
-        disable_raw_mode();
-        fprintf(stderr, "spectrum: unable to open capture device: %s\n", snd_strerror(err));
-        return EXIT_FAILURE;
-    }
-
-    snd_pcm_hw_params_t *hw_params = NULL;
-    snd_pcm_hw_params_malloc(&hw_params);
-    snd_pcm_hw_params_any(pcm_handle, hw_params);
-    snd_pcm_hw_params_set_access(pcm_handle, hw_params, SND_PCM_ACCESS_RW_INTERLEAVED);
-    snd_pcm_hw_params_set_format(pcm_handle, hw_params, SND_PCM_FORMAT_S16_LE);
-    snd_pcm_hw_params_set_channels(pcm_handle, hw_params, 1);
-    unsigned int sample_rate = 48000;
-    snd_pcm_hw_params_set_rate_near(pcm_handle, hw_params, &sample_rate, 0);
-    snd_pcm_hw_params(pcm_handle, hw_params);
-    snd_pcm_hw_params_free(hw_params);
-    snd_pcm_prepare(pcm_handle);
-
     struct analyzer_state state;
     memset(&state, 0, sizeof(state));
+    FILE *record_file = NULL;
+    int raw_initialized = 0;
+    char status_buffer[256];
+    status_buffer[0] = '\0';
+    int status_timeout = 0;
+    const unsigned int desired_sample_rate = 48000;
+    unsigned int sample_rate = desired_sample_rate;
+
+    const char *mic_env = getenv("SPECTRUM_MIC_DEVICE");
+    if (mic_env && *mic_env) {
+        mic_device_name = duplicate_string(mic_env);
+    } else {
+        mic_device_name = duplicate_string("default");
+    }
+    if (!mic_device_name) {
+        fprintf(stderr, "spectrum: unable to determine microphone capture device\n");
+        goto cleanup;
+    }
+
+    const char *stereo_env = getenv("SPECTRUM_STEREO_DEVICE");
+    if (stereo_env && *stereo_env) {
+        stereo_device_name = duplicate_string(stereo_env);
+        if (!stereo_device_name) {
+            fprintf(stderr, "spectrum: unable to determine stereo mix capture device\n");
+            goto cleanup;
+        }
+    } else {
+        stereo_device_name = detect_monitor_device();
+    }
+    int stereo_toggle_available = (stereo_device_name && *stereo_device_name);
+
+    enable_raw_mode();
+    raw_initialized = 1;
+    clear_screen();
+
+    if (open_capture_device(mic_device_name,
+            &pcm_handle,
+            desired_sample_rate,
+            &sample_rate,
+            status_buffer,
+            sizeof(status_buffer),
+            &status_timeout)
+        != 0) {
+        if (status_buffer[0] != '\0') {
+            fprintf(stderr, "spectrum: %s\n",
+                status_buffer);
+        } else {
+            fprintf(stderr, "spectrum: unable to open capture device '%s'\n",
+                mic_device_name);
+        }
+        goto cleanup;
+    }
 
     size_t fft_size = 1024;
     if (fft_size < MIN_FFT_SIZE) {
@@ -734,32 +1004,29 @@ int main(void)
     }
 
     if (reconfigure_fft(&state, fft_size) != 0) {
-        disable_raw_mode();
-        snd_pcm_close(pcm_handle);
         fprintf(stderr, "spectrum: failed to initialize FFT buffers\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     size_t desired_history = compute_history_capacity(rows);
     if (reallocate_history(&state, desired_history) != 0) {
-        disable_raw_mode();
-        snd_pcm_close(pcm_handle);
-        free_analyzer(&state);
         fprintf(stderr, "spectrum: unable to allocate history buffer\n");
-        return EXIT_FAILURE;
+        goto cleanup;
     }
 
     int use_log_frequency = 0;
     int use_log_amplitude = 0;
     int recording = 0;
-    FILE *record_file = NULL;
-    char status_buffer[256];
-    status_buffer[0] = '\0';
-    int status_timeout = 0;
 
     struct pollfd input_fd;
     input_fd.fd = STDIN_FILENO;
     input_fd.events = POLLIN;
+
+    enum capture_source current_source = CAPTURE_SOURCE_MIC;
+    const char *source_labels[2] = { "Mic-in", "Stereo Mix" };
+    if (status_buffer[0] == '\0') {
+        set_status(status_buffer, sizeof(status_buffer), &status_timeout, "Capture source: Mic-in");
+    }
 
     int running = 1;
 
@@ -793,17 +1060,20 @@ int main(void)
             size_t new_history = compute_history_capacity(rows);
             if (new_history != state.history_capacity) {
                 if (reallocate_history(&state, new_history) != 0) {
-                    disable_raw_mode();
-                    snd_pcm_close(pcm_handle);
-                    free_analyzer(&state);
                     fprintf(stderr, "spectrum: unable to adjust history buffer\n");
-                    if (record_file) {
-                        fclose(record_file);
-                    }
-                    return EXIT_FAILURE;
+                    goto cleanup;
                 }
             }
-            draw_ui(&state, rows, cols, use_log_frequency, use_log_amplitude, recording, status_buffer, sample_rate);
+            draw_ui(&state,
+                rows,
+                cols,
+                use_log_frequency,
+                use_log_amplitude,
+                recording,
+                source_labels[current_source],
+                stereo_toggle_available,
+                status_buffer,
+                sample_rate);
         }
 
         if (status_timeout > 0) {
@@ -886,6 +1156,42 @@ int main(void)
                     use_log_amplitude = !use_log_amplitude;
                     set_status(status_buffer, sizeof(status_buffer), &status_timeout, use_log_amplitude ? "Log amplitude" : "Linear amplitude");
                     break;
+                case 's':
+                case 'S':
+                    if (!stereo_toggle_available) {
+                        set_status(status_buffer, sizeof(status_buffer), &status_timeout, "Stereo mix source unavailable");
+                        break;
+                    }
+                    {
+                        enum capture_source next_source = (current_source == CAPTURE_SOURCE_MIC) ? CAPTURE_SOURCE_STEREO : CAPTURE_SOURCE_MIC;
+                        const char *next_device = (next_source == CAPTURE_SOURCE_MIC) ? mic_device_name : stereo_device_name;
+                        unsigned int new_rate = desired_sample_rate;
+                        if (open_capture_device(next_device,
+                                &pcm_handle,
+                                desired_sample_rate,
+                                &new_rate,
+                                status_buffer,
+                                sizeof(status_buffer),
+                                &status_timeout)
+                            == 0) {
+                            sample_rate = new_rate;
+                            current_source = next_source;
+                            char msg[256];
+                            if (next_device) {
+                                snprintf(msg, sizeof(msg), "Capture source: %s (%s)", source_labels[current_source], next_device);
+                            } else {
+                                snprintf(msg, sizeof(msg), "Capture source: %s", source_labels[current_source]);
+                            }
+                            set_status(status_buffer, sizeof(status_buffer), &status_timeout, msg);
+                            state.history_count = 0;
+                            if (state.history_capacity > 0) {
+                                state.history_head = state.history_capacity - 1;
+                            } else {
+                                state.history_head = 0;
+                            }
+                        }
+                    }
+                    break;
                 default:
                     break;
                 }
@@ -893,8 +1199,13 @@ int main(void)
         }
     }
 
+    exit_code = EXIT_SUCCESS;
+
+cleanup:
     if (recording && record_file) {
         fprintf(record_file, "# Spectrum recording stop\n");
+    }
+    if (record_file) {
         fclose(record_file);
         record_file = NULL;
     }
@@ -903,12 +1214,20 @@ int main(void)
     line_buffer = NULL;
     line_capacity = 0;
 
-    clear_screen();
-    disable_raw_mode();
+    if (raw_initialized) {
+        clear_screen();
+        disable_raw_mode();
+    }
 
-    snd_pcm_close(pcm_handle);
+    if (pcm_handle) {
+        snd_pcm_close(pcm_handle);
+    }
     free_analyzer(&state);
-    return EXIT_SUCCESS;
+
+    free(mic_device_name);
+    free(stereo_device_name);
+
+    return exit_code;
 }
 #else
 int main(void)

@@ -22,4 +22,7 @@ RUN help
 PRINT "\n\n"
 PRINT "\n\n================================= CHANGE LOG ================================\n"
 PRINT "\n"
-RUN git --no-pager log --name-only $TAG_OLD..HEAD
+IF $TAG_OLD == none
+  RUN git --no-pager log --name-only
+ELSE
+  RUN git --no-pager log --name-only $TAG_OLD..HEAD

@@ -5,12 +5,13 @@
 #include <limits.h>    /* For PATH_MAX */
 #include <stdlib.h>    /* For malloc, free, realpath, exit */
 #include <unistd.h>    /* For access, fork */
-#include <string.h>    /* For strlen, strncpy, strtok_r, memcpy, strcmp */
+#include <string.h>    /* For strlen, strncpy, memcpy, strcmp */
 #include <stdio.h>     /* For fprintf, perror */
 #include <sys/wait.h>  /* For waitpid */
 #include <errno.h>     /* For errno */
 #include <glob.h>      /* For glob() */
 #include <signal.h>    /* For signal() */
+#include <ctype.h>     /* For isspace */
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -67,72 +68,138 @@ static int contains_wildcard(const char *str) {
  * with optional globbing.
  */
 void parse_input(const char *input, CommandStruct *cmd) {
-    char buffer[INPUT_SIZE];
-    strncpy(buffer, input, sizeof(buffer) - 1);
-    buffer[sizeof(buffer) - 1] = '\0';
+    enum { MAX_TOKENS = 1 + MAX_PARAMETERS + MAX_OPTIONS };
+    char *tokens[MAX_TOKENS];
+    size_t token_count = 0;
+    char token_buffer[INPUT_SIZE];
+    size_t token_len = 0;
+    int in_quotes = 0;
+    char quote_char = '\0';
 
-    char *saveptr;
-    char *token = strtok_r(buffer, " ", &saveptr);
-    if (!token) return;
-
-    /* The first token is the command name */
-    strncpy(cmd->command, token, sizeof(cmd->command) - 1);
-    cmd->command[sizeof(cmd->command) - 1] = '\0';
-
+    cmd->command[0] = '\0';
     cmd->param_count = 0;
-    cmd->opt_count   = 0;
+    cmd->opt_count = 0;
+    for (int i = 0; i < MAX_PARAMETERS; i++) {
+        cmd->parameters[i] = NULL;
+    }
+    for (int i = 0; i < MAX_OPTIONS; i++) {
+        cmd->options[i] = NULL;
+    }
 
-    /* Process the rest of the tokens */
-    while ((token = strtok_r(NULL, " ", &saveptr)) != NULL) {
+    const char *p = input;
+    while (*p != '\0') {
+        unsigned char c = (unsigned char)*p;
+
+        if (c == '\\') {
+            p++;
+            if (*p != '\0') {
+                if (token_len < sizeof(token_buffer) - 1) {
+                    token_buffer[token_len++] = *p;
+                }
+                p++;
+            } else {
+                if (token_len < sizeof(token_buffer) - 1) {
+                    token_buffer[token_len++] = '\\';
+                }
+            }
+            continue;
+        }
+
+        if (in_quotes) {
+            if (*p == quote_char) {
+                in_quotes = 0;
+            } else {
+                if (token_len < sizeof(token_buffer) - 1) {
+                    token_buffer[token_len++] = *p;
+                }
+            }
+            p++;
+            continue;
+        }
+
+        if (*p == '\'' || *p == '"') {
+            in_quotes = 1;
+            quote_char = *p;
+            p++;
+            continue;
+        }
+
+        if (isspace(c)) {
+            if (token_len > 0) {
+                token_buffer[token_len] = '\0';
+                if (token_count < MAX_TOKENS) {
+                    char *dup = strdup(token_buffer);
+                    if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
+                    tokens[token_count++] = dup;
+                }
+                token_len = 0;
+            }
+            p++;
+            continue;
+        }
+
+        if (token_len < sizeof(token_buffer) - 1) {
+            token_buffer[token_len++] = *p;
+        }
+        p++;
+    }
+
+    if (token_len > 0) {
+        token_buffer[token_len] = '\0';
+        if (token_count < MAX_TOKENS) {
+            char *dup = strdup(token_buffer);
+            if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
+            tokens[token_count++] = dup;
+        }
+    }
+
+    if (token_count == 0) {
+        return;
+    }
+
+    strncpy(cmd->command, tokens[0], sizeof(cmd->command) - 1);
+    cmd->command[sizeof(cmd->command) - 1] = '\0';
+    free(tokens[0]);
+
+    size_t i = 1;
+    while (i < token_count) {
+        char *token = tokens[i];
+
         if (token[0] == '-' && token[1] != '\0') {
-            /* Store the flag itself */
             if (cmd->opt_count < MAX_OPTIONS) {
-                char *dup = strdup(token);
-                if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
-                cmd->options[cmd->opt_count++] = dup;
+                cmd->options[cmd->opt_count++] = token;
+            } else {
+                free(token);
             }
-            /* Peek for a value */
-            char *value = strtok_r(NULL, " ", &saveptr);
-            if (value && value[0] != '-') {
-                /* Value for the flag */
+
+            if (i + 1 < token_count) {
+                char *value = tokens[i + 1];
                 if (cmd->opt_count < MAX_OPTIONS) {
-                    char *dup = strdup(value);
-                    if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
-                    cmd->options[cmd->opt_count++] = dup;
+                    cmd->options[cmd->opt_count++] = value;
+                } else {
+                    free(value);
                 }
-            } else if (value && value[0] == '-') {
-                /*
-                 * It was actually another flag—store it
-                 * (will check for its value in the next loop iteration)
-                 */
-                if (cmd->opt_count < MAX_OPTIONS) {
-                    char *dup = strdup(value);
-                    if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
-                    cmd->options[cmd->opt_count++] = dup;
-                }
+                i++;
             }
-            /* If value was NULL, nothing more to do */
         } else {
-            /* Positional parameter: maybe glob-expand it */
             if (should_bypass_expansion(cmd->command)) {
                 if (cmd->param_count < MAX_PARAMETERS) {
-                    char *dup = strdup(token);
-                    if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
-                    cmd->parameters[cmd->param_count++] = dup;
+                    cmd->parameters[cmd->param_count++] = token;
+                } else {
+                    free(token);
                 }
             } else if (contains_wildcard(token)) {
                 glob_t glob_result;
                 int ret = glob(token, GLOB_NOCHECK, NULL, &glob_result);
                 if (ret == 0 || ret == GLOB_NOMATCH) {
-                    for (size_t i = 0; i < glob_result.gl_pathc; i++) {
+                    for (size_t j = 0; j < glob_result.gl_pathc; j++) {
                         if (cmd->param_count < MAX_PARAMETERS) {
-                            char *dup = strdup(glob_result.gl_pathv[i]);
+                            char *dup = strdup(glob_result.gl_pathv[j]);
                             if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
                             cmd->parameters[cmd->param_count++] = dup;
                         }
                     }
                 } else {
-                    /* On glob error, use the literal token */
                     if (cmd->param_count < MAX_PARAMETERS) {
                         char *dup = strdup(token);
                         if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
@@ -140,15 +207,20 @@ void parse_input(const char *input, CommandStruct *cmd) {
                     }
                 }
                 globfree(&glob_result);
+                free(token);
             } else {
-                /* Plain parameter */
                 if (cmd->param_count < MAX_PARAMETERS) {
-                    char *dup = strdup(token);
-                    if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
-                    cmd->parameters[cmd->param_count++] = dup;
+                    cmd->parameters[cmd->param_count++] = token;
+                } else {
+                    free(token);
                 }
             }
         }
+        i++;
+    }
+
+    for (; i < token_count; i++) {
+        free(tokens[i]);
     }
 }
 

@@ -1,13 +1,25 @@
 # Variables
-SET $VERSION = 0
+SET $COMMIT = 0
+SET $TAG = none
+SET $TAG_OLD = none
 
 # TASK script
+RUN clear
+RUN _VERSION to $COMMIT
+PRINT "\nEnter release tag: "
+INPUT $TAG
+PRINT "\nEnter baseline release tag ('none' if no baseline): "
+INPUT $TAG_OLD
 RUN cls
-RUN _VERSION to $VERSION
-PRINT "\n\n============================ RELEASE NOTES v0.5.0 ===========================\n"
+PRINT "\n\n=============================== RELEASE NOTES ===============================\n"
 PRINT "\n Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git\n"
 PRINT "\n  Releance branch:         main"
-PRINT "\n  Release commit number:   " + $VERSION
+PRINT "\n  Release tag:             " + $TAG
+PRINT "\n  Release commit number:   " + $COMMIT
+PRINT "\n  Baseline release:        " + $TAG_OLD
 PRINT "\n"
 RUN help
 PRINT "\n\n"
+PRINT "\n\n================================= CHANGE LOG ================================\n"
+PRINT "\n"
+RUN git --no-pager log --name-only $TAG_OLD..HEAD

@@ -65,8 +65,12 @@ int main(int argc, char *argv[]) {
     printf("-----------------------------------------------------------------------------\n");
     printf("                             - SYSTEM UTILITIES -\n");
     printf("\n");
+    printf("  In general BUDOSTACK passes commands as they are unless they are found\n");
+    printf("  from the list of built-in commands.\n");
+    printf("\n");
     printf("/* System Commands */\n");
     printf("\n");
+    printf("  cd       : Change Directory, remember to put 'if space' in folder name.\n");
     printf("  cls      : Clear terminal screen.\n");
     printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
     printf("  crc32    : Calculate and/or verify CRC32 checksum of a file.\n");

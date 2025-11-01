@@ -7,11 +7,13 @@
 #include <unistd.h>    /* For access, fork */
 #include <string.h>    /* For strlen, strncpy, memcpy, strcmp */
 #include <stdio.h>     /* For fprintf, perror */
+#include <fcntl.h>     /* For open */
 #include <sys/wait.h>  /* For waitpid */
 #include <errno.h>     /* For errno */
 #include <glob.h>      /* For glob() */
 #include <signal.h>    /* For signal() */
 #include <ctype.h>     /* For isspace */
+#include <sys/stat.h>  /* For mode constants */
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -79,6 +81,8 @@ void parse_input(const char *input, CommandStruct *cmd) {
     cmd->command[0] = '\0';
     cmd->param_count = 0;
     cmd->opt_count = 0;
+    cmd->redirect_path = NULL;
+    cmd->redirect_append = 0;
     for (int i = 0; i < MAX_PARAMETERS; i++) {
         cmd->parameters[i] = NULL;
     }
@@ -124,6 +128,32 @@ void parse_input(const char *input, CommandStruct *cmd) {
             continue;
         }
 
+        if (!in_quotes && c == '>') {
+            if (token_len > 0) {
+                token_buffer[token_len] = '\0';
+                if (token_count < MAX_TOKENS) {
+                    char *dup = strdup(token_buffer);
+                    if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
+                    tokens[token_count++] = dup;
+                }
+                token_len = 0;
+            }
+            char redirect_token[3] = {'>', '\0', '\0'};
+            size_t redirect_len = 1;
+            if (*(p + 1) == '>') {
+                redirect_token[1] = '>';
+                redirect_token[2] = '\0';
+                redirect_len = 2;
+            }
+            if (token_count < MAX_TOKENS) {
+                char *dup = strdup(redirect_token);
+                if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
+                tokens[token_count++] = dup;
+            }
+            p += redirect_len;
+            continue;
+        }
+
         if (isspace(c)) {
             if (token_len > 0) {
                 token_buffer[token_len] = '\0';
@@ -164,6 +194,47 @@ void parse_input(const char *input, CommandStruct *cmd) {
     size_t i = 1;
     while (i < token_count) {
         char *token = tokens[i];
+
+        if (token[0] == '>') {
+            const char *embedded = NULL;
+            int append = 0;
+            if (token[1] == '>') {
+                append = 1;
+                if (token[2] != '\0')
+                    embedded = token + 2;
+            } else if (token[1] != '\0') {
+                embedded = token + 1;
+            }
+
+            if (cmd->redirect_path) {
+                free(cmd->redirect_path);
+                cmd->redirect_path = NULL;
+            }
+            cmd->redirect_append = append;
+
+            if (embedded && *embedded != '\0') {
+                cmd->redirect_path = strdup(embedded);
+                if (!cmd->redirect_path) { perror("strdup failed"); exit(EXIT_FAILURE); }
+                free(token);
+                i++;
+                continue;
+            }
+
+            free(token);
+            if (i + 1 < token_count) {
+                cmd->redirect_path = tokens[i + 1];
+                tokens[i + 1] = NULL;
+                i += 2;
+                continue;
+            }
+
+            fprintf(stderr, "Redirection error: missing file operand.\n");
+            for (size_t j = i + 1; j < token_count; j++) {
+                if (tokens[j])
+                    free(tokens[j]);
+            }
+            return;
+        }
 
         if (token[0] == '-' && token[1] != '\0') {
             if (cmd->opt_count < MAX_OPTIONS) {
@@ -282,11 +353,27 @@ int execute_command(const CommandStruct *cmd) {
         args[idx++] = cmd->parameters[i];
     args[idx] = NULL;
 
+    int redirect_fd = -1;
+    if (cmd->redirect_path) {
+        int flags = O_WRONLY | O_CREAT;
+        if (cmd->redirect_append)
+            flags |= O_APPEND;
+        else
+            flags |= O_TRUNC;
+        redirect_fd = open(cmd->redirect_path, flags, 0666);
+        if (redirect_fd < 0) {
+            perror("open failed");
+            return -2;
+        }
+    }
+
     /* Fork & exec */
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork failed");
-        return -1;
+        if (redirect_fd != -1)
+            close(redirect_fd);
+        return -2;
     }
     if (pid == 0) {
         if (base_path[0] != '\0') {
@@ -298,15 +385,30 @@ int execute_command(const CommandStruct *cmd) {
                 }
             }
         }
+        if (redirect_fd != -1) {
+            if (dup2(redirect_fd, STDOUT_FILENO) == -1) {
+                perror("dup2 failed");
+                _exit(EXIT_FAILURE);
+            }
+            if (dup2(redirect_fd, STDERR_FILENO) == -1) {
+                perror("dup2 failed");
+                _exit(EXIT_FAILURE);
+            }
+            close(redirect_fd);
+        }
         signal(SIGINT, SIG_DFL);
         execv(abs_path, args);
         perror("execv failed");
         exit(EXIT_FAILURE);
     } else {
+        if (redirect_fd != -1) {
+            if (close(redirect_fd) < 0)
+                perror("close failed");
+        }
         int status;
         if (waitpid(pid, &status, 0) < 0) {
             perror("waitpid failed");
-            return -1;
+            return -2;
         }
     }
     return 0;
@@ -318,4 +420,9 @@ void free_command_struct(CommandStruct *cmd) {
         free(cmd->parameters[i]);
     for (int i = 0; i < cmd->opt_count; i++)
         free(cmd->options[i]);
+    if (cmd->redirect_path) {
+        free(cmd->redirect_path);
+        cmd->redirect_path = NULL;
+    }
+    cmd->redirect_append = 0;
 }

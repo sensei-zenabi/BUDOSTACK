@@ -1,4 +1,5 @@
 # Global variables
+SET $INIT = 1
 SET $VALUE = 0
 SET $TIME = 0
 SET $INCREMENT = 0.01
@@ -10,35 +11,58 @@ SET $HEIGHT = 0
 SET $STATE = 1
 SET $COLOR = 1
 
-# Code
+# -------------------- CODE -------------------- #
+
+RUN cls
+
+@DRAW 
 
 RUN _GETHEIGHT to $HEIGHT 
 
-RUN cls
-PRINT "\n- - - SIN() and COS() PLOTTING DEMO - - -\n"
-PRINT "\nCreated by: Ville Suoranta\n"
+# Header
 
+IF $INIT == 1
+  RUN _TEXT -x 1 -y 1 -text "- - - SIN() and COS() PLOTTING DEMO - - -"
+  RUN _TEXT -x 1 -y 3 -text "Created by: Ville Suoranta"
+  SET $INIT = 0
 
-@START
+# Calculus
+
 IF $STATE == 1
   RUN _CALC sin(2*pi*$TIME) to $VALUE
+  SET $COLOR = 1
 IF $STATE == 2
   RUN _CALC cos(2*pi*$TIME) to $VALUE
+  SET $COLOR = 2
+IF $STATE == 3
+  RUN _CALC sin(2*pi*$TIME*2) to $VALUE
+  SET $COLOR = 1
+IF $STATE == 4
+  RUN _CALC cos(2*pi*$TIME*2) to $VALUE
+  SET $COLOR = 2
+
 RUN _CALC floor($HEIGHT/2 + $VALUE * $AMPLITUDE) to $Y
+
+# Draw waves
+
+RUN _RECT -x $X -y $HEIGHT/2 -height 1 -width 1 -color 240
 RUN _RECT -x $X -y $Y -height 1 -width 1 -color $COLOR
 SET $TIME = $TIME + $INCREMENT
 SET $X = $X + 1
 WAIT 20
-IF $STATE > 2
+IF $STATE > 4
   GOTO @END
 IF $TIME < $END_TIME
-  GOTO @START
+  GOTO @DRAW
 ELSE
   SET $STATE = $STATE + 1
-  SET $COLOR = $COLOR + 1
   SET $TIME = 0
   SET $X = 1
-  GOTO @START
+GOTO @DRAW
+
 @END
+
 RUN _TEXT -x 1 -y $HEIGHT-2 -text "Demo finished!"
 PRINT "\n"
+
+# -------------------- EOF -------------------- #

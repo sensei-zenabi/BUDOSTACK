@@ -1,6 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include <alsa/asoundlib.h>
 #include <errno.h>
 #include <math.h>
 #include <poll.h>
@@ -12,6 +11,19 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+
+#if defined(__has_include)
+#if __has_include(<alsa/asoundlib.h>)
+#define HAVE_ALSA 1
+#else
+#define HAVE_ALSA 0
+#endif
+#else
+#define HAVE_ALSA 1
+#endif
+
+#if HAVE_ALSA
+#include <alsa/asoundlib.h>
 
 #define MIN_FFT_SIZE 256
 #define MAX_FFT_SIZE 8192
@@ -246,41 +258,53 @@ static size_t map_bin(size_t bin_count, size_t column, size_t columns, int use_l
     return mapped;
 }
 
-static char amplitude_to_char(double value)
+static int amplitude_to_color(double value)
 {
-    static const char *gradient = " .:-=+*#%@";
-    size_t gradient_len = strlen(gradient);
-    if (gradient_len == 0) {
-        return ' ';
-    }
+    static const int palette[] = {17, 18, 19, 20, 21, 27, 33, 39, 45, 51, 82, 118, 154, 190, 226};
+    static const size_t palette_len = sizeof(palette) / sizeof(palette[0]);
     if (value < 0.0) {
         value = 0.0;
     }
     if (value > 1.0) {
         value = 1.0;
     }
-    size_t index = (size_t)lrint(value * (double)(gradient_len - 1));
-    if (index >= gradient_len) {
-        index = gradient_len - 1;
+    size_t index = (size_t)lrint(value * (double)(palette_len - 1));
+    if (index >= palette_len) {
+        index = palette_len - 1;
     }
-    return gradient[index];
+    return palette[index];
 }
 
-static void render_row(const struct analyzer_state *state,
+static double column_to_frequency(const struct analyzer_state *state,
+    size_t column,
+    size_t columns,
+    int use_log_frequency,
+    unsigned int sample_rate)
+{
+    if (columns == 0 || state->fft_size == 0) {
+        return 0.0;
+    }
+    size_t bin = map_bin(state->bin_count, column, columns, use_log_frequency);
+    if (bin >= state->bin_count) {
+        bin = state->bin_count ? state->bin_count - 1 : 0;
+    }
+    double bin_width = (double)sample_rate / (double)state->fft_size;
+    return bin_width * (double)bin;
+}
+
+static void draw_waterfall_row(const struct analyzer_state *state,
     const double *magnitudes,
     int columns,
     int use_log_frequency,
-    int use_log_amplitude,
-    char *out)
+    int use_log_amplitude)
 {
-    if (columns <= 0) {
+    printf("\x1b[2K");
+    if (columns <= 0 || state->bin_count == 0) {
+        printf("\n");
         return;
     }
-    if (state->bin_count == 0) {
-        memset(out, ' ', (size_t)columns);
-        out[columns] = '\0';
-        return;
-    }
+
+    int prev_color = -1;
     for (int col = 0; col < columns; ++col) {
         size_t bin = map_bin(state->bin_count, (size_t)col, (size_t)columns, use_log_frequency);
         if (bin >= state->bin_count) {
@@ -297,9 +321,138 @@ static void render_row(const struct analyzer_state *state,
         if (use_log_amplitude) {
             display_value = log1p(display_value * 9.0) / log1p(9.0);
         }
-        out[col] = amplitude_to_char(display_value);
+        int color = amplitude_to_color(display_value);
+        if (color != prev_color) {
+            printf("\x1b[48;5;%dm", color);
+            prev_color = color;
+        }
+        putchar(' ');
     }
-    out[columns] = '\0';
+    if (prev_color != -1) {
+        printf("\x1b[0m");
+    }
+    printf("\n");
+}
+
+static void format_frequency_label(double frequency, char *buffer, size_t capacity)
+{
+    if (capacity == 0) {
+        return;
+    }
+    if (frequency >= 1000000.0) {
+        double mhz = frequency / 1000000.0;
+        if (mhz >= 10.0) {
+            snprintf(buffer, capacity, "%.0fMHz", mhz);
+        } else {
+            snprintf(buffer, capacity, "%.1fMHz", mhz);
+        }
+    } else if (frequency >= 1000.0) {
+        double khz = frequency / 1000.0;
+        if (khz >= 10.0) {
+            snprintf(buffer, capacity, "%.0fkHz", khz);
+        } else {
+            snprintf(buffer, capacity, "%.1fkHz", khz);
+        }
+    } else {
+        snprintf(buffer, capacity, "%.0fHz", frequency);
+    }
+}
+
+static void draw_frequency_axis_baseline(const struct analyzer_state *state,
+    int columns,
+    int use_log_frequency,
+    unsigned int sample_rate)
+{
+    printf("\x1b[0m\x1b[2K");
+    if (columns <= 0) {
+        printf("\n");
+        return;
+    }
+    ensure_line_capacity(columns);
+    memset(line_buffer, '-', (size_t)columns);
+    int tick_count = columns > 120 ? 10 : 6;
+    if (tick_count < 2) {
+        tick_count = 2;
+    }
+    for (int i = 0; i <= tick_count; ++i) {
+        double fraction = (double)i / (double)tick_count;
+        size_t column = (size_t)llround(fraction * (double)(columns - 1));
+        if (column >= (size_t)columns) {
+            column = (size_t)columns - 1;
+        }
+        line_buffer[column] = '+';
+    }
+    line_buffer[columns] = '\0';
+    printf("%s\n", line_buffer);
+    (void)state;
+    (void)use_log_frequency;
+    (void)sample_rate;
+}
+
+static void draw_frequency_axis_labels(const struct analyzer_state *state,
+    int columns,
+    int use_log_frequency,
+    unsigned int sample_rate)
+{
+    printf("\x1b[2K");
+    if (columns <= 0) {
+        printf("\n");
+        return;
+    }
+    ensure_line_capacity(columns);
+    memset(line_buffer, ' ', (size_t)columns);
+    int tick_count = columns > 120 ? 10 : 6;
+    if (tick_count < 2) {
+        tick_count = 2;
+    }
+    size_t last_end = 0;
+    int first_label = 1;
+    for (int i = 0; i <= tick_count; ++i) {
+        double fraction = (double)i / (double)tick_count;
+        size_t column = (size_t)llround(fraction * (double)(columns - 1));
+        if (column >= (size_t)columns) {
+            column = (size_t)columns - 1;
+        }
+        double frequency = column_to_frequency(state, column, (size_t)columns, use_log_frequency, sample_rate);
+        char label[32];
+        format_frequency_label(frequency, label, sizeof(label));
+        size_t label_len = strlen(label);
+        if (label_len == 0) {
+            continue;
+        }
+        size_t start = 0;
+        if (label_len < 2) {
+            start = column;
+        } else {
+            if (column >= label_len / 2) {
+                start = column - (label_len / 2);
+            } else {
+                start = 0;
+            }
+        }
+        if (start + label_len > (size_t)columns) {
+            if (label_len > (size_t)columns) {
+                continue;
+            }
+            start = (size_t)columns - label_len;
+        }
+        if (!first_label && start <= last_end) {
+            start = last_end + 1;
+            if (start + label_len > (size_t)columns) {
+                continue;
+            }
+        }
+        memcpy(line_buffer + start, label, label_len);
+        if (column < start || column >= start + label_len) {
+            if (column < (size_t)columns) {
+                line_buffer[column] = '|';
+            }
+        }
+        last_end = start + label_len;
+        first_label = 0;
+    }
+    line_buffer[columns] = '\0';
+    printf("%s\n", line_buffer);
 }
 
 static void push_history(struct analyzer_state *state, const double *magnitudes)
@@ -342,9 +495,12 @@ static void draw_ui(const struct analyzer_state *state,
     const char *status,
     unsigned int sample_rate)
 {
+    if (columns < 0) {
+        columns = 0;
+    }
     ensure_line_capacity(columns);
 
-    printf("\x1b[H");
+    printf("\x1b[H\x1b[0m\x1b[J");
     printf("\x1b[2K");
     printf("Spectrum Analyzer | FFT: %zu | Sample Rate: %u Hz | Freq: %s | Amp: %s | Record: %s",
         state->fft_size,
@@ -357,7 +513,7 @@ static void draw_ui(const struct analyzer_state *state,
     }
     printf("\n");
 
-    size_t waterfall_rows = rows > 2 ? (size_t)(rows - 2) : 0;
+    size_t waterfall_rows = rows > 4 ? (size_t)(rows - 4) : 0;
     size_t available_rows = state->history_count < waterfall_rows ? state->history_count : waterfall_rows;
     size_t padding_rows = waterfall_rows > available_rows ? waterfall_rows - available_rows : 0;
 
@@ -371,16 +527,16 @@ static void draw_ui(const struct analyzer_state *state,
         for (size_t r = 0; r < available_rows; ++r) {
             size_t idx = (start_index + r) % state->history_capacity;
             const double *row_data = state->history + (idx * state->bin_count);
-            render_row(state, row_data, columns, use_log_frequency, use_log_amplitude, line_buffer);
-            printf("\x1b[2K");
-            printf("%s", line_buffer);
-            printf("\n");
+            draw_waterfall_row(state, row_data, columns, use_log_frequency, use_log_amplitude);
         }
     }
 
+    draw_frequency_axis_baseline(state, columns, use_log_frequency, sample_rate);
+    draw_frequency_axis_labels(state, columns, use_log_frequency, sample_rate);
+
     printf("\x1b[2K");
     if (columns <= 0) {
-        printf("\n");
+        fflush(stdout);
         return;
     }
     snprintf(line_buffer, line_capacity, " R:Record[%s]  +/-:FFT %zu  L:Freq(%s)  A:Amp(%s)  Q:Quit",
@@ -500,7 +656,7 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-    size_t desired_history = (rows > 2) ? (size_t)(rows - 2) : 0;
+    size_t desired_history = (rows > 4) ? (size_t)(rows - 4) : 0;
     if (reallocate_history(&state, desired_history) != 0) {
         disable_raw_mode();
         snd_pcm_close(pcm_handle);
@@ -543,14 +699,14 @@ int main(void)
 
         get_terminal_size(&rows, &cols);
         if (cols < 80) {
-            printf("\x1b[H\x1b[2K");
-            printf("Spectrum Analyzer requires at least 80 columns. Current width: %d\n", cols);
+            printf("\x1b[H\x1b[0m\x1b[J");
+            printf("\x1b[2KSpectrum Analyzer requires at least 80 columns. Current width: %d\n", cols);
             printf("\x1b[2K\n");
             printf("\x1b[2KPlease resize the terminal.\n");
             printf("\x1b[2K");
             fflush(stdout);
         } else {
-            size_t new_history = (rows > 2) ? (size_t)(rows - 2) : 0;
+            size_t new_history = (rows > 4) ? (size_t)(rows - 4) : 0;
             if (new_history != state.history_capacity) {
                 if (reallocate_history(&state, new_history) != 0) {
                     disable_raw_mode();
@@ -614,7 +770,7 @@ int main(void)
                         if (reconfigure_fft(&state, new_fft) != 0) {
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "Failed to resize FFT");
                         } else {
-                            reallocate_history(&state, (rows > 2) ? (size_t)(rows - 2) : 0);
+                            reallocate_history(&state, (rows > 4) ? (size_t)(rows - 4) : 0);
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "FFT size increased");
                         }
                     }
@@ -630,7 +786,7 @@ int main(void)
                         if (reconfigure_fft(&state, new_fft) != 0) {
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "Failed to resize FFT");
                         } else {
-                            reallocate_history(&state, (rows > 2) ? (size_t)(rows - 2) : 0);
+                            reallocate_history(&state, (rows > 4) ? (size_t)(rows - 4) : 0);
                             set_status(status_buffer, sizeof(status_buffer), &status_timeout, "FFT size decreased");
                         }
                     }
@@ -670,4 +826,11 @@ int main(void)
     free_analyzer(&state);
     return EXIT_SUCCESS;
 }
+#else
+int main(void)
+{
+    fprintf(stderr, "spectrum: ALSA development headers not available at build time\n");
+    return EXIT_FAILURE;
+}
+#endif
 

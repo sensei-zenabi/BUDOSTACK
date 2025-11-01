@@ -1,7 +1,15 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic 
-LDFLAGS = -lasound -lm -pthread
+ALSA_LIBS := $(shell pkg-config --libs alsa 2>/dev/null)
+ifeq ($(ALSA_LIBS),)
+ALSA_HEADER := $(wildcard /usr/include/alsa/asoundlib.h)
+ifneq ($(ALSA_HEADER),)
+ALSA_LIBS := -lasound
+endif
+endif
+
+LDFLAGS = $(ALSA_LIBS) -lm -pthread
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

@@ -88,7 +88,7 @@ static CSVRow parse_csv_line(char *line) {
         exit(EXIT_FAILURE);
     }
     
-    char *token = strtok(line, ",");
+    char *token = strtok(line, ";");
     while (token != NULL) {
         if (row.cell_count >= cell_capacity) {
             cell_capacity *= 2;
@@ -104,7 +104,7 @@ static CSVRow parse_csv_line(char *line) {
             exit(EXIT_FAILURE);
         }
         row.cells[row.cell_count++] = cell;
-        token = strtok(NULL, ",");
+        token = strtok(NULL, ";");
     }
     return row;
 }

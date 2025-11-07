@@ -66,7 +66,7 @@ static int parse_line(char *buf, size_t row, size_t num_cols, int target_col,
     for (size_t col = 1; col <= num_cols; col++) {
         /* isolate field */
         char *start = p;
-        char *end   = start + strcspn(start, ",");
+        char *end   = start + strcspn(start, ";");
         char saved  = *end;
         *end = '\0';
         /* parse/store if requested */
@@ -132,7 +132,7 @@ int main(int argc, char *argv[]) {
     /* count columns */
     size_t len = strlen(line), num_cols = 1;
     for (size_t i = 0; i < len; i++)
-        if (line[i] == ',') num_cols++;
+        if (line[i] == ';') num_cols++;
 
     if (target_col > 0 && (size_t)target_col > num_cols) {
         fprintf(stderr,

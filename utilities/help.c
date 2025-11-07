@@ -107,7 +107,7 @@ int main(int argc, char *argv[]) {
     printf("  mdread   : Pretty-prints .md files. Use: mdread readme.md\n");
     printf("  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n");
     printf("             For help CTRL+H when the app is running.\n");
-    printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.tbl'.\n");
+    printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.csv'.\n");
     printf("\n");
     printf("/* Internet and Communications */\n");
     printf("\n");

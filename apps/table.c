@@ -21,6 +21,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #define CTRL_KEY(k) ((k) & 0x1F)
 #define MAX_INPUT 256
@@ -97,25 +99,51 @@ void move_cursor(int row, int col) {
     fflush(stdout);
 }
 
-/*
- * New function: Print an improved help/shortcut bar below the spreadsheet.
- * Using a carriage return (\r) at the beginning of each line and the clear-to-end-of-line
- * sequence (\033[K) forces a consistent alignment even when lines vary in length.
- */
-void print_help_bar(void) {
-    int table_rows = table_get_rows(g_table);
-    int help_start = table_rows + 3;
-    // Move the cursor to the first line of the help section.
-    printf("\033[%d;1H", help_start);
-    if (show_help) {
-        printf("\rDetailed Shortcuts:\033[K\n");
-        printf("\rNavigation:      HOME: ←5 cols   END: →5 cols   PGUP: ↑10 rows   PGDN: ↓10 rows\033[K\n");
-        printf("\r                 Arrow keys: move (live editing: type to modify cell, backspace to delete)\033[K\n");
-        printf("\rEditing:         CTRL+R: add row   CTRL+N: add column   CTRL+S: save   CTRL+Q: quit   CTRL+F: toggle formula view\033[K\n");
-        printf("\rCell Operations: DEL: clear cell   CTRL+D: delete col   CTRL+E: delete row   CTRL+C: copy   CTRL+X: cut   CTRL+V: paste\033[K\n");
-        printf("\r                 ...Press CTRL+T to hide help.\033[K\n");
-    } else {
-        printf("\rPress CTRL+T for help.\033[K\n");
+static int get_terminal_size(int *rows, int *cols) {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
+        return 0;
+    }
+    if (rows) {
+        *rows = ws.ws_row;
+    }
+    if (cols) {
+        *cols = ws.ws_col;
+    }
+    return 1;
+}
+
+static void print_help_bar(void) {
+    static const char *detailed_help[] = {
+        "Detailed Shortcuts:",
+        "Navigation:      HOME: ←5 cols   END: →5 cols   PGUP: ↑10 rows   PGDN: ↓10 rows",
+        "                 Arrow keys: move (live editing: type to modify cell, backspace to delete)",
+        "Editing:         CTRL+R: add row   CTRL+N: add column   CTRL+S: save   CTRL+Q: quit   CTRL+F: toggle formula view",
+        "Cell Operations: DEL: clear cell   CTRL+D: delete col   CTRL+E: delete row   CTRL+C: copy   CTRL+X: cut   CTRL+V: paste",
+        "                 ...Press CTRL+T to hide help."
+    };
+    static const char compact_help[] = "Press CTRL+T for help.";
+    const int total_lines = (int)(sizeof(detailed_help) / sizeof(detailed_help[0]));
+    int term_rows = 0;
+
+    if (!get_terminal_size(&term_rows, NULL) || term_rows <= 0) {
+        term_rows = 24; // Fallback to a standard terminal height.
+    }
+
+    int start_row = term_rows - total_lines + 1;
+    if (start_row < 1) {
+        start_row = 1;
+    }
+
+    for (int i = 0; i < total_lines; ++i) {
+        move_cursor(start_row + i, 1);
+        if (show_help) {
+            printf("\r%s\033[K", detailed_help[i]);
+        } else if (i == total_lines - 1) {
+            printf("\r%s\033[K", compact_help);
+        } else {
+            printf("\r\033[K");
+        }
     }
     fflush(stdout);
 }

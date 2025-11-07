@@ -14,6 +14,47 @@ static int cmp_double(const void *a, const void *b) {
     return 0;
 }
 
+/* return 1 if the supplied field represents a valid double, 0 otherwise */
+static int field_is_numeric(const char *field) {
+    char *endptr = NULL;
+    errno = 0;
+    (void)strtod(field, &endptr);
+    if (errno != 0) return 0;
+    if (endptr == field) return 0;
+    if (*endptr != '\0') return 0;
+    return 1;
+}
+
+/* detect whether the first CSV row is a header (contains non numeric data) */
+static int has_header_row(const char *line, size_t num_cols) {
+    size_t line_len = strlen(line);
+    char *copy = malloc(line_len + 1);
+    if (!copy) {
+        perror("malloc");
+        return -1;
+    }
+    memcpy(copy, line, line_len + 1);
+
+    char *p = copy;
+    for (size_t col = 1; col <= num_cols; col++) {
+        char *start = p;
+        char *end = start + strcspn(start, ";");
+        char saved = *end;
+        *end = '\0';
+
+        if (!field_is_numeric(start)) {
+            free(copy);
+            return 1;
+        }
+
+        if (saved == '\0') break;
+        p = end + 1;
+    }
+
+    free(copy);
+    return 0;
+}
+
 /* print statistics for a single column */
 static void print_stats(double *data, size_t n, size_t col_number) {
     if (n == 0) {
@@ -142,6 +183,12 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    int header_present = has_header_row(line, num_cols);
+    if (header_present < 0) {
+        fclose(fp);
+        return EXIT_FAILURE;
+    }
+
     /* how many series we store */
     size_t store_cols = (target_col > 0 ? 1 : num_cols);
 
@@ -165,11 +212,13 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* parse row #1 */
-    if (parse_line(line, 1, num_cols, target_col,
-                   data, sizes, caps) != 0) {
-        fclose(fp);
-        return EXIT_FAILURE;
+    /* parse row #1 if it is data */
+    if (!header_present) {
+        if (parse_line(line, 1, num_cols, target_col,
+                       data, sizes, caps) != 0) {
+            fclose(fp);
+            return EXIT_FAILURE;
+        }
     }
 
     /* parse remaining rows */

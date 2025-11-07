@@ -1,0 +1,23 @@
+# THIS DEMO DEMONSTRATEST MAINLY _TOCSV.c
+
+SET $VALUE = 0
+SET $ROW = 1
+SET $ROWS = 10
+SET $INDEX = 1
+SET $VALUE = 10
+
+# Write header
+RUN _TOCSV -file MYCSV.CSV -column 1 -row $ROW -value Indeksi
+RUN _TOCSV -file MYCSV.CSV -column 2 -row $ROW -value Arvo
+SET $ROW = $ROW + 1
+
+# Populate values
+@WRITE
+RUN _TOCSV -file MYCSV.CSV -column 1 -row $ROW -value $INDEX
+RUN _TOCSV -file MYCSV.CSV -column 2 -row $ROW -value $VALUE
+SET $INDEX = $INDEX + 1
+SET $VALUE = $VALUE + 10
+SET $ROW = $ROW + 1
+IF $VALUE < 100
+  GOTO @WRITE
+PRINT "TASK FINISHED!"

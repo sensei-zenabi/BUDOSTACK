@@ -335,10 +335,10 @@ int main(int argc, char *argv[]) {
         if (!header_done) {
             /* detect header */
             ncols = 1;
-            for (char *t = line; *t; t++) if (*t == ',') ncols++;
+            for (char *t = line; *t; t++) if (*t == ';') ncols++;
             char *tmp = strdup(line);
             int any_nonnum = 0;
-            char *save = NULL, *tok = strtok_r(tmp, ",", &save);
+            char *save = NULL, *tok = strtok_r(tmp, ";", &save);
             while (tok) {
                 char *t2 = trim(tok);
                 char *endptr;
@@ -348,7 +348,7 @@ int main(int argc, char *argv[]) {
                     any_nonnum = 1;
                     break;
                 }
-                tok = strtok_r(NULL, ",", &save);
+                tok = strtok_r(NULL, ";", &save);
             }
             free(tmp);
 
@@ -359,10 +359,10 @@ int main(int argc, char *argv[]) {
                 size_t i = 0;
                 save = NULL;
                 tmp  = strdup(line);
-                tok  = strtok_r(tmp, ",", &save);
+                tok  = strtok_r(tmp, ";", &save);
                 while (tok && i < ncols) {
                     headers[i++] = strdup(trim(tok));
-                    tok = strtok_r(NULL, ",", &save);
+                    tok = strtok_r(NULL, ";", &save);
                 }
                 free(tmp);
                 fputs(header_line, fout);
@@ -377,7 +377,7 @@ int main(int argc, char *argv[]) {
         double *row = malloc(ncols * sizeof(double));
         int bad = 0;
         char *tmp = strdup(line);
-        char *save = NULL, *tok = strtok_r(tmp, ",", &save);
+        char *save = NULL, *tok = strtok_r(tmp, ";", &save);
         size_t i = 0;
         while (tok && i < ncols) {
             char *t2 = trim(tok);
@@ -386,7 +386,7 @@ int main(int argc, char *argv[]) {
             double v = strtod(t2, &endptr);
             if (errno || *endptr != '\0') { bad = 1; break; }
             row[i++] = v;
-            tok = strtok_r(NULL, ",", &save);
+            tok = strtok_r(NULL, ";", &save);
         }
         free(tmp);
         if (bad || i != ncols) { free(row); continue; }

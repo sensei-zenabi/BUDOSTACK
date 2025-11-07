@@ -83,7 +83,7 @@ int main(int argc, char *argv[]) {
         /* count fields */
         size_t cols = 1;
         for (char *p = line; *p; p++)
-            if (*p == ',') cols++;
+            if (*p == ';') cols++;
 
         /* first data/header row */
         if (!header_done) {
@@ -92,10 +92,10 @@ int main(int argc, char *argv[]) {
             if (!copy) { perror("malloc"); break; }
             strcpy(copy, line);
             int ok = 1;
-            char *saveptr = NULL, *tok = strtok_r(copy, ",", &saveptr);
+            char *saveptr = NULL, *tok = strtok_r(copy, ";", &saveptr);
             while (tok) {
                 if (!is_numeric(trim(tok))) { ok = 0; break; }
-                tok = strtok_r(NULL, ",", &saveptr);
+                tok = strtok_r(NULL, ";", &saveptr);
             }
             free(copy);
 
@@ -107,13 +107,13 @@ int main(int argc, char *argv[]) {
                 char *hdr = malloc(strlen(line) + 1);
                 if (!hdr) { perror("malloc"); break; }
                 strcpy(hdr, line);
-                saveptr = NULL; tok = strtok_r(hdr, ",", &saveptr);
+                saveptr = NULL; tok = strtok_r(hdr, ";", &saveptr);
                 int first = 1;
                 while (tok) {
-                    if (!first) fputc(',', fout);
+                    if (!first) fputc(';', fout);
                     fputs(trim(tok), fout);
                     first = 0;
-                    tok = strtok_r(NULL, ",", &saveptr);
+                    tok = strtok_r(NULL, ";", &saveptr);
                 }
                 fputc('\n', fout);
                 free(hdr);
@@ -130,10 +130,10 @@ int main(int argc, char *argv[]) {
         if (!copy) { perror("malloc"); break; }
         strcpy(copy, line);
         int ok = 1;
-        char *saveptr = NULL, *tok = strtok_r(copy, ",", &saveptr);
+        char *saveptr = NULL, *tok = strtok_r(copy, ";", &saveptr);
         while (tok) {
             if (!is_numeric(trim(tok))) { ok = 0; break; }
-            tok = strtok_r(NULL, ",", &saveptr);
+            tok = strtok_r(NULL, ";", &saveptr);
         }
         free(copy);
         if (!ok) continue;
@@ -142,13 +142,13 @@ int main(int argc, char *argv[]) {
         char *line2 = malloc(strlen(line) + 1);
         if (!line2) { perror("malloc"); break; }
         strcpy(line2, line);
-        saveptr = NULL; tok = strtok_r(line2, ",", &saveptr);
+        saveptr = NULL; tok = strtok_r(line2, ";", &saveptr);
         int first = 1;
         while (tok) {
-            if (!first) fputc(',', fout);
+            if (!first) fputc(';', fout);
             fputs(trim(tok), fout);
             first = 0;
-            tok = strtok_r(NULL, ",", &saveptr);
+            tok = strtok_r(NULL, ";", &saveptr);
         }
         fputc('\n', fout);
         free(line2);

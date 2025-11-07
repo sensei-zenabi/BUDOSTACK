@@ -82,7 +82,7 @@ int main(int argc, char *argv[]) {
 
     while (getline(&line, &len, f) != -1) {
         int col = 0;
-        char *tok = strtok(line, ",");
+        char *tok = strtok(line, ";");
         double xv = 0.0;
         int have_x = 0;
         double *yv = malloc(ycount * sizeof *yv);
@@ -102,7 +102,7 @@ int main(int argc, char *argv[]) {
                     have_y[j] = 1;
                 }
             }
-            tok = strtok(NULL, ",");
+            tok = strtok(NULL, ";");
             col++;
         }
 

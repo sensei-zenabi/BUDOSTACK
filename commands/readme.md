@@ -14,4 +14,4 @@ Requirements for Commands:
 ## Data analysis helpers
 
 - `_CSVSTATS` — compute a selected statistic (count, sum, mean, min, max, variance, standard deviation) for a numeric column in a `;` separated CSV file, with optional row range filtering.
-- `_CSVFILTER` — filter rows based on one or more numeric or lexical comparisons against a selected column and optionally write the result to a file.
+- `_CSVFILTER` — filter rows based on one or more numeric or lexical comparisons against a selected column, combine them with logical AND or OR, and optionally write the result to a file.

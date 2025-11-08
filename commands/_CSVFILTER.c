@@ -19,9 +19,11 @@ static void usage(void) {
     fprintf(stderr,
             "Usage: _CSVFILTER -file <path> -column <n> [-numeric]\n"
             "        [-op <eq|ne|lt|le|gt|ge> -value <value>]...\n"
+            "        [-logic <and|or>]\n"
             "        [-skipheader] [-keepheader] [-output <path>]\n"
             "Filter rows in a ';' separated CSV. Column indices are 1-based.\n"
-            "Specify one or more -op/-value pairs to combine comparisons with logical AND.\n"
+            "Specify one or more -op/-value pairs to combine comparisons with logical\n"
+            "AND (default) or OR via -logic.\n"
             "When -numeric is set, comparisons treat the column and values as numbers.\n"
             "-skipheader skips the first row during comparisons, while -keepheader\n"
             "prints it before the filtered results.\n");
@@ -31,6 +33,11 @@ struct filter_condition {
     enum comparison_operator op;
     char *value;
     double numeric_value;
+};
+
+enum combine_mode {
+    MODE_AND,
+    MODE_OR
 };
 
 static void free_conditions(struct filter_condition *conditions, size_t count) {
@@ -167,6 +174,7 @@ int main(int argc, char *argv[]) {
     struct filter_condition *conditions = NULL;
     size_t condition_count = 0;
     bool awaiting_value = false;
+    enum combine_mode combine = MODE_AND;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-file") == 0) {
@@ -233,6 +241,21 @@ int main(int argc, char *argv[]) {
             awaiting_value = false;
         } else if (strcmp(argv[i], "-numeric") == 0) {
             numeric = true;
+        } else if (strcmp(argv[i], "-logic") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_CSVFILTER: missing value for -logic\n");
+                free_conditions(conditions, condition_count);
+                return EXIT_FAILURE;
+            }
+            if (strcmp(argv[i], "and") == 0) {
+                combine = MODE_AND;
+            } else if (strcmp(argv[i], "or") == 0) {
+                combine = MODE_OR;
+            } else {
+                fprintf(stderr, "_CSVFILTER: unknown logic mode '%s'\n", argv[i]);
+                free_conditions(conditions, condition_count);
+                return EXIT_FAILURE;
+            }
         } else if (strcmp(argv[i], "-skipheader") == 0) {
             skip_header = true;
         } else if (strcmp(argv[i], "-keepheader") == 0) {
@@ -330,30 +353,48 @@ int main(int argc, char *argv[]) {
             return EXIT_FAILURE;
         }
 
-        bool all_match = true;
+        bool match = (combine == MODE_AND);
         if (numeric) {
             double parsed_value;
-            if (!parse_double(column_value, &parsed_value))
-                all_match = false;
-            else {
+            if (!parse_double(column_value, &parsed_value)) {
+                match = false;
+            } else if (combine == MODE_AND) {
                 for (size_t i = 0; i < condition_count; ++i) {
                     if (!compare_numeric(parsed_value, conditions[i].numeric_value, conditions[i].op)) {
-                        all_match = false;
+                        match = false;
+                        break;
+                    }
+                }
+            } else {
+                match = false;
+                for (size_t i = 0; i < condition_count; ++i) {
+                    if (compare_numeric(parsed_value, conditions[i].numeric_value, conditions[i].op)) {
+                        match = true;
                         break;
                     }
                 }
             }
         } else {
-            for (size_t i = 0; i < condition_count; ++i) {
-                if (!compare_string(column_value, conditions[i].value, conditions[i].op)) {
-                    all_match = false;
-                    break;
+            if (combine == MODE_AND) {
+                for (size_t i = 0; i < condition_count; ++i) {
+                    if (!compare_string(column_value, conditions[i].value, conditions[i].op)) {
+                        match = false;
+                        break;
+                    }
+                }
+            } else {
+                match = false;
+                for (size_t i = 0; i < condition_count; ++i) {
+                    if (compare_string(column_value, conditions[i].value, conditions[i].op)) {
+                        match = true;
+                        break;
+                    }
                 }
             }
         }
         free(column_value);
 
-        if (!all_match)
+        if (!match)
             continue;
 
         if (fprintf(output, "%s\n", line) < 0) {

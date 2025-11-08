@@ -1,3 +1,5 @@
+# screen.task
+
 RUN cls
 PRINT "\n- SCREEN CALIBRATION TASK -\n\n"
 PRINT "\nTo exit the program, press CTRL+C"

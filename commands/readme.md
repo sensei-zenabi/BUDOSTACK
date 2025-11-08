@@ -10,3 +10,8 @@ Requirements for Commands:
 - Have -[color] argument, where colors are defined using standard 256
   color VGA / IBM PC color palette
 - Output their results to stdout
+
+## Data analysis helpers
+
+- `_CSVSTATS` — compute descriptive statistics (count, sum, mean, min, max, variance, standard deviation) for a numeric column in a `;` separated CSV file.
+- `_CSVFILTER` — filter rows based on numeric or lexical comparisons against a selected column and optionally write the result to a file.

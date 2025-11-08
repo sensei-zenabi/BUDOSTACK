@@ -3,6 +3,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,123 +47,123 @@ static double scalbn_wrapper(double value, double exponent);
 static double scalbln_wrapper(double value, double exponent);
 
 #define UNARY_FUNCTION_LIST                                                           \
-    X(abs, fabs)                                                                       \
-    X(acos, acos)                                                                      \
-    X(acosh, acosh)                                                                    \
-    X(asin, asin)                                                                      \
-    X(asinh, asinh)                                                                    \
-    X(atan, atan)                                                                      \
-    X(atanh, atanh)                                                                    \
-    X(cbrt, cbrt)                                                                      \
-    X(ceil, ceil)                                                                      \
-    X(cos, cos)                                                                        \
-    X(cosh, cosh)                                                                      \
-    X(erf, erf)                                                                        \
-    X(erfc, erfc)                                                                      \
-    X(exp, exp)                                                                        \
-    X(exp2, exp2)                                                                      \
-    X(expm1, expm1)                                                                    \
-    X(fabs, fabs)                                                                      \
-    X(floor, floor)                                                                    \
-    X(gamma, tgamma)                                                                   \
-    X(ln, log)                                                                         \
-    X(lgamma, lgamma)                                                                  \
-    X(log, log)                                                                        \
-    X(log10, log10)                                                                    \
-    X(log1p, log1p)                                                                    \
-    X(log2, log2)                                                                      \
-    X(tgamma, tgamma)                                                                  \
-    X(round, round)                                                                    \
-    X(sin, sin)                                                                        \
-    X(sinh, sinh)                                                                      \
-    X(sqrt, sqrt)                                                                      \
-    X(tan, tan)                                                                        \
-    X(tanh, tanh)                                                                      \
-    X(trunc, trunc)
+    X(abs, "abs", fabs)                                                               \
+    X(acos, "acos", acos)                                                             \
+    X(acosh, "acosh", acosh)                                                          \
+    X(asin, "asin", asin)                                                             \
+    X(asinh, "asinh", asinh)                                                          \
+    X(atan, "atan", atan)                                                             \
+    X(atanh, "atanh", atanh)                                                          \
+    X(cbrt, "cbrt", cbrt)                                                             \
+    X(ceil, "ceil(x[, digits])", ceil)                                                \
+    X(cos, "cos", cos)                                                                \
+    X(cosh, "cosh", cosh)                                                             \
+    X(erf, "erf", erf)                                                                \
+    X(erfc, "erfc", erfc)                                                             \
+    X(exp, "exp", exp)                                                                \
+    X(exp2, "exp2", exp2)                                                             \
+    X(expm1, "expm1", expm1)                                                          \
+    X(fabs, "fabs", fabs)                                                             \
+    X(floor, "floor(x[, digits])", floor)                                             \
+    X(gamma, "gamma", tgamma)                                                         \
+    X(ln, "ln(x[, base])", log)                                                       \
+    X(lgamma, "lgamma", lgamma)                                                       \
+    X(log, "log(x[, base])", log)                                                     \
+    X(log10, "log10", log10)                                                          \
+    X(log1p, "log1p", log1p)                                                          \
+    X(log2, "log2", log2)                                                             \
+    X(tgamma, "tgamma", tgamma)                                                       \
+    X(round, "round(x[, digits])", round)                                             \
+    X(sin, "sin", sin)                                                                \
+    X(sinh, "sinh", sinh)                                                             \
+    X(sqrt, "sqrt", sqrt)                                                             \
+    X(tan, "tan", tan)                                                                \
+    X(tanh, "tanh", tanh)                                                             \
+    X(trunc, "trunc(x[, digits])", trunc)
 
 #define BINARY_FUNCTION_LIST                                                          \
-    X(atan2, atan2)                                                                   \
-    X(copysign, copysign)                                                             \
-    X(fdim, fdim)                                                                     \
-    X(fmax, fmax)                                                                     \
-    X(fmin, fmin)                                                                     \
-    X(fmod, fmod)                                                                     \
-    X(hypot, hypot)                                                                   \
-    X(pow, pow)                                                                       \
-    X(remainder, remainder)
+    X(atan2, "atan2(x, y)", atan2)                                                   \
+    X(copysign, "copysign(x, y)", copysign)                                         \
+    X(fdim, "fdim(x, y)", fdim)                                                     \
+    X(fmax, "fmax(x, y[, ...])", fmax)                                              \
+    X(fmin, "fmin(x, y[, ...])", fmin)                                              \
+    X(fmod, "fmod(x, y)", fmod)                                                     \
+    X(hypot, "hypot(x, y[, ...])", hypot)                                           \
+    X(pow, "pow(x, y)", pow)                                                         \
+    X(remainder, "remainder(x, y)", remainder)
 
 #define BINARY_WRAPPER_LIST                                                           \
-    X(ldexp, ldexp_wrapper)                                                           \
-    X(scalbn, scalbn_wrapper)                                                         \
-    X(scalbln, scalbln_wrapper)
+    X(ldexp, "ldexp(x, exp)", ldexp_wrapper)                                         \
+    X(scalbn, "scalbn(x, exp)", scalbn_wrapper)                                     \
+    X(scalbln, "scalbln(x, exp)", scalbln_wrapper)
 
 #define TERNARY_FUNCTION_LIST                                                         \
-    X(fma, fma)
+    X(fma, "fma(x, y, z)", fma)
 
 #define CONSTANT_LIST                                                                 \
-    X(e, BUDOSTACK_E)                                                                 \
-    X(inf, INFINITY)                                                                  \
-    X(infinity, INFINITY)                                                             \
-    X(nan, NAN)                                                                       \
-    X(pi, BUDOSTACK_PI)                                                               \
-    X(tau, 2.0 * BUDOSTACK_PI)
+    X(e, "e", BUDOSTACK_E)                                                           \
+    X(inf, "inf", INFINITY)                                                          \
+    X(infinity, "infinity", INFINITY)                                                \
+    X(nan, "nan", NAN)                                                               \
+    X(pi, "pi", BUDOSTACK_PI)                                                        \
+    X(tau, "tau", 2.0 * BUDOSTACK_PI)
 
 static const UnaryFunction unary_functions[] = {
-#define X(name, func) {#name, func},
+#define X(name, display, func) {#name, func},
     UNARY_FUNCTION_LIST
 #undef X
 };
 
-static const char *const unary_function_names[] = {
-#define X(name, func) #name,
+static const char *const unary_function_displays[] = {
+#define X(name, display, func) display,
     UNARY_FUNCTION_LIST
 #undef X
 };
 
 static const BinaryFunction binary_functions[] = {
-#define X(name, func) {#name, func},
+#define X(name, display, func) {#name, func},
     BINARY_FUNCTION_LIST
 #undef X
 };
 
-static const char *const binary_function_names[] = {
-#define X(name, func) #name,
+static const char *const binary_function_displays[] = {
+#define X(name, display, func) display,
     BINARY_FUNCTION_LIST
 #undef X
 };
 
 static const BinaryFunction binary_wrappers[] = {
-#define X(name, func) {#name, func},
+#define X(name, display, func) {#name, func},
     BINARY_WRAPPER_LIST
 #undef X
 };
 
-static const char *const binary_wrapper_names[] = {
-#define X(name, func) #name,
+static const char *const binary_wrapper_displays[] = {
+#define X(name, display, func) display,
     BINARY_WRAPPER_LIST
 #undef X
 };
 
 static const TernaryFunction ternary_functions[] = {
-#define X(name, func) {#name, func},
+#define X(name, display, func) {#name, func},
     TERNARY_FUNCTION_LIST
 #undef X
 };
 
-static const char *const ternary_function_names[] = {
-#define X(name, func) #name,
+static const char *const ternary_function_displays[] = {
+#define X(name, display, func) display,
     TERNARY_FUNCTION_LIST
 #undef X
 };
 
 static const MathConstant constants[] = {
-#define X(name, value) {#name, value},
+#define X(name, display, value) {#name, value},
     CONSTANT_LIST
 #undef X
 };
 
-static const char *const constant_names[] = {
-#define X(name, value) #name,
+static const char *const constant_displays[] = {
+#define X(name, display, value) display,
     CONSTANT_LIST
 #undef X
 };
@@ -178,6 +179,14 @@ static double parse_primary(Parser *parser, int *error);
 static double parse_function(Parser *parser, const char *name, int *error);
 static void print_help(void);
 static void print_wrapped_list(const char *title, const char *const *items, size_t count);
+static int evaluate_extended_function(const char *name, const double *arguments, size_t count,
+                                      double *result, int *error);
+static int handle_precision_function(const char *name, const double *arguments, size_t count,
+                                     double *result, int *error);
+static double apply_precision_modifier(const char *func_name, double value, double digits,
+                                       double (*rounder)(double), int *error);
+static int convert_precision_argument(const char *func_name, double digits, long *precision,
+                                      int *error);
 
 static void skip_spaces(Parser *parser) {
     while (parser->input[parser->pos] != '\0' &&
@@ -408,9 +417,15 @@ static double parse_function(Parser *parser, const char *name, int *error) {
                 }
             }
         }
+        if (handled == 0) {
+            handled = evaluate_extended_function(name, arguments, count, &result, error);
+        }
         free(arguments);
         if (handled != 0) {
-            return result;
+            if (*error == 0) {
+                return result;
+            }
+            return 0.0;
         }
         fprintf(stderr, "unknown function '%s' with %zu argument(s)\n", name, count);
         *error = 1;
@@ -433,16 +448,20 @@ static void print_help(void) {
     puts("Operators:");
     puts("    +, -, *, /, ^, parentheses, unary +/-");
     puts("");
-    print_wrapped_list("Unary functions", unary_function_names,
-                       sizeof(unary_function_names) / sizeof(unary_function_names[0]));
-    print_wrapped_list("Binary functions", binary_function_names,
-                       sizeof(binary_function_names) / sizeof(binary_function_names[0]));
-    print_wrapped_list("Binary functions (integer exponent helpers)", binary_wrapper_names,
-                       sizeof(binary_wrapper_names) / sizeof(binary_wrapper_names[0]));
-    print_wrapped_list("Ternary functions", ternary_function_names,
-                       sizeof(ternary_function_names) / sizeof(ternary_function_names[0]));
-    print_wrapped_list("Constants", constant_names,
-                       sizeof(constant_names) / sizeof(constant_names[0]));
+    print_wrapped_list("Unary functions", unary_function_displays,
+                       sizeof(unary_function_displays) / sizeof(unary_function_displays[0]));
+    print_wrapped_list("Binary functions", binary_function_displays,
+                       sizeof(binary_function_displays) / sizeof(binary_function_displays[0]));
+    print_wrapped_list("Binary functions (integer exponent helpers)", binary_wrapper_displays,
+                       sizeof(binary_wrapper_displays) / sizeof(binary_wrapper_displays[0]));
+    print_wrapped_list("Ternary functions", ternary_function_displays,
+                       sizeof(ternary_function_displays) / sizeof(ternary_function_displays[0]));
+    print_wrapped_list("Constants", constant_displays,
+                       sizeof(constant_displays) / sizeof(constant_displays[0]));
+    puts("Notes:");
+    puts("    - round, ceil, floor, and trunc accept an optional second argument for decimal digits.");
+    puts("    - log and ln accept an optional base argument.");
+    puts("    - fmin, fmax, and hypot accept two or more arguments.");
     puts("");
     puts("Example: _CALC (1*2 + 3) / 2 + 2^2 + sqrt(5) + sin(pi)");
 }
@@ -476,6 +495,137 @@ static void print_wrapped_list(const char *title, const char *const *items, size
     }
     putchar('\n');
     putchar('\n');
+}
+
+static int evaluate_extended_function(const char *name, const double *arguments, size_t count,
+                                      double *result, int *error) {
+    *result = 0.0;
+    if (handle_precision_function(name, arguments, count, result, error) != 0) {
+        return 1;
+    }
+    if ((strcmp(name, "log") == 0 || strcmp(name, "ln") == 0) && count != 1) {
+        if (count == 2) {
+            double base = arguments[1];
+            if (!isfinite(base) || base <= 0.0 || fabs(base - 1.0) <= DBL_EPSILON) {
+                fprintf(stderr, "%s base must be positive and not equal to 1\n", name);
+                *error = 1;
+            } else {
+                double denominator = log(base);
+                if (denominator == 0.0) {
+                    fprintf(stderr, "%s base results in undefined logarithm\n", name);
+                    *error = 1;
+                } else {
+                    *result = log(arguments[0]) / denominator;
+                }
+            }
+        } else {
+            fprintf(stderr, "%s expects one or two arguments\n", name);
+            *error = 1;
+        }
+        return 1;
+    }
+    if (strcmp(name, "fmax") == 0 || strcmp(name, "fmin") == 0) {
+        if (count < 2) {
+            fprintf(stderr, "%s requires at least two arguments\n", name);
+            *error = 1;
+        } else {
+            double value = arguments[0];
+            if (strcmp(name, "fmax") == 0) {
+                for (size_t i = 1; i < count; ++i) {
+                    value = fmax(value, arguments[i]);
+                }
+            } else {
+                for (size_t i = 1; i < count; ++i) {
+                    value = fmin(value, arguments[i]);
+                }
+            }
+            *result = value;
+        }
+        return 1;
+    }
+    if (strcmp(name, "hypot") == 0) {
+        if (count < 2) {
+            fprintf(stderr, "hypot requires at least two arguments\n");
+            *error = 1;
+        } else {
+            double value = arguments[0];
+            for (size_t i = 1; i < count; ++i) {
+                value = hypot(value, arguments[i]);
+            }
+            *result = value;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static int handle_precision_function(const char *name, const double *arguments, size_t count,
+                                     double *result, int *error) {
+    double (*rounder)(double) = NULL;
+    if (strcmp(name, "round") == 0) {
+        rounder = round;
+    } else if (strcmp(name, "ceil") == 0) {
+        rounder = ceil;
+    } else if (strcmp(name, "floor") == 0) {
+        rounder = floor;
+    } else if (strcmp(name, "trunc") == 0) {
+        rounder = trunc;
+    } else {
+        return 0;
+    }
+    if (count == 1) {
+        return 0;
+    }
+    if (count == 2) {
+        *result = apply_precision_modifier(name, arguments[0], arguments[1], rounder, error);
+    } else {
+        fprintf(stderr, "%s expects one or two arguments\n", name);
+        *error = 1;
+    }
+    return 1;
+}
+
+static double apply_precision_modifier(const char *func_name, double value, double digits,
+                                       double (*rounder)(double), int *error) {
+    long precision = 0;
+    if (convert_precision_argument(func_name, digits, &precision, error) == 0) {
+        return 0.0;
+    }
+    double scale = pow(10.0, (double)precision);
+    if (!isfinite(scale) || scale == 0.0) {
+        fprintf(stderr, "%s precision produces an invalid scaling factor\n", func_name);
+        *error = 1;
+        return 0.0;
+    }
+    double scaled = value * scale;
+    double rounded = rounder(scaled);
+    return rounded / scale;
+}
+
+static int convert_precision_argument(const char *func_name, double digits, long *precision,
+                                      int *error) {
+    if (!isfinite(digits)) {
+        fprintf(stderr, "%s precision must be finite\n", func_name);
+        *error = 1;
+        return 0;
+    }
+    double integral = 0.0;
+    double fractional = modf(digits, &integral);
+    if (fabs(fractional) > DBL_EPSILON) {
+        fprintf(stderr, "%s precision must be an integer value\n", func_name);
+        *error = 1;
+        return 0;
+    }
+    const long max_precision = DBL_MAX_10_EXP;
+    const long min_precision = -DBL_MAX_10_EXP;
+    if (integral > (double)max_precision || integral < (double)min_precision) {
+        fprintf(stderr, "%s precision must be between %ld and %ld\n", func_name, min_precision,
+                max_precision);
+        *error = 1;
+        return 0;
+    }
+    *precision = (long)integral;
+    return 1;
 }
 
 static double ldexp_wrapper(double value, double exponent) {

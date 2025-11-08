@@ -452,11 +452,26 @@ static void print_wrapped_list(const char *title, const char *const *items, size
         return;
     }
     printf("%s:\n", title);
+    const size_t wrap_width = 80;
+    size_t line_length = 0;
     for (size_t i = 0; i < count; ++i) {
-        if (i % 6 == 0) {
-            printf("    %s", items[i]);
+        const char *name = items[i];
+        size_t name_length = strlen(name);
+        size_t separator_length = (line_length == 0) ? 4 : 2;
+        size_t projected_length = (line_length == 0) ? separator_length + name_length
+                                                     : line_length + separator_length + name_length;
+        if (line_length != 0 && projected_length > wrap_width) {
+            putchar('\n');
+            line_length = 0;
+            separator_length = 4;
+            projected_length = separator_length + name_length;
+        }
+        if (line_length == 0) {
+            printf("    %s", name);
+            line_length = separator_length + name_length;
         } else {
-            printf(", %s", items[i]);
+            printf(", %s", name);
+            line_length = projected_length;
         }
     }
     putchar('\n');

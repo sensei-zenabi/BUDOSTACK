@@ -1,23 +1,59 @@
-# THIS DEMO DEMONSTRATEST MAINLY _TOCSV.c
+# csvdemo.task
 
+# Description
+RUN clear
+PRINT "\n- - - CSVDEMO - - -\n"
+PRINT "\n"
+PRINT "This demo illustrates how to perform dynamic read and write operations\n"
+PRINT "to .csv files using _FROMCSV and _TOCSV commands.\n"
+PRINT "\n"
+RUN _WAIT 2500
+
+
+# Initialization
+PRINT "Initialization...\n"
 SET $VALUE = 0
 SET $ROW = 1
 SET $ROWS = 10
 SET $INDEX = 1
 SET $VALUE = 10
+SET $INPUT = 0
+SET $RESULT = 0
+RUN _WAIT 1000
 
 # Write header
-RUN _TOCSV -file MYCSV.CSV -column 1 -row $ROW -value Indeksi
-RUN _TOCSV -file MYCSV.CSV -column 2 -row $ROW -value Arvo
-SET $ROW = $ROW + 1
+PRINT "Writing header...\n"
+RUN _TOCSV -file MYCSV.CSV -column 1 -row $ROW -value Index
+RUN _TOCSV -file MYCSV.CSV -column 2 -row $ROW -value Value
+RUN _TOCSV -file MYCSV.CSV -column 3 -row $ROW -value Result
+SET $ROW = $ROW + 1 
+RUN _WAIT 1000
 
-# Populate values
+# Populate values for columns 1 and 2
+PRINT "Filling table...\n"
+
 @WRITE
+
 RUN _TOCSV -file MYCSV.CSV -column 1 -row $ROW -value $INDEX
 RUN _TOCSV -file MYCSV.CSV -column 2 -row $ROW -value $VALUE
+
+# Calculate the third column
+RUN _FROMCSV -file MYCSV.CSV -column 2 -row $ROW TO $INPUT
+RUN _CALC sqrt($INPUT) + $INPUT^2 TO $RESULT
+RUN _TOCSV -file MYCSV.CSV -column 3 -row $ROW -value $RESULT
+
+# Increment until finish
 SET $INDEX = $INDEX + 1
 SET $VALUE = $VALUE + 10
 SET $ROW = $ROW + 1
 IF $VALUE < 100
   GOTO @WRITE
-PRINT "TASK FINISHED!"
+RUN _WAIT 1000
+  
+# Finish
+PRINT "Printing the generated .csv file...\n\n"
+RUN _WAIT 1000
+RUN csv_print MYCSV.CSV
+PRINT "\n"
+PRINT "TASK FINISHED!\n"
+PRINT "\n"

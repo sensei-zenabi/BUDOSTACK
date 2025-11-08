@@ -1,7 +1,12 @@
+# autoexec.task
+
+# Run BUDOSTACK starting jingle
 RUN _BEEP -C5 -50
 RUN _BEEP -E5 -50
 RUN _BEEP -G5 -50
 RUN _BEEP -C6 -200
+
+# In case user is in Virtual Terminal, loading .psf font
 PRINT "Loading system font..."
 RUN setfont -d pcw8x8.psf
 PRINT "Font loaded succesfully!"

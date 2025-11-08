@@ -17,12 +17,38 @@ enum comparison_operator {
 
 static void usage(void) {
     fprintf(stderr,
-            "Usage: _CSVFILTER -file <path> -column <n> -op <eq|ne|lt|le|gt|ge> -value <value>\n"
-            "        [-numeric] [-skipheader] [-keepheader] [-output <path>]\n"
+            "Usage: _CSVFILTER -file <path> -column <n> [-numeric]\n"
+            "        [-op <eq|ne|lt|le|gt|ge> -value <value>]...\n"
+            "        [-skipheader] [-keepheader] [-output <path>]\n"
             "Filter rows in a ';' separated CSV. Column indices are 1-based.\n"
-            "When -numeric is set, comparisons treat the column and value as numbers.\n"
+            "Specify one or more -op/-value pairs to combine comparisons with logical AND.\n"
+            "When -numeric is set, comparisons treat the column and values as numbers.\n"
             "-skipheader skips the first row during comparisons, while -keepheader\n"
             "prints it before the filtered results.\n");
+}
+
+struct filter_condition {
+    enum comparison_operator op;
+    char *value;
+    double numeric_value;
+};
+
+static void free_conditions(struct filter_condition *conditions, size_t count) {
+    if (conditions == NULL)
+        return;
+    for (size_t i = 0; i < count; ++i)
+        free(conditions[i].value);
+    free(conditions);
+}
+
+static char *duplicate_string(const char *value) {
+    size_t length = strlen(value);
+    char *copy = malloc(length + 1);
+    if (copy == NULL)
+        return NULL;
+    memcpy(copy, value, length);
+    copy[length] = '\0';
+    return copy;
 }
 
 static int parse_index(const char *value, size_t *out_index) {
@@ -133,50 +159,78 @@ static bool compare_string(const char *lhs, const char *rhs, enum comparison_ope
 int main(int argc, char *argv[]) {
     const char *file_path = NULL;
     const char *output_path = NULL;
-    const char *value = NULL;
     size_t column_index = 0;
     bool have_column = false;
-    bool have_value = false;
     bool numeric = false;
     bool skip_header = false;
     bool keep_header = false;
-    enum comparison_operator op = OP_EQ;
-    bool have_operator = false;
+    struct filter_condition *conditions = NULL;
+    size_t condition_count = 0;
+    bool awaiting_value = false;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-file") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_CSVFILTER: missing value for -file\n");
+                free_conditions(conditions, condition_count);
                 return EXIT_FAILURE;
             }
             file_path = argv[i];
         } else if (strcmp(argv[i], "-column") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_CSVFILTER: missing value for -column\n");
+                free_conditions(conditions, condition_count);
                 return EXIT_FAILURE;
             }
             if (parse_index(argv[i], &column_index) != 0) {
                 fprintf(stderr, "_CSVFILTER: invalid column index '%s'\n", argv[i]);
+                free_conditions(conditions, condition_count);
                 return EXIT_FAILURE;
             }
             have_column = true;
         } else if (strcmp(argv[i], "-op") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_CSVFILTER: missing value for -op\n");
+                free_conditions(conditions, condition_count);
                 return EXIT_FAILURE;
             }
+            enum comparison_operator op;
             if (!parse_operator(argv[i], &op)) {
                 fprintf(stderr, "_CSVFILTER: unknown operator '%s'\n", argv[i]);
+                free_conditions(conditions, condition_count);
                 return EXIT_FAILURE;
             }
-            have_operator = true;
+            struct filter_condition *resized = realloc(conditions, (condition_count + 1) * sizeof(*conditions));
+            if (resized == NULL) {
+                perror("_CSVFILTER: realloc conditions");
+                free_conditions(conditions, condition_count);
+                return EXIT_FAILURE;
+            }
+            conditions = resized;
+            conditions[condition_count].op = op;
+            conditions[condition_count].value = NULL;
+            conditions[condition_count].numeric_value = 0.0;
+            condition_count++;
+            awaiting_value = true;
         } else if (strcmp(argv[i], "-value") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_CSVFILTER: missing value for -value\n");
+                free_conditions(conditions, condition_count);
                 return EXIT_FAILURE;
             }
-            value = argv[i];
-            have_value = true;
+            if (!awaiting_value) {
+                fprintf(stderr, "_CSVFILTER: -value requires a preceding -op\n");
+                free_conditions(conditions, condition_count);
+                return EXIT_FAILURE;
+            }
+            char *copy = duplicate_string(argv[i]);
+            if (copy == NULL) {
+                perror("_CSVFILTER: malloc value");
+                free_conditions(conditions, condition_count);
+                return EXIT_FAILURE;
+            }
+            conditions[condition_count - 1].value = copy;
+            awaiting_value = false;
         } else if (strcmp(argv[i], "-numeric") == 0) {
             numeric = true;
         } else if (strcmp(argv[i], "-skipheader") == 0) {
@@ -186,26 +240,47 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "-output") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_CSVFILTER: missing value for -output\n");
+                free_conditions(conditions, condition_count);
                 return EXIT_FAILURE;
             }
             output_path = argv[i];
         } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             usage();
+            free_conditions(conditions, condition_count);
             return EXIT_SUCCESS;
         } else {
             fprintf(stderr, "_CSVFILTER: unknown argument '%s'\n", argv[i]);
+            free_conditions(conditions, condition_count);
             return EXIT_FAILURE;
         }
     }
 
-    if (file_path == NULL || !have_column || !have_operator || !have_value) {
-        usage();
+    if (awaiting_value) {
+        fprintf(stderr, "_CSVFILTER: -op must be followed by -value\n");
+        free_conditions(conditions, condition_count);
         return EXIT_FAILURE;
+    }
+
+    if (file_path == NULL || !have_column || condition_count == 0) {
+        usage();
+        free_conditions(conditions, condition_count);
+        return EXIT_FAILURE;
+    }
+
+    if (numeric) {
+        for (size_t i = 0; i < condition_count; ++i) {
+            if (!parse_double(conditions[i].value, &conditions[i].numeric_value)) {
+                fprintf(stderr, "_CSVFILTER: value '%s' is not numeric\n", conditions[i].value);
+                free_conditions(conditions, condition_count);
+                return EXIT_FAILURE;
+            }
+        }
     }
 
     FILE *input = fopen(file_path, "r");
     if (input == NULL) {
         perror("_CSVFILTER: fopen input");
+        free_conditions(conditions, condition_count);
         return EXIT_FAILURE;
     }
 
@@ -215,6 +290,7 @@ int main(int argc, char *argv[]) {
         if (output == NULL) {
             perror("_CSVFILTER: fopen output");
             fclose(input);
+            free_conditions(conditions, condition_count);
             return EXIT_FAILURE;
         }
     }
@@ -223,18 +299,6 @@ int main(int argc, char *argv[]) {
     size_t line_cap = 0;
     ssize_t line_len;
     bool header_skipped = false;
-    double numeric_value = 0.0;
-
-    if (numeric) {
-        if (!parse_double(value, &numeric_value)) {
-            fprintf(stderr, "_CSVFILTER: value '%s' is not numeric\n", value);
-            free(line);
-            if (output != stdout)
-                fclose(output);
-            fclose(input);
-            return EXIT_FAILURE;
-        }
-    }
 
     while ((line_len = getline(&line, &line_cap, input)) != -1) {
         while (line_len > 0 && (line[line_len - 1] == '\n' || line[line_len - 1] == '\r'))
@@ -248,6 +312,7 @@ int main(int argc, char *argv[]) {
                 if (output != stdout)
                     fclose(output);
                 fclose(input);
+                free_conditions(conditions, condition_count);
                 return EXIT_FAILURE;
             }
             if (!keep_header)
@@ -261,20 +326,34 @@ int main(int argc, char *argv[]) {
             if (output != stdout)
                 fclose(output);
             fclose(input);
+            free_conditions(conditions, condition_count);
             return EXIT_FAILURE;
         }
 
-        bool match = false;
+        bool all_match = true;
         if (numeric) {
-            double parsed;
-            if (parse_double(column_value, &parsed))
-                match = compare_numeric(parsed, numeric_value, op);
+            double parsed_value;
+            if (!parse_double(column_value, &parsed_value))
+                all_match = false;
+            else {
+                for (size_t i = 0; i < condition_count; ++i) {
+                    if (!compare_numeric(parsed_value, conditions[i].numeric_value, conditions[i].op)) {
+                        all_match = false;
+                        break;
+                    }
+                }
+            }
         } else {
-            match = compare_string(column_value, value, op);
+            for (size_t i = 0; i < condition_count; ++i) {
+                if (!compare_string(column_value, conditions[i].value, conditions[i].op)) {
+                    all_match = false;
+                    break;
+                }
+            }
         }
         free(column_value);
 
-        if (!match)
+        if (!all_match)
             continue;
 
         if (fprintf(output, "%s\n", line) < 0) {
@@ -283,6 +362,7 @@ int main(int argc, char *argv[]) {
             if (output != stdout)
                 fclose(output);
             fclose(input);
+            free_conditions(conditions, condition_count);
             return EXIT_FAILURE;
         }
     }
@@ -293,6 +373,7 @@ int main(int argc, char *argv[]) {
         if (output != stdout)
             fclose(output);
         fclose(input);
+        free_conditions(conditions, condition_count);
         return EXIT_FAILURE;
     }
 
@@ -300,12 +381,15 @@ int main(int argc, char *argv[]) {
     if (output != stdout && fclose(output) != 0) {
         perror("_CSVFILTER: fclose output");
         fclose(input);
+        free_conditions(conditions, condition_count);
         return EXIT_FAILURE;
     }
     if (fclose(input) != 0) {
         perror("_CSVFILTER: fclose input");
+        free_conditions(conditions, condition_count);
         return EXIT_FAILURE;
     }
 
+    free_conditions(conditions, condition_count);
     return EXIT_SUCCESS;
 }

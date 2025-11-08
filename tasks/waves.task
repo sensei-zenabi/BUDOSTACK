@@ -1,3 +1,5 @@
+# waves.task
+
 # Global variables
 SET $INIT = 1
 SET $VALUE = 0

@@ -2,7 +2,7 @@
 
 # Change terminal color scheme
 RUN _RETROPROFILE apply c64
-WAIT 1000
+WAIT 2500
 RUN clear
 
 # Run BUDOSTACK starting jingle

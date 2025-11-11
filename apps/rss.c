@@ -1,407 +1,1022 @@
-/*
-    RSS Reader Application
-    ------------------------
-    This application fetches an RSS feed from a defined URL and displays the news items in pages
-    that exactly fit the terminal height. Each news item shows its publication timestamp and title.
-
-    Design principles used:
-      - Single-source configuration: All configurable values are defined in the "rss.ini" file.
-      - Fallback defaults: If "rss.ini" is not found or a key is missing, the built-in default values are used.
-      - Minimal dependencies: Uses only standard libraries and POSIX functions.
-      - Non-blocking timers and input: Uses a per-second loop with select() for checking user input without busy-waiting.
-      - Paging: Automatically scrolls through pages every PAGE_INTERVAL seconds, with a bottom bar showing the last update time, current page, and available controls.
-      - Periodic update: Every RSS_REFRESH_INTERVAL seconds the feed is refreshed.
-      - Layout safety: Ensures that there is always sufficient margin at the top and bottom so that news items are not clipped vertically.
-
-    To compile (using -std=c11):
-        gcc -std=c11 -Wall -Wextra -pedantic -Wno-format-truncation -o rss_reader rss.c
-*/
-
 #define _POSIX_C_SOURCE 200809L
 
+#include <ctype.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/ioctl.h>
+#include <sys/select.h>
+#include <termios.h>
 #include <time.h>
-#include <unistd.h>    // For sleep(), STDIN_FILENO
-#include <termios.h>   // For terminal I/O settings
-#include <sys/select.h> // For select()
+#include <unistd.h>
 
-// Default layout defines
-#define TOP_MARGIN 1              // Number of blank lines at the top
-#define BOTTOM_MARGIN 1           // Number of blank lines at the bottom
-#define NEWS_PER_PAGE 6           // Number of news displayed per page
-#define BUFFER_SIZE 1024
+#define CONFIG_FILE "rss.ini"
+#define DEFAULT_REFRESH_INTERVAL 900
+#define DEFAULT_FEED_URL "https://feeds.yle.fi/uutiset/v1/recent.rss?publisherIds=YLE_UUTISET"
+#define DEFAULT_FEED_NAME "Top Stories"
+#define STATUS_MESSAGE_LEN 256
 
-// Global configuration variables with default values.
-// These values can be overridden by the contents of "rss.ini".
-static char config_rss_url[1024] = "https://feeds.yle.fi/uutiset/v1/recent.rss?publisherIds=YLE_UUTISET";
-static int config_page_interval = 25;          // Seconds to display each page
-static int config_rss_refresh_interval = 1800;   // Seconds between RSS feed updates
+typedef struct {
+    char *title;
+    char *published;
+    char *link;
+    char *summary;
+    int is_read;
+} RssItem;
 
-// Function to load configuration from "rss.ini".
-// The configuration file should have a [Settings] section with keys:
-// RSS_URL, PAGE_INTERVAL, and RSS_REFRESH_INTERVAL.
-void load_config(void) {
-    FILE *file = fopen("rss.ini", "r");
-    if (!file) {
-        // Configuration file not found, using default values.
+typedef struct {
+    char *name;
+    char *url;
+    RssItem *items;
+    size_t count;
+    size_t capacity;
+    size_t selected;
+    size_t scroll;
+} RssFeed;
+
+typedef struct {
+    unsigned short rows;
+    unsigned short cols;
+} TerminalSize;
+
+typedef enum {
+    KEY_NONE = 0,
+    KEY_UP,
+    KEY_DOWN,
+    KEY_LEFT,
+    KEY_RIGHT,
+    KEY_TOGGLE,
+    KEY_REFRESH,
+    KEY_QUIT,
+    KEY_ESC
+} KeyCode;
+
+static RssFeed *feeds = NULL;
+static size_t feed_count = 0;
+static size_t feed_capacity = 0;
+static int refresh_interval = DEFAULT_REFRESH_INTERVAL;
+static char *startup_feed_name = NULL;
+
+static struct termios original_termios;
+static int terminal_configured = 0;
+
+static char status_message[STATUS_MESSAGE_LEN] = "Loading feeds...";
+static char last_refresh_str[64] = "Never";
+static time_t last_refresh_time = 0;
+
+static void free_item(RssItem *item);
+static void free_feed(RssFeed *feed);
+static void cleanup_feeds(void);
+static void reset_terminal(void);
+
+static void set_status(const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(status_message, STATUS_MESSAGE_LEN, fmt, args);
+    va_end(args);
+}
+
+static void trim_whitespace_inplace(char *str) {
+    if (!str) {
         return;
     }
-    char line[1024];
-    int in_settings_section = 0;
-    while (fgets(line, sizeof(line), file)) {
-        // Remove trailing newline characters.
-        line[strcspn(line, "\r\n")] = '\0';
-        // Skip empty lines.
-        if (line[0] == '\0')
-            continue;
-        // Skip comment lines.
-        if (line[0] == ';' || line[0] == '#')
-            continue;
-        // Check for section headers.
-        if (line[0] == '[') {
-            if (strcmp(line, "[Settings]") == 0) {
-                in_settings_section = 1;
-            } else {
-                in_settings_section = 0;
-            }
-            continue;
-        }
-        if (!in_settings_section)
-            continue;
-        // Process key=value pairs.
-        char key[256], value[768];
-        if (sscanf(line, "%255[^=]=%767[^\n]", key, value) != 2)
-            continue;
-        // Remove surrounding quotes from the value if present.
-        size_t len = strlen(value);
-        if (len >= 2 && value[0] == '"' && value[len - 1] == '"') {
-            memmove(value, value + 1, len - 2);
-            value[len - 2] = '\0';
-        }
-        // Update configuration variables based on key.
-        if (strcmp(key, "RSS_URL") == 0) {
-            strncpy(config_rss_url, value, sizeof(config_rss_url) - 1);
-            config_rss_url[sizeof(config_rss_url) - 1] = '\0';
-        } else if (strcmp(key, "PAGE_INTERVAL") == 0) {
-            config_page_interval = atoi(value);
-        } else if (strcmp(key, "RSS_REFRESH_INTERVAL") == 0) {
-            config_rss_refresh_interval = atoi(value);
-        }
+    char *start = str;
+    while (*start != '\0' && isspace((unsigned char)*start)) {
+        start++;
     }
-    fclose(file);
+    char *end = start + strlen(start);
+    while (end > start && isspace((unsigned char)*(end - 1))) {
+        end--;
+    }
+    *end = '\0';
+    if (start != str) {
+        memmove(str, start, (size_t)(end - start) + 1);
+    }
 }
 
-// External function for pretty printing with a delay (assumed to be defined elsewhere).
-extern void prettyprint(const char *message, unsigned int delay_ms);
-
-// Structure to hold a news item.
-typedef struct {
-    char *timestamp; // extracted from <pubDate>
-    char *title;     // extracted from <title>
-} news_item;
-
-// Function to get the number of terminal lines using "tput lines".
-// Returns a default value (24) if retrieval fails.
-int get_terminal_lines(void) {
-    FILE *fp = popen("tput lines", "r");
-    if (!fp) {
-        return 24;
+static void strip_cdata(char *str) {
+    if (!str) {
+        return;
     }
-    int lines = 24;
-    if (fscanf(fp, "%d", &lines) != 1) {
-        lines = 24;
+    const char *prefix = "<![CDATA[";
+    size_t prefix_len = strlen(prefix);
+    if (strncmp(str, prefix, prefix_len) == 0) {
+        char *end = strstr(str + prefix_len, "]]>");
+        if (end) {
+            size_t len = (size_t)(end - (str + prefix_len));
+            memmove(str, str + prefix_len, len);
+            str[len] = '\0';
+        }
     }
-    pclose(fp);
-    return lines;
 }
 
-// Function to fetch the RSS feed data using curl.
-char *fetch_rss(void) {
-    char command[256];
-    if (snprintf(command, sizeof(command), "curl -s \"%s\"", config_rss_url) < 0) {
+static void normalize_spaces(char *str) {
+    if (!str) {
+        return;
+    }
+    for (char *p = str; *p != '\0'; ++p) {
+        if (*p == '\n' || *p == '\r' || *p == '\t') {
+            *p = ' ';
+        }
+    }
+}
+
+static char *duplicate_string(const char *src) {
+    if (!src) {
         return NULL;
     }
-    FILE *fp = popen(command, "r");
-    if (!fp) {
+    char *copy = strdup(src);
+    if (!copy) {
+        perror("strdup");
+    }
+    return copy;
+}
+
+static int ensure_feed_capacity(void) {
+    if (feed_count < feed_capacity) {
+        return 0;
+    }
+    size_t new_capacity = feed_capacity == 0 ? 4 : feed_capacity * 2;
+    RssFeed *new_feeds = realloc(feeds, new_capacity * sizeof(*new_feeds));
+    if (!new_feeds) {
+        return -1;
+    }
+    for (size_t i = feed_capacity; i < new_capacity; ++i) {
+        new_feeds[i].name = NULL;
+        new_feeds[i].url = NULL;
+        new_feeds[i].items = NULL;
+        new_feeds[i].count = 0;
+        new_feeds[i].capacity = 0;
+        new_feeds[i].selected = 0;
+        new_feeds[i].scroll = 0;
+    }
+    feeds = new_feeds;
+    feed_capacity = new_capacity;
+    return 0;
+}
+
+static RssFeed *add_feed(const char *name) {
+    if (ensure_feed_capacity() != 0) {
+        return NULL;
+    }
+    RssFeed *feed = &feeds[feed_count++];
+    feed->name = duplicate_string(name);
+    feed->url = NULL;
+    feed->items = NULL;
+    feed->count = 0;
+    feed->capacity = 0;
+    feed->selected = 0;
+    feed->scroll = 0;
+    if (!feed->name) {
+        feed_count--;
+        return NULL;
+    }
+    return feed;
+}
+
+static void assign_feed_url(RssFeed *feed, const char *url) {
+    if (!feed) {
+        return;
+    }
+    free(feed->url);
+    feed->url = duplicate_string(url);
+}
+
+static void free_item(RssItem *item) {
+    if (!item) {
+        return;
+    }
+    free(item->title);
+    free(item->published);
+    free(item->link);
+    free(item->summary);
+}
+
+static void free_feed(RssFeed *feed) {
+    if (!feed) {
+        return;
+    }
+    free(feed->name);
+    free(feed->url);
+    for (size_t i = 0; i < feed->count; ++i) {
+        free_item(&feed->items[i]);
+    }
+    free(feed->items);
+    feed->name = NULL;
+    feed->url = NULL;
+    feed->items = NULL;
+    feed->count = 0;
+    feed->capacity = 0;
+    feed->selected = 0;
+    feed->scroll = 0;
+}
+
+static void cleanup_feeds(void) {
+    for (size_t i = 0; i < feed_count; ++i) {
+        free_feed(&feeds[i]);
+    }
+    free(feeds);
+    feeds = NULL;
+    feed_count = 0;
+    feed_capacity = 0;
+    free(startup_feed_name);
+    startup_feed_name = NULL;
+}
+
+static void reset_terminal(void) {
+    if (terminal_configured) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &original_termios);
+        terminal_configured = 0;
+    }
+}
+
+static void configure_terminal(void) {
+    if (tcgetattr(STDIN_FILENO, &original_termios) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+    struct termios raw = original_termios;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+    terminal_configured = 1;
+    atexit(reset_terminal);
+    atexit(cleanup_feeds);
+}
+
+static void get_terminal_size(TerminalSize *size) {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0 || ws.ws_row == 0) {
+        size->cols = 80;
+        size->rows = 24;
+    } else {
+        size->cols = ws.ws_col;
+        size->rows = ws.ws_row;
+    }
+}
+
+static size_t count_unread_items(const RssFeed *feed) {
+    size_t unread = 0;
+    if (!feed) {
+        return 0;
+    }
+    for (size_t i = 0; i < feed->count; ++i) {
+        if (!feed->items[i].is_read) {
+            unread++;
+        }
+    }
+    return unread;
+}
+
+static void adjust_scroll(RssFeed *feed, size_t visible_items) {
+    if (!feed) {
+        return;
+    }
+    if (visible_items == 0 || feed->count == 0) {
+        feed->scroll = 0;
+        if (feed->count == 0) {
+            feed->selected = 0;
+        } else if (feed->selected >= feed->count) {
+            feed->selected = feed->count - 1;
+        }
+        return;
+    }
+    if (feed->selected >= feed->count) {
+        feed->selected = feed->count - 1;
+    }
+    if (feed->count <= visible_items) {
+        feed->scroll = 0;
+        return;
+    }
+    if (feed->selected < feed->scroll) {
+        feed->scroll = feed->selected;
+    } else if (feed->selected >= feed->scroll + visible_items) {
+        feed->scroll = feed->selected - visible_items + 1;
+    }
+    size_t max_scroll = feed->count - visible_items;
+    if (feed->scroll > max_scroll) {
+        feed->scroll = max_scroll;
+    }
+}
+
+static void truncate_text(const char *src, size_t width, char *dest, size_t dest_size) {
+    if (dest_size == 0) {
+        return;
+    }
+    if (!src) {
+        src = "";
+    }
+    if (width + 1 > dest_size) {
+        if (dest_size > 0) {
+            width = dest_size - 1;
+        } else {
+            width = 0;
+        }
+    }
+    size_t len = strlen(src);
+    if (len <= width) {
+        size_t copy_len = len < dest_size - 1 ? len : dest_size - 1;
+        memcpy(dest, src, copy_len);
+        dest[copy_len] = '\0';
+        return;
+    }
+    if (width <= 3) {
+        size_t dots = width < dest_size - 1 ? width : dest_size - 1;
+        for (size_t i = 0; i < dots; ++i) {
+            dest[i] = '.';
+        }
+        dest[dots] = '\0';
+        return;
+    }
+    size_t copy_len = width - 3;
+    if (copy_len > dest_size - 4) {
+        copy_len = dest_size - 4;
+    }
+    memcpy(dest, src, copy_len);
+    memcpy(dest + copy_len, "...", 3);
+    dest[copy_len + 3] = '\0';
+}
+
+static void update_last_refresh_string(void) {
+    if (last_refresh_time == 0) {
+        snprintf(last_refresh_str, sizeof(last_refresh_str), "Never");
+        return;
+    }
+    struct tm *tm_info = localtime(&last_refresh_time);
+    if (!tm_info) {
+        snprintf(last_refresh_str, sizeof(last_refresh_str), "Unknown");
+        return;
+    }
+    if (strftime(last_refresh_str, sizeof(last_refresh_str), "%Y-%m-%d %H:%M:%S", tm_info) == 0) {
+        snprintf(last_refresh_str, sizeof(last_refresh_str), "Unknown");
+    }
+}
+
+static char *extract_tag_content(const char *text, const char *tag) {
+    char open_pattern[64];
+    char close_pattern[64];
+    size_t tag_len = strlen(tag);
+    if (tag_len + 3 >= sizeof(open_pattern) || tag_len + 4 >= sizeof(close_pattern)) {
+        return NULL;
+    }
+    snprintf(open_pattern, sizeof(open_pattern), "<%s", tag);
+    snprintf(close_pattern, sizeof(close_pattern), "</%s>", tag);
+
+    const char *open = text;
+    while ((open = strstr(open, open_pattern)) != NULL) {
+        char c = open[strlen(open_pattern)];
+        if (c == '>' || isspace((unsigned char)c)) {
+            break;
+        }
+        open++;
+    }
+    if (!open) {
+        return NULL;
+    }
+    const char *start = strchr(open, '>');
+    if (!start) {
+        return NULL;
+    }
+    start++;
+    const char *end = strstr(start, close_pattern);
+    if (!end) {
+        return NULL;
+    }
+    size_t len = (size_t)(end - start);
+    char *result = malloc(len + 1);
+    if (!result) {
+        return NULL;
+    }
+    memcpy(result, start, len);
+    result[len] = '\0';
+    strip_cdata(result);
+    normalize_spaces(result);
+    trim_whitespace_inplace(result);
+    return result;
+}
+
+static int parse_rss_items(const char *rss_data, RssItem **out_items, size_t *out_count) {
+    if (!out_items || !out_count) {
+        return -1;
+    }
+    *out_items = NULL;
+    *out_count = 0;
+    if (!rss_data) {
+        return -1;
+    }
+    size_t capacity = 8;
+    size_t count = 0;
+    RssItem *items = calloc(capacity, sizeof(*items));
+    if (!items) {
+        return -1;
+    }
+
+    const char *cursor = rss_data;
+    const char *close_tag = "</item>";
+    size_t close_len = strlen(close_tag);
+
+    while ((cursor = strstr(cursor, "<item")) != NULL) {
+        const char *start = strchr(cursor, '>');
+        if (!start) {
+            break;
+        }
+        start++;
+        const char *end = strstr(start, close_tag);
+        if (!end) {
+            break;
+        }
+        size_t segment_len = (size_t)(end - start);
+        char *segment = malloc(segment_len + 1);
+        if (!segment) {
+            for (size_t i = 0; i < count; ++i) {
+                free_item(&items[i]);
+            }
+            free(items);
+            return -1;
+        }
+        memcpy(segment, start, segment_len);
+        segment[segment_len] = '\0';
+
+        if (count >= capacity) {
+            size_t new_capacity = capacity * 2;
+            RssItem *tmp = realloc(items, new_capacity * sizeof(*items));
+            if (!tmp) {
+                free(segment);
+                for (size_t i = 0; i < count; ++i) {
+                    free_item(&items[i]);
+                }
+                free(items);
+                return -1;
+            }
+            items = tmp;
+            memset(items + capacity, 0, (new_capacity - capacity) * sizeof(*items));
+            capacity = new_capacity;
+        }
+
+        RssItem item = {0};
+        item.title = extract_tag_content(segment, "title");
+        item.published = extract_tag_content(segment, "pubDate");
+        item.link = extract_tag_content(segment, "link");
+        item.summary = extract_tag_content(segment, "description");
+        if (!item.title) {
+            item.title = duplicate_string("Untitled");
+        }
+        if (!item.published) {
+            item.published = duplicate_string("Unknown");
+        }
+        if (!item.summary && item.link) {
+            item.summary = duplicate_string(item.link);
+        }
+        if (!item.title || !item.published || (!item.summary && !item.link)) {
+            free_item(&item);
+            free(segment);
+            cursor = end + close_len;
+            continue;
+        }
+        items[count++] = item;
+        free(segment);
+        cursor = end + close_len;
+    }
+
+    if (count == 0) {
+        free(items);
+        items = NULL;
+    }
+    *out_items = items;
+    *out_count = count;
+    return 0;
+}
+
+static char *fetch_rss(const char *url) {
+    if (!url) {
+        return NULL;
+    }
+    char command[1024];
+    int written = snprintf(command, sizeof(command), "curl -s --fail --location \"%s\"", url);
+    if (written <= 0 || (size_t)written >= sizeof(command)) {
+        return NULL;
+    }
+    FILE *pipe = popen(command, "r");
+    if (!pipe) {
         return NULL;
     }
     char *data = NULL;
     size_t size = 0;
-    const size_t chunk_size = 1024;
-    char chunk[1024];
-    while (!feof(fp)) {
-        size_t n = fread(chunk, 1, chunk_size, fp);
+    size_t capacity = 0;
+    char buffer[1024];
+    while (!feof(pipe)) {
+        size_t n = fread(buffer, 1, sizeof(buffer), pipe);
         if (n > 0) {
-            char *temp = realloc(data, size + n + 1);
-            if (!temp) {
-                free(data);
-                pclose(fp);
-                return NULL;
+            if (size + n + 1 > capacity) {
+                size_t new_capacity = capacity == 0 ? 4096 : capacity * 2;
+                while (new_capacity < size + n + 1) {
+                    new_capacity *= 2;
+                }
+                char *tmp = realloc(data, new_capacity);
+                if (!tmp) {
+                    free(data);
+                    pclose(pipe);
+                    return NULL;
+                }
+                data = tmp;
+                capacity = new_capacity;
             }
-            data = temp;
-            memcpy(data + size, chunk, n);
+            memcpy(data + size, buffer, n);
             size += n;
-            data[size] = '\0';
         }
     }
-    pclose(fp);
+    int exit_code = pclose(pipe);
+    if (exit_code != 0 && size == 0) {
+        free(data);
+        return NULL;
+    }
+    if (data) {
+        data[size] = '\0';
+    }
     return data;
 }
 
-// Helper function to extract text between start_tag and end_tag in the given text.
-// Returns a dynamically allocated string (or NULL if not found).
-char *extract_tag(const char *text, const char *start_tag, const char *end_tag) {
-    char *start = strstr(text, start_tag);
-    if (!start) return NULL;
-    start += strlen(start_tag);
-    char *end = strstr(start, end_tag);
-    if (!end) return NULL;
-    size_t len = end - start;
-    char *result = malloc(len + 1);
-    if (!result) return NULL;
-    memcpy(result, start, len);
-    result[len] = '\0';
-    return result;
+static int items_match(const RssItem *a, const RssItem *b) {
+    if (!a || !b) {
+        return 0;
+    }
+    if (a->link && b->link && strcmp(a->link, b->link) == 0) {
+        return 1;
+    }
+    if (a->title && b->title && a->published && b->published) {
+        if (strcmp(a->title, b->title) == 0 && strcmp(a->published, b->published) == 0) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
-// Function to parse the RSS feed and extract news items into an array.
-// Sets *count to the number of news items found.
-news_item *parse_rss(const char *rss_data, int *count) {
-    int capacity = 10;
-    int num_items = 0;
-    news_item *items = malloc(capacity * sizeof(news_item));
-    if (!items) return NULL;
+static void merge_feed_items(RssFeed *feed, RssItem *new_items, size_t new_count) {
+    RssItem *old_items = feed->items;
+    size_t old_count = feed->count;
+    size_t old_selected = feed->selected;
+    size_t selected_match = 0;
 
-    const char *cursor = rss_data;
-    while ((cursor = strstr(cursor, "<item>")) != NULL) {
-        const char *item_end = strstr(cursor, "</item>");
-        if (!item_end) break;
-        size_t item_len = item_end - cursor;
-        char *item_text = malloc(item_len + 1);
-        if (!item_text) break;
-        memcpy(item_text, cursor, item_len);
-        item_text[item_len] = '\0';
-
-        // Extract <pubDate> and <title> from the item.
-        char *pubDate = extract_tag(item_text, "<pubDate>", "</pubDate>");
-        char *title   = extract_tag(item_text, "<title>", "</title>");
-        free(item_text);
-
-        // If no pubDate or title found, set to "N/A"
-        if (!pubDate) {
-            pubDate = strdup("N/A");
-        }
-        if (!title) {
-            title = strdup("N/A");
-        }
-
-        // Save the news item.
-        if (num_items >= capacity) {
-            capacity *= 2;
-            news_item *temp = realloc(items, capacity * sizeof(news_item));
-            if (!temp) {
-                free(pubDate);
-                free(title);
+    for (size_t i = 0; i < new_count; ++i) {
+        new_items[i].is_read = 0;
+        for (size_t j = 0; j < old_count; ++j) {
+            if (items_match(&new_items[i], &old_items[j])) {
+                new_items[i].is_read = old_items[j].is_read;
+                if (old_selected == j) {
+                    selected_match = i;
+                }
                 break;
             }
-            items = temp;
         }
-        items[num_items].timestamp = pubDate;
-        items[num_items].title = title;
-        num_items++;
-
-        cursor = item_end + strlen("</item>");
-    }
-    *count = num_items;
-    return items;
-}
-
-// Function to free an array of news items.
-void free_news(news_item *news, int count) {
-    for (int i = 0; i < count; i++) {
-        free(news[i].timestamp);
-        free(news[i].title);
-    }
-    free(news);
-}
-
-// Function to format current time as a string.
-void format_current_time(char *buffer, size_t buf_size) {
-    time_t now = time(NULL);
-    struct tm *local = localtime(&now);
-    strftime(buffer, buf_size, "%Y-%m-%d %H:%M:%S", local);
-}
-
-// Function to display one page of news.
-// The layout now includes TOP_MARGIN blank lines at the top and BOTTOM_MARGIN blank lines before the bottom bar.
-// Also prints user instructions for navigation at the bottom.
-void display_page(news_item *news, int news_count, int page, int items_per_page, const char *last_update_str, int total_pages) {
-    if (system("clear") == -1) {
-        perror("system");
-    }
-    int printed_lines = 0;
-
-    // Print top margin
-    for (int i = 0; i < TOP_MARGIN; i++) {
-        printf("\n");
-        printed_lines++;
     }
 
-    int start = page * items_per_page;
-    // Print each news item in this page.
-    for (int i = 0; i < items_per_page; i++) {
-        int index = start + i;
-        // Stop printing if there are no more news items.
-        if (index >= news_count) {
-            break;
+    for (size_t i = 0; i < old_count; ++i) {
+        free_item(&old_items[i]);
+    }
+    free(old_items);
+
+    feed->items = new_items;
+    feed->count = new_count;
+    feed->capacity = new_count;
+    if (new_count == 0) {
+        feed->selected = 0;
+        feed->scroll = 0;
+    } else {
+        if (selected_match >= new_count) {
+            selected_match = new_count - 1;
         }
-        // Each news item uses 3 lines: [timestamp], news title, and a blank line.
-        char buffer[BUFFER_SIZE];
-        snprintf(buffer, BUFFER_SIZE, "[%s]\n", news[index].timestamp);
-        prettyprint(buffer, 10);
-        snprintf(buffer, BUFFER_SIZE, "%s\n", news[index].title);
-        prettyprint(buffer, 10);
-        printed_lines += 3;
+        feed->selected = selected_match;
+        if (feed->scroll >= new_count) {
+            feed->scroll = 0;
+        }
     }
-    
-    // Print bottom margin blank lines.
-    for (int i = 0; i < BOTTOM_MARGIN; i++) {
-        printf("\n");
-        printed_lines++;
+}
+
+static int refresh_feed(RssFeed *feed) {
+    if (!feed || !feed->url) {
+        return -1;
     }
-    // Print bottom bar with update info and user instructions.
-    printf("Last update: %s | Page: %d/%d\n", last_update_str, page + 1, total_pages);
-    printf("Controls: [n] Next, [p] Previous, [q] Quit");
+    char *rss_data = fetch_rss(feed->url);
+    if (!rss_data) {
+        return -1;
+    }
+    RssItem *items = NULL;
+    size_t count = 0;
+    if (parse_rss_items(rss_data, &items, &count) != 0) {
+        free(rss_data);
+        return -1;
+    }
+    free(rss_data);
+    merge_feed_items(feed, items, count);
+    return 0;
+}
+
+static int refresh_all_feeds(int manual_trigger) {
+    size_t updated = 0;
+    size_t failed = 0;
+    for (size_t i = 0; i < feed_count; ++i) {
+        if (refresh_feed(&feeds[i]) == 0) {
+            updated++;
+        } else {
+            failed++;
+        }
+    }
+    if (updated > 0) {
+        last_refresh_time = time(NULL);
+        update_last_refresh_string();
+        if (failed == 0) {
+            set_status(manual_trigger ? "Refreshed %zu feed(s)." : "Feeds auto-refreshed successfully.", updated);
+        } else {
+            set_status(manual_trigger ? "Refreshed %zu feed(s). %zu failed." : "Auto refresh: %zu updated, %zu failed.", updated, failed);
+        }
+        return 0;
+    }
+    if (failed > 0) {
+        set_status(manual_trigger ? "Failed to refresh feeds." : "Auto refresh failed.");
+    } else {
+        set_status("No feeds available.");
+    }
+    return -1;
+}
+
+static void draw_ui(size_t current_feed, size_t visible_items, const TerminalSize *size) {
+    printf("\033[2J\033[H");
+    size_t cols = size->cols;
+
+    printf("BUDOSTACK RSS Reader\n");
+    if (refresh_interval > 0) {
+        printf("Last refresh: %s (auto every %d s)\n", last_refresh_str, refresh_interval);
+    } else {
+        printf("Last refresh: %s (auto refresh disabled)\n", last_refresh_str);
+    }
+
+    printf("Feeds: ");
+    for (size_t i = 0; i < feed_count; ++i) {
+        if (i == current_feed) {
+            printf("\033[7m %s \033[0m", feeds[i].name ? feeds[i].name : "(unnamed)");
+        } else {
+            printf(" %s ", feeds[i].name ? feeds[i].name : "(unnamed)");
+        }
+    }
+    printf("\n\n");
+
+    RssFeed *feed = NULL;
+    if (feed_count == 0) {
+        printf("No feeds configured.\n");
+    } else {
+        feed = &feeds[current_feed];
+        if (feed->count == 0) {
+            printf(" (no news items)\n");
+            for (size_t i = 1; i < visible_items; ++i) {
+                printf("\n");
+            }
+        } else {
+            size_t start = feed->scroll;
+            size_t end = start + visible_items;
+            if (end > feed->count) {
+                end = feed->count;
+            }
+            char linebuf[1024];
+            for (size_t i = start; i < end; ++i) {
+                RssItem *item = &feed->items[i];
+                char indicator = item->is_read ? ' ' : '*';
+                size_t available_width = cols > 6 ? cols - 6 : 10;
+                truncate_text(item->title, available_width, linebuf, sizeof(linebuf));
+                if (i == feed->selected) {
+                    printf("\033[7m %c %s\033[0m\n", indicator, linebuf);
+                } else {
+                    printf(" %c %s\n", indicator, linebuf);
+                }
+            }
+            size_t printed = end - start;
+            while (printed < visible_items) {
+                printf("\n");
+                printed++;
+            }
+        }
+    }
+
+    if (feed) {
+        size_t unread = count_unread_items(feed);
+        printf("Feed: %s (%zu items, %zu unread)\n", feed->name ? feed->name : "(unnamed)", feed->count, unread);
+        if (feed->count > 0) {
+            RssItem *item = &feed->items[feed->selected];
+            char info[1024];
+            size_t title_width = cols > 11 ? cols - 11 : 10;
+            truncate_text(item->title, title_width, info, sizeof(info));
+            printf("Selected: %s\n", info);
+            size_t pub_width = cols > 12 ? cols - 12 : 10;
+            truncate_text(item->published, pub_width, info, sizeof(info));
+            printf("Published: %s\n", info);
+            size_t detail_width = cols > 8 ? cols - 8 : 10;
+            const char *detail = item->summary && *item->summary ? item->summary : (item->link ? item->link : "(no details)");
+            truncate_text(detail, detail_width, info, sizeof(info));
+            printf("Info: %s\n", info);
+        } else {
+            printf("Selected: -\n");
+            printf("Published: -\n");
+            printf("Info: (no details)\n");
+        }
+    } else {
+        printf("Feed: -\n");
+        printf("Selected: -\n");
+        printf("Published: -\n");
+        printf("Info: (no details)\n");
+    }
+    printf("Controls: \342\206\220/\342\206\222 feeds | \342\206\221/\342\206\223 items | Enter toggle read | r refresh | q quit\n");
+    printf("Status: %s\n", status_message);
     fflush(stdout);
 }
 
-// Global variable to hold original terminal settings for restoration.
-static struct termios orig_termios;
-
-// Function to reset terminal input mode to original settings.
-void reset_input_mode(void) {
-    tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+static KeyCode read_key(void) {
+    unsigned char ch;
+    ssize_t n = read(STDIN_FILENO, &ch, 1);
+    if (n <= 0) {
+        return KEY_NONE;
+    }
+    if (ch == '\033') {
+        unsigned char seq[2];
+        struct timeval tv = {0, 100000};
+        fd_set set;
+        FD_ZERO(&set);
+        FD_SET(STDIN_FILENO, &set);
+        if (select(STDIN_FILENO + 1, &set, NULL, NULL, &tv) <= 0) {
+            return KEY_ESC;
+        }
+        if (read(STDIN_FILENO, &seq[0], 1) <= 0) {
+            return KEY_ESC;
+        }
+        if (seq[0] == '[') {
+            if (read(STDIN_FILENO, &seq[1], 1) <= 0) {
+                return KEY_NONE;
+            }
+            switch (seq[1]) {
+            case 'A':
+                return KEY_UP;
+            case 'B':
+                return KEY_DOWN;
+            case 'C':
+                return KEY_RIGHT;
+            case 'D':
+                return KEY_LEFT;
+            default:
+                return KEY_NONE;
+            }
+        }
+        return KEY_NONE;
+    }
+    switch (ch) {
+    case 'q':
+    case 'Q':
+        return KEY_QUIT;
+    case 'r':
+    case 'R':
+        return KEY_REFRESH;
+    case '\n':
+    case '\r':
+    case ' ':
+        return KEY_TOGGLE;
+    default:
+        break;
+    }
+    return KEY_NONE;
 }
 
-// Function to set terminal to non-canonical mode with no echo.
-void set_input_mode(void) {
-    struct termios new_termios;
-    tcgetattr(STDIN_FILENO, &orig_termios);
-    atexit(reset_input_mode);
-    new_termios = orig_termios;
-    new_termios.c_lflag &= ~(ICANON | ECHO);
-    // Minimum number of characters for non-canonical read.
-    new_termios.c_cc[VMIN] = 0;
-    new_termios.c_cc[VTIME] = 0;
-    tcsetattr(STDIN_FILENO, TCSANOW, &new_termios);
+static void load_config(void) {
+    FILE *file = fopen(CONFIG_FILE, "r");
+    char *legacy_url = NULL;
+    RssFeed *current_feed = NULL;
+
+    if (!file) {
+        RssFeed *feed = add_feed(DEFAULT_FEED_NAME);
+        if (!feed) {
+            fprintf(stderr, "Failed to allocate default feed.\n");
+            exit(EXIT_FAILURE);
+        }
+        assign_feed_url(feed, DEFAULT_FEED_URL);
+        set_status("Using built-in feed configuration.");
+        return;
+    }
+
+    char line[1024];
+    while (fgets(line, sizeof(line), file)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        char *trimmed = line;
+        trim_whitespace_inplace(trimmed);
+        if (trimmed[0] == '\0' || trimmed[0] == ';' || trimmed[0] == '#') {
+            continue;
+        }
+        if (trimmed[0] == '[') {
+            char *closing = strchr(trimmed, ']');
+            if (!closing) {
+                continue;
+            }
+            *closing = '\0';
+            if (strcmp(trimmed, "[Settings]") == 0) {
+                current_feed = NULL;
+                continue;
+            }
+            if (strncmp(trimmed, "[Feed", 5) == 0) {
+                char name_buf[256] = "";
+                char *quote1 = strchr(trimmed, '"');
+                char *quote2 = quote1 ? strchr(quote1 + 1, '"') : NULL;
+                if (quote1 && quote2 && quote2 > quote1 + 1) {
+                    size_t len = (size_t)(quote2 - quote1 - 1);
+                    if (len >= sizeof(name_buf)) {
+                        len = sizeof(name_buf) - 1;
+                    }
+                    memcpy(name_buf, quote1 + 1, len);
+                    name_buf[len] = '\0';
+                    trim_whitespace_inplace(name_buf);
+                }
+                if (name_buf[0] == '\0') {
+                    snprintf(name_buf, sizeof(name_buf), "Feed %zu", feed_count + 1);
+                }
+                current_feed = add_feed(name_buf);
+            }
+            continue;
+        }
+        char *equals = strchr(trimmed, '=');
+        if (!equals) {
+            continue;
+        }
+        *equals = '\0';
+        char *key = trimmed;
+        char *value = equals + 1;
+        trim_whitespace_inplace(key);
+        trim_whitespace_inplace(value);
+        size_t value_len = strlen(value);
+        if (value_len >= 2 && value[0] == '"' && value[value_len - 1] == '"') {
+            value[value_len - 1] = '\0';
+            memmove(value, value + 1, value_len - 1);
+        }
+        if (!current_feed) {
+            if (strcasecmp(key, "RSS_REFRESH_INTERVAL") == 0 || strcasecmp(key, "REFRESH_INTERVAL") == 0) {
+                int val = atoi(value);
+                if (val < 0) {
+                    val = 0;
+                }
+                refresh_interval = val;
+            } else if (strcasecmp(key, "RSS_URL") == 0) {
+                free(legacy_url);
+                legacy_url = duplicate_string(value);
+            } else if (strcasecmp(key, "START_FEED") == 0) {
+                free(startup_feed_name);
+                startup_feed_name = duplicate_string(value);
+            }
+        } else {
+            if (strcasecmp(key, "URL") == 0) {
+                assign_feed_url(current_feed, value);
+            }
+        }
+    }
+    fclose(file);
+    if (feed_count == 0) {
+        if (legacy_url) {
+            RssFeed *feed = add_feed(DEFAULT_FEED_NAME);
+            if (!feed) {
+                fprintf(stderr, "Failed to allocate feed for legacy URL.\n");
+                free(legacy_url);
+                exit(EXIT_FAILURE);
+            }
+            assign_feed_url(feed, legacy_url);
+        } else {
+            RssFeed *feed = add_feed(DEFAULT_FEED_NAME);
+            if (!feed) {
+                fprintf(stderr, "Failed to allocate default feed.\n");
+                exit(EXIT_FAILURE);
+            }
+            assign_feed_url(feed, DEFAULT_FEED_URL);
+        }
+    }
+    free(legacy_url);
+
+    for (size_t i = 0; i < feed_count;) {
+        if (!feeds[i].url) {
+            fprintf(stderr, "Feed '%s' missing URL in configuration. Removing.\n", feeds[i].name ? feeds[i].name : "(unnamed)");
+            free_feed(&feeds[i]);
+            if (i + 1 < feed_count) {
+                memmove(&feeds[i], &feeds[i + 1], (feed_count - i - 1) * sizeof(RssFeed));
+            }
+            feed_count--;
+        } else {
+            ++i;
+        }
+    }
+
+    if (feed_count == 0) {
+        RssFeed *feed = add_feed(DEFAULT_FEED_NAME);
+        if (!feed) {
+            fprintf(stderr, "Failed to allocate default feed.\n");
+            exit(EXIT_FAILURE);
+        }
+        assign_feed_url(feed, DEFAULT_FEED_URL);
+    }
+
+    set_status("Loaded %zu feed(s).", feed_count);
 }
 
 int main(void) {
-    // Load configuration from rss.ini
     load_config();
-
-    // Set terminal to non-canonical mode for immediate key processing.
-    set_input_mode();
-
-    // Determine terminal height.
-    int term_lines = get_terminal_lines();
-    // Adjust items_per_page to account for TOP_MARGIN and BOTTOM_MARGIN.
-    int items_per_page = (term_lines - TOP_MARGIN - BOTTOM_MARGIN - 1) / 3;
-    if (items_per_page < 1) {
-        items_per_page = 1;
-    }
-    // Override with constant for consistent paging.
-    items_per_page = NEWS_PER_PAGE;
-
-    // Fetch and parse the RSS feed initially.
-    char *rss_data = fetch_rss();
-    if (!rss_data) {
-        fprintf(stderr, "Failed to fetch RSS data.\n");
+    if (feed_count == 0) {
+        fprintf(stderr, "No RSS feeds configured.\n");
+        cleanup_feeds();
         return EXIT_FAILURE;
     }
-    int news_count = 0;
-    news_item *news = parse_rss(rss_data, &news_count);
-    free(rss_data);
-    if (!news || news_count == 0) {
-        fprintf(stderr, "No news items found.\n");
-        free_news(news, news_count);
-        return EXIT_FAILURE;
+
+    configure_terminal();
+
+    size_t current_feed = 0;
+    if (startup_feed_name) {
+        for (size_t i = 0; i < feed_count; ++i) {
+            if (feeds[i].name && strcmp(feeds[i].name, startup_feed_name) == 0) {
+                current_feed = i;
+                break;
+            }
+        }
     }
-    int total_pages = (news_count + items_per_page - 1) / items_per_page;
 
-    // Set last update time.
-    char last_update_str[64];
-    format_current_time(last_update_str, sizeof(last_update_str));
+    refresh_all_feeds(1);
 
-    // Timers: elapsed time for page update and RSS refresh.
-    int elapsed_since_update = 0;
-    int page = 0;
-
-    // Main loop: display pages and update RSS periodically.
     while (1) {
-        display_page(news, news_count, page, items_per_page, last_update_str, total_pages);
-        int seconds_waited = 0;
-        int manual_change = 0;  // flag to indicate manual page change
-        // Wait in one-second increments for either a key press or timeout.
-        while (seconds_waited < config_page_interval) {
-            fd_set readfds;
-            FD_ZERO(&readfds);
-            FD_SET(STDIN_FILENO, &readfds);
-            struct timeval tv;
-            tv.tv_sec = 1;
-            tv.tv_usec = 0;
-            int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
-            if (ret > 0) {
-                char ch;
-                if (read(STDIN_FILENO, &ch, 1) > 0) {
-                    if (ch == 'q') {
-                        // Quit the application.
-                        reset_input_mode();
-                        free_news(news, news_count);
-                        exit(EXIT_SUCCESS);
-                    } else if (ch == 'n') {
-                        page = (page + 1) % total_pages;
-                        manual_change = 1;
-                        break;
-                    } else if (ch == 'p') {
-                        page = (page - 1 + total_pages) % total_pages;
-                        manual_change = 1;
-                        break;
-                    }
+        TerminalSize size;
+        get_terminal_size(&size);
+        size_t reserved_lines = 10;
+        size_t visible_items = size.rows > reserved_lines ? size.rows - reserved_lines : 1;
+        adjust_scroll(&feeds[current_feed], visible_items);
+        draw_ui(current_feed, visible_items, &size);
+
+        fd_set readfds;
+        FD_ZERO(&readfds);
+        FD_SET(STDIN_FILENO, &readfds);
+        struct timeval timeout;
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+        int ret = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
+        if (ret == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("select");
+            break;
+        } else if (ret > 0 && FD_ISSET(STDIN_FILENO, &readfds)) {
+            KeyCode key = read_key();
+            RssFeed *feed = &feeds[current_feed];
+            switch (key) {
+            case KEY_UP:
+                if (feed->count > 0 && feed->selected > 0) {
+                    feed->selected--;
+                }
+                break;
+            case KEY_DOWN:
+                if (feed->count > 0 && feed->selected + 1 < feed->count) {
+                    feed->selected++;
+                }
+                break;
+            case KEY_LEFT:
+                if (feed_count > 0) {
+                    current_feed = (current_feed + feed_count - 1) % feed_count;
+                }
+                break;
+            case KEY_RIGHT:
+                if (feed_count > 0) {
+                    current_feed = (current_feed + 1) % feed_count;
+                }
+                break;
+            case KEY_TOGGLE:
+                if (feed->count > 0) {
+                    feed->items[feed->selected].is_read = !feed->items[feed->selected].is_read;
+                    set_status(feed->items[feed->selected].is_read ? "Marked as read." : "Marked as unread.");
+                }
+                break;
+            case KEY_REFRESH:
+                refresh_all_feeds(1);
+                break;
+            case KEY_QUIT:
+            case KEY_ESC:
+                printf("\033[2J\033[H");
+                return EXIT_SUCCESS;
+            case KEY_NONE:
+            default:
+                break;
+            }
+        } else {
+            if (refresh_interval > 0) {
+                time_t now = time(NULL);
+                if (last_refresh_time == 0 || difftime(now, last_refresh_time) >= refresh_interval) {
+                    refresh_all_feeds(0);
                 }
             }
-            seconds_waited++;
-            elapsed_since_update++;
-            // Check if it's time to refresh the RSS feed.
-            if (elapsed_since_update >= config_rss_refresh_interval) {
-                char *new_rss_data = fetch_rss();
-                if (new_rss_data) {
-                    int new_news_count = 0;
-                    news_item *new_news = parse_rss(new_rss_data, &new_news_count);
-                    free(new_rss_data);
-                    if (new_news && new_news_count > 0) {
-                        free_news(news, news_count);
-                        news = new_news;
-                        news_count = new_news_count;
-                        total_pages = (news_count + items_per_page - 1) / items_per_page;
-                        page = 0;
-                        format_current_time(last_update_str, sizeof(last_update_str));
-                    } else {
-                        free_news(new_news, new_news_count);
-                    }
-                }
-                elapsed_since_update = 0;
-            }
-        }
-        // If no manual change occurred, automatically move to the next page.
-        if (!manual_change) {
-            page = (page + 1) % total_pages;
         }
     }
 
-    // Cleanup (unreachable in an infinite loop)
-    free_news(news, news_count);
-    return EXIT_SUCCESS;
+    return EXIT_FAILURE;
 }

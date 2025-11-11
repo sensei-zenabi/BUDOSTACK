@@ -1,5 +1,10 @@
 # autoexec.task
 
+# Change terminal color scheme
+RUN _RETROPROFILE apply c64
+WAIT 1000
+RUN clear
+
 # Run BUDOSTACK starting jingle
 RUN _BEEP -C5 -50
 RUN _BEEP -E5 -50

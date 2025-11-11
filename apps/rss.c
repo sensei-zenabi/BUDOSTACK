@@ -13,6 +13,7 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include <limits.h>
 
 #define CONFIG_FILE "rss.ini"
 #define DEFAULT_REFRESH_INTERVAL 900
@@ -123,6 +124,74 @@ static void normalize_spaces(char *str) {
             *p = ' ';
         }
     }
+}
+
+static void sanitize_summary(char *text) {
+    if (!text) {
+        return;
+    }
+
+    char *src = text;
+    char *dst = text;
+    while (*src) {
+        if (*src == '<') {
+            char *end = strchr(src, '>');
+            if (!end) {
+                break;
+            }
+            size_t tag_len = (size_t)(end - (src + 1));
+            if (tag_len >= 31) {
+                tag_len = 31;
+            }
+            char tag[32];
+            memcpy(tag, src + 1, tag_len);
+            tag[tag_len] = '\0';
+            for (size_t i = 0; i < tag_len; ++i) {
+                tag[i] = (char)tolower((unsigned char)tag[i]);
+            }
+            if (strncmp(tag, "br", 2) == 0 || strncmp(tag, "p", 1) == 0 || strncmp(tag, "/p", 2) == 0 || strncmp(tag, "li", 2) == 0 || strncmp(tag, "/li", 3) == 0) {
+                if (dst > text && dst[-1] != '\n') {
+                    *dst++ = '\n';
+                }
+            }
+            src = end + 1;
+            continue;
+        }
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+
+    for (char *p = text; *p != '\0'; ++p) {
+        if (*p == '\r') {
+            *p = '\n';
+        }
+    }
+
+    char *read = text;
+    dst = text;
+    int last_was_space = 1;
+    while (*read) {
+        if (*read == '\n') {
+            while (dst > text && dst[-1] == ' ') {
+                dst--;
+            }
+            *dst++ = '\n';
+            last_was_space = 1;
+        } else if (isspace((unsigned char)*read)) {
+            if (!last_was_space) {
+                *dst++ = ' ';
+                last_was_space = 1;
+            }
+        } else {
+            *dst++ = *read;
+            last_was_space = 0;
+        }
+        read++;
+    }
+    while (dst > text && (dst[-1] == ' ' || dst[-1] == '\n')) {
+        dst--;
+    }
+    *dst = '\0';
 }
 
 static char *duplicate_string(const char *src) {
@@ -465,7 +534,17 @@ static int parse_rss_items(const char *rss_data, RssItem **out_items, size_t *ou
         item.title = extract_tag_content(segment, "title");
         item.published = extract_tag_content(segment, "pubDate");
         item.link = extract_tag_content(segment, "link");
-        item.summary = extract_tag_content(segment, "description");
+        item.summary = extract_tag_content(segment, "content:encoded");
+        if (!item.summary) {
+            item.summary = extract_tag_content(segment, "description");
+        }
+        if (item.summary) {
+            sanitize_summary(item.summary);
+            if (item.summary[0] == '\0') {
+                free(item.summary);
+                item.summary = NULL;
+            }
+        }
         if (!item.title) {
             item.title = duplicate_string("Untitled");
         }
@@ -647,6 +726,94 @@ static int refresh_all_feeds(int manual_trigger) {
     return -1;
 }
 
+static void print_wrapped_text(const char *label, const char *text, size_t cols) {
+    size_t prefix_len = strlen(label);
+    size_t width = cols > prefix_len ? cols - prefix_len : 0;
+    printf("%s", label);
+    if (!text || *text == '\0') {
+        printf("(no details)\n");
+        return;
+    }
+    if (width == 0) {
+        printf("%s\n", text);
+        return;
+    }
+
+    size_t line_len = 0;
+    const char *ptr = text;
+    while (*ptr) {
+        if (*ptr == '\n' || *ptr == '\r') {
+            printf("\n");
+            for (size_t i = 0; i < prefix_len; ++i) {
+                putchar(' ');
+            }
+            line_len = 0;
+            ptr++;
+            continue;
+        }
+        if (isspace((unsigned char)*ptr)) {
+            ptr++;
+            continue;
+        }
+        const char *word_end = ptr;
+        while (*word_end && !isspace((unsigned char)*word_end)) {
+            word_end++;
+        }
+        size_t word_len = (size_t)(word_end - ptr);
+        if (word_len > width) {
+            size_t offset = 0;
+            while (offset < word_len) {
+                if (line_len == width) {
+                    printf("\n");
+                    for (size_t i = 0; i < prefix_len; ++i) {
+                        putchar(' ');
+                    }
+                    line_len = 0;
+                }
+                size_t space_left = width - line_len;
+                if (space_left == 0) {
+                    printf("\n");
+                    for (size_t i = 0; i < prefix_len; ++i) {
+                        putchar(' ');
+                    }
+                    space_left = width;
+                    line_len = 0;
+                }
+                size_t chunk = word_len - offset;
+                if (chunk > space_left) {
+                    chunk = space_left;
+                }
+                fwrite(ptr + offset, 1, chunk, stdout);
+                offset += chunk;
+                line_len += chunk;
+                if (offset < word_len) {
+                    printf("\n");
+                    for (size_t i = 0; i < prefix_len; ++i) {
+                        putchar(' ');
+                    }
+                    line_len = 0;
+                }
+            }
+        } else {
+            if (line_len != 0 && line_len + 1 + word_len > width) {
+                printf("\n");
+                for (size_t i = 0; i < prefix_len; ++i) {
+                    putchar(' ');
+                }
+                line_len = 0;
+            }
+            if (line_len != 0) {
+                putchar(' ');
+                line_len++;
+            }
+            fwrite(ptr, 1, word_len, stdout);
+            line_len += word_len;
+        }
+        ptr = word_end;
+    }
+    printf("\n");
+}
+
 static void draw_ui(size_t current_feed, size_t visible_items, const TerminalSize *size) {
     printf("\033[2J\033[H");
     size_t cols = size->cols;
@@ -716,20 +883,34 @@ static void draw_ui(size_t current_feed, size_t visible_items, const TerminalSiz
             size_t pub_width = cols > 12 ? cols - 12 : 10;
             truncate_text(item->published, pub_width, info, sizeof(info));
             printf("Published: %s\n", info);
-            size_t detail_width = cols > 8 ? cols - 8 : 10;
-            const char *detail = item->summary && *item->summary ? item->summary : (item->link ? item->link : "(no details)");
-            truncate_text(detail, detail_width, info, sizeof(info));
-            printf("Info: %s\n", info);
+            const char *detail = NULL;
+            if (item->summary && *item->summary) {
+                detail = item->summary;
+            } else if (item->link && *item->link) {
+                detail = item->link;
+            } else {
+                detail = "(no details)";
+            }
+            print_wrapped_text("Info: ", detail, cols);
+            if (item->link && *item->link) {
+                int same_as_detail = detail == item->link;
+                if (!same_as_detail && detail && item->link) {
+                    same_as_detail = strcmp(detail, item->link) == 0;
+                }
+                if (!same_as_detail) {
+                    print_wrapped_text("Link: ", item->link, cols);
+                }
+            }
         } else {
             printf("Selected: -\n");
             printf("Published: -\n");
-            printf("Info: (no details)\n");
+            print_wrapped_text("Info: ", "(no details)", cols);
         }
     } else {
         printf("Feed: -\n");
         printf("Selected: -\n");
         printf("Published: -\n");
-        printf("Info: (no details)\n");
+        print_wrapped_text("Info: ", "(no details)", cols);
     }
     printf("Controls: \342\206\220/\342\206\222 feeds | \342\206\221/\342\206\223 items | Enter toggle read | r refresh | q quit\n");
     printf("Status: %s\n", status_message);
@@ -790,8 +971,43 @@ static KeyCode read_key(void) {
     return KEY_NONE;
 }
 
-static void load_config(void) {
+static FILE *open_config_file(void) {
     FILE *file = fopen(CONFIG_FILE, "r");
+    if (file) {
+        return file;
+    }
+
+    char path[PATH_MAX];
+    char exe_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0 && (size_t)len < sizeof(exe_path)) {
+        exe_path[len] = '\0';
+        char *slash = strrchr(exe_path, '/');
+        if (slash) {
+            slash[1] = '\0';
+            int written = snprintf(path, sizeof(path), "%s%s", exe_path, CONFIG_FILE);
+            if (written > 0 && (size_t)written < sizeof(path)) {
+                file = fopen(path, "r");
+                if (file) {
+                    return file;
+                }
+            }
+        }
+    }
+
+    int written = snprintf(path, sizeof(path), "apps/%s", CONFIG_FILE);
+    if (written > 0 && (size_t)written < sizeof(path)) {
+        file = fopen(path, "r");
+        if (file) {
+            return file;
+        }
+    }
+
+    return NULL;
+}
+
+static void load_config(void) {
+    FILE *file = open_config_file();
     char *legacy_url = NULL;
     RssFeed *current_feed = NULL;
 

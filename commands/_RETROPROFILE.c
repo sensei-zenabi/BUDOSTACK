@@ -246,10 +246,10 @@ static void emit_palette_sequence(const RetroProfile *profile) {
 }
 
 static void reset_palette(void) {
-    emit_osc("104;");
-    emit_osc("110;");
-    emit_osc("111;");
-    emit_osc("112;");
+    emit_osc("104");
+    emit_osc("110");
+    emit_osc("111");
+    emit_osc("112");
     fflush(stdout);
     fprintf(stderr, "Requested terminal palette/default reset via OSC 104/110/111/112.\n");
 }

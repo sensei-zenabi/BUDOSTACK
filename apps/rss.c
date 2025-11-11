@@ -13,6 +13,7 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include <limits.h>
 
 #define CONFIG_FILE "rss.ini"
 #define DEFAULT_REFRESH_INTERVAL 900
@@ -123,6 +124,74 @@ static void normalize_spaces(char *str) {
             *p = ' ';
         }
     }
+}
+
+static void sanitize_summary(char *text) {
+    if (!text) {
+        return;
+    }
+
+    char *src = text;
+    char *dst = text;
+    while (*src) {
+        if (*src == '<') {
+            char *end = strchr(src, '>');
+            if (!end) {
+                break;
+            }
+            size_t tag_len = (size_t)(end - (src + 1));
+            if (tag_len >= 31) {
+                tag_len = 31;
+            }
+            char tag[32];
+            memcpy(tag, src + 1, tag_len);
+            tag[tag_len] = '\0';
+            for (size_t i = 0; i < tag_len; ++i) {
+                tag[i] = (char)tolower((unsigned char)tag[i]);
+            }
+            if (strncmp(tag, "br", 2) == 0 || strncmp(tag, "p", 1) == 0 || strncmp(tag, "/p", 2) == 0 || strncmp(tag, "li", 2) == 0 || strncmp(tag, "/li", 3) == 0) {
+                if (dst > text && dst[-1] != '\n') {
+                    *dst++ = '\n';
+                }
+            }
+            src = end + 1;
+            continue;
+        }
+        *dst++ = *src++;
+    }
+    *dst = '\0';
+
+    for (char *p = text; *p != '\0'; ++p) {
+        if (*p == '\r') {
+            *p = '\n';
+        }
+    }
+
+    char *read = text;
+    dst = text;
+    int last_was_space = 1;
+    while (*read) {
+        if (*read == '\n') {
+            while (dst > text && dst[-1] == ' ') {
+                dst--;
+            }
+            *dst++ = '\n';
+            last_was_space = 1;
+        } else if (isspace((unsigned char)*read)) {
+            if (!last_was_space) {
+                *dst++ = ' ';
+                last_was_space = 1;
+            }
+        } else {
+            *dst++ = *read;
+            last_was_space = 0;
+        }
+        read++;
+    }
+    while (dst > text && (dst[-1] == ' ' || dst[-1] == '\n')) {
+        dst--;
+    }
+    *dst = '\0';
 }
 
 static char *duplicate_string(const char *src) {
@@ -465,7 +534,17 @@ static int parse_rss_items(const char *rss_data, RssItem **out_items, size_t *ou
         item.title = extract_tag_content(segment, "title");
         item.published = extract_tag_content(segment, "pubDate");
         item.link = extract_tag_content(segment, "link");
-        item.summary = extract_tag_content(segment, "description");
+        item.summary = extract_tag_content(segment, "content:encoded");
+        if (!item.summary) {
+            item.summary = extract_tag_content(segment, "description");
+        }
+        if (item.summary) {
+            sanitize_summary(item.summary);
+            if (item.summary[0] == '\0') {
+                free(item.summary);
+                item.summary = NULL;
+            }
+        }
         if (!item.title) {
             item.title = duplicate_string("Untitled");
         }
@@ -600,6 +679,58 @@ static void merge_feed_items(RssFeed *feed, RssItem *new_items, size_t new_count
     }
 }
 
+static void compute_layout(const TerminalSize *size, size_t *list_lines, size_t *detail_lines) {
+    const size_t header_lines = 3;
+    const size_t footer_lines = 2;
+    size_t rows = size->rows;
+
+    if (rows <= header_lines + footer_lines) {
+        size_t body = rows > footer_lines ? rows - footer_lines : 0;
+        *list_lines = body;
+        *detail_lines = 0;
+        return;
+    }
+
+    size_t body = rows - header_lines - footer_lines;
+    if (body == 0) {
+        *list_lines = 0;
+        *detail_lines = 0;
+        return;
+    }
+
+    size_t list = body / 2;
+    if (list == 0) {
+        list = 1;
+    }
+    if (list > body) {
+        list = body;
+    }
+
+    size_t detail = body - list;
+
+    if (detail == 0 && body > 1) {
+        detail = 1;
+        if (list > 1) {
+            list--;
+        }
+    }
+
+    if (detail < 4 && body >= 5) {
+        size_t needed = 4 - detail;
+        size_t transferable = (list > 1) ? list - 1 : 0;
+        if (transferable > 0) {
+            if (needed > transferable) {
+                needed = transferable;
+            }
+            detail += needed;
+            list -= needed;
+        }
+    }
+
+    *list_lines = list;
+    *detail_lines = detail;
+}
+
 static int refresh_feed(RssFeed *feed) {
     if (!feed || !feed->url) {
         return -1;
@@ -647,7 +778,120 @@ static int refresh_all_feeds(int manual_trigger) {
     return -1;
 }
 
-static void draw_ui(size_t current_feed, size_t visible_items, const TerminalSize *size) {
+static void print_wrapped_block(const char *label, const char *text, size_t cols, size_t max_lines) {
+    if (max_lines == 0) {
+        return;
+    }
+    const char *content = (text && *text) ? text : "(no details)";
+    size_t label_len = strlen(label);
+    size_t width = cols > label_len ? cols - label_len : 0;
+    size_t lines = 0;
+    size_t pos = 0;
+    size_t len = strlen(content);
+
+    while (lines < max_lines) {
+        if (lines == 0) {
+            printf("%s", label);
+        } else {
+            for (size_t i = 0; i < label_len; ++i) {
+                putchar(' ');
+            }
+        }
+
+        if (width == 0) {
+            printf("\n");
+            ++lines;
+            continue;
+        }
+
+        size_t line_used = 0;
+        int printed = 0;
+        while (pos < len) {
+            char c = content[pos];
+            if (c == '\n' || c == '\r') {
+                pos++;
+                break;
+            }
+            if (isspace((unsigned char)c)) {
+                pos++;
+                if (!printed) {
+                    continue;
+                }
+                size_t peek = pos;
+                while (peek < len && isspace((unsigned char)content[peek]) && content[peek] != '\n' && content[peek] != '\r') {
+                    peek++;
+                }
+                size_t next_word_len = 0;
+                size_t tmp = peek;
+                while (tmp < len && !isspace((unsigned char)content[tmp]) && content[tmp] != '\n' && content[tmp] != '\r') {
+                    tmp++;
+                }
+                next_word_len = tmp - peek;
+                if (next_word_len == 0) {
+                    pos = peek;
+                    continue;
+                }
+                if (line_used + 1 + next_word_len > width) {
+                    pos = peek;
+                    break;
+                }
+                putchar(' ');
+                line_used++;
+                printed = 1;
+                pos = peek;
+                continue;
+            }
+
+            size_t start = pos;
+            while (pos < len && !isspace((unsigned char)content[pos]) && content[pos] != '\n' && content[pos] != '\r') {
+                pos++;
+            }
+            size_t word_len = pos - start;
+            if (!printed) {
+                if (word_len > width) {
+                    fwrite(content + start, 1, width, stdout);
+                    line_used = width;
+                    printed = 1;
+                    if (word_len > width) {
+                        pos = start + width;
+                    }
+                    break;
+                }
+                fwrite(content + start, 1, word_len, stdout);
+                line_used = word_len;
+                printed = 1;
+            } else {
+                if (line_used + 1 + word_len > width) {
+                    pos = start;
+                    break;
+                }
+                putchar(' ');
+                fwrite(content + start, 1, word_len, stdout);
+                line_used += 1 + word_len;
+            }
+        }
+
+        printf("\n");
+        ++lines;
+
+        while (pos < len && (content[pos] == ' ' || content[pos] == '\t')) {
+            pos++;
+        }
+        if (pos < len && (content[pos] == '\n' || content[pos] == '\r')) {
+            pos++;
+        }
+        if (pos >= len) {
+            break;
+        }
+    }
+
+    while (lines < max_lines) {
+        printf("\n");
+        ++lines;
+    }
+}
+
+static void draw_ui(size_t current_feed, size_t list_lines, size_t detail_lines, const TerminalSize *size) {
     printf("\033[2J\033[H");
     size_t cols = size->cols;
 
@@ -666,71 +910,171 @@ static void draw_ui(size_t current_feed, size_t visible_items, const TerminalSiz
             printf(" %s ", feeds[i].name ? feeds[i].name : "(unnamed)");
         }
     }
-    printf("\n\n");
+    printf("\n");
 
-    RssFeed *feed = NULL;
-    if (feed_count == 0) {
-        printf("No feeds configured.\n");
-    } else {
-        feed = &feeds[current_feed];
-        if (feed->count == 0) {
-            printf(" (no news items)\n");
-            for (size_t i = 1; i < visible_items; ++i) {
-                printf("\n");
-            }
+    RssFeed *feed = (feed_count > 0) ? &feeds[current_feed] : NULL;
+    size_t unread = feed ? count_unread_items(feed) : 0;
+    size_t item_rows = (list_lines > 0) ? (list_lines - 1) : 0;
+
+    if (list_lines > 0) {
+        if (feed) {
+            printf("Articles (%zu total, %zu unread)\n", feed->count, unread);
         } else {
-            size_t start = feed->scroll;
-            size_t end = start + visible_items;
-            if (end > feed->count) {
-                end = feed->count;
-            }
-            char linebuf[1024];
-            for (size_t i = start; i < end; ++i) {
-                RssItem *item = &feed->items[i];
-                char indicator = item->is_read ? ' ' : '*';
-                size_t available_width = cols > 6 ? cols - 6 : 10;
-                truncate_text(item->title, available_width, linebuf, sizeof(linebuf));
-                if (i == feed->selected) {
-                    printf("\033[7m %c %s\033[0m\n", indicator, linebuf);
-                } else {
-                    printf(" %c %s\n", indicator, linebuf);
+            printf("Articles\n");
+        }
+
+        if (item_rows > 0) {
+            if (!feed) {
+                printf(" (no feeds configured)\n");
+                for (size_t i = 1; i < item_rows; ++i) {
+                    printf("\n");
+                }
+            } else if (feed->count == 0) {
+                printf(" (no news items)\n");
+                for (size_t i = 1; i < item_rows; ++i) {
+                    printf("\n");
+                }
+            } else {
+                size_t start = feed->scroll;
+                size_t end = start + item_rows;
+                if (end > feed->count) {
+                    end = feed->count;
+                }
+                char linebuf[1024];
+                size_t printed = 0;
+                for (size_t i = start; i < end; ++i, ++printed) {
+                    RssItem *item = &feed->items[i];
+                    char indicator = item->is_read ? ' ' : '*';
+                    size_t available_width = cols > 6 ? cols - 6 : 0;
+                    if (available_width > 0) {
+                        truncate_text(item->title, available_width, linebuf, sizeof(linebuf));
+                        if (i == feed->selected) {
+                            printf("\033[7m %c %s\033[0m\n", indicator, linebuf);
+                        } else {
+                            printf(" %c %s\n", indicator, linebuf);
+                        }
+                    } else {
+                        if (i == feed->selected) {
+                            printf("\033[7m %c\033[0m\n", indicator);
+                        } else {
+                            printf(" %c\n", indicator);
+                        }
+                    }
+                }
+                while (printed < item_rows) {
+                    printf("\n");
+                    ++printed;
                 }
             }
-            size_t printed = end - start;
-            while (printed < visible_items) {
-                printf("\n");
-                printed++;
-            }
         }
     }
 
-    if (feed) {
-        size_t unread = count_unread_items(feed);
-        printf("Feed: %s (%zu items, %zu unread)\n", feed->name ? feed->name : "(unnamed)", feed->count, unread);
-        if (feed->count > 0) {
-            RssItem *item = &feed->items[feed->selected];
-            char info[1024];
-            size_t title_width = cols > 11 ? cols - 11 : 10;
-            truncate_text(item->title, title_width, info, sizeof(info));
-            printf("Selected: %s\n", info);
-            size_t pub_width = cols > 12 ? cols - 12 : 10;
-            truncate_text(item->published, pub_width, info, sizeof(info));
-            printf("Published: %s\n", info);
-            size_t detail_width = cols > 8 ? cols - 8 : 10;
-            const char *detail = item->summary && *item->summary ? item->summary : (item->link ? item->link : "(no details)");
-            truncate_text(detail, detail_width, info, sizeof(info));
-            printf("Info: %s\n", info);
-        } else {
-            printf("Selected: -\n");
-            printf("Published: -\n");
-            printf("Info: (no details)\n");
+    size_t detail_remaining = detail_lines;
+    if (detail_remaining > 0) {
+        size_t rule_width = cols > 0 ? cols : 80;
+        for (size_t i = 0; i < rule_width; ++i) {
+            putchar('-');
         }
-    } else {
-        printf("Feed: -\n");
-        printf("Selected: -\n");
-        printf("Published: -\n");
-        printf("Info: (no details)\n");
+        putchar('\n');
+        --detail_remaining;
     }
+
+    RssItem *selected = (feed && feed->count > 0) ? &feed->items[feed->selected] : NULL;
+
+    if (detail_remaining > 0) {
+        if (feed) {
+            printf("Feed: %s (%zu items, %zu unread)\n", feed->name ? feed->name : "(unnamed)", feed->count, unread);
+        } else {
+            printf("Feed: -\n");
+        }
+        --detail_remaining;
+    }
+
+    if (detail_remaining > 0) {
+        if (selected) {
+            char line[1024];
+            size_t title_width = cols > 7 ? cols - 7 : 0;
+            if (title_width > 0) {
+                truncate_text(selected->title, title_width, line, sizeof(line));
+                printf("Title: %s\n", line);
+            } else {
+                printf("Title:\n");
+            }
+        } else {
+            printf("Title: -\n");
+        }
+        --detail_remaining;
+    }
+
+    if (detail_remaining > 0) {
+        if (selected) {
+            char line[1024];
+            size_t published_width = cols > 11 ? cols - 11 : 0;
+            if (published_width > 0) {
+                truncate_text(selected->published, published_width, line, sizeof(line));
+                printf("Published: %s\n", line);
+            } else {
+                printf("Published:\n");
+            }
+        } else {
+            printf("Published: -\n");
+        }
+        --detail_remaining;
+    }
+
+    if (detail_remaining > 0) {
+        const char *detail_text = "(no details)";
+        int show_link = 0;
+        if (selected) {
+            if (selected->summary && *selected->summary) {
+                detail_text = selected->summary;
+            } else if (selected->link && *selected->link) {
+                detail_text = selected->link;
+            }
+            if (selected->link && *selected->link) {
+                if (detail_text == selected->link || (detail_text && strcmp(detail_text, selected->link) == 0)) {
+                    show_link = 0;
+                } else {
+                    show_link = 1;
+                }
+            }
+        }
+
+        size_t summary_lines = detail_remaining;
+        size_t link_lines = 0;
+        if (show_link) {
+            if (summary_lines > 1) {
+                summary_lines -= 1;
+                link_lines = 1;
+            } else {
+                show_link = 0;
+            }
+        }
+
+        if (summary_lines > 0) {
+            print_wrapped_block("Summary: ", detail_text, cols, summary_lines);
+        }
+
+        detail_remaining -= summary_lines;
+
+        if (show_link && link_lines == 1 && detail_remaining > 0) {
+            if (cols > 6) {
+                char line[1024];
+                size_t link_width = cols - 6;
+                truncate_text(selected->link, link_width, line, sizeof(line));
+                printf("Link: %s\n", line);
+            } else {
+                printf("Link:\n");
+            }
+            --detail_remaining;
+        }
+
+        while (detail_remaining > 0) {
+            printf("\n");
+            --detail_remaining;
+        }
+    }
+
     printf("Controls: \342\206\220/\342\206\222 feeds | \342\206\221/\342\206\223 items | Enter toggle read | r refresh | q quit\n");
     printf("Status: %s\n", status_message);
     fflush(stdout);
@@ -790,8 +1134,43 @@ static KeyCode read_key(void) {
     return KEY_NONE;
 }
 
-static void load_config(void) {
+static FILE *open_config_file(void) {
     FILE *file = fopen(CONFIG_FILE, "r");
+    if (file) {
+        return file;
+    }
+
+    char path[PATH_MAX];
+    char exe_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len > 0 && (size_t)len < sizeof(exe_path)) {
+        exe_path[len] = '\0';
+        char *slash = strrchr(exe_path, '/');
+        if (slash) {
+            slash[1] = '\0';
+            int written = snprintf(path, sizeof(path), "%s%s", exe_path, CONFIG_FILE);
+            if (written > 0 && (size_t)written < sizeof(path)) {
+                file = fopen(path, "r");
+                if (file) {
+                    return file;
+                }
+            }
+        }
+    }
+
+    int written = snprintf(path, sizeof(path), "apps/%s", CONFIG_FILE);
+    if (written > 0 && (size_t)written < sizeof(path)) {
+        file = fopen(path, "r");
+        if (file) {
+            return file;
+        }
+    }
+
+    return NULL;
+}
+
+static void load_config(void) {
+    FILE *file = open_config_file();
     char *legacy_url = NULL;
     RssFeed *current_feed = NULL;
 
@@ -949,10 +1328,12 @@ int main(void) {
     while (1) {
         TerminalSize size;
         get_terminal_size(&size);
-        size_t reserved_lines = 10;
-        size_t visible_items = size.rows > reserved_lines ? size.rows - reserved_lines : 1;
-        adjust_scroll(&feeds[current_feed], visible_items);
-        draw_ui(current_feed, visible_items, &size);
+        size_t list_lines = 0;
+        size_t detail_lines = 0;
+        compute_layout(&size, &list_lines, &detail_lines);
+        size_t item_rows = (list_lines > 0) ? (list_lines - 1) : 0;
+        adjust_scroll(&feeds[current_feed], item_rows);
+        draw_ui(current_feed, list_lines, detail_lines, &size);
 
         fd_set readfds;
         FD_ZERO(&readfds);

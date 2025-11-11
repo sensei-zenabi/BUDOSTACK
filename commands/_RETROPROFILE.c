@@ -14,10 +14,17 @@ typedef struct {
 } RgbColor;
 
 typedef struct {
+    RgbColor foreground;
+    RgbColor background;
+    RgbColor cursor;
+} RetroDefaults;
+
+typedef struct {
     const char *key;
     const char *display_name;
     const char *description;
     RgbColor colors[16];
+    RetroDefaults defaults;
 } RetroProfile;
 
 static const RetroProfile profiles[] = {
@@ -43,6 +50,11 @@ static const RetroProfile profiles[] = {
             {0, 136, 255},
             {187, 187, 187},
         },
+        {
+            {170, 255, 238},
+            {0, 0, 170},
+            {255, 255, 255},
+        },
     },
     {
         "ibm5150",
@@ -64,6 +76,11 @@ static const RetroProfile profiles[] = {
             {255, 85, 85},
             {255, 85, 255},
             {255, 255, 85},
+            {255, 255, 255},
+        },
+        {
+            {170, 170, 170},
+            {0, 0, 0},
             {255, 255, 255},
         },
     },
@@ -89,6 +106,11 @@ static const RetroProfile profiles[] = {
             {247, 170, 100},
             {255, 188, 128},
         },
+        {
+            {221, 128, 45},
+            {0, 0, 0},
+            {247, 170, 100},
+        },
     },
     {
         "vt220-green",
@@ -112,6 +134,11 @@ static const RetroProfile profiles[] = {
             {96, 198, 96},
             {124, 216, 124},
         },
+        {
+            {96, 198, 96},
+            {0, 0, 0},
+            {124, 216, 124},
+        },
     },
 };
 
@@ -121,8 +148,8 @@ static void usage(void) {
             "Commands:\n"
             "  list               List available profiles.\n"
             "  show <profile>     Show palette values and a color swatch.\n"
-            "  apply <profile>    Emit OSC 4 escape codes to set terminal palette.\n"
-            "  reset              Reset terminal palette to defaults (OSC 104).\n"
+            "  apply <profile>    Emit OSC 4/10/11/12 escapes to set palette and defaults.\n"
+            "  reset              Reset palette and defaults (OSC 104/110/111/112).\n"
             "\nProfiles are case-insensitive. Redirect output from 'apply' into your shell\n"
             "if you want to persist the palette, e.g. _RETROPROFILE apply c64 > /tmp/palette && cat /tmp/palette.\n");
 }
@@ -151,6 +178,16 @@ static const RetroProfile *find_profile(const char *key) {
 static void show_profile(const RetroProfile *profile) {
     printf("%s (%s)\n", profile->display_name, profile->key);
     printf("%s\n\n", profile->description);
+    printf("Defaults: foreground #%02X%02X%02X, background #%02X%02X%02X, cursor #%02X%02X%02X\n\n",
+           profile->defaults.foreground.r,
+           profile->defaults.foreground.g,
+           profile->defaults.foreground.b,
+           profile->defaults.background.r,
+           profile->defaults.background.g,
+           profile->defaults.background.b,
+           profile->defaults.cursor.r,
+           profile->defaults.cursor.g,
+           profile->defaults.cursor.b);
     for (int i = 0; i < 16; ++i) {
         const RgbColor *color = &profile->colors[i];
         printf("%2d  #%02X%02X%02X  \x1b[48;2;%d;%d;%dm  \x1b[0m\n",
@@ -169,16 +206,31 @@ static void emit_palette_sequence(const RetroProfile *profile) {
         const RgbColor *color = &profile->colors[i];
         printf("\033]4;%d;rgb:%02x/%02x/%02x\a", i, color->r, color->g, color->b);
     }
+    printf("\033]10;rgb:%02x/%02x/%02x\a",
+           profile->defaults.foreground.r,
+           profile->defaults.foreground.g,
+           profile->defaults.foreground.b);
+    printf("\033]11;rgb:%02x/%02x/%02x\a",
+           profile->defaults.background.r,
+           profile->defaults.background.g,
+           profile->defaults.background.b);
+    printf("\033]12;rgb:%02x/%02x/%02x\a",
+           profile->defaults.cursor.r,
+           profile->defaults.cursor.g,
+           profile->defaults.cursor.b);
     fflush(stdout);
     fprintf(stderr,
-            "Applied '%s' palette to terminal using OSC 4 codes. Use 'reset' to restore defaults.\n",
+            "Applied '%s' palette to terminal (OSC 4/10/11/12). Use 'reset' to restore defaults.\n",
             profile->display_name);
 }
 
 static void reset_palette(void) {
     printf("\033]104;\a");
+    printf("\033]110;\a");
+    printf("\033]111;\a");
+    printf("\033]112;\a");
     fflush(stdout);
-    fprintf(stderr, "Requested terminal palette reset via OSC 104.\n");
+    fprintf(stderr, "Requested terminal palette/default reset via OSC 104/110/111/112.\n");
 }
 
 int main(int argc, char *argv[]) {

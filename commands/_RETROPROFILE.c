@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -201,23 +202,43 @@ static void show_profile(const RetroProfile *profile) {
     }
 }
 
+static void emit_osc(const char *fmt, ...) {
+    char buffer[128];
+    va_list args;
+
+    va_start(args, fmt);
+    int written = vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+
+    if (written < 0)
+        return;
+
+    fwrite("\033]", 1, 2, stdout);
+    if ((size_t)written >= sizeof(buffer)) {
+        fwrite(buffer, 1, sizeof(buffer) - 1, stdout);
+    } else {
+        fwrite(buffer, 1, (size_t)written, stdout);
+    }
+    fwrite("\033\\", 1, 2, stdout);
+}
+
 static void emit_palette_sequence(const RetroProfile *profile) {
     for (int i = 0; i < 16; ++i) {
         const RgbColor *color = &profile->colors[i];
-        printf("\033]4;%d;rgb:%02x/%02x/%02x\a", i, color->r, color->g, color->b);
+        emit_osc("4;%d;#%02X%02X%02X", i, color->r, color->g, color->b);
     }
-    printf("\033]10;rgb:%02x/%02x/%02x\a",
-           profile->defaults.foreground.r,
-           profile->defaults.foreground.g,
-           profile->defaults.foreground.b);
-    printf("\033]11;rgb:%02x/%02x/%02x\a",
-           profile->defaults.background.r,
-           profile->defaults.background.g,
-           profile->defaults.background.b);
-    printf("\033]12;rgb:%02x/%02x/%02x\a",
-           profile->defaults.cursor.r,
-           profile->defaults.cursor.g,
-           profile->defaults.cursor.b);
+    emit_osc("10;#%02X%02X%02X",
+             profile->defaults.foreground.r,
+             profile->defaults.foreground.g,
+             profile->defaults.foreground.b);
+    emit_osc("11;#%02X%02X%02X",
+             profile->defaults.background.r,
+             profile->defaults.background.g,
+             profile->defaults.background.b);
+    emit_osc("12;#%02X%02X%02X",
+             profile->defaults.cursor.r,
+             profile->defaults.cursor.g,
+             profile->defaults.cursor.b);
     fflush(stdout);
     fprintf(stderr,
             "Applied '%s' palette to terminal (OSC 4/10/11/12). Use 'reset' to restore defaults.\n",
@@ -225,10 +246,10 @@ static void emit_palette_sequence(const RetroProfile *profile) {
 }
 
 static void reset_palette(void) {
-    printf("\033]104;\a");
-    printf("\033]110;\a");
-    printf("\033]111;\a");
-    printf("\033]112;\a");
+    emit_osc("104;");
+    emit_osc("110;");
+    emit_osc("111;");
+    emit_osc("112;");
     fflush(stdout);
     fprintf(stderr, "Requested terminal palette/default reset via OSC 104/110/111/112.\n");
 }

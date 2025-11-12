@@ -316,8 +316,8 @@ static int run_server(const char *bind_address, const char *port)
             break;
         }
 
-        char host[NI_MAXHOST];
-        char service[NI_MAXSERV];
+        char host[INET6_ADDRSTRLEN];
+        char service[32];
         if (getnameinfo((struct sockaddr *)&client_addr, addr_len, host, sizeof(host),
                         service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV) == 0) {
             fprintf(stdout, "remote server: connection from %s:%s\n", host, service);

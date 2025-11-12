@@ -20,6 +20,7 @@ int main() {
     printf("  git fetch origin            : fetch available branches\n\n");
     printf("  git checkout <branch_name>  : switch into a selected branch\n\n");
     printf("  git merge <branch_name>     : merge selected branch into current branch\n\n");
-    
+    printf("  git tag --sort=-v:refname   : list tags from newest to oldest\n\n");
+        
     return 0;
 }

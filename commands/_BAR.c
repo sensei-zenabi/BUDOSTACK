@@ -4,11 +4,69 @@
 #include <errno.h>
 #include <limits.h>
 
+#include "../lib/retroprofile.h"
 #include "../lib/termbg.h"
 
 // Code
 
 #define BAR_WIDTH 10
+
+static int default_color_index(void) {
+    int index = retroprofile_active_default_foreground_index();
+    if (index >= 0)
+        return index;
+    return 15;
+}
+
+static int clamp_color_value(int value) {
+    if (value < 0)
+        return 0;
+    if (value > 255)
+        return 255;
+    return value;
+}
+
+static int resolve_color(int color_index) {
+    int clamped = clamp_color_value(color_index);
+    if (clamped >= 0 && clamped < 16) {
+        RetroColor palette_color;
+        if (retroprofile_color_from_active(clamped, &palette_color) == 0)
+            return termbg_encode_truecolor(palette_color.r, palette_color.g, palette_color.b);
+    }
+    return clamped;
+}
+
+static void apply_foreground(int resolved_color, int fallback_index) {
+    if (termbg_is_truecolor(resolved_color)) {
+        int r, g, b;
+        termbg_decode_truecolor(resolved_color, &r, &g, &b);
+        printf("\033[38;2;%d;%d;%dm", r, g, b);
+    } else {
+        printf("\033[38;5;%dm", fallback_index);
+    }
+}
+
+static void reset_background(int *last_bg) {
+    if (last_bg != NULL && *last_bg != -1) {
+        printf("\033[49m");
+        *last_bg = -1;
+    }
+}
+
+static void apply_background(int encoded_color, int *last_bg) {
+    if (last_bg == NULL)
+        return;
+    if (*last_bg == encoded_color)
+        return;
+    if (termbg_is_truecolor(encoded_color)) {
+        int r, g, b;
+        termbg_decode_truecolor(encoded_color, &r, &g, &b);
+        printf("\033[48;2;%d;%d;%dm", r, g, b);
+    } else {
+        printf("\033[48;5;%dm", encoded_color);
+    }
+    *last_bg = encoded_color;
+}
 
 static int parse_int(const char *value, const char *name, int *out) {
     char *endptr = NULL;
@@ -33,18 +91,14 @@ static void print_with_background(const char *text, int row, int *col) {
     if (text == NULL)
         return;
 
-    int last_bg = -2;
+    int last_bg = -1;
     for (const unsigned char *ptr = (const unsigned char *)text; *ptr != '\0'; ++ptr) {
         if (col && *col >= 0) {
             int bg_color;
             if (termbg_get(*col, row, &bg_color)) {
-                if (bg_color != last_bg) {
-                    printf("\033[48;5;%dm", bg_color);
-                    last_bg = bg_color;
-                }
-            } else if (last_bg != -1) {
-                printf("\033[49m");
-                last_bg = -1;
+                apply_background(bg_color, &last_bg);
+            } else {
+                reset_background(&last_bg);
             }
         }
 
@@ -54,15 +108,15 @@ static void print_with_background(const char *text, int row, int *col) {
             ++(*col);
     }
 
-    if (col && *col >= 0 && last_bg != -1)
-        printf("\033[49m");
+    if (col && *col >= 0)
+        reset_background(&last_bg);
 }
 
 int main(int argc, char *argv[]) {
     int x = -1;
     int y = -1;
     int progress = -1;
-    int color = 15; /* default bright white */
+    int color = default_color_index();
     const char *title = NULL;
 
     for (int i = 1; i < argc; ++i) {
@@ -121,10 +175,9 @@ int main(int argc, char *argv[]) {
     if (progress > 100)
         progress = 100;
 
-    if (color < 0)
-        color = 0;
-    if (color > 255)
-        color = 255;
+    color = clamp_color_value(color);
+
+    int resolved_color = resolve_color(color);
 
     const char *filled_block = "\u2588";
     const char *empty_block = "\u2591";
@@ -157,7 +210,7 @@ int main(int argc, char *argv[]) {
         printf("\033[%d;%dH", row, col);
         tracked_col = col - 1;
     }
-    printf("\033[38;5;%dm", color);
+    apply_foreground(resolved_color, color);
 
     int row_index = (y >= 0) ? y : -1;
     print_with_background(title, row_index, &tracked_col);

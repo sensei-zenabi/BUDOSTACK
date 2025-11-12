@@ -8,140 +8,7 @@
 #include <string.h>
 #include <strings.h>
 
-typedef struct {
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-} RgbColor;
-
-typedef struct {
-    RgbColor foreground;
-    RgbColor background;
-    RgbColor cursor;
-} RetroDefaults;
-
-typedef struct {
-    const char *key;
-    const char *display_name;
-    const char *description;
-    RgbColor colors[16];
-    RetroDefaults defaults;
-} RetroProfile;
-
-static const RetroProfile profiles[] = {
-    {
-        "c64",
-        "Commodore 64",
-        "Vibrant palette tuned for crisp 8-bit sprites and SID editors.",
-        {
-            {0, 0, 0},
-            {255, 255, 255},
-            {136, 0, 0},
-            {170, 255, 238},
-            {204, 68, 204},
-            {0, 204, 85},
-            {0, 0, 170},
-            {238, 238, 119},
-            {221, 136, 85},
-            {102, 68, 0},
-            {255, 119, 119},
-            {51, 51, 51},
-            {119, 119, 119},
-            {170, 255, 102},
-            {0, 136, 255},
-            {187, 187, 187},
-        },
-        {
-            {255, 255, 255},
-            {0, 0, 170},
-            {255, 255, 255},
-        },
-    },
-    {
-        "ibm5150",
-        "IBM 5150 CGA",
-        "High-contrast DOS tones ideal for ANSI art and BBS sessions.",
-        {
-            {0, 0, 0},
-            {0, 0, 170},
-            {0, 170, 0},
-            {0, 170, 170},
-            {170, 0, 0},
-            {170, 0, 170},
-            {170, 85, 0},
-            {170, 170, 170},
-            {85, 85, 85},
-            {85, 85, 255},
-            {85, 255, 85},
-            {85, 255, 255},
-            {255, 85, 85},
-            {255, 85, 255},
-            {255, 255, 85},
-            {255, 255, 255},
-        },
-        {
-            {170, 170, 170},
-            {0, 0, 0},
-            {255, 255, 255},
-        },
-    },
-    {
-        "vt220-amber",
-        "VT220 Amber",
-        "Warm monochrome amber with subtle intensity steps for long sessions.",
-        {
-            {0, 0, 0},
-            {22, 10, 0},
-            {45, 20, 0},
-            {67, 30, 0},
-            {89, 40, 0},
-            {112, 50, 0},
-            {134, 60, 0},
-            {156, 70, 0},
-            {179, 90, 10},
-            {193, 102, 20},
-            {207, 115, 30},
-            {221, 128, 45},
-            {235, 141, 60},
-            {242, 155, 78},
-            {247, 170, 100},
-            {255, 188, 128},
-        },
-        {
-            {221, 128, 45},
-            {0, 0, 0},
-            {247, 170, 100},
-        },
-    },
-    {
-        "vt220-green",
-        "VT220 Green",
-        "Phosphor-green ladder inspired by DEC monochrome terminals.",
-        {
-            {0, 0, 0},
-            {0, 10, 0},
-            {0, 22, 0},
-            {0, 34, 0},
-            {0, 46, 0},
-            {0, 58, 0},
-            {0, 70, 0},
-            {0, 82, 0},
-            {10, 102, 10},
-            {20, 118, 20},
-            {30, 134, 30},
-            {45, 150, 45},
-            {60, 166, 60},
-            {78, 182, 78},
-            {96, 198, 96},
-            {124, 216, 124},
-        },
-        {
-            {96, 198, 96},
-            {0, 0, 0},
-            {124, 216, 124},
-        },
-    },
-};
+#include "../lib/retroprofile.h"
 
 static void usage(void) {
     fprintf(stderr,
@@ -156,28 +23,26 @@ static void usage(void) {
 }
 
 static void list_profiles(void) {
-    size_t count = sizeof(profiles) / sizeof(profiles[0]);
+    const RetroProfile *active = retroprofile_active();
+    size_t count = retroprofile_count();
     for (size_t i = 0; i < count; ++i) {
-        const RetroProfile *profile = &profiles[i];
-        printf("%-12s %s\n", profile->key, profile->display_name);
+        const RetroProfile *profile = retroprofile_get(i);
+        if (profile == NULL)
+            continue;
+        const char *marker = (profile == active) ? "*" : " ";
+        printf("%s %-12s %s\n", marker, profile->key, profile->display_name);
         printf("    %s\n", profile->description);
     }
 }
 
 static const RetroProfile *find_profile(const char *key) {
-    if (key == NULL)
-        return NULL;
-    size_t count = sizeof(profiles) / sizeof(profiles[0]);
-    for (size_t i = 0; i < count; ++i) {
-        const RetroProfile *profile = &profiles[i];
-        if (strcasecmp(profile->key, key) == 0)
-            return profile;
-    }
-    return NULL;
+    return retroprofile_find(key);
 }
 
 static void show_profile(const RetroProfile *profile) {
-    printf("%s (%s)\n", profile->display_name, profile->key);
+    const RetroProfile *active = retroprofile_active();
+    const char *status = (profile == active) ? " [active]" : "";
+    printf("%s (%s)%s\n", profile->display_name, profile->key, status);
     printf("%s\n\n", profile->description);
     printf("Defaults: foreground #%02X%02X%02X, background #%02X%02X%02X, cursor #%02X%02X%02X\n\n",
            profile->defaults.foreground.r,
@@ -190,7 +55,7 @@ static void show_profile(const RetroProfile *profile) {
            profile->defaults.cursor.g,
            profile->defaults.cursor.b);
     for (int i = 0; i < 16; ++i) {
-        const RgbColor *color = &profile->colors[i];
+        const RetroColor *color = &profile->colors[i];
         printf("%2d  #%02X%02X%02X  \x1b[48;2;%d;%d;%dm  \x1b[0m\n",
                i,
                color->r,
@@ -224,7 +89,7 @@ static void emit_osc(const char *fmt, ...) {
 
 static void emit_palette_sequence(const RetroProfile *profile) {
     for (int i = 0; i < 16; ++i) {
-        const RgbColor *color = &profile->colors[i];
+        const RetroColor *color = &profile->colors[i];
         emit_osc("4;%d;#%02X%02X%02X", i, color->r, color->g, color->b);
     }
     emit_osc("10;#%02X%02X%02X",
@@ -289,11 +154,15 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "_RETROPROFILE: unknown profile '%s'.\n", argv[2]);
             return EXIT_FAILURE;
         }
+        if (retroprofile_set_active(profile->key) != 0)
+            fprintf(stderr, "_RETROPROFILE: warning: failed to persist active profile selection.\n");
         emit_palette_sequence(profile);
         return EXIT_SUCCESS;
     }
 
     if (strcmp(argv[1], "reset") == 0) {
+        if (retroprofile_clear_active() != 0)
+            fprintf(stderr, "_RETROPROFILE: warning: failed to clear stored active profile.\n");
         reset_palette();
         return EXIT_SUCCESS;
     }

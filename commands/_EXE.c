@@ -191,7 +191,13 @@ static void apply_background(int x, int y, int *last_bg) {
     int color;
     if (termbg_get(x, y, &color)) {
         if (*last_bg != color) {
-            printf("\033[48;5;%dm", color);
+            if (termbg_is_truecolor(color)) {
+                int r, g, b;
+                termbg_decode_truecolor(color, &r, &g, &b);
+                printf("\033[48;2;%d;%d;%dm", r, g, b);
+            } else {
+                printf("\033[48;5;%dm", color);
+            }
             *last_bg = color;
         }
     } else {

@@ -5,7 +5,43 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../lib/retroprofile.h"
 #include "../lib/termbg.h"
+
+static int default_color_index(void) {
+    int index = retroprofile_active_default_foreground_index();
+    if (index >= 0)
+        return index;
+    return 15;
+}
+
+static int clamp_color_value(int value) {
+    if (value < 0)
+        return 0;
+    if (value > 255)
+        return 255;
+    return value;
+}
+
+static int resolve_color(int color_index) {
+    int clamped = clamp_color_value(color_index);
+    if (clamped >= 0 && clamped < 16) {
+        RetroColor palette_color;
+        if (retroprofile_color_from_active(clamped, &palette_color) == 0)
+            return termbg_encode_truecolor(palette_color.r, palette_color.g, palette_color.b);
+    }
+    return clamped;
+}
+
+static void apply_background_sequence(int resolved_color) {
+    if (termbg_is_truecolor(resolved_color)) {
+        int r, g, b;
+        termbg_decode_truecolor(resolved_color, &r, &g, &b);
+        printf("\033[48;2;%d;%d;%dm", r, g, b);
+    } else {
+        printf("\033[48;5;%dm", resolved_color);
+    }
+}
 
 static int parse_int(const char *value, const char *name, int *out) {
     char *endptr = NULL;
@@ -31,7 +67,7 @@ int main(int argc, char *argv[]) {
     int y = -1;
     int width = -1;
     int height = -1;
-    int color = 15; /* default bright white */
+    int color = default_color_index();
     int fill = 0;
 
     for (int i = 1; i < argc; ++i) {
@@ -94,10 +130,9 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    if (color < 0)
-        color = 0;
-    if (color > 255)
-        color = 255;
+    color = clamp_color_value(color);
+
+    int resolved_color = resolve_color(color);
 
     size_t buffer_size = (size_t)width + 1;
     char *line = malloc(buffer_size);
@@ -123,24 +158,26 @@ int main(int argc, char *argv[]) {
         int logical_row = y + row;
 
         if (fill || row == 0 || row == height - 1) {
-            printf("\033[48;5;%dm", color);
+            apply_background_sequence(resolved_color);
             fwrite(line, 1, (size_t)width, stdout);
             printf("\033[49m");
             for (int col = 0; col < width; ++col)
-                termbg_set(x + col, logical_row, color);
+                termbg_set(x + col, logical_row, resolved_color);
         } else {
-            printf("\033[48;5;%dm ", color);
+            apply_background_sequence(resolved_color);
+            printf(" ");
             printf("\033[49m");
-            termbg_set(x, logical_row, color);
+            termbg_set(x, logical_row, resolved_color);
 
             if (width > 1) {
                 int interior = width - 2;
                 if (interior > 0)
                     printf("\033[%dC", interior);
 
-                printf("\033[48;5;%dm ", color);
+                apply_background_sequence(resolved_color);
+                printf(" ");
                 printf("\033[49m");
-                termbg_set(x + width - 1, logical_row, color);
+                termbg_set(x + width - 1, logical_row, resolved_color);
             }
         }
     }

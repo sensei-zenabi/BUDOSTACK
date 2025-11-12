@@ -1,5 +1,7 @@
 #include <stdio.h>
 
+#include "../lib/retroprofile.h"
+
 typedef struct {
     const char *name;
     int r;
@@ -32,6 +34,26 @@ int main(void) {
     for (int i = 0; i < 16; ++i) {
         const NamedColor *c = &base16[i];
         printf("%d = %s (rgb(%d,%d,%d))\n", i, c->name, c->r, c->g, c->b);
+    }
+
+    const RetroProfile *active = retroprofile_active();
+    if (active != NULL) {
+        printf("\nActive retro profile: %s (%s)\n", active->display_name, active->key);
+        printf("Defaults -> FG #%02X%02X%02X BG #%02X%02X%02X Cursor #%02X%02X%02X\n", 
+               active->defaults.foreground.r,
+               active->defaults.foreground.g,
+               active->defaults.foreground.b,
+               active->defaults.background.r,
+               active->defaults.background.g,
+               active->defaults.background.b,
+               active->defaults.cursor.r,
+               active->defaults.cursor.g,
+               active->defaults.cursor.b);
+        for (int i = 0; i < 16; ++i) {
+            const RetroColor *color = &active->colors[i];
+            printf("%2d  #%02X%02X%02X\n", i, color->r, color->g, color->b);
+        }
+        printf("\n");
     }
 
     for (int idx = 16; idx <= 231; ++idx) {

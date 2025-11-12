@@ -260,10 +260,18 @@ static void render_pixels_at(const Pixel *pixels, int width, int height, int ori
             if (p->a < 16) {
                 int bg_color = -1;
                 if (termbg_get(origin_x + x, origin_y + y, &bg_color) != 0 && bg_color >= 0) {
-                    char seq[32];
-                    int len = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", bg_color);
-                    if (len > 0) {
-                        fwrite(seq, 1, (size_t)len, stdout);
+                    if (termbg_is_truecolor(bg_color)) {
+                        int r, g, b;
+                        termbg_decode_truecolor(bg_color, &r, &g, &b);
+                        char seq[32];
+                        int len = snprintf(seq, sizeof(seq), "\x1b[48;2;%d;%d;%dm", r, g, b);
+                        if (len > 0)
+                            fwrite(seq, 1, (size_t)len, stdout);
+                    } else {
+                        char seq[32];
+                        int len = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", bg_color);
+                        if (len > 0)
+                            fwrite(seq, 1, (size_t)len, stdout);
                     }
                     fputs("\x1b[39m ", stdout);
                     fputs("\x1b[49m", stdout);

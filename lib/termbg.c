@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +18,54 @@ typedef struct {
     int y;
     int color;
 } TermBgEntry;
+
+#define TERM_BG_TRUECOLOR_FLAG (1u << 30)
+#define TERM_BG_TRUECOLOR_MASK 0x00FFFFFFu
+
+int termbg_encode_truecolor(int r, int g, int b) {
+    if (r < 0)
+        r = 0;
+    else if (r > 255)
+        r = 255;
+
+    if (g < 0)
+        g = 0;
+    else if (g > 255)
+        g = 255;
+
+    if (b < 0)
+        b = 0;
+    else if (b > 255)
+        b = 255;
+
+    return (int)(TERM_BG_TRUECOLOR_FLAG | ((unsigned int)r << 16) | ((unsigned int)g << 8) | (unsigned int)b);
+}
+
+int termbg_is_truecolor(int color) {
+    if (color < 0)
+        return 0;
+    return (((unsigned int)color) & TERM_BG_TRUECOLOR_FLAG) != 0;
+}
+
+void termbg_decode_truecolor(int color, int *r_out, int *g_out, int *b_out) {
+    if (!termbg_is_truecolor(color)) {
+        if (r_out)
+            *r_out = 0;
+        if (g_out)
+            *g_out = 0;
+        if (b_out)
+            *b_out = 0;
+        return;
+    }
+
+    unsigned int value = (unsigned int)color & TERM_BG_TRUECOLOR_MASK;
+    if (r_out)
+        *r_out = (int)((value >> 16) & 0xFFu);
+    if (g_out)
+        *g_out = (int)((value >> 8) & 0xFFu);
+    if (b_out)
+        *b_out = (int)(value & 0xFFu);
+}
 
 static TermBgEntry *g_entries = NULL;
 static size_t g_entry_count = 0;

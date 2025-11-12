@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  ./apps/       - System applications that do not use paging.\n");
     printf("  ./commands/   - BUDOSTACK (BS) programming commands for developers.\n");
-    printf("  ./fonts/      - .psf fonts that can be set with 'setfont'.\n");
+    printf("  ./fonts/      - Folder for built-in .ttf and .psf fonts\n");
     printf("  ./games/      - Built-in games.\n");
     printf("  ./lib/        - System libraries used by applications and utilities.\n");
     printf("  ./tasks/      - Reserved for tasks. Few built-in examples provided.\n");
@@ -113,7 +113,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("/* Internet and Communications */\n");
     printf("\n");
-    printf("  ctalk    : Simple UDP based LAN chat. Start with 'ctalk myname'.\n");    
+    printf("  ctalk    : IRC like messaging tool. Type ctalk for instructions.\n");    
     printf("  exchange : Retrieves exchange rates of common currencies to euro.\n");
     printf("  inet     : Interactive internet connection manager.\n");    
     printf("  rss      : Lightweight rss news app, tested only with yle rss feed.\n");    

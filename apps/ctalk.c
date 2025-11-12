@@ -1,86 +1,543 @@
 /*
- * ctalk.c - UDP-only chat application for a local network.
+ * ctalk.c - TCP-based multi-channel chat inspired by IRC semantics.
  *
- * Design Principles:
- *   - Uses a UDP socket for chat messages and a separate thread for periodic discovery broadcasts.
- *   - Uses raw terminal (non-canonical) mode to allow character-by-character input so that incoming
- *     messages do not disturb the current user input.
- *   - When an incoming message is received, the current input is cleared (using ANSI escape sequences),
- *     the message is printed, and then the prompt (with any partially typed input) is reprinted.
- *   - In client mode, when the user sends a message, it is immediately printed locally (with a timestamp)
- *     so that the user sees it, and the subsequent network echo (which is filtered) does not cause duplicates.
- *   - Added feature: if the user types "/quit" (as the only input), a quit message ("user quit the chat.")
- *     is sent before the application exits. In addition, if a client sends a quit message, the server
- *     removes that client from its registry so that messaging between the remaining users continues normally.
- *   - Supports "/who" to list chat members and "/help" to show available commands.
- *   - To fix a bug that occurred when one client quits and only one client remains, we now always broadcast
- *     to all registered clients (i.e. we no longer exclude the sender). The client code filters out echoes,
- *     so duplicate display is avoided.
- *   - Only plain C (compiled with -std=c11) and POSIX-compliant functions are used.
+ * This implementation replaces the original UDP broadcast LAN utility with a
+ * client/server architecture that works across the public internet.  The
+ * server maintains persistent TCP connections, tracks channel membership, and
+ * relays messages with timestamps.  Clients operate in raw terminal mode so
+ * asynchronous messages do not disrupt in-progress input, mirroring the
+ * original user experience while enabling global connectivity.
  *
- * Compile with: gcc -std=c11 -pthread -o ctalk ctalk.c
+ * Usage:
+ *   Server: ctalk server <bind-address> <port>
+ *           (bind-address may be "0.0.0.0" to listen on all interfaces)
+ *   Client: ctalk client <username> <server-host> <port>
+ *
+ * Supported client commands:
+ *   /help                 Show command summary.
+ *   /join <channel>       Join (or create) a channel.
+ *   /who                  List users in the current channel.
+ *   /quit                 Disconnect from the server.
+ *   Any other text is broadcast to the current channel.
  */
 
+#define _POSIX_C_SOURCE 200809L
+
+#include <arpa/inet.h>
+#include <ctype.h>
+#include <errno.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <unistd.h>
-#include <time.h>
-#include <signal.h>
-#include <pthread.h>
-#include <fcntl.h>
-#include <termios.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <sys/select.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <termios.h>
+#include <time.h>
+#include <unistd.h>
 
-#define UDP_CHAT_PORT 60000         // UDP port used for chat messages
-#define UDP_DISCOVERY_PORT 60001    // UDP port used for server discovery broadcasts
-#define DISCOVERY_INTERVAL 5        // Seconds between UDP discovery broadcasts
-#define BUF_SIZE 1024
-#define MAX_CLIENTS  FD_SETSIZE
+#define BUF_SIZE 2048
+#define MAX_CLIENTS FD_SETSIZE
+#define MAX_USERNAME_LEN 64
+#define MAX_CHANNEL_LEN 64
+#define DEFAULT_CHANNEL "lobby"
+#define SERVER_BACKLOG 32
 
-typedef struct {
-    struct sockaddr_in addr;
-    char username[64];
-} client_t;
+static const char *help_text =
+    "Available commands:\n"
+    "  /help                 Show this help.\n"
+    "  /join <channel>       Join or create a channel.\n"
+    "  /who                  List members in the current channel.\n"
+    "  /quit                 Leave the chat.";
 
-client_t *clients[MAX_CLIENTS];
-int client_count = 0;
-pthread_mutex_t clients_mutex = PTHREAD_MUTEX_INITIALIZER;
+/* -------------------- Shared helpers -------------------- */
 
-/* Global variable holding the local username */
-const char *my_username = NULL;
-
-/* Help text listing supported commands */
-const char *help_text = "Available commands: /help, /who, /quit";
-
-/* Display help text */
-void print_help(void) {
-    printf("\r\33[2K%s\n", help_text);
-    fflush(stdout);
+static void format_timestamp(char *buf, size_t size)
+{
+    time_t now = time(NULL);
+    struct tm tm_now;
+    localtime_r(&now, &tm_now);
+    strftime(buf, size, "%Y-%m-%d %H:%M:%S", &tm_now);
 }
 
-/* Terminal raw mode management */
+static void trim_trailing_whitespace(char *s)
+{
+    size_t len = strlen(s);
+    while (len > 0) {
+        unsigned char c = (unsigned char)s[len - 1];
+        if (c == '\n' || c == '\r' || isspace(c)) {
+            s[len - 1] = '\0';
+            len--;
+        } else {
+            break;
+        }
+    }
+}
+
+static int send_all(int fd, const char *buf, size_t len)
+{
+    while (len > 0) {
+        ssize_t n = send(fd, buf, len, 0);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue;
+            }
+            return -1;
+        }
+        if (n == 0) {
+            return -1;
+        }
+        buf += (size_t)n;
+        len -= (size_t)n;
+    }
+    return 0;
+}
+
+static int send_line(int fd, const char *line)
+{
+    size_t len = strlen(line);
+    return send_all(fd, line, len);
+}
+
+static int send_line_with_newline(int fd, const char *line)
+{
+    char buf[BUF_SIZE];
+    size_t len = strlen(line);
+    if (len > sizeof(buf) - 2) {
+        len = sizeof(buf) - 2;
+    }
+    memcpy(buf, line, len);
+    buf[len++] = '\n';
+    buf[len] = '\0';
+    return send_all(fd, buf, len);
+}
+
+/* -------------------- Server implementation -------------------- */
+
+typedef struct {
+    int fd;
+    bool registered;
+    char username[MAX_USERNAME_LEN];
+    char channel[MAX_CHANNEL_LEN];
+    char buffer[BUF_SIZE];
+    size_t buffer_len;
+} client_t;
+
+static client_t clients[MAX_CLIENTS];
+
+static void init_clients(void)
+{
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        clients[i].fd = -1;
+        clients[i].registered = false;
+        clients[i].buffer_len = 0;
+        clients[i].username[0] = '\0';
+        clients[i].channel[0] = '\0';
+    }
+}
+
+static client_t *find_client_slot(void)
+{
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].fd == -1) {
+            return &clients[i];
+        }
+    }
+    return NULL;
+}
+
+static client_t *find_client_by_username(const char *username)
+{
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].fd != -1 && clients[i].registered &&
+            strcmp(clients[i].username, username) == 0) {
+            return &clients[i];
+        }
+    }
+    return NULL;
+}
+
+static void broadcast_channel(const char *channel, const char *message, const client_t *exclude)
+{
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].fd == -1 || !clients[i].registered) {
+            continue;
+        }
+        if (strcmp(clients[i].channel, channel) != 0) {
+            continue;
+        }
+        if (exclude != NULL && clients[i].fd == exclude->fd) {
+            continue;
+        }
+        if (send_line(clients[i].fd, message) < 0) {
+            close(clients[i].fd);
+            clients[i].fd = -1;
+            clients[i].registered = false;
+        }
+    }
+}
+
+static bool is_valid_name(const char *name, size_t max_len)
+{
+    size_t len = strlen(name);
+    if (len == 0 || len >= max_len) {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)name[i];
+        if (isspace(c) || c == ',') {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void disconnect_client(client_t *client, const char *reason)
+{
+    if (client->fd == -1) {
+        return;
+    }
+    if (client->registered) {
+        char timestamp[64];
+        char msg[BUF_SIZE];
+        format_timestamp(timestamp, sizeof(timestamp));
+        snprintf(msg, sizeof(msg), "[%s] %s left channel %s (%s)\n",
+                 timestamp, client->username, client->channel,
+                 reason != NULL ? reason : "disconnected");
+        broadcast_channel(client->channel, msg, client);
+    }
+    close(client->fd);
+    client->fd = -1;
+    client->registered = false;
+    client->buffer_len = 0;
+    client->username[0] = '\0';
+    client->channel[0] = '\0';
+}
+
+static void send_help(client_t *client)
+{
+    char buf[BUF_SIZE];
+    snprintf(buf, sizeof(buf), "%s\n", help_text);
+    if (send_line(client->fd, buf) < 0) {
+        disconnect_client(client, "write failure");
+    }
+}
+
+static void send_who(client_t *client)
+{
+    char buf[BUF_SIZE];
+    size_t offset = 0;
+    offset += (size_t)snprintf(buf + offset, sizeof(buf) - offset,
+                               "Users in %s: ", client->channel);
+    bool first = true;
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (clients[i].fd == -1 || !clients[i].registered) {
+            continue;
+        }
+        if (strcmp(clients[i].channel, client->channel) != 0) {
+            continue;
+        }
+        if (!first) {
+            offset += (size_t)snprintf(buf + offset, sizeof(buf) - offset, ", ");
+        }
+        first = false;
+        offset += (size_t)snprintf(buf + offset, sizeof(buf) - offset, "%s",
+                                   clients[i].username);
+        if (offset >= sizeof(buf)) {
+            break;
+        }
+    }
+    offset += (size_t)snprintf(buf + offset, sizeof(buf) - offset, "\n");
+    if (send_line(client->fd, buf) < 0) {
+        disconnect_client(client, "write failure");
+    }
+}
+
+static void handle_join(client_t *client, const char *channel)
+{
+    if (!is_valid_name(channel, MAX_CHANNEL_LEN)) {
+        const char *err = "Channel names must be non-empty, without spaces or commas.\n";
+        if (send_line(client->fd, err) < 0) {
+            disconnect_client(client, "write failure");
+        }
+        return;
+    }
+    if (strcmp(client->channel, channel) == 0) {
+        const char *msg = "You are already in that channel.\n";
+        if (send_line(client->fd, msg) < 0) {
+            disconnect_client(client, "write failure");
+        }
+        return;
+    }
+    char timestamp[64];
+    char buf[BUF_SIZE];
+    format_timestamp(timestamp, sizeof(timestamp));
+    snprintf(buf, sizeof(buf), "[%s] %s left channel %s\n", timestamp,
+             client->username, client->channel);
+    broadcast_channel(client->channel, buf, client);
+    snprintf(buf, sizeof(buf), "[%s] %s joined channel %s\n", timestamp,
+             client->username, channel);
+    strncpy(client->channel, channel, sizeof(client->channel) - 1);
+    client->channel[sizeof(client->channel) - 1] = '\0';
+    broadcast_channel(client->channel, buf, NULL);
+}
+
+static void process_client_line(client_t *client, char *line)
+{
+    trim_trailing_whitespace(line);
+    if (client->registered) {
+        if (line[0] == '\0') {
+            return;
+        }
+        if (line[0] == '/') {
+            if (strcmp(line, "/help") == 0) {
+                send_help(client);
+                return;
+            }
+            if (strcmp(line, "/who") == 0) {
+                send_who(client);
+                return;
+            }
+            if (strcmp(line, "/quit") == 0) {
+                disconnect_client(client, "quit");
+                return;
+            }
+            if (strncmp(line, "/join ", 6) == 0) {
+                const char *channel = line + 6;
+                handle_join(client, channel);
+                return;
+            }
+            const char *unknown = "Unknown command. Type /help for assistance.\n";
+            if (send_line(client->fd, unknown) < 0) {
+                disconnect_client(client, "write failure");
+            }
+            return;
+        }
+        char timestamp[64];
+        char message[BUF_SIZE];
+        format_timestamp(timestamp, sizeof(timestamp));
+        snprintf(message, sizeof(message), "[%s] %s: %s\n", timestamp,
+                 client->username, line);
+        broadcast_channel(client->channel, message, NULL);
+    } else {
+        if (!is_valid_name(line, MAX_USERNAME_LEN)) {
+            const char *err = "Invalid username. Use up to 63 visible characters without spaces.\n";
+            if (send_line(client->fd, err) < 0) {
+                disconnect_client(client, "write failure");
+            }
+            return;
+        }
+        if (find_client_by_username(line) != NULL) {
+            const char *err = "Username already in use. Choose another.\n";
+            if (send_line(client->fd, err) < 0) {
+                disconnect_client(client, "write failure");
+            }
+            return;
+        }
+        strncpy(client->username, line, sizeof(client->username) - 1);
+        client->username[sizeof(client->username) - 1] = '\0';
+        strncpy(client->channel, DEFAULT_CHANNEL, sizeof(client->channel) - 1);
+        client->channel[sizeof(client->channel) - 1] = '\0';
+        client->registered = true;
+        const char *welcome = "Welcome to ctalk! Type /help for commands.\n";
+        if (send_line(client->fd, welcome) < 0) {
+            disconnect_client(client, "write failure");
+            return;
+        }
+        char timestamp[64];
+        char msg[BUF_SIZE];
+        format_timestamp(timestamp, sizeof(timestamp));
+        snprintf(msg, sizeof(msg), "[%s] %s joined channel %s\n", timestamp,
+                 client->username, client->channel);
+        broadcast_channel(client->channel, msg, NULL);
+    }
+}
+
+static void handle_client_io(client_t *client)
+{
+    char recv_buf[BUF_SIZE];
+    ssize_t n = recv(client->fd, recv_buf, sizeof(recv_buf), 0);
+    if (n < 0) {
+        if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+            return;
+        }
+        disconnect_client(client, "read failure");
+        return;
+    }
+    if (n == 0) {
+        disconnect_client(client, "remote closed");
+        return;
+    }
+    size_t offset = 0U;
+    while (offset < (size_t)n) {
+        if (client->buffer_len >= sizeof(client->buffer) - 1) {
+            const char *err = "Input line too long. Clearing buffer.\n";
+            if (send_line(client->fd, err) < 0) {
+                disconnect_client(client, "write failure");
+                return;
+            }
+            client->buffer_len = 0;
+        }
+        size_t to_copy = (size_t)n - offset;
+        if (to_copy > sizeof(client->buffer) - 1 - client->buffer_len) {
+            to_copy = sizeof(client->buffer) - 1 - client->buffer_len;
+        }
+        memcpy(client->buffer + client->buffer_len, recv_buf + offset, to_copy);
+        client->buffer_len += to_copy;
+        offset += to_copy;
+        client->buffer[client->buffer_len] = '\0';
+        char *newline = strchr(client->buffer, '\n');
+        while (newline != NULL) {
+            *newline = '\0';
+            process_client_line(client, client->buffer);
+            if (client->fd == -1) {
+                return;
+            }
+            size_t remaining = client->buffer_len - (size_t)(newline - client->buffer + 1);
+            memmove(client->buffer, newline + 1, remaining);
+            client->buffer_len = remaining;
+            client->buffer[client->buffer_len] = '\0';
+            newline = strchr(client->buffer, '\n');
+        }
+    }
+}
+
+static void run_server(const char *bind_addr, const char *port)
+{
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    struct addrinfo *res = NULL;
+    int rc = getaddrinfo(bind_addr, port, &hints, &res);
+    if (rc != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rc));
+        exit(EXIT_FAILURE);
+    }
+
+    int listen_fd = -1;
+    for (struct addrinfo *p = res; p != NULL; p = p->ai_next) {
+        listen_fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (listen_fd < 0) {
+            continue;
+        }
+        int opt = 1;
+        if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
+            perror("setsockopt");
+            close(listen_fd);
+            listen_fd = -1;
+            continue;
+        }
+        if (bind(listen_fd, p->ai_addr, p->ai_addrlen) < 0) {
+            perror("bind");
+            close(listen_fd);
+            listen_fd = -1;
+            continue;
+        }
+        if (listen(listen_fd, SERVER_BACKLOG) < 0) {
+            perror("listen");
+            close(listen_fd);
+            listen_fd = -1;
+            continue;
+        }
+        break;
+    }
+    freeaddrinfo(res);
+
+    if (listen_fd < 0) {
+        fprintf(stderr, "Failed to set up server socket.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("[INFO] ctalk server listening on %s:%s\n", bind_addr, port);
+    init_clients();
+
+    while (1) {
+        fd_set read_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(listen_fd, &read_fds);
+        int max_fd = listen_fd;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].fd != -1) {
+                FD_SET(clients[i].fd, &read_fds);
+                if (clients[i].fd > max_fd) {
+                    max_fd = clients[i].fd;
+                }
+            }
+        }
+        int ready = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("select");
+            break;
+        }
+        if (FD_ISSET(listen_fd, &read_fds)) {
+            struct sockaddr_in cli_addr;
+            socklen_t cli_len = sizeof(cli_addr);
+            int fd = accept(listen_fd, (struct sockaddr *)&cli_addr, &cli_len);
+            if (fd < 0) {
+                if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) {
+                    perror("accept");
+                }
+            } else {
+                client_t *slot = find_client_slot();
+                if (slot == NULL) {
+                    const char *msg = "Server full. Try again later.\n";
+                    send_line(fd, msg);
+                    close(fd);
+                } else {
+                    slot->fd = fd;
+                    slot->registered = false;
+                    slot->buffer_len = 0;
+                    slot->username[0] = '\0';
+                    slot->channel[0] = '\0';
+                    const char *prompt = "Enter your username:\n";
+                    if (send_line(fd, prompt) < 0) {
+                        close(fd);
+                        slot->fd = -1;
+                    }
+                }
+            }
+        }
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (clients[i].fd != -1 && FD_ISSET(clients[i].fd, &read_fds)) {
+                handle_client_io(&clients[i]);
+            }
+        }
+    }
+
+    close(listen_fd);
+}
+
+/* -------------------- Client implementation -------------------- */
+
 static struct termios orig_termios;
 
-void disable_raw_mode(void) {
+static void disable_raw_mode(void)
+{
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
-void enable_raw_mode(void) {
+static void enable_raw_mode(void)
+{
     if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
         perror("tcgetattr");
         exit(EXIT_FAILURE);
     }
     atexit(disable_raw_mode);
     struct termios raw = orig_termios;
-    /* Disable canonical mode and echo */
     raw.c_lflag &= ~(ICANON | ECHO);
-    /* Read one byte at a time */
     raw.c_cc[VMIN] = 1;
     raw.c_cc[VTIME] = 0;
     if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
@@ -89,608 +546,213 @@ void enable_raw_mode(void) {
     }
 }
 
-/* Helper to clear current line and reprint prompt with current input */
-void reprint_prompt(const char *buf) {
-    /* \r returns to start of line, \33[2K clears the line */
+static void reprint_prompt(const char *buf)
+{
     printf("\r\33[2K>> %s", buf);
     fflush(stdout);
 }
 
-/* Check if a client is already registered by comparing IP and port */
-int find_client(struct sockaddr_in *addr) {
-    for (int i = 0; i < client_count; i++) {
-        if (clients[i]->addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
-            clients[i]->addr.sin_port == addr->sin_port) {
-            return i;
-        }
-    }
-    return -1;
-}
+static int connect_to_server(const char *host, const char *port)
+{
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
 
-/* Add a new client */
-void add_client(client_t *client) {
-    pthread_mutex_lock(&clients_mutex);
-    if (client_count < MAX_CLIENTS) {
-        clients[client_count++] = client;
+    struct addrinfo *res = NULL;
+    int rc = getaddrinfo(host, port, &hints, &res);
+    if (rc != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rc));
+        return -1;
     }
-    pthread_mutex_unlock(&clients_mutex);
-}
 
-/* Remove a client from the registry given its address */
-void remove_client(struct sockaddr_in *addr) {
-    pthread_mutex_lock(&clients_mutex);
-    for (int i = 0; i < client_count; i++) {
-        if (clients[i]->addr.sin_addr.s_addr == addr->sin_addr.s_addr &&
-            clients[i]->addr.sin_port == addr->sin_port) {
-            free(clients[i]);
-            for (int j = i; j < client_count - 1; j++) {
-                clients[j] = clients[j+1];
-            }
-            client_count--;
-            break;
-        }
-    }
-    pthread_mutex_unlock(&clients_mutex);
-}
-
-/* Build a comma-separated list of all chat members. */
-void build_client_list(char *out, size_t size) {
-    pthread_mutex_lock(&clients_mutex);
-    snprintf(out, size, "Chat members: %s", my_username);
-    size_t len = strlen(out);
-    for (int i = 0; i < client_count; i++) {
-        if (len + strlen(clients[i]->username) + 2 < size) {
-            snprintf(out + len, size - len, ", %s", clients[i]->username);
-            len = strlen(out);
-        }
-    }
-    pthread_mutex_unlock(&clients_mutex);
-}
-
-/* Broadcast a message to all registered clients.
- * Note: We removed the exclusion parameter to ensure every registered client gets the message.
- * The client side filters out echoes of its own message.
- */
-void broadcast_message(const char *msg, struct sockaddr_in *exclude) {
-    pthread_mutex_lock(&clients_mutex);
-    for (int i = 0; i < client_count; i++) {
-        /* Only use the exclusion if desired. For our fix we pass exclude as NULL when broadcasting.
-         * (This avoids the case where the sender is the only client in the registry.)
-         */
-        if (exclude != NULL) {
-            if (clients[i]->addr.sin_addr.s_addr == exclude->sin_addr.s_addr &&
-                clients[i]->addr.sin_port == exclude->sin_port) {
-                continue;
-            }
-        }
-        int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    int sock = -1;
+    for (struct addrinfo *p = res; p != NULL; p = p->ai_next) {
+        sock = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
         if (sock < 0) {
-            perror("socket");
             continue;
         }
-        if (sendto(sock, msg, strlen(msg), 0,
-                   (struct sockaddr *)&clients[i]->addr, sizeof(clients[i]->addr)) < 0) {
-            perror("sendto");
+        if (connect(sock, p->ai_addr, p->ai_addrlen) == 0) {
+            break;
         }
         close(sock);
+        sock = -1;
     }
-    pthread_mutex_unlock(&clients_mutex);
+    freeaddrinfo(res);
+
+    return sock;
 }
 
-/* Get a formatted timestamp string */
-void get_timestamp(char *buf, size_t size) {
-    time_t now = time(NULL);
-    struct tm *t = localtime(&now);
-    strftime(buf, size, "%Y-%m-%d %H:%M:%S", t);
-}
-
-/* Helper to ensure message ends with a newline */
-void ensure_newline(char *msg, size_t size) {
-    size_t len = strlen(msg);
-    if (len > 0 && msg[len - 1] != '\n') {
-        if (len + 1 < size) {
-            msg[len] = '\n';
-            msg[len + 1] = '\0';
-        }
+static void run_client(const char *username, const char *host, const char *port)
+{
+    int sock = connect_to_server(host, port);
+    if (sock < 0) {
+        fprintf(stderr, "Failed to connect to %s:%s\n", host, port);
+        exit(EXIT_FAILURE);
     }
-}
 
-/* UDP discovery broadcaster thread */
-void *udp_discovery_thread(void *arg) {
-    (void)arg;
-    int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udp_sock < 0) {
-        perror("UDP socket");
-        pthread_exit(NULL);
-    }
-    int broadcastEnable = 1;
-    if (setsockopt(udp_sock, SOL_SOCKET, SO_BROADCAST, &broadcastEnable, sizeof(broadcastEnable)) < 0) {
-        perror("setsockopt SO_BROADCAST");
-        close(udp_sock);
-        pthread_exit(NULL);
-    }
-    struct sockaddr_in broadcast_addr;
-    memset(&broadcast_addr, 0, sizeof(broadcast_addr));
-    broadcast_addr.sin_family = AF_INET;
-    broadcast_addr.sin_port = htons(UDP_DISCOVERY_PORT);
-    broadcast_addr.sin_addr.s_addr = inet_addr("255.255.255.255");
-
-    const char *broadcast_msg = "CTALK_SERVER";
-    fprintf(stdout, "[INFO] Starting UDP discovery broadcast on port %d every %d seconds.\n", UDP_DISCOVERY_PORT, DISCOVERY_INTERVAL);
-    while (1) {
-        if (sendto(udp_sock, broadcast_msg, strlen(broadcast_msg), 0,
-                   (struct sockaddr *)&broadcast_addr, sizeof(broadcast_addr)) < 0) {
-            perror("sendto");
-        }
-        sleep(DISCOVERY_INTERVAL);
-    }
-    close(udp_sock);
-    pthread_exit(NULL);
-}
-
-/*
- * Server mode: Listen for UDP chat messages and broadcast them.
- * The operator uses a raw-mode line editor so that incoming messages do not disturb the current input.
- * When the operator types "/quit", a quit message is broadcast before the entire application exits.
- * Also, if a client sends a quit message, the server broadcasts it and removes the client.
- *
- * Modification:
- *   - We now always broadcast messages to all registered clients (i.e. exclude parameter is set to NULL)
- *     to avoid the situation where a sole remaining client never receives messages.
- */
-void run_server(void) {
-    printf("[INFO] Starting ctalk server (UDP-only) on chat port %d...\n", UDP_CHAT_PORT);
     enable_raw_mode();
 
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        exit(EXIT_FAILURE);
+    char intro_buf[BUF_SIZE];
+    ssize_t intro_len = recv(sock, intro_buf, sizeof(intro_buf) - 1, 0);
+    if (intro_len > 0) {
+        intro_buf[intro_len] = '\0';
+        printf("%s", intro_buf);
     }
-    struct sockaddr_in serv_addr;
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(UDP_CHAT_PORT);
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        perror("bind");
+
+    if (send_line_with_newline(sock, username) < 0) {
+        perror("send");
+        disable_raw_mode();
         close(sock);
         exit(EXIT_FAILURE);
     }
 
-    /* Start UDP discovery broadcast thread */
-    pthread_t disc_thread;
-    if (pthread_create(&disc_thread, NULL, udp_discovery_thread, NULL) != 0) {
-        perror("pthread_create");
-    }
-
-    char buf[BUF_SIZE];
     char input_buf[BUF_SIZE] = {0};
-    int input_len = 0;
-
-    /* Print initial prompt */
+    size_t input_len = 0;
     printf(">> ");
     fflush(stdout);
 
-    while (1) {
-        fd_set read_fds;
-        FD_ZERO(&read_fds);
-        FD_SET(sock, &read_fds);
-        FD_SET(STDIN_FILENO, &read_fds);
-        int maxfd = sock > STDIN_FILENO ? sock : STDIN_FILENO;
-
-        int activity = select(maxfd + 1, &read_fds, NULL, NULL, NULL);
-        if (activity < 0) {
-            perror("select");
-            continue;
-        }
-
-        /* Handle operator input (non-canonical, character-by-character) */
-        if (FD_ISSET(STDIN_FILENO, &read_fds)) {
-            char c;
-            ssize_t nread = read(STDIN_FILENO, &c, 1);
-            if (nread < 0) {
-                perror("read");
-                continue;
-            }
-            if (c == '\n' || c == '\r') {
-                input_buf[input_len] = '\0';
-                /* Check for graceful exit command */
-                if (strcmp(input_buf, "/quit") == 0) {
-                    char timestamp[64];
-                    char quit_msg[BUF_SIZE];
-                    get_timestamp(timestamp, sizeof(timestamp));
-                    snprintf(quit_msg, sizeof(quit_msg), "%s quit the chat.\n", my_username);
-                    broadcast_message(quit_msg, NULL);
-                    printf("\r\33[2K[INFO] Exiting chat...\n");
-                    disable_raw_mode();
-                    close(sock);
-                    exit(EXIT_SUCCESS);
-                }
-                if (strcmp(input_buf, "/help") == 0) {
-                    print_help();
-                    input_len = 0;
-                    input_buf[0] = '\0';
-                    printf(">> ");
-                    fflush(stdout);
-                    continue;
-                }
-                if (strcmp(input_buf, "/who") == 0) {
-                    char list_buf[BUF_SIZE];
-                    build_client_list(list_buf, sizeof(list_buf));
-                    printf("\r\33[2K%s\n", list_buf);
-                    input_len = 0;
-                    input_buf[0] = '\0';
-                    printf(">> ");
-                    fflush(stdout);
-                    continue;
-                }
-                if (input_len > 0) {
-                    char timestamp[64];
-                    char message[BUF_SIZE];
-                    get_timestamp(timestamp, sizeof(timestamp));
-                    /* Construct message safely without truncation */
-                    snprintf(message, sizeof(message), "[%s] %s - ", timestamp, my_username);
-                    strncat(message, input_buf, sizeof(message) - strlen(message) - 1);
-                    ensure_newline(message, sizeof(message));
-                    broadcast_message(message, NULL);
-                    /* Print own message immediately */
-                    printf("\r\33[2K%s", message);
-                }
-                input_len = 0;
-                input_buf[0] = '\0';
-                printf(">> ");
-                fflush(stdout);
-            } else if (c == 127 || c == '\b') { /* backspace */
-                if (input_len > 0) {
-                    input_len--;
-                    input_buf[input_len] = '\0';
-                }
-                reprint_prompt(input_buf);
-            } else {
-                if (input_len < BUF_SIZE - 1) {
-                    input_buf[input_len++] = c;
-                    input_buf[input_len] = '\0';
-                }
-                reprint_prompt(input_buf);
-            }
-        }
-
-        /* Handle incoming UDP messages from clients */
-        if (FD_ISSET(sock, &read_fds)) {
-            struct sockaddr_in client_addr;
-            socklen_t addrlen = sizeof(client_addr);
-            memset(buf, 0, BUF_SIZE);
-            ssize_t n = recvfrom(sock, buf, BUF_SIZE - 1, 0,
-                                 (struct sockaddr *)&client_addr, &addrlen);
-            if (n < 0) {
-                perror("recvfrom");
-                continue;
-            }
-            buf[n] = '\0';
-
-            /* Filter out echo messages from our own username */
-            if (strstr(buf, my_username) != NULL && strstr(buf, " - ") != NULL) {
-                char *start = strchr(buf, ']');
-                if (start) {
-                    start++;
-                    while (*start == ' ') start++;
-                    char sender[64];
-                    char *dash = strstr(start, " - ");
-                    if (dash && (size_t)(dash - start) < sizeof(sender)) {
-                        memcpy(sender, start, dash - start);
-                        sender[dash - start] = '\0';
-                        if (strcmp(sender, my_username) == 0) {
-                            continue;
-                        }
-                    }
-                }
-            }
-
-            int idx = find_client(&client_addr);
-            if (idx < 0) {
-                /* New client registration */
-                if (strstr(buf, "quit the chat.") != NULL) {
-                    /* Do not register a client that immediately quits */
-                    continue;
-                }
-                client_t *client = malloc(sizeof(client_t));
-                if (!client) {
-                    perror("malloc");
-                    continue;
-                }
-                client->addr = client_addr;
-                strncpy(client->username, buf, sizeof(client->username) - 1);
-                client->username[sizeof(client->username) - 1] = '\0';
-                add_client(client);
-
-                char timestamp[64];
-                char join_msg[BUF_SIZE];
-                get_timestamp(timestamp, sizeof(timestamp));
-                snprintf(join_msg, sizeof(join_msg), "[%s] %s joined the chat.\n", timestamp, client->username);
-                printf("\r\33[2K%s", join_msg);
-                reprint_prompt(input_buf);
-                broadcast_message(join_msg, NULL);
-            } else {
-                /* Regular chat message or command from a known client */
-                if (strcmp(buf, "/help") == 0) {
-                    char help_buf[BUF_SIZE];
-                    snprintf(help_buf, sizeof(help_buf), "%s", help_text);
-                    ensure_newline(help_buf, sizeof(help_buf));
-                    int resp_sock = socket(AF_INET, SOCK_DGRAM, 0);
-                    if (resp_sock < 0) {
-                        perror("socket");
-                    } else {
-                        if (sendto(resp_sock, help_buf, strlen(help_buf), 0,
-                                   (struct sockaddr *)&client_addr, sizeof(client_addr)) < 0) {
-                            perror("sendto");
-                        }
-                        close(resp_sock);
-                    }
-                    reprint_prompt(input_buf);
-                    continue;
-                }
-                if (strcmp(buf, "/who") == 0) {
-                    char list_buf[BUF_SIZE];
-                    build_client_list(list_buf, sizeof(list_buf));
-                    ensure_newline(list_buf, sizeof(list_buf));
-                    int resp_sock = socket(AF_INET, SOCK_DGRAM, 0);
-                    if (resp_sock < 0) {
-                        perror("socket");
-                    } else {
-                        if (sendto(resp_sock, list_buf, strlen(list_buf), 0,
-                                   (struct sockaddr *)&client_addr, sizeof(client_addr)) < 0) {
-                            perror("sendto");
-                        }
-                        close(resp_sock);
-                    }
-                    reprint_prompt(input_buf);
-                    continue;
-                }
-                char timestamp[64];
-                char formatted[BUF_SIZE];
-                get_timestamp(timestamp, sizeof(timestamp));
-                pthread_mutex_lock(&clients_mutex);
-                const char *sender = clients[idx]->username;
-                pthread_mutex_unlock(&clients_mutex);
-                /* Safely combine timestamp, sender, and message */
-                snprintf(formatted, sizeof(formatted), "[%s] %s - ", timestamp, sender);
-                strncat(formatted, buf, sizeof(formatted) - strlen(formatted) - 1);
-                ensure_newline(formatted, sizeof(formatted));
-                printf("\r\33[2K%s", formatted);
-                reprint_prompt(input_buf);
-                /* If the message is a quit message, broadcast it and remove the client */
-                if (strstr(buf, "quit the chat.") != NULL) {
-                    broadcast_message(formatted, NULL);
-                    remove_client(&client_addr);
-                    continue;
-                }
-                broadcast_message(formatted, NULL);
-            }
-        }
-    }
-    close(sock);
-    exit(EXIT_SUCCESS);
-}
-
-/*
- * Client mode: Discover the server, register the username, and exchange chat messages.
- * The client uses a raw-mode line editor so that incoming messages do not disturb the partial input.
- * When the user sends a message, if the input equals "/quit", a quit message is sent before the client gracefully exits.
- */
-void run_client(const char *username, const char *server_ip) {
-    enable_raw_mode();
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        perror("socket");
-        exit(EXIT_FAILURE);
-    }
-    struct sockaddr_in serv_addr;
-    memset(&serv_addr, 0, sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(UDP_CHAT_PORT);
-    if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0) {
-        perror("inet_pton");
-        close(sock);
-        exit(EXIT_FAILURE);
-    }
-    /* Send registration (username) */
-    if (sendto(sock, username, strlen(username), 0,
-               (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        perror("sendto");
-    }
-    printf("[INFO] Registered as '%s' with ctalk server at %s\n", username, server_ip);
-
-    char buf[BUF_SIZE];
-    char input_buf[BUF_SIZE] = {0};
-    int input_len = 0;
-    printf(">> ");
-    fflush(stdout);
-
-    int maxfd = sock > STDIN_FILENO ? sock : STDIN_FILENO;
+    char recv_buffer[BUF_SIZE];
+    size_t pending_len = 0;
+    char pending[BUF_SIZE];
 
     while (1) {
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(STDIN_FILENO, &read_fds);
         FD_SET(sock, &read_fds);
-        int activity = select(maxfd + 1, &read_fds, NULL, NULL, NULL);
-        if (activity < 0) {
+        int max_fd = sock > STDIN_FILENO ? sock : STDIN_FILENO;
+        int ready = select(max_fd + 1, &read_fds, NULL, NULL, NULL);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
             perror("select");
             break;
         }
-        /* Handle local input */
         if (FD_ISSET(STDIN_FILENO, &read_fds)) {
             char c;
             ssize_t nread = read(STDIN_FILENO, &c, 1);
             if (nread < 0) {
                 perror("read");
-                continue;
+                break;
             }
-            if (c == '\n' || c == '\r') {
+            if (c == '\r' || c == '\n') {
                 input_buf[input_len] = '\0';
-                /* Check for graceful exit command */
-                if (strcmp(input_buf, "/quit") == 0) {
-                    char timestamp[64];
-                    char quit_msg[BUF_SIZE];
-                    get_timestamp(timestamp, sizeof(timestamp));
-                    snprintf(quit_msg, sizeof(quit_msg), "[%s] %s quit the chat.\n", timestamp, username);
-                    if (sendto(sock, quit_msg, strlen(quit_msg), 0,
-                               (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-                        perror("sendto");
-                    }
-                    printf("\r\33[2K[INFO] Exiting chat...\n");
-                    disable_raw_mode();
-                    close(sock);
-                    exit(EXIT_SUCCESS);
+                if (send_line_with_newline(sock, input_buf) < 0) {
+                    perror("send");
+                    break;
                 }
-                if (strcmp(input_buf, "/help") == 0) {
-                    print_help();
-                } else if (strcmp(input_buf, "/who") == 0) {
-                    if (sendto(sock, input_buf, strlen(input_buf), 0,
-                               (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-                        perror("sendto");
-                    }
-                } else if (input_len > 0) {
-                    if (sendto(sock, input_buf, strlen(input_buf), 0,
-                               (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-                        perror("sendto");
-                    }
-                    /* Format and immediately print the client's own message */
-                    char timestamp[64];
-                    char message[BUF_SIZE];
-                    get_timestamp(timestamp, sizeof(timestamp));
-                    /* Construct client's message without overflowing buffer */
-                    snprintf(message, sizeof(message), "[%s] %s - ", timestamp, username);
-                    strncat(message, input_buf, sizeof(message) - strlen(message) - 1);
-                    ensure_newline(message, sizeof(message));
-                    printf("\r\33[2K%s", message);
+                if (strcmp(input_buf, "/quit") == 0) {
+                    printf("\r\33[2K[INFO] Disconnecting...\n");
+                    goto cleanup;
                 }
                 input_len = 0;
                 input_buf[0] = '\0';
                 printf(">> ");
                 fflush(stdout);
-            } else if (c == 127 || c == '\b') { /* backspace */
+            } else if (c == 127 || c == '\b') {
                 if (input_len > 0) {
                     input_len--;
                     input_buf[input_len] = '\0';
                 }
                 reprint_prompt(input_buf);
-            } else {
-                if (input_len < BUF_SIZE - 1) {
+            } else if (isprint((unsigned char)c)) {
+                if (input_len < sizeof(input_buf) - 1) {
                     input_buf[input_len++] = c;
                     input_buf[input_len] = '\0';
                 }
                 reprint_prompt(input_buf);
             }
         }
-        /* Handle incoming messages */
         if (FD_ISSET(sock, &read_fds)) {
-            struct sockaddr_in from_addr;
-            socklen_t addrlen = sizeof(from_addr);
-            memset(buf, 0, BUF_SIZE);
-            ssize_t n = recvfrom(sock, buf, BUF_SIZE - 1, 0,
-                                 (struct sockaddr *)&from_addr, &addrlen);
+            ssize_t n = recv(sock, recv_buffer, sizeof(recv_buffer), 0);
             if (n < 0) {
-                perror("recvfrom");
-                continue;
-            }
-            buf[n] = '\0';
-            /* Parse formatted message to extract sender.
-             * Expected format: "[timestamp] <username> - <message>"
-             */
-            char *start = strchr(buf, ']');
-            if (start) {
-                start++;
-                while (*start == ' ') start++;
-                char sender[64];
-                char *dash = strstr(start, " - ");
-                if (dash && (size_t)(dash - start) < sizeof(sender)) {
-                    memcpy(sender, start, dash - start);
-                    sender[dash - start] = '\0';
-                    /* Filter out the echo of our own message */
-                    if (strcmp(sender, username) == 0) {
-                        continue;
-                    }
+                if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                    continue;
                 }
+                perror("recv");
+                break;
             }
-            ensure_newline(buf, sizeof(buf));
-            printf("\r\33[2K%s", buf);
-            reprint_prompt(input_buf);
+            if (n == 0) {
+                printf("\r\33[2K[INFO] Server closed the connection.\n");
+                goto cleanup;
+            }
+            size_t offset = 0U;
+            while (offset < (size_t)n) {
+                size_t to_copy = (size_t)n - offset;
+                if (to_copy > sizeof(pending) - 1 - pending_len) {
+                    to_copy = sizeof(pending) - 1 - pending_len;
+                }
+                memcpy(pending + pending_len, recv_buffer + offset, to_copy);
+                pending_len += to_copy;
+                offset += to_copy;
+                pending[pending_len] = '\0';
+                char *newline = strchr(pending, '\n');
+                while (newline != NULL) {
+                    *newline = '\0';
+                    printf("\r\33[2K%s\n", pending);
+                    pending_len -= (size_t)(newline - pending + 1);
+                    memmove(pending, newline + 1, pending_len);
+                    pending[pending_len] = '\0';
+                    newline = strchr(pending, '\n');
+                }
+                reprint_prompt(input_buf);
+            }
         }
     }
+
+    printf("\r\33[2K[INFO] Connection lost.\n");
+
+cleanup:
+    disable_raw_mode();
     close(sock);
     exit(EXIT_SUCCESS);
 }
 
-/*
- * Discover the server by listening for a UDP broadcast on UDP_DISCOVERY_PORT.
- * If a "CTALK_SERVER" broadcast is received within 10 seconds, returns the sender's IP.
- */
-char *discover_server(void) {
-    int udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udp_sock < 0) {
-        perror("socket");
-        return NULL;
-    }
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(UDP_DISCOVERY_PORT);
-    addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(udp_sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("bind");
-        close(udp_sock);
-        return NULL;
-    }
-    fprintf(stdout, "[INFO] Listening for ctalk server broadcast on UDP port %d (timeout 10 seconds)...\n", UDP_DISCOVERY_PORT);
-    struct timeval tv;
-    tv.tv_sec = 10;
-    tv.tv_usec = 0;
-    if (setsockopt(udp_sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof(tv)) < 0) {
-        perror("setsockopt");
-        close(udp_sock);
-        return NULL;
-    }
-    char buffer[128];
-    struct sockaddr_in sender;
-    socklen_t sender_len = sizeof(sender);
-    int n = recvfrom(udp_sock, buffer, sizeof(buffer) - 1, 0, (struct sockaddr *)&sender, &sender_len);
-    if (n < 0) {
-        perror("recvfrom");
-        close(udp_sock);
-        return NULL;
-    }
-    buffer[n] = '\0';
-    char *server_ip = NULL;
-    if (strcmp(buffer, "CTALK_SERVER") == 0) {
-        server_ip = malloc(INET_ADDRSTRLEN);
-        if (server_ip) {
-            inet_ntop(AF_INET, &(sender.sin_addr), server_ip, INET_ADDRSTRLEN);
-            fprintf(stdout, "[INFO] Received ctalk server broadcast from %s\n", server_ip);
-        }
-    }
-    close(udp_sock);
-    return server_ip;
+/* -------------------- Entry point -------------------- */
+
+static void print_usage(const char *prog)
+{
+    fprintf(stderr,
+            "Usage:\n"
+            "  %s server <bind-address> <port>\n"
+            "  %s client <username> <server-host> <port>\n",
+            prog, prog);
 }
 
-int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s username\n", argv[0]);
-        exit(EXIT_FAILURE);
-    }
-    const char *username = argv[1];
-    my_username = username;
-    fprintf(stdout, "[INFO] Starting ctalk instance with username '%s'\n", username);
+int main(int argc, char *argv[])
+{
+    signal(SIGPIPE, SIG_IGN);
 
-    char *server_ip = discover_server();
-    if (server_ip != NULL) {
-        printf("[INFO] Discovered ctalk server at %s. Joining as client...\n", server_ip);
-        run_client(username, server_ip);
-        free(server_ip);
-        exit(EXIT_SUCCESS);
+    if (argc < 2) {
+        print_usage(argv[0]);
+        return EXIT_FAILURE;
     }
-    printf("[INFO] No ctalk server discovered. Becoming the server...\n");
-    run_server();
-    return 0;
+
+    if (strcmp(argv[1], "server") == 0) {
+        if (argc != 4) {
+            print_usage(argv[0]);
+            return EXIT_FAILURE;
+        }
+        run_server(argv[2], argv[3]);
+        return EXIT_SUCCESS;
+    }
+
+    if (strcmp(argv[1], "client") == 0) {
+        if (argc != 5) {
+            print_usage(argv[0]);
+            return EXIT_FAILURE;
+        }
+        const char *username = argv[2];
+        if (!is_valid_name(username, MAX_USERNAME_LEN)) {
+            fprintf(stderr, "Invalid username. Use up to 63 visible characters without spaces.\n");
+            return EXIT_FAILURE;
+        }
+        run_client(username, argv[3], argv[4]);
+        return EXIT_SUCCESS;
+    }
+
+    print_usage(argv[0]);
+    return EXIT_FAILURE;
 }

@@ -32,16 +32,16 @@ IF $INIT == 1
 
 IF $STATE == 1
   RUN _CALC sin(2*pi*$TIME) to $VALUE
-  SET $COLOR = 1
+  SET $COLOR = 5
 IF $STATE == 2
   RUN _CALC cos(2*pi*$TIME) to $VALUE
-  SET $COLOR = 2
+  SET $COLOR = 8
 IF $STATE == 3
   RUN _CALC sin(2*pi*$TIME*2) to $VALUE
-  SET $COLOR = 1
+  SET $COLOR = 5
 IF $STATE == 4
   RUN _CALC cos(2*pi*$TIME*2) to $VALUE
-  SET $COLOR = 2
+  SET $COLOR = 8
 
 RUN _CALC floor($HEIGHT/2 + $VALUE * $AMPLITUDE) to $Y
 

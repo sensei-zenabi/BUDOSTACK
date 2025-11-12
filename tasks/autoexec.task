@@ -1,7 +1,7 @@
 # autoexec.task
 
 SET $SELECTION = 0
-SET $SCHEME = c64
+SET $SCHEME = "c64"
 
 # Change terminal color scheme
 PRINT "\nSelect BUDOSTACK colorscheme:"
@@ -12,13 +12,13 @@ PRINT "\n[3] VT220-Green"
 PRINT "\nEnter Selection: "
 INPUT $SELECTION
 IF $SELECTION == 0
-  $SCHEME = c64
+  $SCHEME = "c64"
 IF $SELECTION == 1
-  $SCHEME = ibm5150
+  $SCHEME = "ibm5150"
 IF $SELECTION == 2
-  $SCHEME = vt220-amber
+  $SCHEME = "vt220-amber"
 IF $SELECTION == 3
-  $SCHEME = vt220-green
+  $SCHEME = "vt220-green"
 RUN _RETROPROFILE apply $SCHEME
 RUN clear
 

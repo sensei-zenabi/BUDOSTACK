@@ -43,6 +43,14 @@
 #define PSF2_MAGIC 0x864ab572u
 #define PSF2_HEADER_SIZE 32u
 
+#define TERMINAL_WINDOW_WIDTH 640
+#define TERMINAL_WINDOW_HEIGHT 480
+#ifndef TERMINAL_FONT_SCALE
+#define TERMINAL_FONT_SCALE 1
+#endif
+
+_Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
+
 struct psf_font {
     uint32_t glyph_count;
     uint32_t width;
@@ -611,6 +619,17 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    size_t glyph_width_size = (size_t)font.width * (size_t)TERMINAL_FONT_SCALE;
+    size_t glyph_height_size = (size_t)font.height * (size_t)TERMINAL_FONT_SCALE;
+    if (glyph_width_size == 0u || glyph_height_size == 0u ||
+        glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
+        fprintf(stderr, "Scaled font dimensions invalid.\n");
+        free_font(&font);
+        return EXIT_FAILURE;
+    }
+    const int glyph_width = (int)glyph_width_size;
+    const int glyph_height = (int)glyph_height_size;
+
     int master_fd = -1;
     pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
     if (child_pid < 0) {
@@ -639,11 +658,34 @@ int main(int argc, char **argv) {
     SDL_Window *window = SDL_CreateWindow("BUDOSTACK Terminal",
                                           SDL_WINDOWPOS_UNDEFINED,
                                           SDL_WINDOWPOS_UNDEFINED,
-                                          1280,
-                                          720,
-                                          SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_RESIZABLE);
+                                          TERMINAL_WINDOW_WIDTH,
+                                          TERMINAL_WINDOW_HEIGHT,
+                                          SDL_WINDOW_RESIZABLE);
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    SDL_DisplayMode mode = {0};
+    mode.w = TERMINAL_WINDOW_WIDTH;
+    mode.h = TERMINAL_WINDOW_HEIGHT;
+    if (SDL_SetWindowDisplayMode(window, &mode) != 0) {
+        fprintf(stderr, "SDL_SetWindowDisplayMode failed: %s\n", SDL_GetError());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN) != 0) {
+        fprintf(stderr, "SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
+        SDL_DestroyWindow(window);
         SDL_Quit();
         kill(child_pid, SIGKILL);
         free_font(&font);
@@ -696,8 +738,8 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    size_t columns = (size_t)(width / (int)font.width);
-    size_t rows = (size_t)(height / (int)font.height);
+    size_t columns = glyph_width > 0 ? (size_t)(width / glyph_width) : 0u;
+    size_t rows = glyph_height > 0 ? (size_t)(height / glyph_height) : 0u;
     if (columns == 0u) {
         columns = 1u;
     }
@@ -737,8 +779,12 @@ int main(int argc, char **argv) {
             } else if (event.type == SDL_WINDOWEVENT && (event.window.event == SDL_WINDOWEVENT_RESIZED || event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
                 int new_width = event.window.data1;
                 int new_height = event.window.data2;
-                size_t new_columns = new_width > 0 ? (size_t)(new_width / (int)font.width) : buffer.columns;
-                size_t new_rows = new_height > 0 ? (size_t)(new_height / (int)font.height) : buffer.rows;
+                size_t new_columns = (new_width > 0 && glyph_width > 0)
+                                         ? (size_t)(new_width / glyph_width)
+                                         : buffer.columns;
+                size_t new_rows = (new_height > 0 && glyph_height > 0)
+                                      ? (size_t)(new_height / glyph_height)
+                                      : buffer.rows;
                 if (new_columns == 0u) {
                     new_columns = 1u;
                 }
@@ -826,7 +872,10 @@ int main(int argc, char **argv) {
                 if (ch == 0u || ch >= 256u) {
                     continue;
                 }
-                SDL_Rect dst = {(int)(col * font.width), (int)(row * font.height), (int)font.width, (int)font.height};
+                SDL_Rect dst = {(int)(col * glyph_width),
+                                (int)(row * glyph_height),
+                                glyph_width,
+                                glyph_height};
                 SDL_RenderCopy(renderer, glyph_textures[ch], NULL, &dst);
             }
         }

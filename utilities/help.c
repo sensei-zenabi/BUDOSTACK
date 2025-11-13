@@ -21,12 +21,16 @@ int main(int argc, char *argv[]) {
     printf("  You can use, modify, and sell GPLv2 software freely, but if you distribute\n");
     printf("  it, you must provide the source code and keep it under the same license.\n");
     printf("\n");
-    printf(" Note! Setting up BUDOSTACK for your console:\n");
+    printf(" Note! To run BUDOSTACK properly with it's all capabilities:\n");
     printf("\n");
     printf("      1. Take into use the font: ModernDOS8x8.ttf installed by setup.sh\n");
     printf("      2. Adjust your console font size and view to display 118cols x 66rows\n");
     printf("         with 1980x1080 resolution, font size 24pt seems OK when fullscreen!\n");
     printf("      3. Run _TEST and verify the result\n");
+    printf("\n");
+    printf("  OR\n");
+    printf("\n");
+    printf("      4. Run the 'terminal' application with built-in 8x8 font support\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     printf("                           - SYSTEM REQUIREMENTS -\n");

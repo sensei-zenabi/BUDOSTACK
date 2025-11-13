@@ -670,23 +670,6 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     return 0;
 }
 
-static void terminal_buffer_reset(struct terminal_buffer *buffer) {
-    if (!buffer || !buffer->cells) {
-        return;
-    }
-    size_t total = buffer->columns * buffer->rows;
-    for (size_t i = 0u; i < total; i++) {
-        terminal_cell_apply_defaults(buffer, &buffer->cells[i]);
-    }
-    buffer->cursor_column = 0u;
-    buffer->cursor_row = 0u;
-    buffer->saved_cursor_column = 0u;
-    buffer->saved_cursor_row = 0u;
-    buffer->cursor_saved = 0;
-    buffer->attr_saved = 0;
-    terminal_buffer_reset_attributes(buffer);
-}
-
 static void terminal_buffer_free(struct terminal_buffer *buffer) {
     if (!buffer) {
         return;
@@ -1487,53 +1470,6 @@ static ssize_t safe_write(int fd, const void *buf, size_t count) {
         remaining -= (size_t)written;
     }
     return (ssize_t)count;
-}
-
-static void update_terminal_geometry(struct terminal_buffer *buffer, size_t columns, size_t rows) {
-    if (!buffer) {
-        return;
-    }
-    if (columns == buffer->columns && rows == buffer->rows && buffer->cells) {
-        return;
-    }
-
-    struct terminal_cell *old_cells = buffer->cells;
-    size_t old_columns = buffer->columns;
-    size_t old_rows = buffer->rows;
-    size_t old_cursor_column = buffer->cursor_column;
-    size_t old_cursor_row = buffer->cursor_row;
-    struct terminal_attributes old_current_attr = buffer->current_attr;
-    struct terminal_attributes old_saved_attr = buffer->saved_attr;
-    int old_cursor_saved = buffer->cursor_saved;
-    int old_attr_saved = buffer->attr_saved;
-    uint32_t old_default_fg = buffer->default_fg;
-    uint32_t old_default_bg = buffer->default_bg;
-    uint32_t old_cursor_color = buffer->cursor_color;
-    uint32_t old_palette[256];
-    memcpy(old_palette, buffer->palette, sizeof(old_palette));
-
-    if (terminal_buffer_init(buffer, columns, rows) != 0) {
-        buffer->cells = old_cells;
-        buffer->columns = old_columns;
-        buffer->rows = old_rows;
-        buffer->cursor_column = old_cursor_column;
-        buffer->cursor_row = old_cursor_row;
-        buffer->current_attr = old_current_attr;
-        buffer->saved_attr = old_saved_attr;
-        buffer->cursor_saved = old_cursor_saved;
-        buffer->attr_saved = old_attr_saved;
-        return;
-    }
-
-    buffer->default_fg = old_default_fg;
-    buffer->default_bg = old_default_bg;
-    buffer->cursor_color = old_cursor_color;
-    memcpy(buffer->palette, old_palette, sizeof(old_palette));
-    buffer->current_attr = old_current_attr;
-    buffer->saved_attr = old_saved_attr;
-    buffer->cursor_saved = old_cursor_saved;
-    buffer->attr_saved = old_attr_saved;
-    free(old_cells);
 }
 
 static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer, const struct psf_font *font, uint32_t glyph_index) {

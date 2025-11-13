@@ -49,6 +49,7 @@
 #ifndef TERMINAL_FONT_SCALE
 #define TERMINAL_FONT_SCALE 1
 #endif
+#define TERMINAL_CURSOR_BLINK_INTERVAL 500u
 
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
@@ -97,6 +98,8 @@ struct terminal_buffer {
     uint32_t default_fg;
     uint32_t default_bg;
     uint32_t cursor_color;
+    int cursor_visible;
+    int saved_cursor_visible;
     uint32_t palette[256];
 };
 
@@ -214,6 +217,8 @@ static void terminal_buffer_initialize_palette(struct terminal_buffer *buffer) {
     buffer->default_fg = buffer->palette[7];
     buffer->default_bg = buffer->palette[0];
     buffer->cursor_color = buffer->palette[7];
+    buffer->cursor_visible = 1;
+    buffer->saved_cursor_visible = 1;
     terminal_buffer_reset_attributes(buffer);
     buffer->attr_saved = 0;
 }
@@ -657,6 +662,8 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->saved_cursor_row = 0u;
     buffer->cursor_saved = 0;
     buffer->attr_saved = 0;
+    buffer->cursor_visible = 1;
+    buffer->saved_cursor_visible = 1;
 
     size_t total_cells = columns * rows;
     buffer->cells = calloc(total_cells, sizeof(struct terminal_cell));
@@ -683,6 +690,8 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     buffer->saved_cursor_column = 0u;
     buffer->saved_cursor_row = 0u;
     buffer->cursor_saved = 0;
+    buffer->cursor_visible = 1;
+    buffer->saved_cursor_visible = 1;
 }
 
 static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
@@ -831,6 +840,7 @@ static void terminal_buffer_save_cursor(struct terminal_buffer *buffer) {
     buffer->saved_cursor_column = buffer->cursor_column;
     buffer->saved_cursor_row = buffer->cursor_row;
     buffer->cursor_saved = 1;
+    buffer->saved_cursor_visible = buffer->cursor_visible;
     buffer->saved_attr = buffer->current_attr;
     buffer->attr_saved = 1;
 }
@@ -840,6 +850,7 @@ static void terminal_buffer_restore_cursor(struct terminal_buffer *buffer) {
         return;
     }
     terminal_buffer_set_cursor(buffer, buffer->saved_cursor_column, buffer->saved_cursor_row);
+    buffer->cursor_visible = buffer->saved_cursor_visible;
     if (buffer->attr_saved) {
         buffer->current_attr = buffer->saved_attr;
     }
@@ -1188,8 +1199,14 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                 }
                 switch (mode) {
                 case 25: /* cursor visibility */
+                    if (command == 'h') {
+                        buffer->cursor_visible = 1;
+                    } else {
+                        buffer->cursor_visible = 0;
+                    }
+                    break;
                 case 2004: /* bracketed paste */
-                    /* These do not affect our simple renderer. */
+                    /* This does not affect our simple renderer. */
                     break;
                 case 47:
                 case 1047:
@@ -1804,6 +1821,9 @@ int main(int argc, char **argv) {
     int child_exited = 0;
     unsigned char input_buffer[512];
     int running = 1;
+    const Uint32 cursor_blink_interval = TERMINAL_CURSOR_BLINK_INTERVAL;
+    Uint32 cursor_last_toggle = SDL_GetTicks();
+    int cursor_phase_visible = 1;
 
     while (running) {
         SDL_Event event;
@@ -1849,6 +1869,8 @@ int main(int argc, char **argv) {
                     if (terminal_send_bytes(master_fd, &ch, 1u) < 0) {
                         running = 0;
                     }
+                    cursor_phase_visible = 1;
+                    cursor_last_toggle = SDL_GetTicks();
                     continue;
                 }
 
@@ -2117,6 +2139,8 @@ int main(int argc, char **argv) {
                 }
 
                 if (handled) {
+                    cursor_phase_visible = 1;
+                    cursor_last_toggle = SDL_GetTicks();
                     continue;
                 }
             } else if (event.type == SDL_TEXTINPUT) {
@@ -2133,6 +2157,8 @@ int main(int argc, char **argv) {
                     if (terminal_send_bytes(master_fd, text, len) < 0) {
                         running = 0;
                     }
+                    cursor_phase_visible = 1;
+                    cursor_last_toggle = SDL_GetTicks();
                 }
             }
         }
@@ -2144,6 +2170,8 @@ int main(int argc, char **argv) {
                 for (ssize_t i = 0; i < bytes_read; i++) {
                     ansi_parser_feed(&parser, &buffer, input_buffer[i]);
                 }
+                cursor_phase_visible = 1;
+                cursor_last_toggle = SDL_GetTicks();
             } else if (bytes_read < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 running = 0;
                 break;
@@ -2154,6 +2182,13 @@ int main(int argc, char **argv) {
         if (wait_result == child_pid) {
             child_exited = 1;
         }
+
+        Uint32 now = SDL_GetTicks();
+        if (cursor_blink_interval > 0u && (Uint32)(now - cursor_last_toggle) >= cursor_blink_interval) {
+            cursor_last_toggle = now;
+            cursor_phase_visible = cursor_phase_visible ? 0 : 1;
+        }
+        int cursor_render_visible = buffer.cursor_visible && cursor_phase_visible;
 
         SDL_SetRenderDrawColor(renderer,
                                terminal_color_r(buffer.default_bg),
@@ -2178,15 +2213,25 @@ int main(int argc, char **argv) {
                     fg = terminal_bold_variant(fg);
                 }
 
+                int is_cursor_cell = cursor_render_visible &&
+                                     row == buffer.cursor_row &&
+                                     col == buffer.cursor_column;
+                uint32_t fill_color = bg;
+                uint32_t glyph_color = fg;
+                if (is_cursor_cell) {
+                    fill_color = buffer.cursor_color;
+                    glyph_color = bg;
+                }
+
                 SDL_Rect dst = {(int)(col * glyph_width),
                                 (int)(row * glyph_height),
                                 glyph_width,
                                 glyph_height};
 
                 SDL_SetRenderDrawColor(renderer,
-                                       terminal_color_r(bg),
-                                       terminal_color_g(bg),
-                                       terminal_color_b(bg),
+                                       terminal_color_r(fill_color),
+                                       terminal_color_g(fill_color),
+                                       terminal_color_b(fill_color),
                                        255);
                 SDL_RenderFillRect(renderer, &dst);
 
@@ -2198,16 +2243,16 @@ int main(int argc, char **argv) {
                     SDL_Texture *glyph = glyph_textures[glyph_index];
                     if (glyph) {
                         SDL_SetTextureColorMod(glyph,
-                                               terminal_color_r(fg),
-                                               terminal_color_g(fg),
-                                               terminal_color_b(fg));
+                                               terminal_color_r(glyph_color),
+                                               terminal_color_g(glyph_color),
+                                               terminal_color_b(glyph_color));
                         SDL_RenderCopy(renderer, glyph, NULL, &dst);
                         if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
                             SDL_Rect underline = {dst.x, dst.y + glyph_height - 1, glyph_width, 1};
                             SDL_SetRenderDrawColor(renderer,
-                                                   terminal_color_r(fg),
-                                                   terminal_color_g(fg),
-                                                   terminal_color_b(fg),
+                                                   terminal_color_r(glyph_color),
+                                                   terminal_color_g(glyph_color),
+                                                   terminal_color_b(glyph_color),
                                                    255);
                             SDL_RenderFillRect(renderer, &underline);
                         }

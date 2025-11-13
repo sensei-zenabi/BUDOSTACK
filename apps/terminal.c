@@ -1472,6 +1472,83 @@ static ssize_t safe_write(int fd, const void *buf, size_t count) {
     return (ssize_t)count;
 }
 
+static int terminal_send_bytes(int fd, const void *data, size_t length) {
+    if (safe_write(fd, data, length) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
+static int terminal_send_string(int fd, const char *str) {
+    return terminal_send_bytes(fd, str, strlen(str));
+}
+
+static unsigned int terminal_modifier_param(SDL_Keymod mod) {
+    unsigned int value = 1u;
+    if ((mod & KMOD_SHIFT) != 0) {
+        value += 1u;
+    }
+    if ((mod & KMOD_ALT) != 0) {
+        value += 2u;
+    }
+    if ((mod & KMOD_CTRL) != 0) {
+        value += 4u;
+    }
+    return value;
+}
+
+static int terminal_send_csi_final(int fd, SDL_Keymod mod, char final_char) {
+    unsigned int modifier = terminal_modifier_param(mod);
+    char sequence[32];
+    if (modifier == 1u) {
+        sequence[0] = '\x1b';
+        sequence[1] = '[';
+        sequence[2] = final_char;
+        sequence[3] = '\0';
+    } else {
+        if (snprintf(sequence, sizeof(sequence), "\x1b[1;%u%c", modifier, final_char) < 0) {
+            return -1;
+        }
+    }
+    return terminal_send_string(fd, sequence);
+}
+
+static int terminal_send_csi_number(int fd, SDL_Keymod mod, unsigned int number) {
+    unsigned int modifier = terminal_modifier_param(mod);
+    char sequence[32];
+    if (modifier == 1u) {
+        if (snprintf(sequence, sizeof(sequence), "\x1b[%u~", number) < 0) {
+            return -1;
+        }
+    } else {
+        if (snprintf(sequence, sizeof(sequence), "\x1b[%u;%u~", number, modifier) < 0) {
+            return -1;
+        }
+    }
+    return terminal_send_string(fd, sequence);
+}
+
+static int terminal_send_ss3_final(int fd, SDL_Keymod mod, char final_char) {
+    unsigned int modifier = terminal_modifier_param(mod);
+    char sequence[32];
+    if (modifier == 1u) {
+        sequence[0] = '\x1b';
+        sequence[1] = 'O';
+        sequence[2] = final_char;
+        sequence[3] = '\0';
+    } else {
+        if (snprintf(sequence, sizeof(sequence), "\x1b[1;%u%c", modifier, final_char) < 0) {
+            return -1;
+        }
+    }
+    return terminal_send_string(fd, sequence);
+}
+
+static int terminal_send_escape_prefix(int fd) {
+    const unsigned char esc = 0x1Bu;
+    return terminal_send_bytes(fd, &esc, 1u);
+}
+
 static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer, const struct psf_font *font, uint32_t glyph_index) {
     if (!renderer || !font || !font->glyphs) {
         return NULL;
@@ -1743,46 +1820,317 @@ int main(int argc, char **argv) {
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = event.key.keysym.mod;
-                unsigned char ch = 0u;
                 int handled = 0;
+                unsigned char ch = 0u;
+
                 if ((mod & KMOD_CTRL) != 0) {
-                    if (sym >= 'a' && sym <= 'z') {
-                        ch = (unsigned char)(sym - 'a' + 1);
-                        handled = 1;
-                    } else if (sym >= 'A' && sym <= 'Z') {
-                        ch = (unsigned char)(sym - 'A' + 1);
-                        handled = 1;
+                    if (sym >= 0 && sym <= 127) {
+                        int ascii = (int)sym;
+                        if (ascii >= 'a' && ascii <= 'z') {
+                            ascii -= ('a' - 'A');
+                        }
+                        if (ascii >= '@' && ascii <= '_') {
+                            ch = (unsigned char)(ascii - '@');
+                            handled = 1;
+                        } else if (ascii == ' ') {
+                            ch = 0u;
+                            handled = 1;
+                        } else if (ascii == '/') {
+                            ch = 31u;
+                            handled = 1;
+                        } else if (ascii == '?') {
+                            ch = 127u;
+                            handled = 1;
+                        }
                     }
                 }
-                if (!handled) {
-                    switch (sym) {
-                    case SDLK_RETURN:
-                    case SDLK_KP_ENTER:
-                        ch = '\r';
-                        handled = 1;
-                        break;
-                    case SDLK_BACKSPACE:
-                        ch = '\b';
-                        handled = 1;
-                        break;
-                    case SDLK_ESCAPE:
+
+                if (handled) {
+                    if (terminal_send_bytes(master_fd, &ch, 1u) < 0) {
                         running = 0;
-                        handled = 0;
-                        break;
-                    default:
-                        break;
                     }
+                    continue;
                 }
-                if (handled && ch != 0u) {
-                    if (safe_write(master_fd, &ch, 1u) < 0) {
+
+                switch (sym) {
+                case SDLK_RETURN:
+                case SDLK_KP_ENTER: {
+                    unsigned int modifier = terminal_modifier_param(mod);
+                    if (modifier == 1u) {
+                        unsigned char cr = '\r';
+                        if (terminal_send_bytes(master_fd, &cr, 1u) < 0) {
+                            running = 0;
+                        }
+                    } else if (terminal_send_csi_number(master_fd, mod, 13u) < 0) {
                         running = 0;
                     }
+                    handled = 1;
+                    break;
+                }
+                case SDLK_BACKSPACE: {
+                    unsigned int modifier = terminal_modifier_param(mod);
+                    if (modifier == 1u) {
+                        unsigned char del = 0x7Fu;
+                        if (terminal_send_bytes(master_fd, &del, 1u) < 0) {
+                            running = 0;
+                        }
+                    } else if (terminal_send_csi_number(master_fd, mod, 127u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                }
+                case SDLK_TAB: {
+                    unsigned int modifier = terminal_modifier_param(mod);
+                    int has_ctrl_or_alt = (mod & (KMOD_CTRL | KMOD_ALT)) != 0;
+                    if (modifier == 1u) {
+                        unsigned char tab = '\t';
+                        if (terminal_send_bytes(master_fd, &tab, 1u) < 0) {
+                            running = 0;
+                        }
+                        handled = 1;
+                    } else if ((mod & KMOD_SHIFT) != 0 && !has_ctrl_or_alt && modifier == 2u) {
+                        if (terminal_send_string(master_fd, "\x1b[Z") < 0) {
+                            running = 0;
+                        }
+                        handled = 1;
+                    } else if (terminal_send_csi_number(master_fd, mod, 9u) < 0) {
+                        running = 0;
+                        handled = 1;
+                    } else {
+                        handled = 1;
+                    }
+                    break;
+                }
+                case SDLK_ESCAPE:
+                    if (terminal_send_escape_prefix(master_fd) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_UP:
+                    if (terminal_send_csi_final(master_fd, mod, 'A') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_DOWN:
+                    if (terminal_send_csi_final(master_fd, mod, 'B') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_RIGHT:
+                    if (terminal_send_csi_final(master_fd, mod, 'C') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_LEFT:
+                    if (terminal_send_csi_final(master_fd, mod, 'D') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_HOME:
+                    if (terminal_send_csi_final(master_fd, mod, 'H') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_END:
+                    if (terminal_send_csi_final(master_fd, mod, 'F') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_PAGEUP:
+                    if (terminal_send_csi_number(master_fd, mod, 5u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_PAGEDOWN:
+                    if (terminal_send_csi_number(master_fd, mod, 6u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_INSERT:
+                    if (terminal_send_csi_number(master_fd, mod, 2u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_DELETE:
+                    if (terminal_send_csi_number(master_fd, mod, 3u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F1:
+                    if (terminal_send_ss3_final(master_fd, mod, 'P') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F2:
+                    if (terminal_send_ss3_final(master_fd, mod, 'Q') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F3:
+                    if (terminal_send_ss3_final(master_fd, mod, 'R') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F4:
+                    if (terminal_send_ss3_final(master_fd, mod, 'S') < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F5:
+                    if (terminal_send_csi_number(master_fd, mod, 15u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F6:
+                    if (terminal_send_csi_number(master_fd, mod, 17u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F7:
+                    if (terminal_send_csi_number(master_fd, mod, 18u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F8:
+                    if (terminal_send_csi_number(master_fd, mod, 19u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F9:
+                    if (terminal_send_csi_number(master_fd, mod, 20u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F10:
+                    if (terminal_send_csi_number(master_fd, mod, 21u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F11:
+                    if (terminal_send_csi_number(master_fd, mod, 23u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F12:
+                    if (terminal_send_csi_number(master_fd, mod, 24u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F13:
+                    if (terminal_send_csi_number(master_fd, mod, 25u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F14:
+                    if (terminal_send_csi_number(master_fd, mod, 26u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F15:
+                    if (terminal_send_csi_number(master_fd, mod, 28u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F16:
+                    if (terminal_send_csi_number(master_fd, mod, 29u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F17:
+                    if (terminal_send_csi_number(master_fd, mod, 31u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F18:
+                    if (terminal_send_csi_number(master_fd, mod, 32u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F19:
+                    if (terminal_send_csi_number(master_fd, mod, 33u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F20:
+                    if (terminal_send_csi_number(master_fd, mod, 34u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F21:
+                    if (terminal_send_csi_number(master_fd, mod, 42u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F22:
+                    if (terminal_send_csi_number(master_fd, mod, 43u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F23:
+                    if (terminal_send_csi_number(master_fd, mod, 44u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                case SDLK_F24:
+                    if (terminal_send_csi_number(master_fd, mod, 45u) < 0) {
+                        running = 0;
+                    }
+                    handled = 1;
+                    break;
+                default:
+                    break;
+                }
+
+                if (handled) {
+                    continue;
                 }
             } else if (event.type == SDL_TEXTINPUT) {
                 const char *text = event.text.text;
                 size_t len = strlen(text);
                 if (len > 0u) {
-                    if (safe_write(master_fd, text, len) < 0) {
+                    SDL_Keymod mod_state = SDL_GetModState();
+                    if ((mod_state & KMOD_ALT) != 0 && (mod_state & KMOD_CTRL) == 0) {
+                        if (terminal_send_escape_prefix(master_fd) < 0) {
+                            running = 0;
+                            continue;
+                        }
+                    }
+                    if (terminal_send_bytes(master_fd, text, len) < 0) {
                         running = 0;
                     }
                 }

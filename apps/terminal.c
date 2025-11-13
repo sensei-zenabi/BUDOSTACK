@@ -1605,6 +1605,16 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
+        fprintf(stderr, "SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!renderer) {
         fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
@@ -1726,7 +1736,10 @@ int main(int argc, char **argv) {
             } else if (event.type == SDL_WINDOWEVENT &&
                        (event.window.event == SDL_WINDOWEVENT_RESIZED ||
                         event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
-                SDL_SetWindowSize(window, window_width, window_height);
+                Uint32 flags = SDL_GetWindowFlags(window);
+                if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+                    SDL_SetWindowSize(window, window_width, window_height);
+                }
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = event.key.keysym.mod;

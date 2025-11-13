@@ -22,8 +22,9 @@ ifeq ($(strip $(SDL2_LIBS)),)
 SDL2_LIBS = -lSDL2
 endif
 
-CFLAGS += $(SDL2_CFLAGS)
-LDFLAGS += $(SDL2_LIBS)
+# SDL2-specific flags are only needed for the SDL terminal target.
+apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
+apps/terminal: LDFLAGS += $(SDL2_LIBS)
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

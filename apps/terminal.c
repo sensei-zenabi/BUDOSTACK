@@ -50,7 +50,9 @@
 #define TERMINAL_FONT_SCALE 1.0
 #endif
 
-_Static_assert(TERMINAL_FONT_SCALE > 0.0, "TERMINAL_FONT_SCALE must be positive");
+#if TERMINAL_FONT_SCALE <= 0.0
+#error "TERMINAL_FONT_SCALE must be positive"
+#endif
 
 struct psf_font {
     uint32_t glyph_count;

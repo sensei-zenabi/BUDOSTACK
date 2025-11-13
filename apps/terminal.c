@@ -1541,6 +1541,9 @@ static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer, const struct te
     SDL_FreeSurface(surface);
     if (texture) {
         SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+#if SDL_VERSION_ATLEAST(2, 0, 12)
+        SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
+#endif
     }
     return texture;
 }
@@ -1649,7 +1652,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
     SDL_Window *window = SDL_CreateWindow("BUDOSTACK Terminal",
                                           SDL_WINDOWPOS_CENTERED,

@@ -98,6 +98,26 @@ struct terminal_buffer {
     uint32_t palette[256];
 };
 
+enum ansi_parser_state {
+    ANSI_STATE_GROUND = 0,
+    ANSI_STATE_ESCAPE,
+    ANSI_STATE_CSI,
+    ANSI_STATE_OSC,
+    ANSI_STATE_OSC_ESCAPE
+};
+
+#define ANSI_MAX_PARAMS 16
+
+struct ansi_parser {
+    enum ansi_parser_state state;
+    int params[ANSI_MAX_PARAMS];
+    size_t param_count;
+    int collecting_param;
+    int private_marker;
+    char osc_buffer[512];
+    size_t osc_length;
+};
+
 static const uint32_t terminal_default_palette16[16] = {
     0x000000u, /* black */
     0xAA0000u, /* red */
@@ -448,26 +468,6 @@ static void terminal_apply_sgr(struct terminal_buffer *buffer, const struct ansi
         }
     }
 }
-
-enum ansi_parser_state {
-    ANSI_STATE_GROUND = 0,
-    ANSI_STATE_ESCAPE,
-    ANSI_STATE_CSI,
-    ANSI_STATE_OSC,
-    ANSI_STATE_OSC_ESCAPE
-};
-
-#define ANSI_MAX_PARAMS 16
-
-struct ansi_parser {
-    enum ansi_parser_state state;
-    int params[ANSI_MAX_PARAMS];
-    size_t param_count;
-    int collecting_param;
-    int private_marker;
-    char osc_buffer[512];
-    size_t osc_length;
-};
 
 static void free_font(struct psf_font *font) {
     if (!font) {

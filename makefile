@@ -1,7 +1,29 @@
 # Compiler and flags
 CC = gcc
-CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic 
+CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic
 LDFLAGS = -lasound -lm -pthread
+
+SDL2_CFLAGS = $(shell pkg-config --cflags sdl2 2>/dev/null)
+SDL2_LIBS = $(shell pkg-config --libs sdl2 2>/dev/null)
+
+ifeq ($(strip $(SDL2_CFLAGS)),)
+SDL2_CFLAGS = $(shell sdl2-config --cflags 2>/dev/null)
+endif
+
+ifeq ($(strip $(SDL2_LIBS)),)
+SDL2_LIBS = $(shell sdl2-config --libs 2>/dev/null)
+endif
+
+ifeq ($(strip $(SDL2_CFLAGS)),)
+SDL2_CFLAGS = -I/usr/include/SDL2
+endif
+
+ifeq ($(strip $(SDL2_LIBS)),)
+SDL2_LIBS = -lSDL2
+endif
+
+CFLAGS += $(SDL2_CFLAGS)
+LDFLAGS += $(SDL2_LIBS)
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

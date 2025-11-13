@@ -47,10 +47,10 @@
 #define TERMINAL_WINDOW_WIDTH 1280
 #define TERMINAL_WINDOW_HEIGHT 720
 #ifndef TERMINAL_FONT_SCALE
-#define TERMINAL_FONT_SCALE 1
+#define TERMINAL_FONT_SCALE 1.0
 #endif
 
-_Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
+_Static_assert(TERMINAL_FONT_SCALE > 0.0, "TERMINAL_FONT_SCALE must be positive");
 
 struct psf_font {
     uint32_t glyph_count;
@@ -1605,10 +1605,24 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    size_t glyph_width_size = (size_t)font.width * (size_t)TERMINAL_FONT_SCALE;
-    size_t glyph_height_size = (size_t)font.height * (size_t)TERMINAL_FONT_SCALE;
-    if (glyph_width_size == 0u || glyph_height_size == 0u ||
-        glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
+    const double font_scale = (double)TERMINAL_FONT_SCALE;
+    if (!(font_scale > 0.0)) {
+        fprintf(stderr, "Invalid font scale configured.\n");
+        free_font(&font);
+        return EXIT_FAILURE;
+    }
+
+    double glyph_width_d = (double)font.width * font_scale;
+    double glyph_height_d = (double)font.height * font_scale;
+    if (glyph_width_d <= 0.0 || glyph_height_d <= 0.0 ||
+        glyph_width_d > (double)INT_MAX || glyph_height_d > (double)INT_MAX) {
+        fprintf(stderr, "Scaled font dimensions invalid.\n");
+        free_font(&font);
+        return EXIT_FAILURE;
+    }
+    size_t glyph_width_size = (size_t)(glyph_width_d + 0.5);
+    size_t glyph_height_size = (size_t)(glyph_height_d + 0.5);
+    if (glyph_width_size == 0u || glyph_height_size == 0u) {
         fprintf(stderr, "Scaled font dimensions invalid.\n");
         free_font(&font);
         return EXIT_FAILURE;

@@ -509,7 +509,8 @@ static int load_ttf_font(const char *path, struct terminal_font *out_font, char 
         return -1;
     }
 
-    TTF_SetFontHinting(ttf, TTF_HINTING_MONO);
+    /* Disable hinting so the bitmap font remains pixel-aligned. */
+    TTF_SetFontHinting(ttf, TTF_HINTING_NONE);
     TTF_SetFontKerning(ttf, 0);
 
     int height = TTF_FontHeight(ttf);
@@ -1493,17 +1494,21 @@ static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer, const struct te
             continue;
         }
         SDL_Color white = {255, 255, 255, 255};
-        SDL_Surface *candidate = TTF_RenderGlyph_Blended(font->ttf, codepoint, white);
+        SDL_Surface *candidate = TTF_RenderGlyph_Solid(font->ttf, codepoint, white);
         if (candidate) {
-            glyph_surface = candidate;
-            minx = local_minx;
-            maxy = local_maxy;
-            break;
+            SDL_Surface *converted = SDL_ConvertSurfaceFormat(candidate, SDL_PIXELFORMAT_RGBA32, 0);
+            SDL_FreeSurface(candidate);
+            if (converted) {
+                glyph_surface = converted;
+                minx = local_minx;
+                maxy = local_maxy;
+                break;
+            }
         }
     }
 
     if (glyph_surface) {
-        SDL_SetSurfaceBlendMode(glyph_surface, SDL_BLENDMODE_BLEND);
+        SDL_SetSurfaceBlendMode(glyph_surface, SDL_BLENDMODE_NONE);
 
         SDL_Rect src = {0, 0, glyph_surface->w, glyph_surface->h};
         SDL_Rect dst = {minx, font->ascent - maxy, glyph_surface->w, glyph_surface->h};

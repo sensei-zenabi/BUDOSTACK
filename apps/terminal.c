@@ -639,9 +639,9 @@ int main(int argc, char **argv) {
     SDL_Window *window = SDL_CreateWindow("BUDOSTACK Terminal",
                                           SDL_WINDOWPOS_UNDEFINED,
                                           SDL_WINDOWPOS_UNDEFINED,
-                                          1280,
-                                          720,
-                                          SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_RESIZABLE);
+                                          320,
+                                          200,
+                                          SDL_WINDOW_RESIZABLE);
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();

@@ -50,10 +50,6 @@
 #define TERMINAL_FONT_SCALE 1.0
 #endif
 
-#if TERMINAL_FONT_SCALE <= 0.0
-#error "TERMINAL_FONT_SCALE must be positive"
-#endif
-
 struct psf_font {
     uint32_t glyph_count;
     uint32_t width;
@@ -1609,7 +1605,7 @@ int main(int argc, char **argv) {
 
     const double font_scale = (double)TERMINAL_FONT_SCALE;
     if (!(font_scale > 0.0)) {
-        fprintf(stderr, "Invalid font scale configured.\n");
+        fprintf(stderr, "TERMINAL_FONT_SCALE must be positive.\n");
         free_font(&font);
         return EXIT_FAILURE;
     }

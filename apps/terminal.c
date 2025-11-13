@@ -47,7 +47,13 @@
 #define TERMINAL_WINDOW_WIDTH 1280
 #define TERMINAL_WINDOW_HEIGHT 720
 #ifndef TERMINAL_FONT_SCALE
-#define TERMINAL_FONT_SCALE 1.0
+#define TERMINAL_FONT_SCALE 0.0
+#endif
+#ifndef TERMINAL_TARGET_COLUMNS
+#define TERMINAL_TARGET_COLUMNS 118u
+#endif
+#ifndef TERMINAL_TARGET_ROWS
+#define TERMINAL_TARGET_ROWS 66u
 #endif
 
 struct psf_font {
@@ -1532,8 +1538,111 @@ static void update_terminal_geometry(struct terminal_buffer *buffer, size_t colu
     free(old_cells);
 }
 
-static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer, const struct psf_font *font, uint32_t glyph_index) {
-    if (!renderer || !font || !font->glyphs) {
+static int determine_glyph_dimensions(int renderer_width,
+                                      int renderer_height,
+                                      const struct psf_font *font,
+                                      double font_scale,
+                                      size_t *out_width,
+                                      size_t *out_height) {
+    if (!font || !out_width || !out_height) {
+        return -1;
+    }
+
+    if (font->width == 0u || font->height == 0u) {
+        return -1;
+    }
+
+    if (font_scale < 0.0) {
+        return -1;
+    }
+
+    if (font_scale > 0.0) {
+        double glyph_width_d = (double)font->width * font_scale;
+        double glyph_height_d = (double)font->height * font_scale;
+        if (glyph_width_d <= 0.0 || glyph_height_d <= 0.0) {
+            return -1;
+        }
+        if (glyph_width_d > (double)INT_MAX || glyph_height_d > (double)INT_MAX) {
+            return -1;
+        }
+        size_t glyph_width_size = (size_t)(glyph_width_d + 0.5);
+        size_t glyph_height_size = (size_t)(glyph_height_d + 0.5);
+        if (glyph_width_size == 0u || glyph_height_size == 0u) {
+            return -1;
+        }
+        *out_width = glyph_width_size;
+        *out_height = glyph_height_size;
+        return 0;
+    }
+
+    const size_t target_columns = (size_t)TERMINAL_TARGET_COLUMNS;
+    const size_t target_rows = (size_t)TERMINAL_TARGET_ROWS;
+    if (target_columns == 0u || target_rows == 0u) {
+        return -1;
+    }
+
+    size_t best_width = 0u;
+    size_t best_height = 0u;
+    size_t best_columns = 0u;
+    size_t best_rows = 0u;
+    uint64_t best_error = UINT64_MAX;
+
+    const size_t max_candidate = renderer_width > 0 ? (size_t)renderer_width : 0u;
+    for (size_t candidate = font->width; candidate > 0u && candidate <= max_candidate; candidate++) {
+        if ((int)candidate <= 0) {
+            break;
+        }
+
+        double scale = (double)candidate / (double)font->width;
+        double candidate_height_d = (double)font->height * scale;
+        if (candidate_height_d <= 0.0) {
+            continue;
+        }
+        if (candidate_height_d > (double)INT_MAX) {
+            break;
+        }
+        size_t candidate_height = (size_t)(candidate_height_d + 0.5);
+        if (candidate_height == 0u) {
+            candidate_height = 1u;
+        }
+
+        size_t columns = candidate > 0u ? (size_t)((size_t)renderer_width / candidate) : 0u;
+        size_t rows = candidate_height > 0u ? (size_t)((size_t)renderer_height / candidate_height) : 0u;
+        if (columns == 0u || rows == 0u) {
+            break;
+        }
+
+        size_t column_diff = (columns > target_columns) ? (columns - target_columns) : (target_columns - columns);
+        size_t row_diff = (rows > target_rows) ? (rows - target_rows) : (target_rows - rows);
+        uint64_t error = (uint64_t)column_diff * (uint64_t)column_diff +
+                         (uint64_t)row_diff * (uint64_t)row_diff;
+
+        if (error < best_error ||
+            (error == best_error && columns > best_columns) ||
+            (error == best_error && columns == best_columns && rows > best_rows)) {
+            best_error = error;
+            best_width = candidate;
+            best_height = candidate_height;
+            best_columns = columns;
+            best_rows = rows;
+        }
+    }
+
+    if (best_width == 0u || best_height == 0u) {
+        return -1;
+    }
+
+    *out_width = best_width;
+    *out_height = best_height;
+    return 0;
+}
+
+static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer,
+                                         const struct psf_font *font,
+                                         uint32_t glyph_index,
+                                         int target_width,
+                                         int target_height) {
+    if (!renderer || !font || !font->glyphs || target_width <= 0 || target_height <= 0) {
         return NULL;
     }
     if (glyph_index >= font->glyph_count) {
@@ -1543,7 +1652,7 @@ static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer, const struct ps
         }
     }
 
-    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, (int)font->width, (int)font->height, 32, SDL_PIXELFORMAT_RGBA32);
+    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, target_width, target_height, 32, SDL_PIXELFORMAT_RGBA32);
     if (!surface) {
         return NULL;
     }
@@ -1552,12 +1661,22 @@ static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer, const struct ps
     size_t pitch_pixels = (size_t)surface->pitch / sizeof(uint32_t);
     const uint8_t *glyph = font->glyphs + glyph_index * font->glyph_size;
 
-    for (uint32_t y = 0u; y < font->height; y++) {
-        for (uint32_t x = 0u; x < font->width; x++) {
-            size_t byte_index = y * font->stride + x / 8u;
-            uint8_t mask = (uint8_t)(0x80u >> (x % 8u));
+    for (int y = 0; y < target_height; y++) {
+        uint32_t src_y = (uint32_t)(((uint64_t)y * (uint64_t)font->height + (uint64_t)target_height / 2u) /
+                                    (uint64_t)target_height);
+        if (src_y >= font->height) {
+            src_y = font->height - 1u;
+        }
+        for (int x = 0; x < target_width; x++) {
+            uint32_t src_x = (uint32_t)(((uint64_t)x * (uint64_t)font->width + (uint64_t)target_width / 2u) /
+                                        (uint64_t)target_width);
+            if (src_x >= font->width) {
+                src_x = font->width - 1u;
+            }
+            size_t byte_index = (size_t)src_y * font->stride + src_x / 8u;
+            uint8_t mask = (uint8_t)(0x80u >> (src_x % 8u));
             int set = (glyph[byte_index] & mask) != 0;
-            pixels[y * pitch_pixels + x] = set ? 0xFFFFFFFFu : 0x00000000u;
+            pixels[(size_t)y * pitch_pixels + (size_t)x] = set ? 0xFFFFFFFFu : 0x00000000u;
         }
     }
 
@@ -1604,29 +1723,11 @@ int main(int argc, char **argv) {
     }
 
     const double font_scale = (double)TERMINAL_FONT_SCALE;
-    if (!(font_scale > 0.0)) {
-        fprintf(stderr, "TERMINAL_FONT_SCALE must be positive.\n");
+    if (font_scale < 0.0) {
+        fprintf(stderr, "TERMINAL_FONT_SCALE must not be negative.\n");
         free_font(&font);
         return EXIT_FAILURE;
     }
-
-    double glyph_width_d = (double)font.width * font_scale;
-    double glyph_height_d = (double)font.height * font_scale;
-    if (glyph_width_d <= 0.0 || glyph_height_d <= 0.0 ||
-        glyph_width_d > (double)INT_MAX || glyph_height_d > (double)INT_MAX) {
-        fprintf(stderr, "Scaled font dimensions invalid.\n");
-        free_font(&font);
-        return EXIT_FAILURE;
-    }
-    size_t glyph_width_size = (size_t)(glyph_width_d + 0.5);
-    size_t glyph_height_size = (size_t)(glyph_height_d + 0.5);
-    if (glyph_width_size == 0u || glyph_height_size == 0u) {
-        fprintf(stderr, "Scaled font dimensions invalid.\n");
-        free_font(&font);
-        return EXIT_FAILURE;
-    }
-    const int glyph_width = (int)glyph_width_size;
-    const int glyph_height = (int)glyph_height_size;
 
     int master_fd = -1;
     pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
@@ -1702,9 +1803,50 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    int width = 0;
+    int height = 0;
+    if (SDL_GetRendererOutputSize(renderer, &width, &height) != 0) {
+        fprintf(stderr, "SDL_GetRendererOutputSize failed: %s\n", SDL_GetError());
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    size_t glyph_width_size = 0u;
+    size_t glyph_height_size = 0u;
+    if (determine_glyph_dimensions(width, height, &font, font_scale, &glyph_width_size, &glyph_height_size) != 0) {
+        fprintf(stderr, "Failed to compute glyph dimensions.\n");
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    if (glyph_width_size == 0u || glyph_height_size == 0u ||
+        glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
+        fprintf(stderr, "Computed glyph dimensions invalid.\n");
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    const int glyph_width = (int)glyph_width_size;
+    const int glyph_height = (int)glyph_height_size;
+
     SDL_Texture *glyph_textures[256];
     for (size_t i = 0u; i < 256u; i++) {
-        glyph_textures[i] = create_glyph_texture(renderer, &font, (uint32_t)i);
+        glyph_textures[i] = create_glyph_texture(renderer, &font, (uint32_t)i, glyph_width, glyph_height);
         if (!glyph_textures[i]) {
             fprintf(stderr, "Failed to create glyph texture for %zu: %s\n", i, SDL_GetError());
             for (size_t j = 0u; j < i; j++) {
@@ -1718,22 +1860,6 @@ int main(int argc, char **argv) {
             close(master_fd);
             return EXIT_FAILURE;
         }
-    }
-
-    int width = 0;
-    int height = 0;
-    if (SDL_GetRendererOutputSize(renderer, &width, &height) != 0) {
-        fprintf(stderr, "SDL_GetRendererOutputSize failed: %s\n", SDL_GetError());
-        for (size_t i = 0u; i < 256u; i++) {
-            SDL_DestroyTexture(glyph_textures[i]);
-        }
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        kill(child_pid, SIGKILL);
-        free_font(&font);
-        close(master_fd);
-        return EXIT_FAILURE;
     }
 
     size_t columns = glyph_width > 0 ? (size_t)(width / glyph_width) : 0u;

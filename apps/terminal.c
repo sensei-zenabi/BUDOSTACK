@@ -113,6 +113,8 @@ struct terminal_buffer {
     uint32_t palette[256];
 };
 
+static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
+
 enum ansi_parser_state {
     ANSI_STATE_GROUND = 0,
     ANSI_STATE_ESCAPE,

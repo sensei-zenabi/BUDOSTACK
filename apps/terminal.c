@@ -103,6 +103,33 @@ struct terminal_buffer {
     uint32_t palette[256];
 };
 
+struct terminal_runtime {
+    SDL_Window *window;
+    SDL_Renderer *renderer;
+    int master_fd;
+    pid_t child_pid;
+    int glyph_width;
+    int glyph_height;
+    int window_width;
+    int window_height;
+    size_t columns;
+    size_t rows;
+};
+
+static struct terminal_runtime g_terminal_runtime;
+static int g_terminal_runtime_valid = 0;
+
+static struct terminal_runtime *terminal_runtime_get(void) {
+    if (!g_terminal_runtime_valid) {
+        return NULL;
+    }
+    return &g_terminal_runtime;
+}
+
+static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t columns, size_t rows);
+static int terminal_apply_dimensions(struct terminal_buffer *buffer, size_t columns, size_t rows);
+static void update_pty_size(int fd, size_t columns, size_t rows);
+
 enum ansi_parser_state {
     ANSI_STATE_GROUND = 0,
     ANSI_STATE_ESCAPE,
@@ -694,6 +721,61 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     buffer->saved_cursor_visible = 1;
 }
 
+static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t columns, size_t rows) {
+    if (!buffer || columns == 0u || rows == 0u) {
+        return -1;
+    }
+    if (rows > SIZE_MAX / columns) {
+        return -1;
+    }
+
+    size_t total_cells = columns * rows;
+    struct terminal_cell *new_cells = calloc(total_cells, sizeof(struct terminal_cell));
+    if (!new_cells) {
+        return -1;
+    }
+
+    for (size_t i = 0u; i < total_cells; i++) {
+        terminal_cell_apply_defaults(buffer, &new_cells[i]);
+    }
+
+    struct terminal_cell *old_cells = buffer->cells;
+    size_t old_columns = buffer->columns;
+    size_t old_rows = buffer->rows;
+
+    if (old_cells && old_columns > 0u && old_rows > 0u) {
+        size_t copy_rows = old_rows < rows ? old_rows : rows;
+        size_t copy_cols = old_columns < columns ? old_columns : columns;
+        if (copy_cols > 0u) {
+            for (size_t row = 0u; row < copy_rows; row++) {
+                struct terminal_cell *dst_row = new_cells + row * columns;
+                struct terminal_cell *src_row = old_cells + row * old_columns;
+                memcpy(dst_row, src_row, copy_cols * sizeof(struct terminal_cell));
+            }
+        }
+    }
+
+    free(old_cells);
+    buffer->cells = new_cells;
+    buffer->columns = columns;
+    buffer->rows = rows;
+
+    if (buffer->cursor_column >= columns) {
+        buffer->cursor_column = columns - 1u;
+    }
+    if (buffer->cursor_row >= rows) {
+        buffer->cursor_row = rows - 1u;
+    }
+    if (buffer->saved_cursor_column >= columns) {
+        buffer->saved_cursor_column = columns - 1u;
+    }
+    if (buffer->saved_cursor_row >= rows) {
+        buffer->saved_cursor_row = rows - 1u;
+    }
+
+    return 0;
+}
+
 static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
     if (!buffer || buffer->rows == 0u || buffer->columns == 0u) {
         return;
@@ -1082,6 +1164,30 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
     case 112: /* Reset cursor color */
         terminal_update_cursor_color(buffer, terminal_default_palette16[7]);
         break;
+    case 777: {
+        if (!args) {
+            break;
+        }
+        const char prefix[] = "term-scale=";
+        size_t prefix_len = sizeof(prefix) - 1u;
+        if (strncmp(args, prefix, prefix_len) != 0) {
+            break;
+        }
+        const char *value = args + prefix_len;
+        size_t columns = 0u;
+        size_t rows = 0u;
+        if (strcmp(value, "118x66") == 0) {
+            columns = 118u;
+            rows = 66u;
+        } else if (strcmp(value, "354x198") == 0) {
+            columns = 354u;
+            rows = 198u;
+        } else {
+            break;
+        }
+        (void)terminal_apply_dimensions(buffer, columns, rows);
+        break;
+    }
     default:
         break;
     }
@@ -1399,6 +1505,69 @@ static void update_pty_size(int fd, size_t columns, size_t rows) {
     ioctl(fd, TIOCSWINSZ, &ws);
 }
 
+static int terminal_apply_dimensions(struct terminal_buffer *buffer, size_t columns, size_t rows) {
+    struct terminal_runtime *runtime = terminal_runtime_get();
+    if (!runtime || !buffer || columns == 0u || rows == 0u) {
+        return -1;
+    }
+
+    if (columns == runtime->columns && rows == runtime->rows) {
+        return 0;
+    }
+
+    size_t width_size = columns * (size_t)runtime->glyph_width;
+    size_t height_size = rows * (size_t)runtime->glyph_height;
+    if (width_size == 0u || height_size == 0u ||
+        width_size > (size_t)INT_MAX || height_size > (size_t)INT_MAX) {
+        return -1;
+    }
+
+    int new_window_width = (int)width_size;
+    int new_window_height = (int)height_size;
+    int old_window_width = runtime->window_width;
+    int old_window_height = runtime->window_height;
+    size_t old_columns = runtime->columns;
+    size_t old_rows = runtime->rows;
+
+    if (runtime->renderer) {
+        if (SDL_RenderSetLogicalSize(runtime->renderer, new_window_width, new_window_height) != 0) {
+            return -1;
+        }
+    }
+
+    if (terminal_buffer_resize(buffer, columns, rows) != 0) {
+        if (runtime->renderer) {
+            SDL_RenderSetLogicalSize(runtime->renderer, old_window_width, old_window_height);
+        }
+        runtime->columns = old_columns;
+        runtime->rows = old_rows;
+        return -1;
+    }
+
+    runtime->window_width = new_window_width;
+    runtime->window_height = new_window_height;
+    runtime->columns = columns;
+    runtime->rows = rows;
+
+    if (runtime->window) {
+        Uint32 flags = SDL_GetWindowFlags(runtime->window);
+        if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+            SDL_SetWindowSize(runtime->window, new_window_width, new_window_height);
+        }
+    }
+
+    if (runtime->renderer) {
+        SDL_RenderSetLogicalSize(runtime->renderer, new_window_width, new_window_height);
+    }
+
+    update_pty_size(runtime->master_fd, columns, rows);
+    if (runtime->child_pid > 0) {
+        kill(runtime->child_pid, SIGWINCH);
+    }
+
+    return 0;
+}
+
 static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
     if (!exe_path || !out_master_fd) {
         return -1;
@@ -1462,6 +1631,9 @@ static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
         if (!term_value || term_value[0] == '\0') {
             setenv("TERM", "xterm-256color", 1);
         }
+
+        setenv("BUDOSTACK_TERMINAL", "1", 1);
+        setenv("BUDOSTACK_TERMINAL_VIEW", "118x66", 1);
 
         execl(exe_path, exe_path, (char *)NULL);
         perror("execl");
@@ -1647,6 +1819,17 @@ int main(int argc, char **argv) {
     }
     const int glyph_width = (int)glyph_width_size;
     const int glyph_height = (int)glyph_height_size;
+    g_terminal_runtime.glyph_width = glyph_width;
+    g_terminal_runtime.glyph_height = glyph_height;
+    g_terminal_runtime.master_fd = -1;
+    g_terminal_runtime.child_pid = -1;
+    g_terminal_runtime.window = NULL;
+    g_terminal_runtime.renderer = NULL;
+    g_terminal_runtime.window_width = 0;
+    g_terminal_runtime.window_height = 0;
+    g_terminal_runtime.columns = 0u;
+    g_terminal_runtime.rows = 0u;
+    g_terminal_runtime_valid = 0;
 
     size_t window_width_size = glyph_width_size * (size_t)TERMINAL_COLUMNS;
     size_t window_height_size = glyph_height_size * (size_t)TERMINAL_ROWS;
@@ -1658,6 +1841,8 @@ int main(int argc, char **argv) {
     }
     const int window_width = (int)window_width_size;
     const int window_height = (int)window_height_size;
+    g_terminal_runtime.window_width = window_width;
+    g_terminal_runtime.window_height = window_height;
 
     int master_fd = -1;
     pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
@@ -1665,6 +1850,9 @@ int main(int argc, char **argv) {
         free_font(&font);
         return EXIT_FAILURE;
     }
+
+    g_terminal_runtime.master_fd = master_fd;
+    g_terminal_runtime.child_pid = child_pid;
 
     if (fcntl(master_fd, F_SETFL, O_NONBLOCK) < 0) {
         perror("fcntl");
@@ -1699,6 +1887,8 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    g_terminal_runtime.window = window;
+
     if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
         fprintf(stderr, "SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
         SDL_DestroyWindow(window);
@@ -1720,7 +1910,9 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (SDL_RenderSetLogicalSize(renderer, window_width, window_height) != 0) {
+    g_terminal_runtime.renderer = renderer;
+
+    if (SDL_RenderSetLogicalSize(renderer, g_terminal_runtime.window_width, g_terminal_runtime.window_height) != 0) {
         fprintf(stderr, "SDL_RenderSetLogicalSize failed: %s\n", SDL_GetError());
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
@@ -1777,7 +1969,7 @@ int main(int argc, char **argv) {
         close(master_fd);
         return EXIT_FAILURE;
     }
-    if (output_width < window_width || output_height < window_height) {
+    if (output_width < g_terminal_runtime.window_width || output_height < g_terminal_runtime.window_height) {
         fprintf(stderr, "Renderer output size is smaller than required terminal dimensions.\n");
         for (size_t i = 0u; i < 256u; i++) {
             SDL_DestroyTexture(glyph_textures[i]);
@@ -1810,6 +2002,10 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    g_terminal_runtime.columns = columns;
+    g_terminal_runtime.rows = rows;
+    g_terminal_runtime_valid = 1;
+
     update_pty_size(master_fd, columns, rows);
 
     struct ansi_parser parser;
@@ -1833,9 +2029,12 @@ int main(int argc, char **argv) {
             } else if (event.type == SDL_WINDOWEVENT &&
                        (event.window.event == SDL_WINDOWEVENT_RESIZED ||
                         event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
-                Uint32 flags = SDL_GetWindowFlags(window);
-                if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
-                    SDL_SetWindowSize(window, window_width, window_height);
+                struct terminal_runtime *runtime = terminal_runtime_get();
+                if (runtime) {
+                    Uint32 flags = SDL_GetWindowFlags(window);
+                    if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+                        SDL_SetWindowSize(window, runtime->window_width, runtime->window_height);
+                    }
                 }
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
@@ -2278,6 +2477,9 @@ int main(int argc, char **argv) {
     }
 
     terminal_buffer_free(&buffer);
+    g_terminal_runtime_valid = 0;
+    g_terminal_runtime.window = NULL;
+    g_terminal_runtime.renderer = NULL;
 
     for (size_t i = 0u; i < 256u; i++) {
         SDL_DestroyTexture(glyph_textures[i]);

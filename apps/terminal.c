@@ -1511,10 +1511,8 @@ static void terminal_renderer_anchor_viewport(struct terminal_runtime *runtime) 
         return;
     }
 
-    SDL_Rect viewport;
-    if (SDL_RenderGetViewport(runtime->renderer, &viewport) != 0) {
-        return;
-    }
+    SDL_Rect viewport = {0, 0, 0, 0};
+    SDL_RenderGetViewport(runtime->renderer, &viewport);
 
     if (viewport.x != 0 || viewport.y != 0) {
         viewport.x = 0;

@@ -14,9 +14,44 @@
 #endif
 
 struct glyph_entry {
-    FT_ULong codepoint;
     FT_UInt glyph_index;
+    FT_ULong *codepoints;
+    size_t codepoint_count;
+    size_t codepoint_capacity;
+    bool seen;
 };
+
+static void
+append_codepoint(struct glyph_entry *entry, FT_ULong codepoint)
+{
+    if (entry == NULL) {
+        return;
+    }
+
+    if (entry->codepoint_count == entry->codepoint_capacity) {
+        size_t new_capacity = entry->codepoint_capacity == 0 ? 4u : entry->codepoint_capacity * 2u;
+        FT_ULong *new_buf = realloc(entry->codepoints, new_capacity * sizeof(*new_buf));
+        if (new_buf == NULL) {
+            fprintf(stderr, "Failed to grow codepoint list.\n");
+            exit(EXIT_FAILURE);
+        }
+        entry->codepoints = new_buf;
+        entry->codepoint_capacity = new_capacity;
+    }
+
+    entry->codepoints[entry->codepoint_count++] = codepoint;
+}
+
+static void
+free_codepoint_lists(struct glyph_entry *entries, size_t count)
+{
+    if (entries == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        free(entries[i].codepoints);
+    }
+}
 
 static void
 usage(const char *prog)
@@ -179,6 +214,9 @@ main(int argc, char **argv)
     unsigned int glyph_limit = 0;
     unsigned char *glyph_data = NULL;
     struct glyph_entry *entries = NULL;
+    FT_UInt *glyph_order = NULL;
+    size_t glyph_order_count = 0;
+    size_t glyph_order_capacity = 0;
 
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
@@ -310,59 +348,123 @@ main(int argc, char **argv)
         }
     }
 
-    FT_ULong charcode = 0;
-    FT_UInt glyph_index = 0;
-    size_t available_glyphs = 0;
-    for (charcode = FT_Get_First_Char(face, &glyph_index); glyph_index != 0;
-         charcode = FT_Get_Next_Char(face, charcode, &glyph_index)) {
-        ++available_glyphs;
-    }
-
-    if (available_glyphs == 0) {
-        fprintf(stderr, "Font does not expose any encodable glyphs.\n");
+    if (face->num_glyphs <= 0) {
+        fprintf(stderr, "Font reports no glyphs.\n");
         FT_Done_Face(face);
         FT_Done_FreeType(library);
         return EXIT_FAILURE;
     }
 
-    if (available_glyphs > (size_t)UINT_MAX) {
-        available_glyphs = (size_t)UINT_MAX;
+    entries = calloc((size_t)face->num_glyphs, sizeof(*entries));
+    if (entries == NULL) {
+        fprintf(stderr, "Failed to allocate %ld glyph entries.\n", face->num_glyphs);
+        FT_Done_Face(face);
+        FT_Done_FreeType(library);
+        return EXIT_FAILURE;
     }
 
-    unsigned int export_glyphs = (unsigned int)available_glyphs;
+    FT_CharMap original_charmap = face->charmap;
+    bool enumerated_any = false;
+
+    for (int map_index = 0; map_index < face->num_charmaps; ++map_index) {
+        FT_CharMap cmap = face->charmaps[map_index];
+        if (cmap == NULL || cmap->encoding != FT_ENCODING_UNICODE) {
+            continue;
+        }
+
+        if (FT_Set_Charmap(face, cmap) != 0) {
+            continue;
+        }
+
+        enumerated_any = true;
+
+        FT_ULong charcode = 0;
+        FT_UInt glyph_index = 0;
+        for (charcode = FT_Get_First_Char(face, &glyph_index); glyph_index != 0;
+             charcode = FT_Get_Next_Char(face, charcode, &glyph_index)) {
+            if (glyph_index >= (FT_UInt)face->num_glyphs) {
+                continue;
+            }
+
+            struct glyph_entry *entry = &entries[glyph_index];
+            if (!entry->seen) {
+                entry->glyph_index = glyph_index;
+                entry->seen = true;
+
+                if (glyph_order_count == glyph_order_capacity) {
+                    size_t new_capacity = glyph_order_capacity == 0 ? 64u : glyph_order_capacity * 2u;
+                    FT_UInt *new_order = realloc(glyph_order, new_capacity * sizeof(*new_order));
+                    if (new_order == NULL) {
+                        fprintf(stderr, "Failed to allocate glyph order list.\n");
+                        free_codepoint_lists(entries, (size_t)face->num_glyphs);
+                        free(entries);
+                        FT_Done_Face(face);
+                        FT_Done_FreeType(library);
+                        free(glyph_order);
+                        return EXIT_FAILURE;
+                    }
+                    glyph_order = new_order;
+                    glyph_order_capacity = new_capacity;
+                }
+
+                glyph_order[glyph_order_count++] = glyph_index;
+            }
+
+            append_codepoint(entry, charcode);
+        }
+    }
+
+    if (original_charmap != NULL) {
+        FT_Set_Charmap(face, original_charmap);
+    }
+
+    if (!enumerated_any || glyph_order_count == 0) {
+        fprintf(stderr, "Font does not expose any encodable glyphs.\n");
+        free_codepoint_lists(entries, (size_t)face->num_glyphs);
+        free(entries);
+        FT_Done_Face(face);
+        FT_Done_FreeType(library);
+        free(glyph_order);
+        return EXIT_FAILURE;
+    }
+
+    if (glyph_order_count > (size_t)UINT32_MAX) {
+        fprintf(stderr, "Font exports more than 2^32 glyphs; cannot encode.\n");
+        free_codepoint_lists(entries, (size_t)face->num_glyphs);
+        free(entries);
+        FT_Done_Face(face);
+        FT_Done_FreeType(library);
+        free(glyph_order);
+        return EXIT_FAILURE;
+    }
+
+    unsigned int export_glyphs = (unsigned int)glyph_order_count;
     if (glyph_limit > 0 && glyph_limit < export_glyphs) {
         export_glyphs = glyph_limit;
     }
 
-    entries = calloc(export_glyphs, sizeof(*entries));
-    if (entries == NULL) {
-        fprintf(stderr, "Failed to allocate %zu glyph entries.\n", (size_t)export_glyphs);
-        FT_Done_Face(face);
-        FT_Done_FreeType(library);
-        return EXIT_FAILURE;
-    }
-
-    size_t filled = 0;
-    for (charcode = FT_Get_First_Char(face, &glyph_index);
-         glyph_index != 0 && filled < export_glyphs;
-         charcode = FT_Get_Next_Char(face, charcode, &glyph_index)) {
-        entries[filled].codepoint = charcode;
-        entries[filled].glyph_index = glyph_index;
-        ++filled;
-    }
-
-    if (filled == 0) {
-        fprintf(stderr, "Failed to enumerate glyphs from font charmap.\n");
+    if (export_glyphs == 0) {
+        fprintf(stderr, "Glyph selection produced no output glyphs.\n");
+        free_codepoint_lists(entries, (size_t)face->num_glyphs);
         free(entries);
         FT_Done_Face(face);
         FT_Done_FreeType(library);
+        free(glyph_order);
         return EXIT_FAILURE;
     }
 
-    export_glyphs = (unsigned int)filled;
-
     size_t row_bytes = (cell_width + 7u) / 8u;
     size_t charsize = row_bytes * (size_t)cell_height;
+    if (charsize == 0 || export_glyphs == 0 || charsize > SIZE_MAX / export_glyphs) {
+        fprintf(stderr, "Glyph dimensions overflow output buffer.\n");
+        free_codepoint_lists(entries, (size_t)face->num_glyphs);
+        free(entries);
+        FT_Done_Face(face);
+        FT_Done_FreeType(library);
+        free(glyph_order);
+        return EXIT_FAILURE;
+    }
+
     glyph_data = allocate_glyph_buffer(export_glyphs, charsize);
 
     int baseline = 0;
@@ -384,11 +486,15 @@ main(int argc, char **argv)
     }
 
     for (unsigned int i = 0; i < export_glyphs; ++i) {
-        ft_error = FT_Load_Glyph(face, entries[i].glyph_index, FT_LOAD_DEFAULT);
+        FT_UInt glyph_index = glyph_order[i];
+        ft_error = FT_Load_Glyph(face, glyph_index, FT_LOAD_DEFAULT);
         if (ft_error != 0) {
             continue;
         }
-        ft_error = FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL);
+        ft_error = FT_Render_Glyph(face->glyph, FT_RENDER_MODE_MONO);
+        if (ft_error != 0) {
+            ft_error = FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL);
+        }
         if (ft_error != 0) {
             continue;
         }
@@ -409,7 +515,9 @@ main(int argc, char **argv)
         FT_Done_Face(face);
         FT_Done_FreeType(library);
         free(glyph_data);
+        free_codepoint_lists(entries, (size_t)face->num_glyphs);
         free(entries);
+        free(glyph_order);
         return EXIT_FAILURE;
     }
 
@@ -421,7 +529,7 @@ main(int argc, char **argv)
     write_le32(out, 0u);
     write_le32(out, header_size);
     write_le32(out, flags);
-    write_le32(out, export_glyphs);
+    write_le32(out, (uint32_t)export_glyphs);
     write_le32(out, (uint32_t)charsize);
     write_le32(out, cell_height);
     write_le32(out, cell_width);
@@ -432,13 +540,18 @@ main(int argc, char **argv)
         FT_Done_Face(face);
         FT_Done_FreeType(library);
         free(glyph_data);
+        free_codepoint_lists(entries, (size_t)face->num_glyphs);
         free(entries);
+        free(glyph_order);
         return EXIT_FAILURE;
     }
 
     for (unsigned int i = 0; i < export_glyphs; ++i) {
-        uint32_t codepoint = (uint32_t)entries[i].codepoint;
-        write_le32(out, codepoint);
+        struct glyph_entry *entry = &entries[glyph_order[i]];
+        for (size_t cp = 0; cp < entry->codepoint_count; ++cp) {
+            uint32_t codepoint = (uint32_t)entry->codepoints[cp];
+            write_le32(out, codepoint);
+        }
         write_le32(out, 0xFFFFFFFFu);
     }
     write_le32(out, 0xFFFFFFFFu);
@@ -448,14 +561,18 @@ main(int argc, char **argv)
         FT_Done_Face(face);
         FT_Done_FreeType(library);
         free(glyph_data);
+        free_codepoint_lists(entries, (size_t)face->num_glyphs);
         free(entries);
+        free(glyph_order);
         return EXIT_FAILURE;
     }
 
     FT_Done_Face(face);
     FT_Done_FreeType(library);
     free(glyph_data);
+    free_codepoint_lists(entries, (size_t)face->num_glyphs);
     free(entries);
+    free(glyph_order);
 
     return EXIT_SUCCESS;
 }

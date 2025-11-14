@@ -32,17 +32,26 @@
 #define BUDOSTACK_HAVE_SDL2 1
 #endif
 
+#if defined(__has_include)
+#if __has_include(<SDL2/SDL_ttf.h>)
+#include <SDL2/SDL_ttf.h>
+#define BUDOSTACK_HAVE_SDL_TTF 1
+#elif __has_include(<SDL_ttf.h>)
+#include <SDL_ttf.h>
+#define BUDOSTACK_HAVE_SDL_TTF 1
+#else
+#define BUDOSTACK_HAVE_SDL_TTF 0
+#endif
+#else
+#include <SDL2/SDL_ttf.h>
+#define BUDOSTACK_HAVE_SDL_TTF 1
+#endif
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
 
-#if BUDOSTACK_HAVE_SDL2
-
-#define PSF1_MAGIC0 0x36
-#define PSF1_MAGIC1 0x04
-#define PSF1_MODE512 0x01
-#define PSF2_MAGIC 0x864ab572u
-#define PSF2_HEADER_SIZE 32u
+#if BUDOSTACK_HAVE_SDL2 && BUDOSTACK_HAVE_SDL_TTF
 
 #define TERMINAL_COLUMNS 118u
 #define TERMINAL_ROWS 66u
@@ -79,14 +88,14 @@ static int terminal_send_response(const char *response) {
 }
 
 
-struct psf_font {
-    uint32_t glyph_count;
-    uint32_t width;
-    uint32_t height;
-    uint32_t stride;
-    uint32_t glyph_size;
-    uint8_t *glyphs;
-};
+typedef struct {
+    SDL_Texture *tex;
+    int w;
+    int h;
+    int advance;
+} Glyph;
+
+static Glyph glyph_cache[256];
 
 struct terminal_cell {
     uint32_t ch;
@@ -170,6 +179,206 @@ static const uint32_t terminal_default_palette16[16] = {
 
 static uint32_t terminal_pack_rgb(uint8_t r, uint8_t g, uint8_t b) {
     return ((uint32_t)r << 16u) | ((uint32_t)g << 8u) | (uint32_t)b;
+}
+
+static void glyph_cache_destroy(void) {
+    for (size_t i = 0u; i < 256u; i++) {
+        if (glyph_cache[i].tex) {
+            SDL_DestroyTexture(glyph_cache[i].tex);
+            glyph_cache[i].tex = NULL;
+        }
+        glyph_cache[i].w = 0;
+        glyph_cache[i].h = 0;
+        glyph_cache[i].advance = 0;
+    }
+}
+
+static int terminal_font_metrics(TTF_Font *font, int *out_width, int *out_height) {
+    if (!font || !out_width || !out_height) {
+        return -1;
+    }
+
+    int reference_width = 0;
+    int reference_height = 0;
+    if (TTF_SizeText(font, "M", &reference_width, &reference_height) != 0) {
+        return -1;
+    }
+
+    int max_advance = reference_width > 0 ? reference_width : 0;
+    int max_height = reference_height > 0 ? reference_height : 0;
+    int font_height = TTF_FontHeight(font);
+    if (font_height > max_height) {
+        max_height = font_height;
+    }
+
+    for (int c = 0; c < 256; c++) {
+        int minx = 0;
+        int maxx = 0;
+        int miny = 0;
+        int maxy = 0;
+        int advance = 0;
+        if (TTF_GlyphMetrics(font, c, &minx, &maxx, &miny, &maxy, &advance) == 0) {
+            if (advance > max_advance) {
+                max_advance = advance;
+            }
+            int glyph_height = maxy - miny;
+            if (glyph_height > max_height) {
+                max_height = glyph_height;
+            }
+        }
+    }
+
+    if (max_advance <= 0) {
+        max_advance = reference_width > 0 ? reference_width : 8;
+    }
+    if (max_height <= 0) {
+        max_height = reference_height > 0 ? reference_height : 8;
+    }
+
+    *out_width = max_advance;
+    *out_height = max_height;
+    return 0;
+}
+
+static TTF_Font *open_terminal_font(const char *path, int target_height, int *out_width, int *out_height, char *errbuf, size_t errbuf_size) {
+    if (!path) {
+        if (errbuf && errbuf_size > 0) {
+            snprintf(errbuf, errbuf_size, "Font path not specified");
+        }
+        return NULL;
+    }
+
+    if (errbuf && errbuf_size > 0) {
+        errbuf[0] = '\0';
+    }
+
+    const int size_candidates[] = {8, 7, 9, 6, 10, 5, 11, 4, 12, 13, 14, 15, 16, 17, 18, 19, 20};
+    const size_t candidate_count = sizeof(size_candidates) / sizeof(size_candidates[0]);
+
+    TTF_Font *best_font = NULL;
+    int best_width = 0;
+    int best_height = 0;
+    int best_diff = INT_MAX;
+
+    for (size_t i = 0; i < candidate_count; i++) {
+        int size = size_candidates[i];
+        if (size <= 0) {
+            continue;
+        }
+        TTF_Font *font = TTF_OpenFont(path, size);
+        if (!font) {
+            continue;
+        }
+
+        int width = 0;
+        int height = 0;
+        if (terminal_font_metrics(font, &width, &height) != 0) {
+            TTF_CloseFont(font);
+            continue;
+        }
+
+        int diff = height - target_height;
+        if (diff < 0) {
+            diff = -diff;
+        }
+
+        if (diff < best_diff) {
+            if (best_font) {
+                TTF_CloseFont(best_font);
+            }
+            best_font = font;
+            best_width = width;
+            best_height = height;
+            best_diff = diff;
+            if (diff == 0) {
+                break;
+            }
+        } else {
+            TTF_CloseFont(font);
+        }
+    }
+
+    if (!best_font) {
+        if (errbuf && errbuf_size > 0) {
+            const char *ttf_err = TTF_GetError();
+            if (ttf_err && ttf_err[0] != '\0') {
+                snprintf(errbuf, errbuf_size, "Failed to open font '%s': %s", path, ttf_err);
+            } else {
+                snprintf(errbuf, errbuf_size, "Failed to open font '%s'", path);
+            }
+        }
+        return NULL;
+    }
+
+    if (out_width) {
+        *out_width = best_width;
+    }
+    if (out_height) {
+        *out_height = best_height;
+    }
+
+    return best_font;
+}
+
+static int glyph_cache_build(SDL_Renderer *renderer, TTF_Font *font, int default_advance, int default_height, char *errbuf, size_t errbuf_size) {
+    if (!renderer || !font) {
+        if (errbuf && errbuf_size > 0) {
+            snprintf(errbuf, errbuf_size, "Renderer or font unavailable");
+        }
+        return -1;
+    }
+
+    glyph_cache_destroy();
+
+    SDL_Color white = {255, 255, 255, 255};
+
+    for (int c = 0; c < 256; c++) {
+        Glyph *g = &glyph_cache[c];
+        g->advance = default_advance;
+        g->w = 0;
+        g->h = default_height;
+
+        if (c == 0) {
+            g->tex = NULL;
+            continue;
+        }
+
+        char text[2] = {(char)c, '\0'};
+        SDL_Surface *surf = TTF_RenderUTF8_Solid(font, text, white);
+        if (!surf) {
+            g->tex = NULL;
+            continue;
+        }
+
+        g->w = surf->w;
+        g->h = surf->h > 0 ? surf->h : default_height;
+
+        SDL_Texture *tex = SDL_CreateTextureFromSurface(renderer, surf);
+        SDL_FreeSurface(surf);
+        if (!tex) {
+            if (errbuf && errbuf_size > 0) {
+                snprintf(errbuf, errbuf_size, "SDL_CreateTextureFromSurface failed: %s", SDL_GetError());
+            }
+            glyph_cache_destroy();
+            return -1;
+        }
+
+        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+        g->tex = tex;
+
+        int minx = 0;
+        int maxx = 0;
+        int miny = 0;
+        int maxy = 0;
+        int advance = 0;
+        if (TTF_GlyphMetrics(font, c, &minx, &maxx, &miny, &maxy, &advance) == 0 && advance > 0) {
+            g->advance = advance;
+        } else if (g->w > 0) {
+            g->advance = g->w;
+        }
+    }
+
+    return 0;
 }
 
 static uint8_t terminal_color_r(uint32_t color) {
@@ -502,182 +711,6 @@ static void terminal_apply_sgr(struct terminal_buffer *buffer, const struct ansi
     }
 }
 
-static void free_font(struct psf_font *font) {
-    if (!font) {
-        return;
-    }
-    free(font->glyphs);
-    font->glyphs = NULL;
-    font->glyph_count = 0;
-    font->width = 0;
-    font->height = 0;
-    font->stride = 0;
-    font->glyph_size = 0;
-}
-
-static uint32_t read_u32_le(const unsigned char *p) {
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8u) | ((uint32_t)p[2] << 16u) | ((uint32_t)p[3] << 24u);
-}
-
-static int load_psf_font(const char *path, struct psf_font *out_font, char *errbuf, size_t errbuf_size) {
-    FILE *fp = fopen(path, "rb");
-    if (!fp) {
-        if (errbuf && errbuf_size > 0) {
-            snprintf(errbuf, errbuf_size, "Failed to open '%s': %s", path, strerror(errno));
-        }
-        return -1;
-    }
-
-    unsigned char header[PSF2_HEADER_SIZE];
-    size_t header_read = fread(header, 1, sizeof(header), fp);
-    if (header_read < 4) {
-        if (errbuf && errbuf_size > 0) {
-            snprintf(errbuf, errbuf_size, "File too small to be a PSF font");
-        }
-        fclose(fp);
-        return -1;
-    }
-
-    struct psf_font font = {0};
-
-    if (header[0] == PSF1_MAGIC0 && header[1] == PSF1_MAGIC1) {
-        if (header_read < 4) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Incomplete PSF1 header");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        uint32_t glyph_count = (header[2] & PSF1_MODE512) ? 512u : 256u;
-        uint32_t charsize = header[3];
-
-        font.width = 8u;
-        font.height = charsize;
-        font.stride = 1u;
-        font.glyph_size = font.height * font.stride;
-        font.glyph_count = glyph_count;
-
-        if (font.glyph_size == 0 || glyph_count == 0) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Invalid PSF1 font dimensions");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        if ((size_t)glyph_count > SIZE_MAX / font.glyph_size) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Font too large");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        if (fseek(fp, 4L, SEEK_SET) != 0) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Failed to seek glyph data");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        size_t total = (size_t)glyph_count * font.glyph_size;
-        font.glyphs = calloc(total, 1);
-        if (!font.glyphs) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Out of memory allocating font");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        if (fread(font.glyphs, 1, total, fp) != total) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Failed to read glyph data");
-            }
-            free_font(&font);
-            fclose(fp);
-            return -1;
-        }
-    } else if (read_u32_le(header) == PSF2_MAGIC) {
-        if (header_read < PSF2_HEADER_SIZE) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Incomplete PSF2 header");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        uint32_t version = read_u32_le(header + 4);
-        (void)version;
-        uint32_t header_size = read_u32_le(header + 8);
-        uint32_t flags = read_u32_le(header + 12);
-        (void)flags;
-        uint32_t glyph_count = read_u32_le(header + 16);
-        uint32_t glyph_size = read_u32_le(header + 20);
-        uint32_t height = read_u32_le(header + 24);
-        uint32_t width = read_u32_le(header + 28);
-
-        if (glyph_count == 0 || glyph_size == 0 || height == 0 || width == 0) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Invalid PSF2 font dimensions");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        if ((size_t)glyph_count > SIZE_MAX / glyph_size) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Font too large");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        if (fseek(fp, (long)header_size, SEEK_SET) != 0) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Failed to seek glyph data");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        font.width = width;
-        font.height = height;
-        font.stride = (width + 7u) / 8u;
-        font.glyph_size = glyph_size;
-        font.glyph_count = glyph_count;
-
-        font.glyphs = calloc((size_t)glyph_count, glyph_size);
-        if (!font.glyphs) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Out of memory allocating font");
-            }
-            fclose(fp);
-            return -1;
-        }
-
-        if (fread(font.glyphs, 1, (size_t)glyph_count * glyph_size, fp) != (size_t)glyph_count * glyph_size) {
-            if (errbuf && errbuf_size > 0) {
-                snprintf(errbuf, errbuf_size, "Failed to read glyph data");
-            }
-            free_font(&font);
-            fclose(fp);
-            return -1;
-        }
-    } else {
-        if (errbuf && errbuf_size > 0) {
-            snprintf(errbuf, errbuf_size, "Unsupported font format");
-        }
-        fclose(fp);
-        return -1;
-    }
-
-    fclose(fp);
-    *out_font = font;
-    return 0;
-}
 
 static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, size_t rows) {
     buffer->columns = columns;
@@ -1784,43 +1817,6 @@ static int terminal_send_escape_prefix(int fd) {
     return terminal_send_bytes(fd, &esc, 1u);
 }
 
-static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer, const struct psf_font *font, uint32_t glyph_index) {
-    if (!renderer || !font || !font->glyphs) {
-        return NULL;
-    }
-    if (glyph_index >= font->glyph_count) {
-        glyph_index = '?';
-        if (glyph_index >= font->glyph_count) {
-            glyph_index = 0u;
-        }
-    }
-
-    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, (int)font->width, (int)font->height, 32, SDL_PIXELFORMAT_RGBA32);
-    if (!surface) {
-        return NULL;
-    }
-
-    uint32_t *pixels = (uint32_t *)surface->pixels;
-    size_t pitch_pixels = (size_t)surface->pitch / sizeof(uint32_t);
-    const uint8_t *glyph = font->glyphs + glyph_index * font->glyph_size;
-
-    for (uint32_t y = 0u; y < font->height; y++) {
-        for (uint32_t x = 0u; x < font->width; x++) {
-            size_t byte_index = y * font->stride + x / 8u;
-            uint8_t mask = (uint8_t)(0x80u >> (x % 8u));
-            int set = (glyph[byte_index] & mask) != 0;
-            pixels[y * pitch_pixels + x] = set ? 0xFFFFFFFFu : 0x00000000u;
-        }
-    }
-
-    SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
-    SDL_FreeSurface(surface);
-    if (texture) {
-        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    }
-    return texture;
-}
-
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -1843,51 +1839,21 @@ int main(int argc, char **argv) {
     }
 
     char font_path[PATH_MAX];
-    if (build_path(font_path, sizeof(font_path), root_dir, "fonts/pcw8x8.psf") != 0) {
+    if (build_path(font_path, sizeof(font_path), root_dir, "fonts/ModernDOS8x8.ttf") != 0) {
         fprintf(stderr, "Failed to resolve font path.\n");
         return EXIT_FAILURE;
     }
 
-    struct psf_font font = {0};
     char errbuf[256];
-    if (load_psf_font(font_path, &font, errbuf, sizeof(errbuf)) != 0) {
-        fprintf(stderr, "Failed to load font: %s\n", errbuf);
-        return EXIT_FAILURE;
-    }
-
-    size_t glyph_width_size = (size_t)font.width * (size_t)TERMINAL_FONT_SCALE;
-    size_t glyph_height_size = (size_t)font.height * (size_t)TERMINAL_FONT_SCALE;
-    if (glyph_width_size == 0u || glyph_height_size == 0u ||
-        glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
-        fprintf(stderr, "Scaled font dimensions invalid.\n");
-        free_font(&font);
-        return EXIT_FAILURE;
-    }
-    int glyph_width = (int)glyph_width_size;
-    int glyph_height = (int)glyph_height_size;
-
-    size_t window_width_size = glyph_width_size * (size_t)TERMINAL_COLUMNS;
-    size_t window_height_size = glyph_height_size * (size_t)TERMINAL_ROWS;
-    if (window_width_size == 0u || window_height_size == 0u ||
-        window_width_size > (size_t)INT_MAX || window_height_size > (size_t)INT_MAX) {
-        fprintf(stderr, "Computed window dimensions invalid.\n");
-        free_font(&font);
-        return EXIT_FAILURE;
-    }
-    int window_width = (int)window_width_size;
-    int window_height = (int)window_height_size;
-
     int master_fd = -1;
     pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
     if (child_pid < 0) {
-        free_font(&font);
         return EXIT_FAILURE;
     }
 
     if (fcntl(master_fd, F_SETFL, O_NONBLOCK) < 0) {
         perror("fcntl");
         kill(child_pid, SIGKILL);
-        free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
     }
@@ -1895,10 +1861,67 @@ int main(int argc, char **argv) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         kill(child_pid, SIGKILL);
-        free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
     }
+
+    if (TTF_Init() == -1) {
+        fprintf(stderr, "TTF_Init error: %s\n", TTF_GetError());
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    int base_glyph_width = 0;
+    int base_glyph_height = 0;
+    TTF_Font *terminal_font = open_terminal_font(font_path, 8, &base_glyph_width, &base_glyph_height, errbuf, sizeof(errbuf));
+    if (!terminal_font) {
+        fprintf(stderr, "Failed to load font: %s\n", errbuf);
+        TTF_Quit();
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    if (base_glyph_width <= 0 || base_glyph_height <= 0) {
+        fprintf(stderr, "Font metrics invalid.\n");
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    size_t glyph_width_size = (size_t)base_glyph_width * (size_t)TERMINAL_FONT_SCALE;
+    size_t glyph_height_size = (size_t)base_glyph_height * (size_t)TERMINAL_FONT_SCALE;
+    if (glyph_width_size == 0u || glyph_height_size == 0u ||
+        glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
+        fprintf(stderr, "Scaled font dimensions invalid.\n");
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    size_t window_width_size = glyph_width_size * (size_t)TERMINAL_COLUMNS;
+    size_t window_height_size = glyph_height_size * (size_t)TERMINAL_ROWS;
+    if (window_width_size == 0u || window_height_size == 0u ||
+        window_width_size > (size_t)INT_MAX || window_height_size > (size_t)INT_MAX) {
+        fprintf(stderr, "Computed window dimensions invalid.\n");
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+    int window_width = (int)window_width_size;
+    int window_height = (int)window_height_size;
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
 
@@ -1910,9 +1933,10 @@ int main(int argc, char **argv) {
                                           SDL_WINDOW_SHOWN);
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
     }
@@ -1920,9 +1944,10 @@ int main(int argc, char **argv) {
     if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
         fprintf(stderr, "SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
         SDL_DestroyWindow(window);
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
     }
@@ -1931,12 +1956,32 @@ int main(int argc, char **argv) {
     if (!renderer) {
         fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
         SDL_DestroyWindow(window);
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
     }
+
+    errbuf[0] = '\0';
+    if (glyph_cache_build(renderer, terminal_font, base_glyph_width, base_glyph_height, errbuf, sizeof(errbuf)) != 0) {
+        if (errbuf[0] == '\0') {
+            snprintf(errbuf, sizeof(errbuf), "glyph cache build failed");
+        }
+        fprintf(stderr, "Failed to build glyph cache: %s\n", errbuf);
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(window);
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    int glyph_width = (int)glyph_width_size;
+    int glyph_height = (int)glyph_height_size;
 
     terminal_window_handle = window;
     terminal_renderer_handle = renderer;
@@ -1945,49 +1990,29 @@ int main(int argc, char **argv) {
     terminal_cell_pixel_height = glyph_height;
     terminal_scale_factor = 1;
 
-    SDL_Texture *glyph_textures[256];
-    for (size_t i = 0u; i < 256u; i++) {
-        glyph_textures[i] = create_glyph_texture(renderer, &font, (uint32_t)i);
-        if (!glyph_textures[i]) {
-            fprintf(stderr, "Failed to create glyph texture for %zu: %s\n", i, SDL_GetError());
-            for (size_t j = 0u; j < i; j++) {
-                SDL_DestroyTexture(glyph_textures[j]);
-            }
-            SDL_DestroyRenderer(renderer);
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            kill(child_pid, SIGKILL);
-            free_font(&font);
-            close(master_fd);
-            return EXIT_FAILURE;
-        }
-    }
-
     int output_width = 0;
     int output_height = 0;
     if (SDL_GetRendererOutputSize(renderer, &output_width, &output_height) != 0) {
         fprintf(stderr, "SDL_GetRendererOutputSize failed: %s\n", SDL_GetError());
-        for (size_t i = 0u; i < 256u; i++) {
-            SDL_DestroyTexture(glyph_textures[i]);
-        }
+        glyph_cache_destroy();
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
     }
     if (output_width <= 0 || output_height <= 0) {
         fprintf(stderr, "Renderer output size is invalid.\n");
-        for (size_t i = 0u; i < 256u; i++) {
-            SDL_DestroyTexture(glyph_textures[i]);
-        }
+        glyph_cache_destroy();
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
     }
@@ -2001,14 +2026,13 @@ int main(int argc, char **argv) {
     terminal_buffer_initialize_palette(&buffer);
     if (terminal_buffer_init(&buffer, columns, rows) != 0) {
         fprintf(stderr, "Failed to allocate terminal buffer.\n");
-        for (size_t i = 0u; i < 256u; i++) {
-            SDL_DestroyTexture(glyph_textures[i]);
-        }
+        glyph_cache_destroy();
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
+        TTF_CloseFont(terminal_font);
+        TTF_Quit();
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
     }
@@ -2442,16 +2466,16 @@ int main(int argc, char **argv) {
 
                 if (ch != 0u) {
                     uint32_t glyph_index = ch;
-                    if (glyph_index >= 256u || glyph_textures[glyph_index] == NULL) {
+                    if (glyph_index >= 256u || glyph_cache[glyph_index].tex == NULL) {
                         glyph_index = '?';
                     }
-                    SDL_Texture *glyph = glyph_textures[glyph_index];
-                    if (glyph) {
-                        SDL_SetTextureColorMod(glyph,
+                    Glyph *glyph = &glyph_cache[glyph_index];
+                    if (glyph->tex) {
+                        SDL_SetTextureColorMod(glyph->tex,
                                                terminal_color_r(glyph_color),
                                                terminal_color_g(glyph_color),
                                                terminal_color_b(glyph_color));
-                        SDL_RenderCopy(renderer, glyph, NULL, &dst);
+                        SDL_RenderCopy(renderer, glyph->tex, NULL, &dst);
                         if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
                             SDL_Rect underline = {dst.x, dst.y + glyph_height - 1, glyph_width, 1};
                             SDL_SetRenderDrawColor(renderer,
@@ -2484,15 +2508,14 @@ int main(int argc, char **argv) {
 
     terminal_buffer_free(&buffer);
 
-    for (size_t i = 0u; i < 256u; i++) {
-        SDL_DestroyTexture(glyph_textures[i]);
-    }
+    glyph_cache_destroy();
 
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+    TTF_CloseFont(terminal_font);
+    TTF_Quit();
     SDL_Quit();
 
-    free_font(&font);
     close(master_fd);
 
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
@@ -2505,8 +2528,8 @@ int main(int argc, char **argv) {
 #else
 
 int main(void) {
-    fprintf(stderr, "BUDOSTACK terminal requires SDL2 development headers to build.\n");
-    fprintf(stderr, "Please install SDL2 and rebuild to use this application.\n");
+    fprintf(stderr, "BUDOSTACK terminal requires SDL2 and SDL_ttf development headers to build.\n");
+    fprintf(stderr, "Please install SDL2 and SDL_ttf and rebuild to use this application.\n");
     return EXIT_FAILURE;
 }
 

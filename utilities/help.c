@@ -31,6 +31,7 @@ int main(int argc, char *argv[]) {
     printf("  OR\n");
     printf("\n");
     printf("      4. Run the 'terminal' application with built-in 8x8 font support\n");
+    printf("         --> enables running ./commands/TERM_* -commands in TASK scripts\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     printf("                           - SYSTEM REQUIREMENTS -\n");

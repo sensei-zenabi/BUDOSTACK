@@ -1213,12 +1213,23 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
         }
         const char *value = args + prefix_len;
         unsigned int scale = 0u;
+        size_t columns = 0u;
+        size_t rows = 0u;
+        int have_dimensions = 0;
 
-        if (strcmp(value, "118x66") == 0 || strcmp(value, "1") == 0 || strcmp(value, "default") == 0 ||
-            strcmp(value, "small") == 0) {
+        if (strcmp(value, "118x66") == 0 || strcmp(value, "default") == 0 || strcmp(value, "small") == 0) {
+            columns = (size_t)TERMINAL_COLUMNS;
+            rows = (size_t)TERMINAL_ROWS;
+            have_dimensions = 1;
             scale = 1u;
-        } else if (strcmp(value, "354x198") == 0 || strcmp(value, "3") == 0 || strcmp(value, "large") == 0 ||
-                   strcmp(value, "triple") == 0) {
+        } else if (strcmp(value, "354x198") == 0 || strcmp(value, "large") == 0 || strcmp(value, "triple") == 0) {
+            columns = (size_t)TERMINAL_COLUMNS * 3u;
+            rows = (size_t)TERMINAL_ROWS * 3u;
+            have_dimensions = 1;
+            scale = 3u;
+        } else if (strcmp(value, "1") == 0) {
+            scale = 1u;
+        } else if (strcmp(value, "3") == 0) {
             scale = 3u;
         } else {
             errno = 0;
@@ -1227,9 +1238,8 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
             if (errno == 0 && endptr && *endptr == '\0' && parsed > 0ul && parsed <= (unsigned long)UINT_MAX) {
                 scale = (unsigned int)parsed;
             } else {
-                size_t columns = 0u;
-                size_t rows = 0u;
                 if (terminal_parse_size_spec(value, &columns, &rows) == 0) {
+                    have_dimensions = 1;
                     size_t base_columns = (size_t)TERMINAL_COLUMNS;
                     size_t base_rows = (size_t)TERMINAL_ROWS;
                     if (base_columns > 0u && base_rows > 0u &&
@@ -1243,6 +1253,10 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
                     }
                 }
             }
+        }
+
+        if (have_dimensions && columns > 0u && rows > 0u) {
+            (void)terminal_apply_dimensions(buffer, columns, rows);
         }
 
         if (scale > 0u) {

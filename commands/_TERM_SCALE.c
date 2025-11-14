@@ -6,7 +6,7 @@
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: _TERM_SCALE <scale>\n");
-    fprintf(stderr, "  scale must be an integer between 1 and 4.\n");
+    fprintf(stderr, "  1: original resolution, 2: double resolution.\n");
 }
 
 int main(int argc, char **argv) {
@@ -24,8 +24,8 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (value < 1 || value > 4) {
-        fprintf(stderr, "_TERM_SCALE: scale must be between 1 and 4\n");
+    if (value < 1 || value > 2) {
+        fprintf(stderr, "_TERM_SCALE: scale must be either 1 or 2!\n");
         return EXIT_FAILURE;
     }
 

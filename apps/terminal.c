@@ -1511,18 +1511,18 @@ static void terminal_renderer_anchor_viewport(struct terminal_runtime *runtime) 
         return;
     }
 
-    int output_width = 0;
-    int output_height = 0;
-    if (SDL_GetRendererOutputSize(runtime->renderer, &output_width, &output_height) != 0) {
-        output_width = runtime->window_width;
-        output_height = runtime->window_height;
-    }
-
-    if (output_width <= 0 || output_height <= 0) {
+    SDL_Rect viewport = {0, 0, 0, 0};
+    SDL_RenderGetViewport(runtime->renderer, &viewport);
+    if (viewport.w <= 0 || viewport.h <= 0) {
         return;
     }
 
-    SDL_Rect viewport = {0, 0, output_width, output_height};
+    if (viewport.x == 0 && viewport.y == 0) {
+        return;
+    }
+
+    viewport.x = 0;
+    viewport.y = 0;
     (void)SDL_RenderSetViewport(runtime->renderer, &viewport);
 }
 

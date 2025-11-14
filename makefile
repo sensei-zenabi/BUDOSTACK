@@ -1,7 +1,18 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic
-LDFLAGS = -lasound -lm -pthread
+
+BASE_LDFLAGS = -lm -pthread
+ALSA_LIBS = $(shell pkg-config --libs alsa 2>/dev/null)
+
+ifeq ($(strip $(ALSA_LIBS)),)
+ALSA_CHECK = $(shell ldconfig -p 2>/dev/null | grep -q libasound.so && echo yes)
+ifeq ($(ALSA_CHECK),yes)
+ALSA_LIBS = -lasound
+endif
+endif
+
+LDFLAGS = $(BASE_LDFLAGS) $(ALSA_LIBS)
 
 SDL2_CFLAGS = $(shell pkg-config --cflags sdl2 2>/dev/null)
 SDL2_LIBS = $(shell pkg-config --libs sdl2 2>/dev/null)

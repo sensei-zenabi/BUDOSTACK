@@ -7,18 +7,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifndef TTFTOPSF_DEFAULT_GLYPHS
-#define TTFTOPSF_DEFAULT_GLYPHS 256U
-#endif
+#include <limits.h>
 
 #ifndef TTFTOPSF_DEFAULT_PIXEL_SIZE
 #define TTFTOPSF_DEFAULT_PIXEL_SIZE 16U
 #endif
 
-#ifndef TTFTOPSF_MAX_GLYPHS
-#define TTFTOPSF_MAX_GLYPHS 512U
-#endif
+struct glyph_entry {
+    FT_ULong codepoint;
+    FT_UInt glyph_index;
+};
 
 static void
 usage(const char *prog)
@@ -30,12 +28,10 @@ usage(const char *prog)
             "  -s <size>   Cell size (height and width) in pixels (default: %u).\n"
             "  -W <width>  Cell width in pixels (overrides -s).\n"
             "  -H <height> Cell height in pixels (overrides -s).\n"
-            "  -g <count>  Number of glyphs to export (1-%u, default: %u).\n"
+            "  -g <count>  Limit number of glyphs to export (default: all).\n"
             "  -h, --help  Show this help and exit.\n",
             prog,
-            TTFTOPSF_DEFAULT_PIXEL_SIZE,
-            TTFTOPSF_MAX_GLYPHS,
-            TTFTOPSF_DEFAULT_GLYPHS);
+            TTFTOPSF_DEFAULT_PIXEL_SIZE);
 }
 
 static bool
@@ -180,7 +176,9 @@ main(int argc, char **argv)
     const char *input_path = NULL;
     unsigned int cell_height = TTFTOPSF_DEFAULT_PIXEL_SIZE;
     unsigned int cell_width = TTFTOPSF_DEFAULT_PIXEL_SIZE;
-    unsigned int glyphs = TTFTOPSF_DEFAULT_GLYPHS;
+    unsigned int glyph_limit = 0;
+    unsigned char *glyph_data = NULL;
+    struct glyph_entry *entries = NULL;
 
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
@@ -230,11 +228,11 @@ main(int argc, char **argv)
                 return EXIT_FAILURE;
             }
             unsigned int count = 0;
-            if (!parse_unsigned(argv[++i], &count) || count == 0 || count > TTFTOPSF_MAX_GLYPHS) {
-                fprintf(stderr, "Invalid glyph count: %s (must be 1-%u).\n", argv[i], TTFTOPSF_MAX_GLYPHS);
+            if (!parse_unsigned(argv[++i], &count) || count == 0) {
+                fprintf(stderr, "Invalid glyph count: %s.\n", argv[i]);
                 return EXIT_FAILURE;
             }
-            glyphs = count;
+            glyph_limit = count;
         } else if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
             usage(argv[0]);
             return EXIT_SUCCESS;
@@ -277,10 +275,6 @@ main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    size_t row_bytes = (cell_width + 7u) / 8u;
-    size_t charsize = row_bytes * (size_t)cell_height;
-    unsigned char *glyph_data = allocate_glyph_buffer(glyphs, charsize);
-
     FT_Library library = NULL;
     FT_Face face = NULL;
     FT_Error ft_error = FT_Init_FreeType(&library);
@@ -303,9 +297,73 @@ main(int argc, char **argv)
         fprintf(stderr, "Failed to set pixel size %ux%u: 0x%02X\n", cell_width, cell_height, ft_error);
         FT_Done_Face(face);
         FT_Done_FreeType(library);
-        free(glyph_data);
         return EXIT_FAILURE;
     }
+
+    if (face->charmap == NULL || face->charmap->encoding != FT_ENCODING_UNICODE) {
+        FT_Error select_error = FT_Select_Charmap(face, FT_ENCODING_UNICODE);
+        if (select_error != 0) {
+            fprintf(stderr, "Font lacks a Unicode charmap (error 0x%02X).\n", select_error);
+            FT_Done_Face(face);
+            FT_Done_FreeType(library);
+            return EXIT_FAILURE;
+        }
+    }
+
+    FT_ULong charcode = 0;
+    FT_UInt glyph_index = 0;
+    size_t available_glyphs = 0;
+    for (charcode = FT_Get_First_Char(face, &glyph_index); glyph_index != 0;
+         charcode = FT_Get_Next_Char(face, charcode, &glyph_index)) {
+        ++available_glyphs;
+    }
+
+    if (available_glyphs == 0) {
+        fprintf(stderr, "Font does not expose any encodable glyphs.\n");
+        FT_Done_Face(face);
+        FT_Done_FreeType(library);
+        return EXIT_FAILURE;
+    }
+
+    if (available_glyphs > (size_t)UINT_MAX) {
+        available_glyphs = (size_t)UINT_MAX;
+    }
+
+    unsigned int export_glyphs = (unsigned int)available_glyphs;
+    if (glyph_limit > 0 && glyph_limit < export_glyphs) {
+        export_glyphs = glyph_limit;
+    }
+
+    entries = calloc(export_glyphs, sizeof(*entries));
+    if (entries == NULL) {
+        fprintf(stderr, "Failed to allocate %zu glyph entries.\n", (size_t)export_glyphs);
+        FT_Done_Face(face);
+        FT_Done_FreeType(library);
+        return EXIT_FAILURE;
+    }
+
+    size_t filled = 0;
+    for (charcode = FT_Get_First_Char(face, &glyph_index);
+         glyph_index != 0 && filled < export_glyphs;
+         charcode = FT_Get_Next_Char(face, charcode, &glyph_index)) {
+        entries[filled].codepoint = charcode;
+        entries[filled].glyph_index = glyph_index;
+        ++filled;
+    }
+
+    if (filled == 0) {
+        fprintf(stderr, "Failed to enumerate glyphs from font charmap.\n");
+        free(entries);
+        FT_Done_Face(face);
+        FT_Done_FreeType(library);
+        return EXIT_FAILURE;
+    }
+
+    export_glyphs = (unsigned int)filled;
+
+    size_t row_bytes = (cell_width + 7u) / 8u;
+    size_t charsize = row_bytes * (size_t)cell_height;
+    glyph_data = allocate_glyph_buffer(export_glyphs, charsize);
 
     int baseline = 0;
     if (face->size != NULL) {
@@ -325,13 +383,17 @@ main(int argc, char **argv)
         }
     }
 
-    for (unsigned int glyph_index = 0; glyph_index < glyphs; ++glyph_index) {
-        ft_error = FT_Load_Char(face, glyph_index, FT_LOAD_RENDER);
+    for (unsigned int i = 0; i < export_glyphs; ++i) {
+        ft_error = FT_Load_Glyph(face, entries[i].glyph_index, FT_LOAD_DEFAULT);
+        if (ft_error != 0) {
+            continue;
+        }
+        ft_error = FT_Render_Glyph(face->glyph, FT_RENDER_MODE_NORMAL);
         if (ft_error != 0) {
             continue;
         }
         blit_bitmap(glyph_data,
-                    glyph_index,
+                    i,
                     charsize,
                     cell_width,
                     cell_height,
@@ -347,6 +409,7 @@ main(int argc, char **argv)
         FT_Done_Face(face);
         FT_Done_FreeType(library);
         free(glyph_data);
+        free(entries);
         return EXIT_FAILURE;
     }
 
@@ -358,22 +421,24 @@ main(int argc, char **argv)
     write_le32(out, 0u);
     write_le32(out, header_size);
     write_le32(out, flags);
-    write_le32(out, glyphs);
+    write_le32(out, export_glyphs);
     write_le32(out, (uint32_t)charsize);
     write_le32(out, cell_height);
     write_le32(out, cell_width);
 
-    if (fwrite(glyph_data, charsize, glyphs, out) != glyphs) {
+    if (fwrite(glyph_data, charsize, export_glyphs, out) != export_glyphs) {
         fprintf(stderr, "Failed to write glyph bitmap data: %s\n", strerror(errno));
         fclose(out);
         FT_Done_Face(face);
         FT_Done_FreeType(library);
         free(glyph_data);
+        free(entries);
         return EXIT_FAILURE;
     }
 
-    for (unsigned int i = 0; i < glyphs; ++i) {
-        write_le32(out, i);
+    for (unsigned int i = 0; i < export_glyphs; ++i) {
+        uint32_t codepoint = (uint32_t)entries[i].codepoint;
+        write_le32(out, codepoint);
         write_le32(out, 0xFFFFFFFFu);
     }
     write_le32(out, 0xFFFFFFFFu);
@@ -383,12 +448,14 @@ main(int argc, char **argv)
         FT_Done_Face(face);
         FT_Done_FreeType(library);
         free(glyph_data);
+        free(entries);
         return EXIT_FAILURE;
     }
 
     FT_Done_Face(face);
     FT_Done_FreeType(library);
     free(glyph_data);
+    free(entries);
 
     return EXIT_SUCCESS;
 }

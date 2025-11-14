@@ -19,22 +19,22 @@ int main(int argc, char *argv[]) {
     }
 
     const char *arg = argv[1];
-    const char *target = NULL;
+    unsigned int scale = 0u;
 
     if (strcmp(arg, "118x66") == 0 || strcmp(arg, "1") == 0 || strcmp(arg, "default") == 0 || strcmp(arg, "small") == 0) {
-        target = "118x66";
+        scale = 1u;
     } else if (strcmp(arg, "354x198") == 0 || strcmp(arg, "3") == 0 || strcmp(arg, "large") == 0 || strcmp(arg, "triple") == 0) {
-        target = "354x198";
+        scale = 3u;
     } else {
         print_usage();
         return EXIT_FAILURE;
     }
 
-    if (printf("\033]777;term-scale=%s\007", target) < 0) {
+    if (printf("\033]777;term-scale=%u\007", scale) < 0) {
         fprintf(stderr, "_TERM_SCALE: failed to emit control sequence.\n");
         return EXIT_FAILURE;
     }
     fflush(stdout);
-    fprintf(stderr, "_TERM_SCALE: requested %s terminal view.\n", target);
+    fprintf(stderr, "_TERM_SCALE: requested %ux terminal scale.\n", scale);
     return EXIT_SUCCESS;
 }

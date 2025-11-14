@@ -110,6 +110,9 @@ struct terminal_runtime {
     pid_t child_pid;
     int glyph_width;
     int glyph_height;
+    int base_glyph_width;
+    int base_glyph_height;
+    unsigned int scale;
     int window_width;
     int window_height;
     size_t columns;
@@ -128,6 +131,7 @@ static struct terminal_runtime *terminal_runtime_get(void) {
 
 static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t columns, size_t rows);
 static int terminal_apply_dimensions(struct terminal_buffer *buffer, size_t columns, size_t rows);
+static int terminal_apply_scale(struct terminal_buffer *buffer, unsigned int scale);
 static void update_pty_size(int fd, size_t columns, size_t rows);
 static void terminal_renderer_anchor_viewport(struct terminal_runtime *runtime);
 
@@ -378,6 +382,39 @@ static void terminal_update_cursor_color(struct terminal_buffer *buffer, uint32_
         return;
     }
     buffer->cursor_color = color;
+}
+
+static int terminal_parse_size_spec(const char *spec, size_t *out_width, size_t *out_height) {
+    if (!spec || !out_width || !out_height) {
+        return -1;
+    }
+
+    const char *separator = strchr(spec, 'x');
+    if (!separator || separator == spec || separator[1] == '\0') {
+        return -1;
+    }
+
+    errno = 0;
+    char *endptr = NULL;
+    unsigned long width = strtoul(spec, &endptr, 10);
+    if (errno != 0 || endptr != separator || width == 0ul) {
+        return -1;
+    }
+
+    errno = 0;
+    char *endptr_height = NULL;
+    unsigned long height = strtoul(separator + 1, &endptr_height, 10);
+    if (errno != 0 || !endptr_height || *endptr_height != '\0' || height == 0ul) {
+        return -1;
+    }
+
+    if (width > (unsigned long)SIZE_MAX || height > (unsigned long)SIZE_MAX) {
+        return -1;
+    }
+
+    *out_width = (size_t)width;
+    *out_height = (size_t)height;
+    return 0;
 }
 
 static int terminal_parse_hex_color(const char *text, uint32_t *out_color) {
@@ -1175,18 +1212,42 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
             break;
         }
         const char *value = args + prefix_len;
-        size_t columns = 0u;
-        size_t rows = 0u;
-        if (strcmp(value, "118x66") == 0) {
-            columns = 118u;
-            rows = 66u;
-        } else if (strcmp(value, "354x198") == 0) {
-            columns = 354u;
-            rows = 198u;
+        unsigned int scale = 0u;
+
+        if (strcmp(value, "118x66") == 0 || strcmp(value, "1") == 0 || strcmp(value, "default") == 0 ||
+            strcmp(value, "small") == 0) {
+            scale = 1u;
+        } else if (strcmp(value, "354x198") == 0 || strcmp(value, "3") == 0 || strcmp(value, "large") == 0 ||
+                   strcmp(value, "triple") == 0) {
+            scale = 3u;
         } else {
-            break;
+            errno = 0;
+            char *endptr = NULL;
+            unsigned long parsed = strtoul(value, &endptr, 10);
+            if (errno == 0 && endptr && *endptr == '\0' && parsed > 0ul && parsed <= (unsigned long)UINT_MAX) {
+                scale = (unsigned int)parsed;
+            } else {
+                size_t columns = 0u;
+                size_t rows = 0u;
+                if (terminal_parse_size_spec(value, &columns, &rows) == 0) {
+                    size_t base_columns = (size_t)TERMINAL_COLUMNS;
+                    size_t base_rows = (size_t)TERMINAL_ROWS;
+                    if (base_columns > 0u && base_rows > 0u &&
+                        columns % base_columns == 0u && rows % base_rows == 0u) {
+                        size_t scale_columns = columns / base_columns;
+                        size_t scale_rows = rows / base_rows;
+                        if (scale_columns == scale_rows && scale_columns > 0u &&
+                            scale_columns <= (size_t)UINT_MAX) {
+                            scale = (unsigned int)scale_columns;
+                        }
+                    }
+                }
+            }
         }
-        (void)terminal_apply_dimensions(buffer, columns, rows);
+
+        if (scale > 0u) {
+            (void)terminal_apply_scale(buffer, scale);
+        }
         break;
     }
     default:
@@ -1526,6 +1587,86 @@ static void terminal_renderer_anchor_viewport(struct terminal_runtime *runtime) 
     (void)SDL_RenderSetViewport(runtime->renderer, &viewport);
 }
 
+static int terminal_apply_scale(struct terminal_buffer *buffer, unsigned int scale) {
+    (void)buffer;
+
+    struct terminal_runtime *runtime = terminal_runtime_get();
+    if (!runtime || scale == 0u) {
+        return -1;
+    }
+
+    if (runtime->scale == scale) {
+        return 0;
+    }
+
+    if (runtime->base_glyph_width <= 0 || runtime->base_glyph_height <= 0) {
+        return -1;
+    }
+
+    if (runtime->columns == 0u || runtime->rows == 0u) {
+        return -1;
+    }
+
+    size_t glyph_width_size = (size_t)runtime->base_glyph_width * (size_t)scale;
+    size_t glyph_height_size = (size_t)runtime->base_glyph_height * (size_t)scale;
+    if (glyph_width_size == 0u || glyph_height_size == 0u ||
+        glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
+        return -1;
+    }
+
+    size_t window_width_size = glyph_width_size * runtime->columns;
+    size_t window_height_size = glyph_height_size * runtime->rows;
+    if (window_width_size == 0u || window_height_size == 0u ||
+        window_width_size > (size_t)INT_MAX || window_height_size > (size_t)INT_MAX) {
+        return -1;
+    }
+
+    int new_glyph_width = (int)glyph_width_size;
+    int new_glyph_height = (int)glyph_height_size;
+    int new_window_width = (int)window_width_size;
+    int new_window_height = (int)window_height_size;
+
+    int old_glyph_width = runtime->glyph_width;
+    int old_glyph_height = runtime->glyph_height;
+    int old_window_width = runtime->window_width;
+    int old_window_height = runtime->window_height;
+    unsigned int old_scale = runtime->scale;
+
+    runtime->glyph_width = new_glyph_width;
+    runtime->glyph_height = new_glyph_height;
+    runtime->window_width = new_window_width;
+    runtime->window_height = new_window_height;
+    runtime->scale = scale;
+
+    if (runtime->renderer) {
+        if (SDL_RenderSetLogicalSize(runtime->renderer, new_window_width, new_window_height) != 0) {
+            runtime->glyph_width = old_glyph_width;
+            runtime->glyph_height = old_glyph_height;
+            runtime->window_width = old_window_width;
+            runtime->window_height = old_window_height;
+            runtime->scale = old_scale;
+            SDL_RenderSetLogicalSize(runtime->renderer, old_window_width, old_window_height);
+            terminal_renderer_anchor_viewport(runtime);
+            return -1;
+        }
+        terminal_renderer_anchor_viewport(runtime);
+    }
+
+    if (runtime->window) {
+        Uint32 flags = SDL_GetWindowFlags(runtime->window);
+        if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+            SDL_SetWindowSize(runtime->window, new_window_width, new_window_height);
+        }
+    }
+
+    if (runtime->renderer) {
+        SDL_RenderSetLogicalSize(runtime->renderer, new_window_width, new_window_height);
+        terminal_renderer_anchor_viewport(runtime);
+    }
+
+    return 0;
+}
+
 static int terminal_apply_dimensions(struct terminal_buffer *buffer, size_t columns, size_t rows) {
     struct terminal_runtime *runtime = terminal_runtime_get();
     if (!runtime || !buffer || columns == 0u || rows == 0u) {
@@ -1841,10 +1982,13 @@ int main(int argc, char **argv) {
         free_font(&font);
         return EXIT_FAILURE;
     }
-    const int glyph_width = (int)glyph_width_size;
-    const int glyph_height = (int)glyph_height_size;
-    g_terminal_runtime.glyph_width = glyph_width;
-    g_terminal_runtime.glyph_height = glyph_height;
+    const int base_glyph_width = (int)glyph_width_size;
+    const int base_glyph_height = (int)glyph_height_size;
+    g_terminal_runtime.base_glyph_width = base_glyph_width;
+    g_terminal_runtime.base_glyph_height = base_glyph_height;
+    g_terminal_runtime.glyph_width = base_glyph_width;
+    g_terminal_runtime.glyph_height = base_glyph_height;
+    g_terminal_runtime.scale = 1u;
     g_terminal_runtime.master_fd = -1;
     g_terminal_runtime.child_pid = -1;
     g_terminal_runtime.window = NULL;
@@ -2420,6 +2564,15 @@ int main(int argc, char **argv) {
                                terminal_color_b(buffer.default_bg),
                                255);
         SDL_RenderClear(renderer);
+
+        int glyph_width = g_terminal_runtime.glyph_width;
+        int glyph_height = g_terminal_runtime.glyph_height;
+        if (glyph_width <= 0) {
+            glyph_width = g_terminal_runtime.base_glyph_width > 0 ? g_terminal_runtime.base_glyph_width : 1;
+        }
+        if (glyph_height <= 0) {
+            glyph_height = g_terminal_runtime.base_glyph_height > 0 ? g_terminal_runtime.base_glyph_height : 1;
+        }
 
         for (size_t row = 0u; row < buffer.rows; row++) {
             for (size_t col = 0u; col < buffer.columns; col++) {

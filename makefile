@@ -22,9 +22,28 @@ ifeq ($(strip $(SDL2_LIBS)),)
 SDL2_LIBS = -lSDL2
 endif
 
+SDL2_TTF_CFLAGS = $(shell pkg-config --cflags SDL2_ttf 2>/dev/null)
+SDL2_TTF_LIBS = $(shell pkg-config --libs SDL2_ttf 2>/dev/null)
+
+ifeq ($(strip $(SDL2_TTF_CFLAGS)),)
+SDL2_TTF_CFLAGS = $(shell pkg-config --cflags SDL_ttf 2>/dev/null)
+endif
+
+ifeq ($(strip $(SDL2_TTF_LIBS)),)
+SDL2_TTF_LIBS = $(shell pkg-config --libs SDL_ttf 2>/dev/null)
+endif
+
+ifeq ($(strip $(SDL2_TTF_CFLAGS)),)
+SDL2_TTF_CFLAGS = -I/usr/include/SDL2
+endif
+
+ifeq ($(strip $(SDL2_TTF_LIBS)),)
+SDL2_TTF_LIBS = -lSDL2_ttf
+endif
+
 # SDL2-specific flags are only needed for the SDL terminal target.
-apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
-apps/terminal: LDFLAGS += $(SDL2_LIBS)
+apps/terminal.o: CFLAGS += $(SDL2_CFLAGS) $(SDL2_TTF_CFLAGS)
+apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_TTF_LIBS)
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

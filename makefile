@@ -6,6 +6,9 @@ LDFLAGS = -lasound -lm -pthread
 SDL2_CFLAGS = $(shell pkg-config --cflags sdl2 2>/dev/null)
 SDL2_LIBS = $(shell pkg-config --libs sdl2 2>/dev/null)
 
+FREETYPE_CFLAGS = $(shell pkg-config --cflags freetype2 2>/dev/null)
+FREETYPE_LIBS = $(shell pkg-config --libs freetype2 2>/dev/null)
+
 ifeq ($(strip $(SDL2_CFLAGS)),)
 SDL2_CFLAGS = $(shell sdl2-config --cflags 2>/dev/null)
 endif
@@ -22,9 +25,20 @@ ifeq ($(strip $(SDL2_LIBS)),)
 SDL2_LIBS = -lSDL2
 endif
 
+ifeq ($(strip $(FREETYPE_CFLAGS)),)
+FREETYPE_CFLAGS = -I/usr/include/freetype2
+endif
+
+ifeq ($(strip $(FREETYPE_LIBS)),)
+FREETYPE_LIBS = -lfreetype
+endif
+
 # SDL2-specific flags are only needed for the SDL terminal target.
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS)
+
+utilities/ttftopsf.o: CFLAGS += $(FREETYPE_CFLAGS)
+utilities/ttftopsf: LDFLAGS += $(FREETYPE_LIBS)
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

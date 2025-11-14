@@ -129,6 +129,7 @@ static struct terminal_runtime *terminal_runtime_get(void) {
 static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t columns, size_t rows);
 static int terminal_apply_dimensions(struct terminal_buffer *buffer, size_t columns, size_t rows);
 static void update_pty_size(int fd, size_t columns, size_t rows);
+static void terminal_renderer_anchor_viewport(struct terminal_runtime *runtime);
 
 enum ansi_parser_state {
     ANSI_STATE_GROUND = 0,
@@ -1505,6 +1506,23 @@ static void update_pty_size(int fd, size_t columns, size_t rows) {
     ioctl(fd, TIOCSWINSZ, &ws);
 }
 
+static void terminal_renderer_anchor_viewport(struct terminal_runtime *runtime) {
+    if (!runtime || !runtime->renderer) {
+        return;
+    }
+
+    SDL_Rect viewport;
+    if (SDL_RenderGetViewport(runtime->renderer, &viewport) != 0) {
+        return;
+    }
+
+    if (viewport.x != 0 || viewport.y != 0) {
+        viewport.x = 0;
+        viewport.y = 0;
+        (void)SDL_RenderSetViewport(runtime->renderer, &viewport);
+    }
+}
+
 static int terminal_apply_dimensions(struct terminal_buffer *buffer, size_t columns, size_t rows) {
     struct terminal_runtime *runtime = terminal_runtime_get();
     if (!runtime || !buffer || columns == 0u || rows == 0u) {
@@ -1533,11 +1551,13 @@ static int terminal_apply_dimensions(struct terminal_buffer *buffer, size_t colu
         if (SDL_RenderSetLogicalSize(runtime->renderer, new_window_width, new_window_height) != 0) {
             return -1;
         }
+        terminal_renderer_anchor_viewport(runtime);
     }
 
     if (terminal_buffer_resize(buffer, columns, rows) != 0) {
         if (runtime->renderer) {
             SDL_RenderSetLogicalSize(runtime->renderer, old_window_width, old_window_height);
+            terminal_renderer_anchor_viewport(runtime);
         }
         runtime->columns = old_columns;
         runtime->rows = old_rows;
@@ -1558,6 +1578,7 @@ static int terminal_apply_dimensions(struct terminal_buffer *buffer, size_t colu
 
     if (runtime->renderer) {
         SDL_RenderSetLogicalSize(runtime->renderer, new_window_width, new_window_height);
+        terminal_renderer_anchor_viewport(runtime);
     }
 
     update_pty_size(runtime->master_fd, columns, rows);
@@ -1922,6 +1943,7 @@ int main(int argc, char **argv) {
         close(master_fd);
         return EXIT_FAILURE;
     }
+    terminal_renderer_anchor_viewport(&g_terminal_runtime);
 
 #if SDL_VERSION_ATLEAST(2, 0, 5)
     if (SDL_RenderSetIntegerScale(renderer, SDL_TRUE) != 0) {

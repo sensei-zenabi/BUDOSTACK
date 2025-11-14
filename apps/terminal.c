@@ -64,6 +64,20 @@ static int terminal_logical_width = 0;
 static int terminal_logical_height = 0;
 static int terminal_scale_factor = 1;
 
+static ssize_t safe_write(int fd, const void *buf, size_t count);
+static int terminal_send_bytes(int fd, const void *data, size_t length);
+static int terminal_send_string(int fd, const char *str);
+
+static int terminal_send_response(const char *response) {
+    if (!response || response[0] == '\0') {
+        return 0;
+    }
+    if (terminal_master_fd_handle < 0) {
+        return 0;
+    }
+    return terminal_send_string(terminal_master_fd_handle, response);
+}
+
 
 struct psf_font {
     uint32_t glyph_count;
@@ -1310,6 +1324,52 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
             }
         }
         break;
+    case 'n': {
+        if (parser) {
+            int query = ansi_parser_get_param(parser, 0u, 0);
+            if (query == 5) {
+                terminal_send_response("\x1b[0n");
+            } else if (query == 6 && buffer) {
+                size_t row = 1u;
+                size_t column = 1u;
+                if (buffer->rows > 0u) {
+                    size_t cursor_row = buffer->cursor_row;
+                    if (cursor_row >= buffer->rows) {
+                        cursor_row = buffer->rows - 1u;
+                    }
+                    row = cursor_row + 1u;
+                }
+                if (buffer->columns > 0u) {
+                    size_t cursor_column = buffer->cursor_column;
+                    if (cursor_column >= buffer->columns) {
+                        cursor_column = buffer->columns - 1u;
+                    }
+                    column = cursor_column + 1u;
+                }
+                char response[64];
+                int written = snprintf(response, sizeof(response), "\x1b[%zu;%zuR", row, column);
+                if (written > 0 && (size_t)written < sizeof(response)) {
+                    terminal_send_response(response);
+                }
+            }
+        }
+        break;
+    }
+    case 'c': {
+        if (!parser) {
+            break;
+        }
+        const char *response = NULL;
+        if (parser->private_marker == '?') {
+            response = "\x1b[?1;0c";
+        } else if (parser->private_marker == '>') {
+            response = "\x1b[>0;95;0c";
+        } else {
+            response = "\x1b[?1;0c";
+        }
+        terminal_send_response(response);
+        break;
+    }
     default:
         break;
     }
@@ -1376,6 +1436,8 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             parser->collecting_param = 0;
         } else if (ch == '?') {
             parser->private_marker = '?';
+        } else if (ch == '>') {
+            parser->private_marker = '>';
         } else if (ch >= 0x40 && ch <= 0x7E) {
             ansi_apply_csi(parser, buffer, ch);
             ansi_parser_reset_parameters(parser);

@@ -55,6 +55,16 @@ _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
 _Static_assert(TERMINAL_ROWS > 0u, "TERMINAL_ROWS must be positive");
 
+static SDL_Window *terminal_window_handle = NULL;
+static SDL_Renderer *terminal_renderer_handle = NULL;
+static int terminal_master_fd_handle = -1;
+static int terminal_cell_pixel_width = 0;
+static int terminal_cell_pixel_height = 0;
+static int terminal_logical_width = 0;
+static int terminal_logical_height = 0;
+static int terminal_scale_factor = 1;
+
+
 struct psf_font {
     uint32_t glyph_count;
     uint32_t width;
@@ -102,6 +112,8 @@ struct terminal_buffer {
     int saved_cursor_visible;
     uint32_t palette[256];
 };
+
+static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
 
 enum ansi_parser_state {
     ANSI_STATE_GROUND = 0,
@@ -677,6 +689,63 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     return 0;
 }
 
+static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_columns, size_t new_rows) {
+    if (!buffer || new_columns == 0u || new_rows == 0u) {
+        return -1;
+    }
+
+    if (buffer->columns == new_columns && buffer->rows == new_rows) {
+        return 0;
+    }
+
+    if (new_columns > SIZE_MAX / new_rows) {
+        return -1;
+    }
+
+    size_t total_cells = new_columns * new_rows;
+    struct terminal_cell *new_cells = calloc(total_cells, sizeof(struct terminal_cell));
+    if (!new_cells) {
+        return -1;
+    }
+
+    for (size_t i = 0u; i < total_cells; i++) {
+        terminal_cell_apply_defaults(buffer, &new_cells[i]);
+    }
+
+    size_t copy_rows = buffer->rows < new_rows ? buffer->rows : new_rows;
+    size_t copy_cols = buffer->columns < new_columns ? buffer->columns : new_columns;
+
+    if (copy_rows > 0u && copy_cols > 0u) {
+        for (size_t row = 0u; row < copy_rows; row++) {
+            struct terminal_cell *dst = new_cells + row * new_columns;
+            struct terminal_cell *src = buffer->cells + row * buffer->columns;
+            memcpy(dst, src, copy_cols * sizeof(struct terminal_cell));
+        }
+    }
+
+    free(buffer->cells);
+    buffer->cells = new_cells;
+    buffer->columns = new_columns;
+    buffer->rows = new_rows;
+
+    if (buffer->cursor_column >= new_columns) {
+        buffer->cursor_column = new_columns - 1u;
+    }
+    if (buffer->cursor_row >= new_rows) {
+        buffer->cursor_row = new_rows - 1u;
+    }
+    if (buffer->cursor_saved) {
+        if (buffer->saved_cursor_column >= new_columns) {
+            buffer->saved_cursor_column = new_columns - 1u;
+        }
+        if (buffer->saved_cursor_row >= new_rows) {
+            buffer->saved_cursor_row = new_rows - 1u;
+        }
+    }
+
+    return 0;
+}
+
 static void terminal_buffer_free(struct terminal_buffer *buffer) {
     if (!buffer) {
         return;
@@ -1066,6 +1135,21 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
         }
         break;
     }
+    case 777: {
+        int scale = 0;
+        if (args && args[0] != '\0') {
+            const char *prefix = "scale=";
+            if (strncmp(args, prefix, strlen(prefix)) == 0) {
+                scale = atoi(args + (int)strlen(prefix));
+            } else {
+                scale = atoi(args);
+            }
+        }
+        if (scale > 0) {
+            terminal_apply_scale(buffer, scale);
+        }
+        break;
+    }
     case 104: /* Reset palette */
         if (!args || args[0] == '\0') {
             for (size_t i = 0u; i < 16u; i++) {
@@ -1399,6 +1483,78 @@ static void update_pty_size(int fd, size_t columns, size_t rows) {
     ioctl(fd, TIOCSWINSZ, &ws);
 }
 
+static void terminal_update_render_size(size_t columns, size_t rows) {
+    if (columns == 0u || rows == 0u) {
+        return;
+    }
+    if (terminal_cell_pixel_width <= 0 || terminal_cell_pixel_height <= 0) {
+        return;
+    }
+    if (columns > (size_t)(INT_MAX / terminal_cell_pixel_width) ||
+        rows > (size_t)(INT_MAX / terminal_cell_pixel_height)) {
+        return;
+    }
+
+    int width = (int)(columns * (size_t)terminal_cell_pixel_width);
+    int height = (int)(rows * (size_t)terminal_cell_pixel_height);
+    terminal_logical_width = width;
+    terminal_logical_height = height;
+
+    if (terminal_renderer_handle) {
+        if (SDL_RenderSetLogicalSize(terminal_renderer_handle, width, height) != 0) {
+            fprintf(stderr, "SDL_RenderSetLogicalSize failed: %s\n", SDL_GetError());
+        }
+#if SDL_VERSION_ATLEAST(2, 0, 5)
+        if (SDL_RenderSetIntegerScale(terminal_renderer_handle, SDL_TRUE) != 0) {
+            fprintf(stderr, "SDL_RenderSetIntegerScale failed: %s\n", SDL_GetError());
+        }
+#endif
+    }
+}
+
+static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
+    if (!buffer || scale <= 0) {
+        return;
+    }
+
+    if (scale > 4) {
+        scale = 4;
+    }
+
+    if (scale == terminal_scale_factor) {
+        return;
+    }
+
+    size_t base_columns = (size_t)TERMINAL_COLUMNS;
+    size_t base_rows = (size_t)TERMINAL_ROWS;
+    size_t scale_value = (size_t)scale;
+    if (scale_value > 0u) {
+        if (scale_value > SIZE_MAX / base_columns || scale_value > SIZE_MAX / base_rows) {
+            return;
+        }
+    }
+    size_t new_columns = base_columns * scale_value;
+    size_t new_rows = base_rows * scale_value;
+
+    if (terminal_buffer_resize(buffer, new_columns, new_rows) != 0) {
+        return;
+    }
+
+    terminal_scale_factor = scale;
+    terminal_update_render_size(new_columns, new_rows);
+
+    if (terminal_window_handle && terminal_logical_width > 0 && terminal_logical_height > 0) {
+        Uint32 flags = SDL_GetWindowFlags(terminal_window_handle);
+        if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+            SDL_SetWindowSize(terminal_window_handle, terminal_logical_width, terminal_logical_height);
+        }
+    }
+
+    if (terminal_master_fd_handle >= 0) {
+        update_pty_size(terminal_master_fd_handle, new_columns, new_rows);
+    }
+}
+
 static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
     if (!exe_path || !out_master_fd) {
         return -1;
@@ -1645,8 +1801,8 @@ int main(int argc, char **argv) {
         free_font(&font);
         return EXIT_FAILURE;
     }
-    const int glyph_width = (int)glyph_width_size;
-    const int glyph_height = (int)glyph_height_size;
+    int glyph_width = (int)glyph_width_size;
+    int glyph_height = (int)glyph_height_size;
 
     size_t window_width_size = glyph_width_size * (size_t)TERMINAL_COLUMNS;
     size_t window_height_size = glyph_height_size * (size_t)TERMINAL_ROWS;
@@ -1656,8 +1812,8 @@ int main(int argc, char **argv) {
         free_font(&font);
         return EXIT_FAILURE;
     }
-    const int window_width = (int)window_width_size;
-    const int window_height = (int)window_height_size;
+    int window_width = (int)window_width_size;
+    int window_height = (int)window_height_size;
 
     int master_fd = -1;
     pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
@@ -1720,29 +1876,12 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (SDL_RenderSetLogicalSize(renderer, window_width, window_height) != 0) {
-        fprintf(stderr, "SDL_RenderSetLogicalSize failed: %s\n", SDL_GetError());
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        kill(child_pid, SIGKILL);
-        free_font(&font);
-        close(master_fd);
-        return EXIT_FAILURE;
-    }
-
-#if SDL_VERSION_ATLEAST(2, 0, 5)
-    if (SDL_RenderSetIntegerScale(renderer, SDL_TRUE) != 0) {
-        fprintf(stderr, "SDL_RenderSetIntegerScale failed: %s\n", SDL_GetError());
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        kill(child_pid, SIGKILL);
-        free_font(&font);
-        close(master_fd);
-        return EXIT_FAILURE;
-    }
-#endif
+    terminal_window_handle = window;
+    terminal_renderer_handle = renderer;
+    terminal_master_fd_handle = master_fd;
+    terminal_cell_pixel_width = glyph_width;
+    terminal_cell_pixel_height = glyph_height;
+    terminal_scale_factor = 1;
 
     SDL_Texture *glyph_textures[256];
     for (size_t i = 0u; i < 256u; i++) {
@@ -1777,8 +1916,8 @@ int main(int argc, char **argv) {
         close(master_fd);
         return EXIT_FAILURE;
     }
-    if (output_width < window_width || output_height < window_height) {
-        fprintf(stderr, "Renderer output size is smaller than required terminal dimensions.\n");
+    if (output_width <= 0 || output_height <= 0) {
+        fprintf(stderr, "Renderer output size is invalid.\n");
         for (size_t i = 0u; i < 256u; i++) {
             SDL_DestroyTexture(glyph_textures[i]);
         }
@@ -1793,6 +1932,8 @@ int main(int argc, char **argv) {
 
     size_t columns = (size_t)TERMINAL_COLUMNS;
     size_t rows = (size_t)TERMINAL_ROWS;
+
+    terminal_update_render_size(columns, rows);
 
     struct terminal_buffer buffer = {0};
     terminal_buffer_initialize_palette(&buffer);
@@ -1835,7 +1976,9 @@ int main(int argc, char **argv) {
                         event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
                 Uint32 flags = SDL_GetWindowFlags(window);
                 if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
-                    SDL_SetWindowSize(window, window_width, window_height);
+                    if (terminal_logical_width > 0 && terminal_logical_height > 0) {
+                        SDL_SetWindowSize(window, terminal_logical_width, terminal_logical_height);
+                    }
                 }
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;

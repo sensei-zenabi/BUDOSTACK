@@ -29,8 +29,10 @@ RUN clear
 RUN _TERM_SOUND_PLAY 1 sounds/564237__breviceps__retro-audio-logo.wav 100
 
 # Display logo and wait for the sound to finish
-PRINT "\n\n\n\n"
-PRINT "\n WELCOME TO"
-RUN _DISPLAY -x 10 -y 10 -file tasks/assets/login_logo.bmp
+RUN _RECT -x 0 -y 0 -width 118 -height 66 -color 0 -fill on
+RUN _DISPLAY -x 20 -y 15 -file tasks/assets/login_logo.png
+RUN _TEXT -x 46 -y 31 -text "...WELCOME BACK TO 1980s..."
+RUN _TEXT -x 2 -y 64 -text "Created by: Ville Suoranta"
+RUN _TEXT -x 2 -y 65 -text "email: ville.m.suoranta(at)gmail.com"
 RUN _WAIT 4000                                                                                                                      
                                                                                                                       

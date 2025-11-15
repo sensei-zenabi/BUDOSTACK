@@ -1,6 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
 #define STB_TRUETYPE_IMPLEMENTATION
-#define STBTT_STATIC
 #include "../lib/stb_truetype.h"
 
 #include <errno.h>

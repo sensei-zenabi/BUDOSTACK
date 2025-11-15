@@ -92,6 +92,15 @@ static GLint terminal_attrib_vertex = -1;
 static GLint terminal_attrib_color = -1;
 static GLint terminal_attrib_texcoord = -1;
 
+struct psf_font {
+    uint32_t glyph_count;
+    uint32_t width;
+    uint32_t height;
+    uint32_t stride;
+    uint32_t glyph_size;
+    uint8_t *glyphs;
+};
+
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);
 static int terminal_send_string(int fd, const char *str);
@@ -113,15 +122,6 @@ static int terminal_send_response(const char *response) {
     return terminal_send_string(terminal_master_fd_handle, response);
 }
 
-
-struct psf_font {
-    uint32_t glyph_count;
-    uint32_t width;
-    uint32_t height;
-    uint32_t stride;
-    uint32_t glyph_size;
-    uint8_t *glyphs;
-};
 
 struct terminal_cell {
     uint32_t ch;

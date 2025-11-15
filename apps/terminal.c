@@ -17,6 +17,10 @@
 #include <termios.h>
 #include <unistd.h>
 
+#ifndef GL_GLEXT_PROTOTYPES
+#define GL_GLEXT_PROTOTYPES 1
+#endif
+
 #if defined(__has_include)
 #if __has_include(<SDL2/SDL.h>)
 #include <SDL2/SDL.h>

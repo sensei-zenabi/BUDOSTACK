@@ -30,6 +30,7 @@ PACKAGE_MANAGER="apt-get install -y"
 PACKAGES=(
     "gcc"               # Mandatory: commands: 'restart', 'build', etc.
     "build-essential"   # Mandatory: commands: 'restart', 'build', etc.
+    "pkg-config"        # Mandatory: required for pkg-config lookups during build
     "curl"              # Optional: apps: 'news' / nodes: gui_webui
     "git"               # Mandatory: general requirement
     "zip"               # Mandatory: commands: unpack, pack

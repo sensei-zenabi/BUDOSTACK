@@ -36,7 +36,7 @@
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL2/SDL_opengl.h>
 #define DR_MP3_IMPLEMENTATION
-#include "lib/dr_mp3.h"
+#include "../lib/dr_mp3.h"
 #endif
 
 #ifndef PATH_MAX
@@ -164,6 +164,8 @@ static int terminal_audio_load_file(const char *path, float **out_samples, size_
 static int terminal_sound_play(int channel_index, const char *path);
 static void terminal_sound_stop(int channel_index);
 #endif
+
+struct terminal_buffer;
 
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);

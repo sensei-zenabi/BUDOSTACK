@@ -220,6 +220,10 @@ struct ansi_parser {
     int private_marker;
     char osc_buffer[512];
     size_t osc_length;
+    uint32_t utf8_codepoint;
+    uint32_t utf8_min_value;
+    uint8_t utf8_bytes_expected;
+    uint8_t utf8_bytes_seen;
 };
 
 static const uint32_t terminal_default_palette16[16] = {
@@ -1855,6 +1859,110 @@ static void ansi_parser_reset_parameters(struct ansi_parser *parser) {
     }
 }
 
+static void ansi_parser_reset_utf8(struct ansi_parser *parser) {
+    if (!parser) {
+        return;
+    }
+    parser->utf8_codepoint = 0u;
+    parser->utf8_min_value = 0u;
+    parser->utf8_bytes_expected = 0u;
+    parser->utf8_bytes_seen = 0u;
+}
+
+static void ansi_parser_emit_codepoint(struct ansi_parser *parser, struct terminal_buffer *buffer, uint32_t codepoint) {
+    (void)parser;
+    if (!buffer) {
+        return;
+    }
+    terminal_put_char(buffer, codepoint);
+}
+
+static void ansi_parser_emit_replacement(struct ansi_parser *parser, struct terminal_buffer *buffer) {
+    ansi_parser_emit_codepoint(parser, buffer, 0xFFFDu);
+}
+
+static void ansi_parser_feed_utf8(struct ansi_parser *parser, struct terminal_buffer *buffer, unsigned char byte) {
+    if (!parser) {
+        return;
+    }
+
+    while (1) {
+        if (parser->utf8_bytes_expected > 0u) {
+            if ((byte & 0xC0u) == 0x80u) {
+                parser->utf8_codepoint = (parser->utf8_codepoint << 6u) | (uint32_t)(byte & 0x3Fu);
+                parser->utf8_bytes_seen++;
+                if (parser->utf8_bytes_seen == parser->utf8_bytes_expected) {
+                    uint32_t codepoint = parser->utf8_codepoint;
+                    uint32_t min_value = parser->utf8_min_value;
+                    ansi_parser_reset_utf8(parser);
+                    if (codepoint < min_value || codepoint > 0x10FFFFu ||
+                        (codepoint >= 0xD800u && codepoint <= 0xDFFFu)) {
+                        ansi_parser_emit_replacement(parser, buffer);
+                    } else {
+                        ansi_parser_emit_codepoint(parser, buffer, codepoint);
+                    }
+                }
+                return;
+            }
+
+            ansi_parser_emit_replacement(parser, buffer);
+            ansi_parser_reset_utf8(parser);
+            continue;
+        }
+
+        if (byte == 0x1b) {
+            ansi_parser_reset_utf8(parser);
+            parser->state = ANSI_STATE_ESCAPE;
+            return;
+        }
+
+        if ((byte & 0x80u) == 0u) {
+            ansi_parser_emit_codepoint(parser, buffer, (uint32_t)byte);
+            return;
+        }
+
+        if ((byte & 0xC0u) == 0x80u) {
+            ansi_parser_emit_replacement(parser, buffer);
+            return;
+        }
+
+        if ((byte & 0xE0u) == 0xC0u) {
+            if (byte < 0xC2u) {
+                ansi_parser_emit_replacement(parser, buffer);
+                return;
+            }
+            parser->utf8_bytes_expected = 2u;
+            parser->utf8_bytes_seen = 1u;
+            parser->utf8_codepoint = (uint32_t)(byte & 0x1Fu);
+            parser->utf8_min_value = 0x80u;
+            return;
+        }
+
+        if ((byte & 0xF0u) == 0xE0u) {
+            parser->utf8_bytes_expected = 3u;
+            parser->utf8_bytes_seen = 1u;
+            parser->utf8_codepoint = (uint32_t)(byte & 0x0Fu);
+            parser->utf8_min_value = 0x800u;
+            return;
+        }
+
+        if ((byte & 0xF8u) == 0xF0u) {
+            if (byte > 0xF4u) {
+                ansi_parser_emit_replacement(parser, buffer);
+                return;
+            }
+            parser->utf8_bytes_expected = 4u;
+            parser->utf8_bytes_seen = 1u;
+            parser->utf8_codepoint = (uint32_t)(byte & 0x07u);
+            parser->utf8_min_value = 0x10000u;
+            return;
+        }
+
+        ansi_parser_emit_replacement(parser, buffer);
+        return;
+    }
+}
+
 static void ansi_parser_init(struct ansi_parser *parser) {
     if (!parser) {
         return;
@@ -1865,6 +1973,7 @@ static void ansi_parser_init(struct ansi_parser *parser) {
     if (sizeof(parser->osc_buffer) > 0u) {
         parser->osc_buffer[0] = '\0';
     }
+    ansi_parser_reset_utf8(parser);
 }
 
 static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *buffer) {
@@ -2204,11 +2313,7 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
 
     switch (parser->state) {
     case ANSI_STATE_GROUND:
-        if (ch == 0x1b) {
-            parser->state = ANSI_STATE_ESCAPE;
-        } else {
-            terminal_put_char(buffer, ch);
-        }
+        ansi_parser_feed_utf8(parser, buffer, ch);
         break;
     case ANSI_STATE_ESCAPE:
         if (ch == '[') {
@@ -2223,14 +2328,18 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
         } else if (ch == 'c') {
             terminal_buffer_clear_display(buffer);
             parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
         } else if (ch == '7') {
             terminal_buffer_save_cursor(buffer);
             parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
         } else if (ch == '8') {
             terminal_buffer_restore_cursor(buffer);
             parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
         } else {
             parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
         }
         break;
     case ANSI_STATE_CSI:
@@ -2264,6 +2373,7 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             ansi_apply_csi(parser, buffer, ch);
             ansi_parser_reset_parameters(parser);
             parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
         } else {
             /* Ignore unsupported intermediate bytes. */
         }
@@ -2272,6 +2382,7 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
         if (ch == 0x07) {
             ansi_handle_osc(parser, buffer);
             parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
         } else if (ch == 0x1b) {
             parser->state = ANSI_STATE_OSC_ESCAPE;
         } else {
@@ -2285,6 +2396,7 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
         if (ch == '\\') {
             ansi_handle_osc(parser, buffer);
             parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
         } else {
             parser->state = ANSI_STATE_OSC;
         }

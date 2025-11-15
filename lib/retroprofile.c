@@ -58,6 +58,24 @@ static const RetroProfile retro_profiles[] = {
             {0, 0, 170},
             {255, 255, 255},
         },
+        {
+            [RETROPROFILE_FORMAT_C_PREPROCESSOR] = 4,
+            [RETROPROFILE_FORMAT_C_COMMENT] = 12,
+            [RETROPROFILE_FORMAT_C_STRING] = 13,
+            [RETROPROFILE_FORMAT_C_CHARACTER] = 13,
+            [RETROPROFILE_FORMAT_C_KEYWORD] = 6,
+            [RETROPROFILE_FORMAT_C_KEYWORD_TYPE] = 14,
+            [RETROPROFILE_FORMAT_C_FUNCTION] = 3,
+            [RETROPROFILE_FORMAT_C_NUMBER] = 7,
+            [RETROPROFILE_FORMAT_C_PUNCTUATION] = 4,
+            [RETROPROFILE_FORMAT_TEXT_HEADER] = 10,
+            [RETROPROFILE_FORMAT_TEXT_BULLET] = 13,
+            [RETROPROFILE_FORMAT_TEXT_CODE] = 3,
+            [RETROPROFILE_FORMAT_TEXT_BOLD] = 7,
+            [RETROPROFILE_FORMAT_TEXT_ITALIC] = 4,
+            [RETROPROFILE_FORMAT_TEXT_TAG] = 6,
+            [RETROPROFILE_FORMAT_EDITOR_MODIFIED] = 10,
+        },
     },
     {
         "ibm5150",
@@ -85,6 +103,24 @@ static const RetroProfile retro_profiles[] = {
             {170, 170, 170},
             {0, 0, 0},
             {255, 255, 255},
+        },
+        {
+            [RETROPROFILE_FORMAT_C_PREPROCESSOR] = 13,
+            [RETROPROFILE_FORMAT_C_COMMENT] = 8,
+            [RETROPROFILE_FORMAT_C_STRING] = 10,
+            [RETROPROFILE_FORMAT_C_CHARACTER] = 10,
+            [RETROPROFILE_FORMAT_C_KEYWORD] = 9,
+            [RETROPROFILE_FORMAT_C_KEYWORD_TYPE] = 11,
+            [RETROPROFILE_FORMAT_C_FUNCTION] = 11,
+            [RETROPROFILE_FORMAT_C_NUMBER] = 14,
+            [RETROPROFILE_FORMAT_C_PUNCTUATION] = 5,
+            [RETROPROFILE_FORMAT_TEXT_HEADER] = 12,
+            [RETROPROFILE_FORMAT_TEXT_BULLET] = 10,
+            [RETROPROFILE_FORMAT_TEXT_CODE] = 11,
+            [RETROPROFILE_FORMAT_TEXT_BOLD] = 14,
+            [RETROPROFILE_FORMAT_TEXT_ITALIC] = 5,
+            [RETROPROFILE_FORMAT_TEXT_TAG] = 9,
+            [RETROPROFILE_FORMAT_EDITOR_MODIFIED] = 12,
         },
     },
     {
@@ -114,6 +150,24 @@ static const RetroProfile retro_profiles[] = {
             {0, 0, 0},
             {247, 170, 100},
         },
+        {
+            [RETROPROFILE_FORMAT_C_PREPROCESSOR] = 14,
+            [RETROPROFILE_FORMAT_C_COMMENT] = 6,
+            [RETROPROFILE_FORMAT_C_STRING] = 12,
+            [RETROPROFILE_FORMAT_C_CHARACTER] = 12,
+            [RETROPROFILE_FORMAT_C_KEYWORD] = 11,
+            [RETROPROFILE_FORMAT_C_KEYWORD_TYPE] = 13,
+            [RETROPROFILE_FORMAT_C_FUNCTION] = 15,
+            [RETROPROFILE_FORMAT_C_NUMBER] = 10,
+            [RETROPROFILE_FORMAT_C_PUNCTUATION] = 9,
+            [RETROPROFILE_FORMAT_TEXT_HEADER] = 14,
+            [RETROPROFILE_FORMAT_TEXT_BULLET] = 12,
+            [RETROPROFILE_FORMAT_TEXT_CODE] = 13,
+            [RETROPROFILE_FORMAT_TEXT_BOLD] = 15,
+            [RETROPROFILE_FORMAT_TEXT_ITALIC] = 11,
+            [RETROPROFILE_FORMAT_TEXT_TAG] = 10,
+            [RETROPROFILE_FORMAT_EDITOR_MODIFIED] = 14,
+        },
     },
     {
         "vt220-green",
@@ -141,6 +195,24 @@ static const RetroProfile retro_profiles[] = {
             {96, 198, 96},
             {0, 0, 0},
             {124, 216, 124},
+        },
+        {
+            [RETROPROFILE_FORMAT_C_PREPROCESSOR] = 14,
+            [RETROPROFILE_FORMAT_C_COMMENT] = 6,
+            [RETROPROFILE_FORMAT_C_STRING] = 12,
+            [RETROPROFILE_FORMAT_C_CHARACTER] = 12,
+            [RETROPROFILE_FORMAT_C_KEYWORD] = 11,
+            [RETROPROFILE_FORMAT_C_KEYWORD_TYPE] = 15,
+            [RETROPROFILE_FORMAT_C_FUNCTION] = 13,
+            [RETROPROFILE_FORMAT_C_NUMBER] = 10,
+            [RETROPROFILE_FORMAT_C_PUNCTUATION] = 9,
+            [RETROPROFILE_FORMAT_TEXT_HEADER] = 14,
+            [RETROPROFILE_FORMAT_TEXT_BULLET] = 12,
+            [RETROPROFILE_FORMAT_TEXT_CODE] = 13,
+            [RETROPROFILE_FORMAT_TEXT_BOLD] = 15,
+            [RETROPROFILE_FORMAT_TEXT_ITALIC] = 11,
+            [RETROPROFILE_FORMAT_TEXT_TAG] = 9,
+            [RETROPROFILE_FORMAT_EDITOR_MODIFIED] = 14,
         },
     },
 };
@@ -323,4 +395,35 @@ int retroprofile_active_default_foreground_index(void) {
         return -1;
 
     return retroprofile_color_index(profile, profile->defaults.foreground);
+}
+
+static int retroprofile_format_index(const RetroProfile *profile,
+                                     RetroFormatRole role) {
+    if (profile == NULL)
+        return -1;
+    if (role < 0 || role >= RETROPROFILE_FORMAT_COUNT)
+        return -1;
+    return profile->format[role];
+}
+
+int retroprofile_format_color(const RetroProfile *profile,
+                              RetroFormatRole role,
+                              RetroColor *out_color) {
+    if (profile == NULL || out_color == NULL)
+        return -1;
+
+    int index = retroprofile_format_index(profile, role);
+    if (index < 0 || index >= 16)
+        return -1;
+
+    *out_color = profile->colors[index];
+    return 0;
+}
+
+int retroprofile_active_format_color(RetroFormatRole role,
+                                     RetroColor *out_color) {
+    const RetroProfile *profile = retroprofile_active();
+    if (profile == NULL)
+        return -1;
+    return retroprofile_format_color(profile, role, out_color);
 }

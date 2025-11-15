@@ -17,6 +17,8 @@
 #include <signal.h>
 #include <time.h>
 
+#include "../lib/retroprofile.h"
+
 /*
  * Design principles and notes:
  * - Plain C using -std=c11 and standard C libraries with POSIX-compliant functions.
@@ -46,6 +48,30 @@ void abAppend(struct abuf *ab, const char *s, int len) {
 
 void abFree(struct abuf *ab) {
     free(ab->b);
+}
+
+static size_t editor_build_modified_marker(char *buffer, size_t size) {
+    if (buffer == NULL || size == 0)
+        return 0;
+
+    RetroColor color;
+    if (retroprofile_active_format_color(RETROPROFILE_FORMAT_EDITOR_MODIFIED, &color) != 0)
+        return 0;
+
+    int written = snprintf(buffer,
+                           size,
+                           "\x1b[48;2;%u;%u;%um \x1b[0m",
+                           color.r,
+                           color.g,
+                           color.b);
+    if (written < 0)
+        return 0;
+    if ((size_t)written >= size) {
+        buffer[size - 1] = '\0';
+        return size - 1;
+    }
+
+    return (size_t)written;
 }
 
 /*** Editor Definitions ***/
@@ -488,6 +514,8 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
     int text_width = E.screencols - rn_width - 1;
     int skip_highlight = is_plain_text_file();
     char numbuf[16];
+    char modified_marker[64];
+    size_t modified_marker_len = editor_build_modified_marker(modified_marker, sizeof(modified_marker));
     for (int y = 0; y < E.textrows; y++) {
         int file_row = E.rowoff + y;
         if (file_row < E.numrows) {
@@ -520,9 +548,12 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
             if (printed_width > text_width) printed_width = text_width;
             for (int i = printed_width; i < text_width; i++)
                 abAppend(ab, " ", 1);
-            if (E.row[file_row].modified)
-                abAppend(ab, "\x1b[41m \x1b[0m", 10);
-            else
+            if (E.row[file_row].modified) {
+                if (modified_marker_len > 0)
+                    abAppend(ab, modified_marker, (int)modified_marker_len);
+                else
+                    abAppend(ab, "!", 1);
+            } else
                 abAppend(ab, " ", 1);
         } else {
             for (int i = 0; i < rn_width; i++)

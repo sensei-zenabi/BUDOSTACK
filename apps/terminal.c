@@ -4589,11 +4589,16 @@ int main(int argc, char **argv) {
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = event.key.keysym.mod;
+                int ctrl_active = (mod & KMOD_CTRL) != 0;
+                int alt_active = (mod & KMOD_ALT) != 0;
+                int gui_active = (mod & KMOD_GUI) != 0;
+                int mode_active = (mod & KMOD_MODE) != 0;
+                int ctrl_without_modifiers = ctrl_active && !alt_active && !gui_active && !mode_active;
                 int handled = 0;
                 unsigned char ch = 0u;
 
                 int clipboard_handled = 0;
-                if ((mod & KMOD_CTRL) != 0 && (mod & KMOD_ALT) == 0 && (mod & KMOD_GUI) == 0) {
+                if (ctrl_without_modifiers) {
                     if (sym == SDLK_c) {
                         if (terminal_copy_selection_to_clipboard(&buffer)) {
                             clipboard_handled = 1;
@@ -4611,7 +4616,7 @@ int main(int argc, char **argv) {
                     continue;
                 }
 
-                if ((mod & KMOD_CTRL) != 0) {
+                if (ctrl_without_modifiers) {
                     if (sym >= 0 && sym <= 127) {
                         int ascii = (int)sym;
                         if (ascii >= 'a' && ascii <= 'z') {

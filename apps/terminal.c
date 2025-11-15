@@ -69,6 +69,7 @@ static int terminal_cell_pixel_height = 0;
 static int terminal_logical_width = 0;
 static int terminal_logical_height = 0;
 static int terminal_scale_factor = 1;
+static int terminal_margin_pixels = 0;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -219,6 +220,7 @@ struct terminal_buffer {
 };
 
 static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
+static void terminal_apply_margin(struct terminal_buffer *buffer, int margin);
 
 enum ansi_parser_state {
     ANSI_STATE_GROUND = 0,
@@ -2421,16 +2423,37 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
     }
     case 777: {
         int scale = 0;
+        int margin = -1;
         if (args && args[0] != '\0') {
-            const char *prefix = "scale=";
-            if (strncmp(args, prefix, strlen(prefix)) == 0) {
-                scale = atoi(args + (int)strlen(prefix));
-            } else {
+            const char *scale_prefix = "scale=";
+            const char *margin_prefix = "margin=";
+            const char *scale_ptr = strstr(args, scale_prefix);
+            if (scale_ptr && (scale_ptr == args || scale_ptr[-1] == ';')) {
+                char *endptr = NULL;
+                errno = 0;
+                long value = strtol(scale_ptr + strlen(scale_prefix), &endptr, 10);
+                if (errno == 0 && endptr != NULL && value > 0 && value <= INT_MAX) {
+                    scale = (int)value;
+                }
+            }
+            const char *margin_ptr = strstr(args, margin_prefix);
+            if (margin_ptr && (margin_ptr == args || margin_ptr[-1] == ';')) {
+                char *endptr = NULL;
+                errno = 0;
+                long value = strtol(margin_ptr + strlen(margin_prefix), &endptr, 10);
+                if (errno == 0 && endptr != NULL && value >= 0 && value <= INT_MAX) {
+                    margin = (int)value;
+                }
+            }
+            if (scale == 0) {
                 scale = atoi(args);
             }
         }
         if (scale > 0) {
             terminal_apply_scale(buffer, scale);
+        }
+        if (margin >= 0) {
+            terminal_apply_margin(buffer, margin);
         }
         break;
     }
@@ -2858,8 +2881,28 @@ static void terminal_update_render_size(size_t columns, size_t rows) {
         return;
     }
 
-    int width = (int)(columns * (size_t)terminal_cell_pixel_width);
-    int height = (int)(rows * (size_t)terminal_cell_pixel_height);
+    size_t base_width = columns * (size_t)terminal_cell_pixel_width;
+    size_t base_height = rows * (size_t)terminal_cell_pixel_height;
+    int margin = terminal_margin_pixels;
+    if (margin < 0) {
+        margin = 0;
+    }
+
+    size_t extra_width = (size_t)margin * 2u;
+    size_t extra_height = (size_t)margin * 2u;
+    if (base_width > SIZE_MAX - extra_width || base_height > SIZE_MAX - extra_height) {
+        return;
+    }
+
+    size_t total_width = base_width + extra_width;
+    size_t total_height = base_height + extra_height;
+
+    if (total_width > (size_t)INT_MAX || total_height > (size_t)INT_MAX) {
+        return;
+    }
+
+    int width = (int)total_width;
+    int height = (int)total_height;
     terminal_logical_width = width;
     terminal_logical_height = height;
 
@@ -2910,6 +2953,37 @@ static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
 
     if (terminal_master_fd_handle >= 0) {
         update_pty_size(terminal_master_fd_handle, new_columns, new_rows);
+    }
+}
+
+static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {
+    if (!buffer) {
+        return;
+    }
+
+    if (margin < 0) {
+        margin = 0;
+    }
+
+    if (margin > 0) {
+        int max_margin = INT_MAX / 4;
+        if (margin > max_margin) {
+            margin = max_margin;
+        }
+    }
+
+    if (margin == terminal_margin_pixels) {
+        return;
+    }
+
+    terminal_margin_pixels = margin;
+    terminal_update_render_size(buffer->columns, buffer->rows);
+
+    if (terminal_window_handle && terminal_logical_width > 0 && terminal_logical_height > 0) {
+        Uint32 flags = SDL_GetWindowFlags(terminal_window_handle);
+        if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+            SDL_SetWindowSize(terminal_window_handle, terminal_logical_width, terminal_logical_height);
+        }
     }
 }
 
@@ -3192,6 +3266,16 @@ int main(int argc, char **argv) {
 
     size_t window_width_size = glyph_width_size * (size_t)TERMINAL_COLUMNS;
     size_t window_height_size = glyph_height_size * (size_t)TERMINAL_ROWS;
+    int initial_margin = terminal_margin_pixels;
+    if (initial_margin < 0) {
+        initial_margin = 0;
+    }
+    size_t margin_component = (size_t)initial_margin * 2u;
+    if (window_width_size <= SIZE_MAX - margin_component &&
+        window_height_size <= SIZE_MAX - margin_component) {
+        window_width_size += margin_component;
+        window_height_size += margin_component;
+    }
     if (window_width_size == 0u || window_height_size == 0u ||
         window_width_size > (size_t)INT_MAX || window_height_size > (size_t)INT_MAX) {
         fprintf(stderr, "Computed window dimensions invalid.\n");
@@ -3805,6 +3889,55 @@ int main(int argc, char **argv) {
             break;
         }
 
+        int margin_pixels = terminal_margin_pixels;
+        if (margin_pixels < 0) {
+            margin_pixels = 0;
+        }
+        if (margin_pixels > 0) {
+            if (margin_pixels * 2 > frame_width) {
+                margin_pixels = frame_width / 2;
+            }
+            if (margin_pixels * 2 > frame_height) {
+                margin_pixels = frame_height / 2;
+            }
+            uint32_t margin_color_value = buffer.default_bg;
+            uint8_t margin_r = terminal_color_r(margin_color_value);
+            uint8_t margin_g = terminal_color_g(margin_color_value);
+            uint8_t margin_b = terminal_color_b(margin_color_value);
+            for (int py = 0; py < frame_height; py++) {
+                uint8_t *row_ptr = framebuffer + (size_t)py * (size_t)frame_pitch;
+                if (py < margin_pixels || py >= frame_height - margin_pixels) {
+                    uint8_t *dst = row_ptr;
+                    for (int px = 0; px < frame_width; px++) {
+                        dst[0] = margin_r;
+                        dst[1] = margin_g;
+                        dst[2] = margin_b;
+                        dst[3] = 255u;
+                        dst += 4;
+                    }
+                } else {
+                    uint8_t *dst_left = row_ptr;
+                    for (int px = 0; px < margin_pixels; px++) {
+                        dst_left[0] = margin_r;
+                        dst_left[1] = margin_g;
+                        dst_left[2] = margin_b;
+                        dst_left[3] = 255u;
+                        dst_left += 4;
+                    }
+                    if (margin_pixels < frame_width) {
+                        uint8_t *dst_right = row_ptr + (size_t)(frame_width - margin_pixels) * 4u;
+                        for (int px = 0; px < margin_pixels; px++) {
+                            dst_right[0] = margin_r;
+                            dst_right[1] = margin_g;
+                            dst_right[2] = margin_b;
+                            dst_right[3] = 255u;
+                            dst_right += 4;
+                        }
+                    }
+                }
+            }
+        }
+
         for (size_t row = 0u; row < buffer.rows; row++) {
             size_t global_index = top_index + row;
             const struct terminal_cell *row_cells = terminal_buffer_row_at(&buffer, global_index);
@@ -3836,8 +3969,8 @@ int main(int argc, char **argv) {
                     glyph_color = bg;
                 }
 
-                int dest_x = (int)(col * (size_t)glyph_width);
-                int dest_y = (int)(row * (size_t)glyph_height);
+                int dest_x = margin_pixels + (int)(col * (size_t)glyph_width);
+                int dest_y = margin_pixels + (int)(row * (size_t)glyph_height);
                 int end_x = dest_x + glyph_width;
                 int end_y = dest_y + glyph_height;
                 if (dest_x < 0) {

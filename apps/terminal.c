@@ -178,6 +178,7 @@ static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);
 static int terminal_send_string(int fd, const char *str);
 static size_t terminal_total_rows(const struct terminal_buffer *buffer);
+static const struct terminal_cell *terminal_buffer_row_at(const struct terminal_buffer *buffer, size_t index);
 static size_t terminal_clamped_scroll_offset(const struct terminal_buffer *buffer);
 static void terminal_visible_row_range(const struct terminal_buffer *buffer, size_t *out_top_index, size_t *out_bottom_index);
 static int terminal_screen_point_to_cell(int x,

@@ -26,7 +26,11 @@ RUN _RETROPROFILE apply $SCHEME
 RUN clear
 
 # Run BUDOSTACK starting jingle
-RUN _BEEP -C5 -50
-RUN _BEEP -E5 -50
-RUN _BEEP -G5 -50
-RUN _BEEP -C6 -200
+RUN _TERM_SOUND_PLAY 1 sounds/564237__breviceps__retro-audio-logo.wav 100
+
+# Display logo and wait for the sound to finish
+PRINT "\n\n\n\n"
+PRINT "\n WELCOME TO"
+RUN _DISPLAY -x 10 -y 10 -file tasks/assets/login_logo.bmp
+RUN _WAIT 4000                                                                                                                      
+                                                                                                                      

@@ -4094,6 +4094,18 @@ static unsigned int terminal_modifier_param(SDL_Keymod mod) {
     return value;
 }
 
+static int terminal_mod_state_is_altgr(SDL_Keymod mod) {
+    if ((mod & KMOD_MODE) != 0) {
+        return 1;
+    }
+#if defined(KMOD_RALT)
+    if ((mod & KMOD_RALT) != 0 && (mod & KMOD_CTRL) != 0) {
+        return 1;
+    }
+#endif
+    return 0;
+}
+
 static int terminal_send_csi_final(int fd, SDL_Keymod mod, char final_char) {
     unsigned int modifier = terminal_modifier_param(mod);
     char sequence[32];
@@ -4923,8 +4935,9 @@ int main(int argc, char **argv) {
                 size_t len = strlen(text);
                 if (len > 0u) {
                     SDL_Keymod mod_state = SDL_GetModState();
+                    int altgr_active = terminal_mod_state_is_altgr(mod_state);
                     terminal_selection_clear();
-                    if ((mod_state & KMOD_ALT) != 0 && (mod_state & KMOD_CTRL) == 0) {
+                    if (!altgr_active && (mod_state & KMOD_ALT) != 0 && (mod_state & KMOD_CTRL) == 0) {
                         if (terminal_send_escape_prefix(master_fd) < 0) {
                             running = 0;
                             continue;

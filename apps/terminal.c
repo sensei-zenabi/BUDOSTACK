@@ -51,6 +51,7 @@
 
 #define TERMINAL_COLUMNS 118u
 #define TERMINAL_ROWS 66u
+#define TERMINAL_HISTORY_LIMIT 10000u
 #ifndef TERMINAL_FONT_SCALE
 #define TERMINAL_FONT_SCALE 1
 #endif
@@ -190,6 +191,7 @@ struct terminal_buffer {
     int cursor_saved;
     int attr_saved;
     struct terminal_cell *cells;
+    struct terminal_cell *history;
     struct terminal_attributes current_attr;
     struct terminal_attributes saved_attr;
     uint32_t default_fg;
@@ -197,6 +199,10 @@ struct terminal_buffer {
     uint32_t cursor_color;
     int cursor_visible;
     int saved_cursor_visible;
+    size_t history_limit;
+    size_t history_rows;
+    size_t history_start;
+    size_t scroll_offset;
     uint32_t palette[256];
 };
 
@@ -1516,15 +1522,54 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->attr_saved = 0;
     buffer->cursor_visible = 1;
     buffer->saved_cursor_visible = 1;
+    buffer->history_limit = TERMINAL_HISTORY_LIMIT;
+    buffer->history_rows = 0u;
+    buffer->history_start = 0u;
+    buffer->scroll_offset = 0u;
+
+    if (columns == 0u || rows == 0u) {
+        buffer->cells = NULL;
+        buffer->history = NULL;
+        return -1;
+    }
+
+    if (columns > SIZE_MAX / rows) {
+        buffer->cells = NULL;
+        buffer->history = NULL;
+        return -1;
+    }
 
     size_t total_cells = columns * rows;
     buffer->cells = calloc(total_cells, sizeof(struct terminal_cell));
     if (!buffer->cells) {
+        buffer->history = NULL;
         return -1;
     }
     for (size_t i = 0u; i < total_cells; i++) {
         terminal_cell_apply_defaults(buffer, &buffer->cells[i]);
     }
+
+    if (buffer->history_limit > 0u) {
+        if (columns > SIZE_MAX / buffer->history_limit) {
+            free(buffer->cells);
+            buffer->cells = NULL;
+            buffer->history = NULL;
+            return -1;
+        }
+        size_t history_cells = buffer->history_limit * columns;
+        buffer->history = calloc(history_cells, sizeof(struct terminal_cell));
+        if (!buffer->history) {
+            free(buffer->cells);
+            buffer->cells = NULL;
+            return -1;
+        }
+        for (size_t i = 0u; i < history_cells; i++) {
+            terminal_cell_apply_defaults(buffer, &buffer->history[i]);
+        }
+    } else {
+        buffer->history = NULL;
+    }
+
     terminal_buffer_reset_attributes(buffer);
     return 0;
 }
@@ -1542,6 +1587,10 @@ static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_col
         return -1;
     }
 
+    size_t old_columns = buffer->columns;
+    size_t old_rows = buffer->rows;
+    struct terminal_cell *old_cells = buffer->cells;
+
     size_t total_cells = new_columns * new_rows;
     struct terminal_cell *new_cells = calloc(total_cells, sizeof(struct terminal_cell));
     if (!new_cells) {
@@ -1552,19 +1601,38 @@ static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_col
         terminal_cell_apply_defaults(buffer, &new_cells[i]);
     }
 
-    size_t copy_rows = buffer->rows < new_rows ? buffer->rows : new_rows;
-    size_t copy_cols = buffer->columns < new_columns ? buffer->columns : new_columns;
+    size_t copy_rows = old_rows < new_rows ? old_rows : new_rows;
+    size_t copy_cols = old_columns < new_columns ? old_columns : new_columns;
 
-    if (copy_rows > 0u && copy_cols > 0u) {
+    if (copy_rows > 0u && copy_cols > 0u && old_cells) {
         for (size_t row = 0u; row < copy_rows; row++) {
             struct terminal_cell *dst = new_cells + row * new_columns;
-            struct terminal_cell *src = buffer->cells + row * buffer->columns;
+            struct terminal_cell *src = old_cells + row * old_columns;
             memcpy(dst, src, copy_cols * sizeof(struct terminal_cell));
         }
     }
 
+    struct terminal_cell *new_history = NULL;
+    if (buffer->history_limit > 0u) {
+        if (new_columns > SIZE_MAX / buffer->history_limit) {
+            free(new_cells);
+            return -1;
+        }
+        size_t history_cells = buffer->history_limit * new_columns;
+        new_history = calloc(history_cells, sizeof(struct terminal_cell));
+        if (!new_history) {
+            free(new_cells);
+            return -1;
+        }
+        for (size_t i = 0u; i < history_cells; i++) {
+            terminal_cell_apply_defaults(buffer, &new_history[i]);
+        }
+    }
+
     free(buffer->cells);
+    free(buffer->history);
     buffer->cells = new_cells;
+    buffer->history = new_history;
     buffer->columns = new_columns;
     buffer->rows = new_rows;
 
@@ -1583,6 +1651,10 @@ static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_col
         }
     }
 
+    buffer->history_rows = 0u;
+    buffer->history_start = 0u;
+    buffer->scroll_offset = 0u;
+
     return 0;
 }
 
@@ -1592,6 +1664,8 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     }
     free(buffer->cells);
     buffer->cells = NULL;
+    free(buffer->history);
+    buffer->history = NULL;
     buffer->columns = 0u;
     buffer->rows = 0u;
     buffer->cursor_column = 0u;
@@ -1601,6 +1675,41 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     buffer->cursor_saved = 0;
     buffer->cursor_visible = 1;
     buffer->saved_cursor_visible = 1;
+    buffer->history_rows = 0u;
+    buffer->history_start = 0u;
+    buffer->scroll_offset = 0u;
+}
+
+static void terminal_buffer_clamp_scroll(struct terminal_buffer *buffer) {
+    if (!buffer) {
+        return;
+    }
+    if (buffer->scroll_offset > buffer->history_rows) {
+        buffer->scroll_offset = buffer->history_rows;
+    }
+}
+
+static void terminal_buffer_push_history(struct terminal_buffer *buffer, const struct terminal_cell *row) {
+    if (!buffer || !row || buffer->columns == 0u) {
+        return;
+    }
+    if (buffer->history_limit == 0u || !buffer->history) {
+        return;
+    }
+
+    size_t row_size = buffer->columns * sizeof(struct terminal_cell);
+    size_t target_index;
+    if (buffer->history_rows < buffer->history_limit) {
+        target_index = (buffer->history_start + buffer->history_rows) % buffer->history_limit;
+        buffer->history_rows++;
+    } else {
+        target_index = buffer->history_start;
+        buffer->history_start = (buffer->history_start + 1u) % buffer->history_limit;
+    }
+
+    struct terminal_cell *dest = buffer->history + target_index * buffer->columns;
+    memcpy(dest, row, row_size);
+    terminal_buffer_clamp_scroll(buffer);
 }
 
 static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
@@ -1608,6 +1717,8 @@ static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
         return;
     }
     size_t row_size = buffer->columns * sizeof(struct terminal_cell);
+    struct terminal_cell *first_row = buffer->cells;
+    terminal_buffer_push_history(buffer, first_row);
     memmove(buffer->cells, buffer->cells + buffer->columns, row_size * (buffer->rows - 1u));
     struct terminal_cell *last_row = buffer->cells + buffer->columns * (buffer->rows - 1u);
     for (size_t col = 0u; col < buffer->columns; col++) {
@@ -1619,6 +1730,28 @@ static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
     if (buffer->cursor_saved && buffer->saved_cursor_row > 0u) {
         buffer->saved_cursor_row--;
     }
+    if (buffer->scroll_offset > 0u) {
+        buffer->scroll_offset++;
+        terminal_buffer_clamp_scroll(buffer);
+    }
+}
+
+static const struct terminal_cell *terminal_buffer_row_at(const struct terminal_buffer *buffer, size_t index) {
+    if (!buffer) {
+        return NULL;
+    }
+    if (index < buffer->history_rows) {
+        if (buffer->history_limit == 0u || !buffer->history) {
+            return NULL;
+        }
+        size_t ring_index = (buffer->history_start + index) % buffer->history_limit;
+        return buffer->history + ring_index * buffer->columns;
+    }
+    index -= buffer->history_rows;
+    if (index >= buffer->rows || !buffer->cells) {
+        return NULL;
+    }
+    return buffer->cells + index * buffer->columns;
 }
 
 static void terminal_buffer_set_cursor(struct terminal_buffer *buffer, size_t column, size_t row) {
@@ -3062,6 +3195,27 @@ int main(int argc, char **argv) {
                 if (drawable_width > 0 && drawable_height > 0) {
                     glViewport(0, 0, drawable_width, drawable_height);
                 }
+#if SDL_MAJOR_VERSION >= 2
+            } else if (event.type == SDL_MOUSEWHEEL) {
+                int wheel_y = event.wheel.y;
+#if defined(SDL_MOUSEWHEEL_FLIPPED)
+                if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
+                    wheel_y = -wheel_y;
+                }
+#endif
+                if (wheel_y > 0) {
+                    size_t delta = (size_t)wheel_y;
+                    buffer.scroll_offset += delta;
+                    terminal_buffer_clamp_scroll(&buffer);
+                } else if (wheel_y < 0) {
+                    size_t delta = (size_t)(-wheel_y);
+                    if (delta >= buffer.scroll_offset) {
+                        buffer.scroll_offset = 0u;
+                    } else {
+                        buffer.scroll_offset -= delta;
+                    }
+                }
+#endif
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = event.key.keysym.mod;
@@ -3413,7 +3567,27 @@ int main(int argc, char **argv) {
             cursor_last_toggle = now;
             cursor_phase_visible = cursor_phase_visible ? 0 : 1;
         }
-        int cursor_render_visible = buffer.cursor_visible && cursor_phase_visible;
+        size_t clamped_scroll_offset = buffer.scroll_offset;
+        if (clamped_scroll_offset > buffer.history_rows) {
+            clamped_scroll_offset = buffer.history_rows;
+        }
+        size_t total_available_rows = buffer.history_rows + buffer.rows;
+        size_t bottom_index = 0u;
+        if (total_available_rows > 0u) {
+            bottom_index = total_available_rows - 1u;
+            if (clamped_scroll_offset <= bottom_index) {
+                bottom_index -= clamped_scroll_offset;
+            } else {
+                bottom_index = 0u;
+            }
+        }
+        size_t top_index = 0u;
+        if (bottom_index + 1u > buffer.rows) {
+            top_index = bottom_index + 1u - buffer.rows;
+        }
+
+        size_t cursor_global_index = buffer.history_rows + buffer.cursor_row;
+        int cursor_render_visible = (clamped_scroll_offset == 0u) && buffer.cursor_visible && cursor_phase_visible;
 
         uint8_t *framebuffer = terminal_framebuffer_pixels;
         int frame_width = terminal_framebuffer_width;
@@ -3426,8 +3600,13 @@ int main(int argc, char **argv) {
         }
 
         for (size_t row = 0u; row < buffer.rows; row++) {
+            size_t global_index = top_index + row;
+            const struct terminal_cell *row_cells = terminal_buffer_row_at(&buffer, global_index);
+            if (!row_cells) {
+                continue;
+            }
             for (size_t col = 0u; col < buffer.columns; col++) {
-                struct terminal_cell *cell = &buffer.cells[row * buffer.columns + col];
+                const struct terminal_cell *cell = &row_cells[col];
                 uint32_t ch = cell->ch;
                 uint32_t fg = cell->fg;
                 uint32_t bg = cell->bg;
@@ -3442,7 +3621,7 @@ int main(int argc, char **argv) {
                 }
 
                 int is_cursor_cell = cursor_render_visible &&
-                                     row == buffer.cursor_row &&
+                                     global_index == cursor_global_index &&
                                      col == buffer.cursor_column;
                 uint32_t fill_color = bg;
                 uint32_t glyph_color = fg;

@@ -35,6 +35,8 @@
 #if BUDOSTACK_HAVE_SDL2
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL2/SDL_opengl.h>
+#define DR_MP3_IMPLEMENTATION
+#include "lib/dr_mp3.h"
 #endif
 
 #ifndef PATH_MAX
@@ -138,6 +140,31 @@ struct psf_unicode_map {
     uint32_t glyph_index;
 };
 
+#if BUDOSTACK_HAVE_SDL2
+#define TERMINAL_SOUND_CHANNEL_COUNT 32
+
+struct terminal_sound_channel {
+    float *samples;
+    size_t frame_count;
+    size_t position;
+    int active;
+};
+
+static SDL_AudioDeviceID terminal_audio_device = 0;
+static SDL_AudioSpec terminal_audio_spec = {0};
+static SDL_mutex *terminal_audio_mutex = NULL;
+static struct terminal_sound_channel terminal_sound_channels[TERMINAL_SOUND_CHANNEL_COUNT];
+
+static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int len);
+static void terminal_audio_channel_clear(struct terminal_sound_channel *channel);
+static int terminal_initialize_audio(void);
+static void terminal_shutdown_audio(void);
+static int terminal_audio_convert(const SDL_AudioSpec *source_spec, const void *data, size_t length, float **out_samples, size_t *out_frames);
+static int terminal_audio_load_file(const char *path, float **out_samples, size_t *out_frames);
+static int terminal_sound_play(int channel_index, const char *path);
+static void terminal_sound_stop(int channel_index);
+#endif
+
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);
 static int terminal_send_string(int fd, const char *str);
@@ -163,6 +190,7 @@ static float terminal_get_parameter_default(const struct terminal_shader_paramet
 static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label);
 static void terminal_print_usage(const char *progname);
 static int terminal_resolve_shader_path(const char *root_dir, const char *shader_arg, char *out_path, size_t out_size);
+static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args);
 
 static int terminal_send_response(const char *response) {
     if (!response || response[0] == '\0') {
@@ -173,6 +201,421 @@ static int terminal_send_response(const char *response) {
     }
     return terminal_send_string(terminal_master_fd_handle, response);
 }
+
+
+#if BUDOSTACK_HAVE_SDL2
+static void terminal_audio_channel_clear(struct terminal_sound_channel *channel) {
+    if (!channel) {
+        return;
+    }
+    if (channel->samples) {
+        free(channel->samples);
+        channel->samples = NULL;
+    }
+    channel->frame_count = 0u;
+    channel->position = 0u;
+    channel->active = 0;
+}
+
+static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int len) {
+    (void)userdata;
+    if (!stream || len <= 0) {
+        return;
+    }
+
+    SDL_memset(stream, 0, (size_t)len);
+
+    if (!terminal_audio_mutex) {
+        return;
+    }
+
+    int channel_count = (int)terminal_audio_spec.channels;
+    if (channel_count <= 0) {
+        return;
+    }
+
+    if (SDL_LockMutex(terminal_audio_mutex) != 0) {
+        return;
+    }
+
+    size_t byte_length = (size_t)len;
+    size_t frames = byte_length / (sizeof(float) * (size_t)channel_count);
+    if (frames == 0u) {
+        SDL_UnlockMutex(terminal_audio_mutex);
+        return;
+    }
+
+    float *output = (float *)stream;
+
+    for (size_t channel_index = 0u; channel_index < TERMINAL_SOUND_CHANNEL_COUNT; channel_index++) {
+        struct terminal_sound_channel *channel = &terminal_sound_channels[channel_index];
+        if (!channel->active || !channel->samples || channel->frame_count == 0u) {
+            continue;
+        }
+
+        size_t available_frames = 0u;
+        if (channel->position < channel->frame_count) {
+            available_frames = channel->frame_count - channel->position;
+        }
+        if (available_frames == 0u) {
+            terminal_audio_channel_clear(channel);
+            continue;
+        }
+
+        size_t mix_frames = frames;
+        if (available_frames < mix_frames) {
+            mix_frames = available_frames;
+        }
+
+        for (size_t frame_index = 0u; frame_index < mix_frames; frame_index++) {
+            size_t output_offset = frame_index * (size_t)channel_count;
+            size_t input_offset = (channel->position + frame_index) * (size_t)channel_count;
+            for (int sample_channel = 0; sample_channel < channel_count; sample_channel++) {
+                size_t sample_index = output_offset + (size_t)sample_channel;
+                size_t input_index = input_offset + (size_t)sample_channel;
+                output[sample_index] += channel->samples[input_index];
+            }
+        }
+
+        channel->position += mix_frames;
+        if (channel->position >= channel->frame_count) {
+            terminal_audio_channel_clear(channel);
+        }
+    }
+
+    SDL_UnlockMutex(terminal_audio_mutex);
+
+    size_t total_samples = frames * (size_t)channel_count;
+    for (size_t i = 0u; i < total_samples; i++) {
+        float sample = output[i];
+        if (sample > 1.0f) {
+            sample = 1.0f;
+        } else if (sample < -1.0f) {
+            sample = -1.0f;
+        }
+        output[i] = sample;
+    }
+}
+
+static int terminal_initialize_audio(void) {
+    if (terminal_audio_device != 0) {
+        return 0;
+    }
+
+    SDL_AudioSpec desired;
+    SDL_zero(desired);
+    desired.freq = 48000;
+    desired.format = AUDIO_F32SYS;
+    desired.channels = 2;
+    desired.samples = 4096;
+    desired.callback = terminal_audio_callback;
+
+    SDL_zero(terminal_audio_spec);
+    terminal_audio_device = SDL_OpenAudioDevice(NULL, 0, &desired, &terminal_audio_spec, 0);
+    if (terminal_audio_device == 0) {
+        fprintf(stderr, "terminal: SDL_OpenAudioDevice failed: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    if (!SDL_AUDIO_ISFLOAT(terminal_audio_spec.format) || SDL_AUDIO_BITSIZE(terminal_audio_spec.format) != 32) {
+        fprintf(stderr, "terminal: Unsupported audio format %u\n", (unsigned int)terminal_audio_spec.format);
+        SDL_CloseAudioDevice(terminal_audio_device);
+        terminal_audio_device = 0;
+        SDL_zero(terminal_audio_spec);
+        return -1;
+    }
+
+    if (terminal_audio_spec.channels == 0) {
+        fprintf(stderr, "terminal: Audio device reported zero channels.\n");
+        SDL_CloseAudioDevice(terminal_audio_device);
+        terminal_audio_device = 0;
+        SDL_zero(terminal_audio_spec);
+        return -1;
+    }
+
+    if (!terminal_audio_mutex) {
+        terminal_audio_mutex = SDL_CreateMutex();
+        if (!terminal_audio_mutex) {
+            fprintf(stderr, "terminal: Failed to create audio mutex: %s\n", SDL_GetError());
+            SDL_CloseAudioDevice(terminal_audio_device);
+            terminal_audio_device = 0;
+            SDL_zero(terminal_audio_spec);
+            return -1;
+        }
+    }
+
+    SDL_memset(terminal_sound_channels, 0, sizeof(terminal_sound_channels));
+
+    SDL_PauseAudioDevice(terminal_audio_device, 0);
+    return 0;
+}
+
+static void terminal_shutdown_audio(void) {
+    if (terminal_audio_mutex) {
+        if (SDL_LockMutex(terminal_audio_mutex) == 0) {
+            for (size_t i = 0u; i < TERMINAL_SOUND_CHANNEL_COUNT; i++) {
+                terminal_audio_channel_clear(&terminal_sound_channels[i]);
+            }
+            SDL_UnlockMutex(terminal_audio_mutex);
+        } else {
+            for (size_t i = 0u; i < TERMINAL_SOUND_CHANNEL_COUNT; i++) {
+                terminal_audio_channel_clear(&terminal_sound_channels[i]);
+            }
+        }
+    }
+
+    if (terminal_audio_device != 0) {
+        SDL_CloseAudioDevice(terminal_audio_device);
+        terminal_audio_device = 0;
+    }
+
+    SDL_zero(terminal_audio_spec);
+
+    if (terminal_audio_mutex) {
+        SDL_DestroyMutex(terminal_audio_mutex);
+        terminal_audio_mutex = NULL;
+    }
+}
+
+static int terminal_audio_convert(const SDL_AudioSpec *source_spec, const void *data, size_t length, float **out_samples, size_t *out_frames) {
+    if (!source_spec || !data || !out_samples || !out_frames || length == 0u) {
+        return -1;
+    }
+    if (terminal_audio_device == 0 || terminal_audio_spec.channels == 0) {
+        return -1;
+    }
+
+    SDL_AudioStream *stream = SDL_NewAudioStream(source_spec->format,
+                                                 source_spec->channels,
+                                                 source_spec->freq,
+                                                 terminal_audio_spec.format,
+                                                 terminal_audio_spec.channels,
+                                                 terminal_audio_spec.freq);
+    if (!stream) {
+        fprintf(stderr, "terminal: SDL_NewAudioStream failed: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    size_t offset = 0u;
+    while (offset < length) {
+        size_t remaining = length - offset;
+        size_t chunk = remaining;
+        if (chunk > (size_t)INT_MAX) {
+            chunk = (size_t)INT_MAX;
+        }
+        if (SDL_AudioStreamPut(stream, (const Uint8 *)data + offset, (int)chunk) != 0) {
+            fprintf(stderr, "terminal: SDL_AudioStreamPut failed: %s\n", SDL_GetError());
+            SDL_FreeAudioStream(stream);
+            return -1;
+        }
+        offset += chunk;
+    }
+
+    if (SDL_AudioStreamFlush(stream) != 0) {
+        fprintf(stderr, "terminal: SDL_AudioStreamFlush failed: %s\n", SDL_GetError());
+        SDL_FreeAudioStream(stream);
+        return -1;
+    }
+
+    int available = SDL_AudioStreamAvailable(stream);
+    if (available <= 0) {
+        SDL_FreeAudioStream(stream);
+        return -1;
+    }
+
+    float *converted = malloc((size_t)available);
+    if (!converted) {
+        SDL_FreeAudioStream(stream);
+        return -1;
+    }
+
+    int obtained = SDL_AudioStreamGet(stream, converted, available);
+    if (obtained < 0) {
+        fprintf(stderr, "terminal: SDL_AudioStreamGet failed: %s\n", SDL_GetError());
+        free(converted);
+        SDL_FreeAudioStream(stream);
+        return -1;
+    }
+
+    SDL_FreeAudioStream(stream);
+
+    if (obtained == 0) {
+        free(converted);
+        return -1;
+    }
+
+    if (obtained < available) {
+        float *shrunk = realloc(converted, (size_t)obtained);
+        if (shrunk) {
+            converted = shrunk;
+        }
+        available = obtained;
+    }
+
+    size_t frame_count = (size_t)available / (sizeof(float) * (size_t)terminal_audio_spec.channels);
+    if (frame_count == 0u) {
+        free(converted);
+        return -1;
+    }
+
+    *out_samples = converted;
+    *out_frames = frame_count;
+    return 0;
+}
+
+static int terminal_audio_load_file(const char *path, float **out_samples, size_t *out_frames) {
+    if (!path || !out_samples || !out_frames) {
+        return -1;
+    }
+    if (terminal_audio_device == 0) {
+        fprintf(stderr, "terminal: Audio device is not initialized.\n");
+        return -1;
+    }
+
+    const char *extension = strrchr(path, '.');
+    if (!extension || extension[1] == '\0') {
+        fprintf(stderr, "terminal: Unable to determine audio format for '%s'.\n", path);
+        return -1;
+    }
+
+    char lower_ext[16];
+    size_t ext_length = strlen(extension);
+    if (ext_length >= sizeof(lower_ext)) {
+        fprintf(stderr, "terminal: Audio file extension too long for '%s'.\n", path);
+        return -1;
+    }
+    for (size_t i = 0u; i < ext_length; i++) {
+        lower_ext[i] = (char)tolower((unsigned char)extension[i]);
+    }
+    lower_ext[ext_length] = '\0';
+
+    if (strcmp(lower_ext, ".wav") == 0) {
+        SDL_AudioSpec file_spec;
+        Uint8 *buffer = NULL;
+        Uint32 length = 0u;
+        if (!SDL_LoadWAV(path, &file_spec, &buffer, &length)) {
+            fprintf(stderr, "terminal: SDL_LoadWAV failed for '%s': %s\n", path, SDL_GetError());
+            return -1;
+        }
+        int result = terminal_audio_convert(&file_spec, buffer, (size_t)length, out_samples, out_frames);
+        SDL_FreeWAV(buffer);
+        return result;
+    } else if (strcmp(lower_ext, ".mp3") == 0) {
+        drmp3 mp3;
+        if (!drmp3_init_file(&mp3, path, NULL)) {
+            fprintf(stderr, "terminal: Failed to open MP3 '%s'.\n", path);
+            return -1;
+        }
+
+        drmp3_uint64 total_frames = drmp3_get_pcm_frame_count(&mp3);
+        if (total_frames == 0) {
+            drmp3_uninit(&mp3);
+            fprintf(stderr, "terminal: MP3 '%s' contains no audio frames.\n", path);
+            return -1;
+        }
+
+        if (mp3.channels <= 0) {
+            drmp3_uninit(&mp3);
+            fprintf(stderr, "terminal: MP3 '%s' has invalid channel count.\n", path);
+            return -1;
+        }
+
+        drmp3_uint64 channel_count = (drmp3_uint64)mp3.channels;
+        if (total_frames > UINT64_C(0) && channel_count > 0) {
+            drmp3_uint64 max_frames = (drmp3_uint64)(SIZE_MAX / (sizeof(float) * channel_count));
+            if (total_frames > max_frames) {
+                drmp3_uninit(&mp3);
+                fprintf(stderr, "terminal: MP3 '%s' is too large to decode.\n", path);
+                return -1;
+            }
+        }
+
+        size_t sample_count = (size_t)(total_frames * channel_count);
+        float *temp = malloc(sample_count * sizeof(float));
+        if (!temp) {
+            drmp3_uninit(&mp3);
+            return -1;
+        }
+
+        drmp3_uint64 frames_decoded = drmp3_read_pcm_frames_f32(&mp3, total_frames, temp);
+        if (frames_decoded == 0) {
+            free(temp);
+            drmp3_uninit(&mp3);
+            fprintf(stderr, "terminal: Failed to decode MP3 '%s'.\n", path);
+            return -1;
+        }
+
+        size_t decoded_samples = (size_t)(frames_decoded * channel_count);
+        SDL_AudioSpec file_spec;
+        SDL_zero(file_spec);
+        file_spec.format = AUDIO_F32SYS;
+        file_spec.channels = (Uint8)mp3.channels;
+        file_spec.freq = (int)mp3.sampleRate;
+
+        int result = terminal_audio_convert(&file_spec, temp, decoded_samples * sizeof(float), out_samples, out_frames);
+        free(temp);
+        drmp3_uninit(&mp3);
+        return result;
+    }
+
+    fprintf(stderr, "terminal: Unsupported audio format '%s'.\n", extension);
+    return -1;
+}
+
+static int terminal_sound_play(int channel_index, const char *path) {
+    if (channel_index < 0 || channel_index >= (int)TERMINAL_SOUND_CHANNEL_COUNT) {
+        fprintf(stderr, "terminal: Sound channel %d out of range.\n", channel_index + 1);
+        return -1;
+    }
+    if (!path || path[0] == '\0') {
+        fprintf(stderr, "terminal: Sound path is empty.\n");
+        return -1;
+    }
+    if (terminal_audio_device == 0 || !terminal_audio_mutex) {
+        fprintf(stderr, "terminal: Audio subsystem not initialized.\n");
+        return -1;
+    }
+
+    float *samples = NULL;
+    size_t frames = 0u;
+    if (terminal_audio_load_file(path, &samples, &frames) != 0) {
+        return -1;
+    }
+
+    if (SDL_LockMutex(terminal_audio_mutex) != 0) {
+        fprintf(stderr, "terminal: Failed to lock audio mutex: %s\n", SDL_GetError());
+        free(samples);
+        return -1;
+    }
+
+    struct terminal_sound_channel *channel = &terminal_sound_channels[(size_t)channel_index];
+    terminal_audio_channel_clear(channel);
+    channel->samples = samples;
+    channel->frame_count = frames;
+    channel->position = 0u;
+    channel->active = 1;
+
+    SDL_UnlockMutex(terminal_audio_mutex);
+    return 0;
+}
+
+static void terminal_sound_stop(int channel_index) {
+    if (channel_index < 0 || channel_index >= (int)TERMINAL_SOUND_CHANNEL_COUNT) {
+        return;
+    }
+    if (!terminal_audio_mutex) {
+        return;
+    }
+
+    if (SDL_LockMutex(terminal_audio_mutex) != 0) {
+        fprintf(stderr, "terminal: Failed to lock audio mutex for stop: %s\n", SDL_GetError());
+        return;
+    }
+
+    terminal_audio_channel_clear(&terminal_sound_channels[(size_t)channel_index]);
+    SDL_UnlockMutex(terminal_audio_mutex);
+}
+#endif
 
 
 struct terminal_cell {
@@ -2317,6 +2760,105 @@ static void ansi_parser_init(struct ansi_parser *parser) {
     ansi_parser_reset_utf8(parser);
 }
 
+static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args) {
+    if (!buffer) {
+        return;
+    }
+
+    int scale = 0;
+    int margin = -1;
+
+    if (args && args[0] != '\0') {
+        char *copy = strdup(args);
+        if (copy) {
+            char *saveptr = NULL;
+            char *token = strtok_r(copy, ";", &saveptr);
+#if BUDOSTACK_HAVE_SDL2
+            char *sound_action = NULL;
+            char *sound_path = NULL;
+            int sound_channel = -1;
+#endif
+            while (token) {
+                char *value = strchr(token, '=');
+                char *key = token;
+                if (value) {
+                    *value = '\0';
+                    value++;
+                }
+                if (key && key[0] != '\0') {
+                    if (strcmp(key, "scale") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed > 0 && parsed <= INT_MAX) {
+                            scale = (int)parsed;
+                        }
+                    } else if (strcmp(key, "margin") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0 && parsed <= INT_MAX) {
+                            margin = (int)parsed;
+                        }
+#if BUDOSTACK_HAVE_SDL2
+                    } else if (strcmp(key, "sound") == 0 && value && *value != '\0') {
+                        sound_action = value;
+                    } else if (strcmp(key, "channel") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 1 && parsed <= TERMINAL_SOUND_CHANNEL_COUNT) {
+                            sound_channel = (int)(parsed - 1);
+                        }
+                    } else if (strcmp(key, "path") == 0 && value) {
+                        sound_path = value;
+#endif
+                    }
+                }
+                token = strtok_r(NULL, ";", &saveptr);
+            }
+
+#if BUDOSTACK_HAVE_SDL2
+            if (sound_action) {
+                if (strcmp(sound_action, "play") == 0) {
+                    if (sound_channel >= 0 && sound_path && sound_path[0] != '\0') {
+                        if (terminal_sound_play(sound_channel, sound_path) != 0) {
+                            fprintf(stderr, "terminal: Failed to play sound on channel %d.\n", sound_channel + 1);
+                        }
+                    } else {
+                        fprintf(stderr, "terminal: Sound play requires a valid channel and path.\n");
+                    }
+                } else if (strcmp(sound_action, "stop") == 0) {
+                    if (sound_channel >= 0) {
+                        terminal_sound_stop(sound_channel);
+                    } else {
+                        fprintf(stderr, "terminal: Sound stop requires a valid channel.\n");
+                    }
+                }
+            }
+#endif
+
+            free(copy);
+        }
+
+        if (scale == 0) {
+            char *endptr = NULL;
+            errno = 0;
+            long parsed = strtol(args, &endptr, 10);
+            if (errno == 0 && endptr && *endptr == '\0' && parsed > 0 && parsed <= INT_MAX) {
+                scale = (int)parsed;
+            }
+        }
+    }
+
+    if (scale > 0) {
+        terminal_apply_scale(buffer, scale);
+    }
+    if (margin >= 0) {
+        terminal_apply_margin(buffer, margin);
+    }
+}
+
 static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *buffer) {
     if (!parser || !buffer) {
         return;
@@ -2421,42 +2963,9 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
         }
         break;
     }
-    case 777: {
-        int scale = 0;
-        int margin = -1;
-        if (args && args[0] != '\0') {
-            const char *scale_prefix = "scale=";
-            const char *margin_prefix = "margin=";
-            const char *scale_ptr = strstr(args, scale_prefix);
-            if (scale_ptr && (scale_ptr == args || scale_ptr[-1] == ';')) {
-                char *endptr = NULL;
-                errno = 0;
-                long value = strtol(scale_ptr + strlen(scale_prefix), &endptr, 10);
-                if (errno == 0 && endptr != NULL && value > 0 && value <= INT_MAX) {
-                    scale = (int)value;
-                }
-            }
-            const char *margin_ptr = strstr(args, margin_prefix);
-            if (margin_ptr && (margin_ptr == args || margin_ptr[-1] == ';')) {
-                char *endptr = NULL;
-                errno = 0;
-                long value = strtol(margin_ptr + strlen(margin_prefix), &endptr, 10);
-                if (errno == 0 && endptr != NULL && value >= 0 && value <= INT_MAX) {
-                    margin = (int)value;
-                }
-            }
-            if (scale == 0) {
-                scale = atoi(args);
-            }
-        }
-        if (scale > 0) {
-            terminal_apply_scale(buffer, scale);
-        }
-        if (margin >= 0) {
-            terminal_apply_margin(buffer, margin);
-        }
+    case 777:
+        terminal_handle_osc_777(buffer, args);
         break;
-    }
     case 104: /* Reset palette */
         if (!args || args[0] == '\0') {
             for (size_t i = 0u; i < 16u; i++) {
@@ -3305,7 +3814,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         kill(child_pid, SIGKILL);
         free_font(&font);
@@ -3313,6 +3822,12 @@ int main(int argc, char **argv) {
         free(shader_paths);
         return EXIT_FAILURE;
     }
+
+#if BUDOSTACK_HAVE_SDL2
+    if (terminal_initialize_audio() != 0) {
+        fprintf(stderr, "terminal: Audio subsystem disabled due to initialization failure.\n");
+    }
+#endif
 
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
@@ -3331,6 +3846,9 @@ int main(int argc, char **argv) {
                                           SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
+#if BUDOSTACK_HAVE_SDL2
+        terminal_shutdown_audio();
+#endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
         free_font(&font);
@@ -3342,6 +3860,9 @@ int main(int argc, char **argv) {
     if (SDL_SetWindowFullscreen(window, SDL_WINDOW_FULLSCREEN_DESKTOP) != 0) {
         fprintf(stderr, "SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
         SDL_DestroyWindow(window);
+#if BUDOSTACK_HAVE_SDL2
+        terminal_shutdown_audio();
+#endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
         free_font(&font);
@@ -3354,6 +3875,9 @@ int main(int argc, char **argv) {
     if (!gl_context) {
         fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
         SDL_DestroyWindow(window);
+#if BUDOSTACK_HAVE_SDL2
+        terminal_shutdown_audio();
+#endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
         free_font(&font);
@@ -3366,6 +3890,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "SDL_GL_MakeCurrent failed: %s\n", SDL_GetError());
         SDL_GL_DeleteContext(gl_context);
         SDL_DestroyWindow(window);
+#if BUDOSTACK_HAVE_SDL2
+        terminal_shutdown_audio();
+#endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
         free_font(&font);
@@ -3382,6 +3909,9 @@ int main(int argc, char **argv) {
         if (terminal_initialize_gl_program(shader_paths[i].path) != 0) {
             SDL_GL_DeleteContext(gl_context);
             SDL_DestroyWindow(window);
+#if BUDOSTACK_HAVE_SDL2
+            terminal_shutdown_audio();
+#endif
             SDL_Quit();
             kill(child_pid, SIGKILL);
             free_font(&font);
@@ -3414,6 +3944,9 @@ int main(int argc, char **argv) {
         terminal_release_gl_resources();
         SDL_GL_DeleteContext(gl_context);
         SDL_DestroyWindow(window);
+#if BUDOSTACK_HAVE_SDL2
+        terminal_shutdown_audio();
+#endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
         free_font(&font);
@@ -3431,6 +3964,9 @@ int main(int argc, char **argv) {
         terminal_release_gl_resources();
         SDL_GL_DeleteContext(gl_context);
         SDL_DestroyWindow(window);
+#if BUDOSTACK_HAVE_SDL2
+        terminal_shutdown_audio();
+#endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
         free_font(&font);
@@ -3445,6 +3981,9 @@ int main(int argc, char **argv) {
         terminal_release_gl_resources();
         SDL_GL_DeleteContext(gl_context);
         SDL_DestroyWindow(window);
+#if BUDOSTACK_HAVE_SDL2
+        terminal_shutdown_audio();
+#endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
         free_font(&font);
@@ -4246,6 +4785,9 @@ int main(int argc, char **argv) {
         SDL_GL_DeleteContext(terminal_gl_context_handle);
         terminal_gl_context_handle = NULL;
     }
+#if BUDOSTACK_HAVE_SDL2
+    terminal_shutdown_audio();
+#endif
     SDL_DestroyWindow(window);
     SDL_Quit();
 

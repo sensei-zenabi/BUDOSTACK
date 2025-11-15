@@ -37,7 +37,7 @@ static const RetroProfile retro_profiles[] = {
         "Vibrant palette tuned for crisp 8-bit sprites and SID editors.",
         {
             {0, 0, 0},       // 0 background canvas for code blocks
-            {255, 255, 255}, // 1 plain text and general prose
+            {187, 187, 187}, // 1 plain text and general prose
             {136, 0, 0},     // 2 control-flow keywords
             {170, 255, 238}, // 3 data-type keywords
             {204, 68, 204},  // 4 string and character literals
@@ -65,7 +65,7 @@ static const RetroProfile retro_profiles[] = {
         "High-contrast DOS tones ideal for ANSI art and BBS sessions.",
         {
             {0, 0, 0},       // 0 background canvas for code blocks
-            {0, 0, 170},     // 1 plain text and general prose
+            {170, 170, 170}, // 1 plain text and general prose
             {0, 170, 0},     // 2 control-flow keywords
             {0, 170, 170},   // 3 data-type keywords
             {170, 0, 0},     // 4 string and character literals
@@ -93,7 +93,7 @@ static const RetroProfile retro_profiles[] = {
         "Warm monochrome amber with subtle intensity steps for long sessions.",
         {
             {86, 39, 0},    // 0 background canvas for code blocks
-            {92, 42, 0},    // 1 plain text and general prose
+            {221, 128, 45}, // 1 plain text and general prose
             {99, 45, 0},    // 2 control-flow keywords
             {106, 48, 0},   // 3 data-type keywords
             {112, 51, 0},   // 4 string and character literals
@@ -121,13 +121,13 @@ static const RetroProfile retro_profiles[] = {
         "Phosphor-green ladder inspired by DEC monochrome terminals.",
         {
             {0, 0, 0},      // 0 background canvas for code blocks
-            {0, 10, 0},     // 1 plain text and general prose
-            {0, 22, 0},     // 2 control-flow keywords
-            {0, 34, 0},     // 3 data-type keywords
-            {0, 46, 0},     // 4 string and character literals
-            {0, 58, 0},     // 5 numeric literals
-            {0, 70, 0},     // 6 function identifiers
-            {0, 82, 0},     // 7 punctuation, braces, and brackets
+            {30, 134, 30},  // 1 plain text and general prose
+            {30, 134, 30},     // 2 control-flow keywords
+            {30, 134, 30},     // 3 data-type keywords
+            {30, 134, 30},     // 4 string and character literals
+            {30, 134, 30},     // 5 numeric literals
+            {30, 134, 30},     // 6 function identifiers
+            {30, 134, 30},     // 7 punctuation, braces, and brackets
             {10, 102, 10},  // 8 preprocessor directives
             {20, 118, 20},  // 9 comments and documentation
             {30, 134, 30},  // 10 markdown headers

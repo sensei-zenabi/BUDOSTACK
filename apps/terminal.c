@@ -2802,7 +2802,7 @@ int main(int argc, char **argv) {
     }
 
     char font_path[PATH_MAX];
-    if (build_path(font_path, sizeof(font_path), root_dir, "fonts/pcw8x8.psf") != 0) {
+    if (build_path(font_path, sizeof(font_path), root_dir, "fonts/system.psf") != 0) {
         fprintf(stderr, "Failed to resolve font path.\n");
         free(shader_args);
         return EXIT_FAILURE;

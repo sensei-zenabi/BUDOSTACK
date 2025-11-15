@@ -26,6 +26,57 @@
 #include <strings.h>
 #include <ctype.h>
 
+#include "retroprofile.h"
+
+#define ANSI_RESET "\x1b[0m"
+
+static size_t format_color_sequence(char *buffer,
+                                    size_t size,
+                                    RetroFormatRole role,
+                                    const char *style_prefix) {
+    if (buffer == NULL || size == 0)
+        return 0;
+
+    RetroColor color;
+    if (retroprofile_active_format_color(role, &color) != 0) {
+        buffer[0] = '\0';
+        return 0;
+    }
+
+    if (style_prefix == NULL)
+        style_prefix = "";
+
+    int written;
+    if (style_prefix[0] != '\0') {
+        written = snprintf(buffer,
+                           size,
+                           "\x1b[%s38;2;%u;%u;%um",
+                           style_prefix,
+                           color.r,
+                           color.g,
+                           color.b);
+    } else {
+        written = snprintf(buffer,
+                           size,
+                           "\x1b[38;2;%u;%u;%um",
+                           color.r,
+                           color.g,
+                           color.b);
+    }
+
+    if (written < 0) {
+        buffer[0] = '\0';
+        return 0;
+    }
+
+    if ((size_t)written >= size) {
+        buffer[size - 1] = '\0';
+        return size - 1;
+    }
+
+    return (size_t)written;
+}
+
 int libedit_is_plain_text(const char *filename) {
     if (!filename)
         return 0;
@@ -46,25 +97,69 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
         return NULL;
     size_t ri = 0;  // result buffer index
 
+    char preprocessor_color[32];
+    char comment_color[32];
+    char string_color[32];
+    char character_color[32];
+    char keyword_color[32];
+    char keyword_type_color[32];
+    char function_color[32];
+    char number_color[32];
+    char punctuation_color[32];
+
+    size_t preprocessor_len = format_color_sequence(preprocessor_color,
+                                                    sizeof(preprocessor_color),
+                                                    RETROPROFILE_FORMAT_C_PREPROCESSOR,
+                                                    "");
+    size_t comment_len = format_color_sequence(comment_color,
+                                               sizeof(comment_color),
+                                               RETROPROFILE_FORMAT_C_COMMENT,
+                                               "");
+    size_t string_len = format_color_sequence(string_color,
+                                              sizeof(string_color),
+                                              RETROPROFILE_FORMAT_C_STRING,
+                                              "");
+    size_t character_len = format_color_sequence(character_color,
+                                                 sizeof(character_color),
+                                                 RETROPROFILE_FORMAT_C_CHARACTER,
+                                                 "");
+    size_t keyword_len = format_color_sequence(keyword_color,
+                                               sizeof(keyword_color),
+                                               RETROPROFILE_FORMAT_C_KEYWORD,
+                                               "");
+    size_t keyword_type_len = format_color_sequence(keyword_type_color,
+                                                    sizeof(keyword_type_color),
+                                                    RETROPROFILE_FORMAT_C_KEYWORD_TYPE,
+                                                    "");
+    size_t function_len = format_color_sequence(function_color,
+                                                sizeof(function_color),
+                                                RETROPROFILE_FORMAT_C_FUNCTION,
+                                                "");
+    size_t number_len = format_color_sequence(number_color,
+                                              sizeof(number_color),
+                                              RETROPROFILE_FORMAT_C_NUMBER,
+                                              "");
+    size_t punctuation_len = format_color_sequence(punctuation_color,
+                                                   sizeof(punctuation_color),
+                                                   RETROPROFILE_FORMAT_C_PUNCTUATION,
+                                                   "");
+    const size_t reset_len = strlen(ANSI_RESET);
+
     /* --- Check for preprocessor directive (macros, defines, etc.) --- */
     size_t j = 0;
     while (j < len && isspace((unsigned char)line[j]))
         j++;
     if (j < len && line[j] == '#') {
-        const char *prep_color = "\x1b[95m";  // bright magenta for preprocessor directives
-        size_t cl = strlen(prep_color);
-        if (ri + cl < buf_size) {
-            memcpy(result + ri, prep_color, cl);
-            ri += cl;
+        if (preprocessor_len > 0 && ri + preprocessor_len < buf_size) {
+            memcpy(result + ri, preprocessor_color, preprocessor_len);
+            ri += preprocessor_len;
         }
         /* Copy the entire preprocessor directive line */
         memcpy(result + ri, line, len);
         ri += len;
-        const char *reset = "\x1b[0m";
-        size_t rl = strlen(reset);
-        if (ri + rl < buf_size) {
-            memcpy(result + ri, reset, rl);
-            ri += rl;
+        if (reset_len > 0 && ri + reset_len < buf_size) {
+            memcpy(result + ri, ANSI_RESET, reset_len);
+            ri += reset_len;
         }
         result[ri] = '\0';
         return result;
@@ -76,20 +171,18 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
     while (i < len) {
         if (in_comment) {
             /* If we are inside a multi-line comment, ensure the comment color is active. */
-            if (i == 0) {
-                const char *comment_color = "\x1b[90m";  // gray
-                size_t cl = strlen(comment_color);
-                memcpy(result + ri, comment_color, cl);
-                ri += cl;
+            if (i == 0 && comment_len > 0) {
+                memcpy(result + ri, comment_color, comment_len);
+                ri += comment_len;
             }
             /* Check for end of multi-line comment */
             if (i + 1 < len && line[i] == '*' && line[i + 1] == '/') {
                 result[ri++] = '*';
                 result[ri++] = '/';
-                const char *reset = "\x1b[0m";
-                size_t rl = strlen(reset);
-                memcpy(result + ri, reset, rl);
-                ri += rl;
+                if (reset_len > 0) {
+                    memcpy(result + ri, ANSI_RESET, reset_len);
+                    ri += reset_len;
+                }
                 i += 2;
                 in_comment = 0;
                 continue;
@@ -100,10 +193,10 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
         } else {
             /* Check for start of multi-line comment */
             if (i + 1 < len && line[i] == '/' && line[i + 1] == '*') {
-                const char *comment_color = "\x1b[90m";  // gray
-                size_t cl = strlen(comment_color);
-                memcpy(result + ri, comment_color, cl);
-                ri += cl;
+                if (comment_len > 0) {
+                    memcpy(result + ri, comment_color, comment_len);
+                    ri += comment_len;
+                }
                 result[ri++] = '/';
                 result[ri++] = '*';
                 i += 2;
@@ -112,25 +205,25 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
             }
             /* Check for single-line comment ("//") */
             if (i + 1 < len && line[i] == '/' && line[i + 1] == '/') {
-                const char *comment_color = "\x1b[90m";  // gray
-                size_t cl = strlen(comment_color);
-                memcpy(result + ri, comment_color, cl);
-                ri += cl;
+                if (comment_len > 0) {
+                    memcpy(result + ri, comment_color, comment_len);
+                    ri += comment_len;
+                }
                 while (i < len) {
                     result[ri++] = line[i++];
                 }
-                const char *reset = "\x1b[0m";
-                size_t rl = strlen(reset);
-                memcpy(result + ri, reset, rl);
-                ri += rl;
+                if (reset_len > 0) {
+                    memcpy(result + ri, ANSI_RESET, reset_len);
+                    ri += reset_len;
+                }
                 break;
             }
             /* Check for string literal start */
             if (line[i] == '"') {
-                const char *str_color = "\x1b[32m";  // green
-                size_t cl = strlen(str_color);
-                memcpy(result + ri, str_color, cl);
-                ri += cl;
+                if (string_len > 0) {
+                    memcpy(result + ri, string_color, string_len);
+                    ri += string_len;
+                }
                 result[ri++] = line[i++];  // copy starting quote
                 while (i < len) {
                     result[ri++] = line[i];
@@ -140,18 +233,20 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                     }
                     i++;
                 }
-                const char *reset = "\x1b[0m";
-                size_t rl = strlen(reset);
-                memcpy(result + ri, reset, rl);
-                ri += rl;
+                if (reset_len > 0) {
+                    memcpy(result + ri, ANSI_RESET, reset_len);
+                    ri += reset_len;
+                }
                 continue;
             }
             /* Check for character literal start */
             if (line[i] == '\'') {
-                const char *char_color = "\x1b[32m";  // green
-                size_t cl = strlen(char_color);
-                memcpy(result + ri, char_color, cl);
-                ri += cl;
+                size_t active_char_len = character_len > 0 ? character_len : string_len;
+                const char *active_char_color = character_len > 0 ? character_color : string_color;
+                if (active_char_len > 0) {
+                    memcpy(result + ri, active_char_color, active_char_len);
+                    ri += active_char_len;
+                }
                 result[ri++] = line[i++];  // copy starting single quote
                 while (i < len) {
                     result[ri++] = line[i];
@@ -161,10 +256,10 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                     }
                     i++;
                 }
-                const char *reset = "\x1b[0m";
-                size_t rl = strlen(reset);
-                memcpy(result + ri, reset, rl);
-                ri += rl;
+                if (reset_len > 0) {
+                    memcpy(result + ri, ANSI_RESET, reset_len);
+                    ri += reset_len;
+                }
                 continue;
             }
             /* Check for identifier (potential keyword) */
@@ -213,17 +308,19 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                             break;
                         }
                     }
-                    const char *color = is_data_type ? "\x1b[36m" : "\x1b[34m";
-                    size_t cl = strlen(color);
-                    memcpy(result + ri, color, cl);
-                    ri += cl;
+                    const char *color = is_data_type ? keyword_type_color : keyword_color;
+                    size_t cl = is_data_type ? keyword_type_len : keyword_len;
+                    if (cl > 0) {
+                        memcpy(result + ri, color, cl);
+                        ri += cl;
+                    }
                     for (size_t k = i; k < j; k++) {
                         result[ri++] = line[k];
                     }
-                    const char *reset = "\x1b[0m";
-                    size_t rl = strlen(reset);
-                    memcpy(result + ri, reset, rl);
-                    ri += rl;
+                    if (reset_len > 0) {
+                        memcpy(result + ri, ANSI_RESET, reset_len);
+                        ri += reset_len;
+                    }
                     i = j;
                     continue;
                 } else {
@@ -231,17 +328,17 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                     while (k2 < len && isspace((unsigned char)line[k2]))
                         k2++;
                     if (k2 < len && line[k2] == '(') {
-                        const char *fn_color = "\x1b[96m";  // bright cyan for function names
-                        size_t cl2 = strlen(fn_color);
-                        memcpy(result + ri, fn_color, cl2);
-                        ri += cl2;
+                        if (function_len > 0) {
+                            memcpy(result + ri, function_color, function_len);
+                            ri += function_len;
+                        }
                         for (size_t k = i; k < j; k++) {
                             result[ri++] = line[k];
                         }
-                        const char *reset = "\x1b[0m";
-                        size_t rl2 = strlen(reset);
-                        memcpy(result + ri, reset, rl2);
-                        ri += rl2;
+                        if (reset_len > 0) {
+                            memcpy(result + ri, ANSI_RESET, reset_len);
+                            ri += reset_len;
+                        }
                         i = j;
                         continue;
                     }
@@ -249,10 +346,10 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
             }
             /* Check for numeric literals */
             if (isdigit((unsigned char)line[i])) {
-                const char *num_color = "\x1b[33m";  // yellow
-                size_t cl = strlen(num_color);
-                memcpy(result + ri, num_color, cl);
-                ri += cl;
+                if (number_len > 0) {
+                    memcpy(result + ri, number_color, number_len);
+                    ri += number_len;
+                }
                 if (line[i] == '0' && i + 1 < len) {
                     if (line[i + 1] == 'x' || line[i + 1] == 'X') {
                         result[ri++] = line[i++];
@@ -291,23 +388,23 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                         result[ri++] = line[i++];
                     }
                 }
-                const char *reset = "\x1b[0m";
-                size_t rl = strlen(reset);
-                memcpy(result + ri, reset, rl);
-                ri += rl;
+                if (reset_len > 0) {
+                    memcpy(result + ri, ANSI_RESET, reset_len);
+                    ri += reset_len;
+                }
                 continue;
             }
             /* Check for parentheses and brackets */
             if (strchr("(){}[]", line[i])) {
-                const char *paren_color = "\x1b[35m";  // magenta
-                size_t cl = strlen(paren_color);
-                memcpy(result + ri, paren_color, cl);
-                ri += cl;
+                if (punctuation_len > 0) {
+                    memcpy(result + ri, punctuation_color, punctuation_len);
+                    ri += punctuation_len;
+                }
                 result[ri++] = line[i++];
-                const char *reset = "\x1b[0m";
-                size_t rl = strlen(reset);
-                memcpy(result + ri, reset, rl);
-                ri += rl;
+                if (reset_len > 0) {
+                    memcpy(result + ri, ANSI_RESET, reset_len);
+                    ri += reset_len;
+                }
                 continue;
             }
             /* Default: copy the character unchanged */
@@ -315,12 +412,10 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
         }
     }
     /* If still inside a multi-line comment, append a reset to ensure color does not leak */
-    if (in_comment) {
-        const char *reset = "\x1b[0m";
-        size_t rl = strlen(reset);
-        if (ri + rl < buf_size) {
-            memcpy(result + ri, reset, rl);
-            ri += rl;
+    if (in_comment && reset_len > 0) {
+        if (ri + reset_len < buf_size) {
+            memcpy(result + ri, ANSI_RESET, reset_len);
+            ri += reset_len;
         }
     }
     result[ri] = '\0';
@@ -354,6 +449,39 @@ char *highlight_other_line(const char *line) {
         return NULL;
     size_t ri = 0;  // result index
 
+    char header_color_seq[32];
+    char bullet_color_seq[32];
+    char code_color_seq[32];
+    char bold_color_seq[32];
+    char italic_color_seq[32];
+    char tag_color_seq[32];
+
+    size_t header_color_len = format_color_sequence(header_color_seq,
+                                                    sizeof(header_color_seq),
+                                                    RETROPROFILE_FORMAT_TEXT_HEADER,
+                                                    "");
+    size_t bullet_color_len = format_color_sequence(bullet_color_seq,
+                                                    sizeof(bullet_color_seq),
+                                                    RETROPROFILE_FORMAT_TEXT_BULLET,
+                                                    "");
+    size_t code_color_len = format_color_sequence(code_color_seq,
+                                                  sizeof(code_color_seq),
+                                                  RETROPROFILE_FORMAT_TEXT_CODE,
+                                                  "");
+    size_t bold_color_len = format_color_sequence(bold_color_seq,
+                                                  sizeof(bold_color_seq),
+                                                  RETROPROFILE_FORMAT_TEXT_BOLD,
+                                                  "1;");
+    size_t italic_color_len = format_color_sequence(italic_color_seq,
+                                                    sizeof(italic_color_seq),
+                                                    RETROPROFILE_FORMAT_TEXT_ITALIC,
+                                                    "3;");
+    size_t tag_color_len = format_color_sequence(tag_color_seq,
+                                                 sizeof(tag_color_seq),
+                                                 RETROPROFILE_FORMAT_TEXT_TAG,
+                                                 "");
+    const size_t reset_len = strlen(ANSI_RESET);
+
     size_t i = 0;
     // Copy any leading whitespace
     while (i < len && isspace((unsigned char)line[i])) {
@@ -361,39 +489,31 @@ char *highlight_other_line(const char *line) {
     }
     // Check for Markdown header (line starting with '#')
     if (i < len && line[i] == '#') {
-        const char *header_color = "\x1b[31m";  // red for headers
-        size_t cl = strlen(header_color);
-        if (ri + cl < buf_size) {
-            memcpy(result + ri, header_color, cl);
-            ri += cl;
+        if (header_color_len > 0 && ri + header_color_len < buf_size) {
+            memcpy(result + ri, header_color_seq, header_color_len);
+            ri += header_color_len;
         }
         // Copy the rest of the line as header text
         while (i < len) {
             result[ri++] = line[i++];
         }
-        const char *reset = "\x1b[0m";
-        size_t rl = strlen(reset);
-        if (ri + rl < buf_size) {
-            memcpy(result + ri, reset, rl);
-            ri += rl;
+        if (reset_len > 0 && ri + reset_len < buf_size) {
+            memcpy(result + ri, ANSI_RESET, reset_len);
+            ri += reset_len;
         }
     } else {
         // Highlight list bullets (-, * or +) followed by a space
         if (i < len && (line[i] == '-' || line[i] == '*' || line[i] == '+') &&
             (i + 1 < len && line[i + 1] == ' ')) {
-            const char *bullet_color = "\x1b[32m";  // green for bullets
-            size_t cl = strlen(bullet_color);
-            if (ri + cl < buf_size) {
-                memcpy(result + ri, bullet_color, cl);
-                ri += cl;
+            if (bullet_color_len > 0 && ri + bullet_color_len < buf_size) {
+                memcpy(result + ri, bullet_color_seq, bullet_color_len);
+                ri += bullet_color_len;
             }
             result[ri++] = line[i++];
             result[ri++] = line[i++];
-            const char *reset = "\x1b[0m";
-            size_t rl = strlen(reset);
-            if (ri + rl < buf_size) {
-                memcpy(result + ri, reset, rl);
-                ri += rl;
+            if (reset_len > 0 && ri + reset_len < buf_size) {
+                memcpy(result + ri, ANSI_RESET, reset_len);
+                ri += reset_len;
             }
         }
         // Process the line for markup tags, inline code, bold and italic markers
@@ -406,11 +526,9 @@ char *highlight_other_line(const char *line) {
             char c = line[i];
             // Check for inline code span start (backtick) if not inside a tag
             if (!in_tag && c == '`') {
-                const char *code_color = "\x1b[36m";  // cyan for inline code
-                size_t cl = strlen(code_color);
-                if (ri + cl < buf_size) {
-                    memcpy(result + ri, code_color, cl);
-                    ri += cl;
+                if (code_color_len > 0 && ri + code_color_len < buf_size) {
+                    memcpy(result + ri, code_color_seq, code_color_len);
+                    ri += code_color_len;
                 }
                 // Append the starting backtick
                 result[ri++] = c;
@@ -423,11 +541,9 @@ char *highlight_other_line(const char *line) {
                 if (i < len && line[i] == '`') {
                     result[ri++] = line[i++];
                 }
-                const char *reset = "\x1b[0m";
-                size_t rl = strlen(reset);
-                if (ri + rl < buf_size) {
-                    memcpy(result + ri, reset, rl);
-                    ri += rl;
+                if (reset_len > 0 && ri + reset_len < buf_size) {
+                    memcpy(result + ri, ANSI_RESET, reset_len);
+                    ri += reset_len;
                 }
                 i--; // adjust for the outer loop increment
                 continue;
@@ -444,11 +560,9 @@ char *highlight_other_line(const char *line) {
                         }
                     }
                     if (!in_bold && has_closing) {
-                        const char *bold_color = "\x1b[1;33m";  // bold yellow
-                        size_t cl = strlen(bold_color);
-                        if (ri + cl < buf_size) {
-                            memcpy(result + ri, bold_color, cl);
-                            ri += cl;
+                        if (bold_color_len > 0 && ri + bold_color_len < buf_size) {
+                            memcpy(result + ri, bold_color_seq, bold_color_len);
+                            ri += bold_color_len;
                         }
                         result[ri++] = marker;
                         result[ri++] = marker;
@@ -459,11 +573,9 @@ char *highlight_other_line(const char *line) {
                     } else if (bold_marker == marker) {
                         result[ri++] = marker;
                         result[ri++] = marker;
-                        const char *reset = "\x1b[0m";
-                        size_t rl = strlen(reset);
-                        if (ri + rl < buf_size) {
-                            memcpy(result + ri, reset, rl);
-                            ri += rl;
+                        if (reset_len > 0 && ri + reset_len < buf_size) {
+                            memcpy(result + ri, ANSI_RESET, reset_len);
+                            ri += reset_len;
                         }
                         in_bold = 0;
                         bold_marker = 0;
@@ -486,11 +598,9 @@ char *highlight_other_line(const char *line) {
                         }
                     }
                     if (!in_italic && has_closing) {
-                        const char *italic_color = "\x1b[3;35m";  // italic magenta
-                        size_t cl = strlen(italic_color);
-                        if (ri + cl < buf_size) {
-                            memcpy(result + ri, italic_color, cl);
-                            ri += cl;
+                        if (italic_color_len > 0 && ri + italic_color_len < buf_size) {
+                            memcpy(result + ri, italic_color_seq, italic_color_len);
+                            ri += italic_color_len;
                         }
                         result[ri++] = marker;
                         in_italic = 1;
@@ -498,11 +608,9 @@ char *highlight_other_line(const char *line) {
                         continue;
                     } else if (italic_marker == marker) {
                         result[ri++] = marker;
-                        const char *reset = "\x1b[0m";
-                        size_t rl = strlen(reset);
-                        if (ri + rl < buf_size) {
-                            memcpy(result + ri, reset, rl);
-                            ri += rl;
+                        if (reset_len > 0 && ri + reset_len < buf_size) {
+                            memcpy(result + ri, ANSI_RESET, reset_len);
+                            ri += reset_len;
                         }
                         in_italic = 0;
                         italic_marker = 0;
@@ -517,11 +625,9 @@ char *highlight_other_line(const char *line) {
             if (c == '<') {
                 /* Only treat the '<' as a markup tag if a closing '>' exists later */
                 if (strchr(line + i + 1, '>')) {
-                    const char *tag_color = "\x1b[34m";  // blue for tags
-                    size_t cl = strlen(tag_color);
-                    if (ri + cl < buf_size) {
-                        memcpy(result + ri, tag_color, cl);
-                        ri += cl;
+                    if (tag_color_len > 0 && ri + tag_color_len < buf_size) {
+                        memcpy(result + ri, tag_color_seq, tag_color_len);
+                        ri += tag_color_len;
                     }
                     in_tag = 1;
                 }
@@ -530,22 +636,18 @@ char *highlight_other_line(const char *line) {
             result[ri++] = c;
             // Check for end of a markup tag
             if (c == '>' && in_tag) {
-                const char *reset = "\x1b[0m";
-                size_t rl = strlen(reset);
-                if (ri + rl < buf_size) {
-                    memcpy(result + ri, reset, rl);
-                    ri += rl;
+                if (reset_len > 0 && ri + reset_len < buf_size) {
+                    memcpy(result + ri, ANSI_RESET, reset_len);
+                    ri += reset_len;
                 }
                 in_tag = 0;
             }
         }
         // If any formatting is still active, reset it at the end
-        if (in_tag || in_bold || in_italic) {
-            const char *reset = "\x1b[0m";
-            size_t rl = strlen(reset);
-            if (ri + rl < buf_size) {
-                memcpy(result + ri, reset, rl);
-                ri += rl;
+        if ((in_tag || in_bold || in_italic) && reset_len > 0) {
+            if (ri + reset_len < buf_size) {
+                memcpy(result + ri, ANSI_RESET, reset_len);
+                ri += reset_len;
             }
         }
     }

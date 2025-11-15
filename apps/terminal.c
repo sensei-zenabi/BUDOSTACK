@@ -181,6 +181,7 @@ static size_t terminal_total_rows(const struct terminal_buffer *buffer);
 static const struct terminal_cell *terminal_buffer_row_at(const struct terminal_buffer *buffer, size_t index);
 static size_t terminal_clamped_scroll_offset(const struct terminal_buffer *buffer);
 static void terminal_visible_row_range(const struct terminal_buffer *buffer, size_t *out_top_index, size_t *out_bottom_index);
+static int terminal_window_point_to_framebuffer(int window_x, int window_y, int *out_x, int *out_y);
 static int terminal_screen_point_to_cell(int x,
                                          int y,
                                          size_t columns,
@@ -777,6 +778,50 @@ static void terminal_visible_row_range(const struct terminal_buffer *buffer, siz
     if (out_bottom_index) {
         *out_bottom_index = bottom_index;
     }
+}
+
+static int terminal_window_point_to_framebuffer(int window_x, int window_y, int *out_x, int *out_y) {
+    if (!out_x || !out_y) {
+        return -1;
+    }
+    if (!terminal_window_handle || terminal_framebuffer_width <= 0 || terminal_framebuffer_height <= 0) {
+        return -1;
+    }
+
+    int window_width = 0;
+    int window_height = 0;
+    SDL_GetWindowSize(terminal_window_handle, &window_width, &window_height);
+    int drawable_width = 0;
+    int drawable_height = 0;
+    SDL_GL_GetDrawableSize(terminal_window_handle, &drawable_width, &drawable_height);
+
+    double reference_width = (window_width > 0) ? (double)window_width : (double)drawable_width;
+    double reference_height = (window_height > 0) ? (double)window_height : (double)drawable_height;
+    if (reference_width <= 0.0 || reference_height <= 0.0) {
+        return -1;
+    }
+
+    double normalized_x = (double)window_x / reference_width;
+    double normalized_y = (double)window_y / reference_height;
+    double framebuffer_x = normalized_x * (double)terminal_framebuffer_width;
+    double framebuffer_y = normalized_y * (double)terminal_framebuffer_height;
+
+    if (framebuffer_x < (double)INT_MIN) {
+        framebuffer_x = (double)INT_MIN;
+    }
+    if (framebuffer_x > (double)INT_MAX) {
+        framebuffer_x = (double)INT_MAX;
+    }
+    if (framebuffer_y < (double)INT_MIN) {
+        framebuffer_y = (double)INT_MIN;
+    }
+    if (framebuffer_y > (double)INT_MAX) {
+        framebuffer_y = (double)INT_MAX;
+    }
+
+    *out_x = (int)framebuffer_x;
+    *out_y = (int)framebuffer_y;
+    return 0;
 }
 
 static int terminal_screen_point_to_cell(int x,
@@ -4491,8 +4536,11 @@ int main(int argc, char **argv) {
                     size_t total_rows = terminal_total_rows(&buffer);
                     size_t global_row = 0u;
                     size_t column = 0u;
-                    if (terminal_screen_point_to_cell(event.button.x,
-                                                      event.button.y,
+                    int logical_x = 0;
+                    int logical_y = 0;
+                    if (terminal_window_point_to_framebuffer(event.button.x, event.button.y, &logical_x, &logical_y) == 0 &&
+                        terminal_screen_point_to_cell(logical_x,
+                                                      logical_y,
                                                       buffer.columns,
                                                       buffer.rows,
                                                       top_index,
@@ -4522,8 +4570,11 @@ int main(int argc, char **argv) {
                         size_t total_rows = terminal_total_rows(&buffer);
                         size_t global_row = 0u;
                         size_t column = 0u;
-                        if (terminal_screen_point_to_cell(event.motion.x,
-                                                          event.motion.y,
+                        int logical_x = 0;
+                        int logical_y = 0;
+                        if (terminal_window_point_to_framebuffer(event.motion.x, event.motion.y, &logical_x, &logical_y) == 0 &&
+                            terminal_screen_point_to_cell(logical_x,
+                                                          logical_y,
                                                           buffer.columns,
                                                           buffer.rows,
                                                           top_index,

@@ -3442,11 +3442,17 @@ int main(int argc, char **argv) {
                 -1.0f,  1.0f, 0.0f, 1.0f,
                  1.0f,  1.0f, 0.0f, 1.0f
             };
-            const GLfloat quad_texcoords[8] = {
+            const GLfloat quad_texcoords_cpu[8] = {
                 0.0f, 1.0f,
                 1.0f, 1.0f,
                 0.0f, 0.0f,
                 1.0f, 0.0f
+            };
+            const GLfloat quad_texcoords_fbo[8] = {
+                0.0f, 0.0f,
+                1.0f, 0.0f,
+                0.0f, 1.0f,
+                1.0f, 1.0f
             };
 
             static int frame_counter = 0;
@@ -3529,6 +3535,9 @@ int main(int argc, char **argv) {
                     glVertexAttribPointer((GLuint)shader->attrib_vertex, 4, GL_FLOAT, GL_FALSE, 0, quad_vertices);
                 }
                 if (shader->attrib_texcoord >= 0) {
+                    const GLfloat *quad_texcoords = (source_texture == terminal_gl_texture)
+                        ? quad_texcoords_cpu
+                        : quad_texcoords_fbo;
                     glEnableVertexAttribArray((GLuint)shader->attrib_texcoord);
                     glVertexAttribPointer((GLuint)shader->attrib_texcoord, 2, GL_FLOAT, GL_FALSE, 0, quad_texcoords);
                 }

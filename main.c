@@ -584,34 +584,34 @@ int main(int argc, char *argv[]) {
         snprintf(auto_command, len, "runtask %s.task", argv[1]);
     }
 
-	/* Run autoexec before announcing readiness */
-	{
-	    CommandStruct aut;
-	    char *autoexec_cmd = strdup("runtask autoexec.task");
-	    if (!autoexec_cmd) {
-	        perror("strdup");
-	    } else {
-	        parse_input(autoexec_cmd, &aut);
-	        /* Try in-app command first; if not handled, fall back to /bin/sh */
-	        if (execute_command_with_paging(&aut) == -1) {
-	            run_shell_command(autoexec_cmd);
-	        }
-	        free_command_struct(&aut);
-	        free(autoexec_cmd);
-	    }
-	}
+    /* Run autoexec before announcing readiness */
+    {
+        CommandStruct aut;
+        char *autoexec_cmd = strdup("runtask autoexec.task");
+        if (!autoexec_cmd) {
+            perror("strdup");
+        } else {
+            parse_input(autoexec_cmd, &aut);
+            /* Try in-app command first; if not handled, fall back to /bin/sh */
+            if (execute_command_with_paging(&aut) == -1) {
+                run_shell_command(autoexec_cmd);
+            }
+            free_command_struct(&aut);
+            free(autoexec_cmd);
+        }
+    }
 
-	system("clear");
+    system("clear");
 
-    /* Modified: Skip startup messages if in forced mode (-f) or auto_command mode. */
-    if ((argc > 1 && strcmp(argv[1], "-f") == 0) || auto_command != NULL) {
-        /* Do not print startup messages and skip login() */
-    } else {
+    /* Modified: Enable login only if argument (-f) given or auto_command mode. */
+    if ((argc > 1 && strcmp(argv[1], "-f") == 0) || auto_command != NULL) {        
         if (system("clear") != 0)
             perror("system");
         printlogo();
         login();
         printf("========================================================================\n");
+    } else {
+        /* Do not print startup messages and skip login() */
     }
 
     printf("\nSYSTEM READY");
@@ -642,8 +642,8 @@ int main(int argc, char *argv[]) {
             continue;
         }
         input[strcspn(input, "\n")] = '\0';
-		if (espeak_enable) { say(input); };
-		        
+        if (espeak_enable) { say(input); };
+                
         /* NEW: "restart" command handling.
          * When the user types "restart" or "restart -f", the shell first changes its working directory to the base directory,
          * then runs "make" to recompile itself. If "restart -f" is entered, "make clean" is executed before rebuilding.
@@ -690,16 +690,16 @@ int main(int argc, char *argv[]) {
         }
 
         if (strcmp(input, "mute") == 0) {
-        	// set say() off / on
-			espeak_enable = !espeak_enable;
-			if (espeak_enable) {
-				printf("Voice assist enabled\n");
-			}
-			else {
-				printf("Voice assist disabled\n");
-			}
-        	free(input);
-        	continue;
+            // set say() off / on
+            espeak_enable = !espeak_enable;
+            if (espeak_enable) {
+                printf("Voice assist enabled\n");
+            }
+            else {
+                printf("Voice assist disabled\n");
+            }
+            free(input);
+            continue;
         }
         
         if (strcmp(input, "exit") == 0) {

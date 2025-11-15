@@ -36,27 +36,27 @@ static const RetroProfile retro_profiles[] = {
         "Commodore 64",
         "Vibrant palette tuned for crisp 8-bit sprites and SID editors.",
         {
-            {0, 0, 0},
-            {255, 255, 255},
-            {136, 0, 0},
-            {170, 255, 238},
-            {204, 68, 204},
-            {0, 204, 85},
-            {0, 0, 170},
-            {238, 238, 119},
-            {221, 136, 85},
-            {102, 68, 0},
-            {255, 119, 119},
-            {51, 51, 51},
-            {119, 119, 119},
-            {170, 255, 102},
-            {0, 136, 255},
-            {187, 187, 187},
+            {0, 0, 0},       // 0 black anchor used for borders/background
+            {255, 255, 255}, // 1 bright white highlight for sprites/text
+            {136, 0, 0},     // 2 deep red accent typical for C64 UI
+            {170, 255, 238}, // 3 cyan highlight for water/sky motifs
+            {204, 68, 204},  // 4 magenta for character art/shadows
+            {0, 204, 85},    // 5 emerald green for HUD elements
+            {0, 0, 170},     // 6 navy blue for command areas
+            {238, 238, 119}, // 7 pastel yellow for warm mid-tones
+            {221, 136, 85},  // 8 tan/brown skin-tone shade
+            {102, 68, 0},    // 9 dark brown for outlines
+            {255, 119, 119}, // 10 light red for alerts
+            {51, 51, 51},    // 11 charcoal gray for dim UI chrome
+            {119, 119, 119}, // 12 mid gray for neutral panels
+            {170, 255, 102}, // 13 lime highlight for energy meters
+            {0, 136, 255},   // 14 azure for menu selections
+            {187, 187, 187}, // 15 bright gray fallback neutral
         },
         {
-            {255, 255, 255},
-            {0, 0, 170},
-            {255, 255, 255},
+            {255, 255, 255}, // default foreground: vivid white text
+            {0, 0, 170},     // default background: deep blue backdrop
+            {255, 255, 255}, // cursor: same white for consistency
         },
     },
     {
@@ -64,27 +64,27 @@ static const RetroProfile retro_profiles[] = {
         "IBM 5150 CGA",
         "High-contrast DOS tones ideal for ANSI art and BBS sessions.",
         {
-            {0, 0, 0},
-            {0, 0, 170},
-            {0, 170, 0},
-            {0, 170, 170},
-            {170, 0, 0},
-            {170, 0, 170},
-            {170, 85, 0},
-            {170, 170, 170},
-            {85, 85, 85},
-            {85, 85, 255},
-            {85, 255, 85},
-            {85, 255, 255},
-            {255, 85, 85},
-            {255, 85, 255},
-            {255, 255, 85},
-            {255, 255, 255},
+            {0, 0, 0},       // 0 pure black for DOS backdrops
+            {0, 0, 170},     // 1 primary blue for prompts
+            {0, 170, 0},     // 2 primary green for success text
+            {0, 170, 170},   // 3 cyan for selection bars
+            {170, 0, 0},     // 4 strong red for critical warnings
+            {170, 0, 170},   // 5 magenta for system banners
+            {170, 85, 0},    // 6 brown/orange for UI dividers
+            {170, 170, 170}, // 7 light gray for default text
+            {85, 85, 85},    // 8 dark gray for shadowed text
+            {85, 85, 255},   // 9 bright blue for hyperlinks
+            {85, 255, 85},   // 10 bright green for OK states
+            {85, 255, 255},  // 11 bright cyan for status panels
+            {255, 85, 85},   // 12 bright red for errors
+            {255, 85, 255},  // 13 bright magenta for prompts
+            {255, 255, 85},  // 14 bright yellow for attention markers
+            {255, 255, 255}, // 15 pure white for emphasis
         },
         {
-            {170, 170, 170},
-            {0, 0, 0},
-            {255, 255, 255},
+            {170, 170, 170}, // default foreground: CGA light gray
+            {0, 0, 0},       // default background: void black
+            {255, 255, 255}, // cursor: white block caret
         },
     },
     {
@@ -92,27 +92,27 @@ static const RetroProfile retro_profiles[] = {
         "VT220 Amber",
         "Warm monochrome amber with subtle intensity steps for long sessions.",
         {
-            {86, 39, 0},
-            {92, 42, 0},
-            {99, 45, 0},
-            {106, 48, 0},
-            {112, 51, 0},
-            {119, 54, 0},
-            {125, 57, 0},
-            {132, 60, 0},
-            {179, 90, 10},
-            {193, 102, 20},
-            {207, 115, 30},
-            {221, 128, 45},
-            {235, 141, 60},
-            {242, 155, 78},
-            {247, 170, 100},
-            {255, 188, 128},
+            {86, 39, 0},    // 0 darkest amber for background
+            {92, 42, 0},    // 1 slightly brighter base shadow
+            {99, 45, 0},    // 2 low glow baseline
+            {106, 48, 0},   // 3 step toward readable text
+            {112, 51, 0},   // 4 dim text accent
+            {119, 54, 0},   // 5 muted glow for separators
+            {125, 57, 0},   // 6 soft amber mid-tone
+            {132, 60, 0},   // 7 brighter mid-tone for UI
+            {179, 90, 10},  // 8 strong amber highlight
+            {193, 102, 20}, // 9 brighter highlight for active elements
+            {207, 115, 30}, // 10 warm highlight for prompts
+            {221, 128, 45}, // 11 default text glow
+            {235, 141, 60}, // 12 bright text alt
+            {242, 155, 78}, // 13 luminous amber for focus
+            {247, 170, 100}, // 14 near-peak glow for emphasis
+            {255, 188, 128}, // 15 brightest amber for cursor/alerts
         },
         {
-            {221, 128, 45},
-            {33, 15, 0},
-            {247, 170, 100},
+            {221, 128, 45}, // default foreground: glowing amber text
+            {33, 15, 0},    // default background: deep amber black
+            {247, 170, 100}, // cursor: intense amber block
         },
     },
     {
@@ -120,27 +120,27 @@ static const RetroProfile retro_profiles[] = {
         "VT220 Green",
         "Phosphor-green ladder inspired by DEC monochrome terminals.",
         {
-            {0, 0, 0},
-            {0, 10, 0},
-            {0, 22, 0},
-            {0, 34, 0},
-            {0, 46, 0},
-            {0, 58, 0},
-            {0, 70, 0},
-            {0, 82, 0},
-            {10, 102, 10},
-            {20, 118, 20},
-            {30, 134, 30},
-            {45, 150, 45},
-            {60, 166, 60},
-            {78, 182, 78},
-            {96, 198, 96},
-            {124, 216, 124},
+            {0, 0, 0},      // 0 phosphor off black
+            {0, 10, 0},     // 1 faint glow baseline
+            {0, 22, 0},     // 2 subtle green shadow
+            {0, 34, 0},     // 3 low-intensity scanline
+            {0, 46, 0},     // 4 darker mid-tone
+            {0, 58, 0},     // 5 low mid-tone glow
+            {0, 70, 0},     // 6 muted green ramp
+            {0, 82, 0},     // 7 deeper glow before highlights
+            {10, 102, 10},  // 8 soft green text base
+            {20, 118, 20},  // 9 brighter base text
+            {30, 134, 30},  // 10 warm green highlight
+            {45, 150, 45},  // 11 standard text intensity
+            {60, 166, 60},  // 12 active selection glow
+            {78, 182, 78},  // 13 strong highlight
+            {96, 198, 96},  // 14 bright text/foreground
+            {124, 216, 124}, // 15 cursor/alert green
         },
         {
-            {96, 198, 96},
-            {0, 0, 0},
-            {124, 216, 124},
+            {96, 198, 96},  // default foreground: bright green text
+            {0, 0, 0},      // default background: void black
+            {124, 216, 124}, // cursor: vivid green block
         },
     },
 };

@@ -22,9 +22,15 @@ ifeq ($(strip $(SDL2_LIBS)),)
 SDL2_LIBS = -lSDL2
 endif
 
+OPENGL_LIBS = $(shell pkg-config --libs gl 2>/dev/null)
+
+ifeq ($(strip $(OPENGL_LIBS)),)
+OPENGL_LIBS = -lGL
+endif
+
 # SDL2-specific flags are only needed for the SDL terminal target.
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
-apps/terminal: LDFLAGS += $(SDL2_LIBS)
+apps/terminal: LDFLAGS += $(SDL2_LIBS) $(OPENGL_LIBS)
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

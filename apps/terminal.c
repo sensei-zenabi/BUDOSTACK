@@ -177,6 +177,8 @@ struct terminal_buffer;
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);
 static int terminal_send_string(int fd, const char *str);
+static int terminal_mod_is_altgr(SDL_Keymod mod);
+static SDL_Keymod terminal_normalize_modifiers(SDL_Keymod mod);
 static size_t terminal_total_rows(const struct terminal_buffer *buffer);
 static const struct terminal_cell *terminal_buffer_row_at(const struct terminal_buffer *buffer, size_t index);
 static size_t terminal_clamped_scroll_offset(const struct terminal_buffer *buffer);
@@ -4080,7 +4082,26 @@ static int terminal_send_string(int fd, const char *str) {
     return terminal_send_bytes(fd, str, strlen(str));
 }
 
+static int terminal_mod_is_altgr(SDL_Keymod mod) {
+#if defined(KMOD_MODE)
+    if ((mod & KMOD_MODE) != 0) {
+        return 1;
+    }
+#else
+    (void)mod;
+#endif
+    return 0;
+}
+
+static SDL_Keymod terminal_normalize_modifiers(SDL_Keymod mod) {
+    if (terminal_mod_is_altgr(mod)) {
+        mod &= ~(KMOD_CTRL | KMOD_ALT);
+    }
+    return mod;
+}
+
 static unsigned int terminal_modifier_param(SDL_Keymod mod) {
+    mod = terminal_normalize_modifiers(mod);
     unsigned int value = 1u;
     if ((mod & KMOD_SHIFT) != 0) {
         value += 1u;
@@ -4588,7 +4609,7 @@ int main(int argc, char **argv) {
                 }
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
-                SDL_Keymod mod = event.key.keysym.mod;
+                SDL_Keymod mod = terminal_normalize_modifiers(event.key.keysym.mod);
                 int handled = 0;
                 unsigned char ch = 0u;
 
@@ -4917,7 +4938,7 @@ int main(int argc, char **argv) {
                 const char *text = event.text.text;
                 size_t len = strlen(text);
                 if (len > 0u) {
-                    SDL_Keymod mod_state = SDL_GetModState();
+                    SDL_Keymod mod_state = terminal_normalize_modifiers(SDL_GetModState());
                     terminal_selection_clear();
                     if ((mod_state & KMOD_ALT) != 0 && (mod_state & KMOD_CTRL) == 0) {
                         if (terminal_send_escape_prefix(master_fd) < 0) {

@@ -132,6 +132,20 @@ struct psf_font {
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);
 static int terminal_send_string(int fd, const char *str);
+
+struct terminal_shader_parameter {
+    char *name;
+    float default_value;
+};
+
+static char *terminal_read_text_file(const char *path, size_t *out_size);
+static const char *terminal_skip_utf8_bom(const char *src, size_t *size);
+static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end);
+static void terminal_free_shader_parameters(struct terminal_shader_parameter *params, size_t count);
+static int terminal_parse_shader_parameters(const char *source, size_t length, struct terminal_shader_parameter **out_params, size_t *out_count);
+static float terminal_get_parameter_default(const struct terminal_shader_parameter *params, size_t count, const char *name, float fallback);
+static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label);
+
 static int terminal_initialize_gl_program(const char *shader_path, struct terminal_shader_pass *out_pass) {
     if (!shader_path || !out_pass) {
         return -1;
@@ -501,18 +515,7 @@ static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_ensure_postprocess_targets(int width, int height);
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
-static char *terminal_read_text_file(const char *path, size_t *out_size);
-static const char *terminal_skip_utf8_bom(const char *src, size_t *size);
-static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end);
-struct terminal_shader_parameter {
-    char *name;
-    float default_value;
-};
-static void terminal_free_shader_parameters(struct terminal_shader_parameter *params, size_t count);
 static void terminal_free_shader_path_list(char **paths, size_t count);
-static int terminal_parse_shader_parameters(const char *source, size_t length, struct terminal_shader_parameter **out_params, size_t *out_count);
-static float terminal_get_parameter_default(const struct terminal_shader_parameter *params, size_t count, const char *name, float fallback);
-static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label);
 static void terminal_print_usage(const char *progname);
 
 static int terminal_send_response(const char *response) {

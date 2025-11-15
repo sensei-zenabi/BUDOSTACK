@@ -32,6 +32,10 @@
 #define BUDOSTACK_HAVE_SDL2 1
 #endif
 
+#ifndef SDL_BUTTON_LMASK
+#define SDL_BUTTON_LMASK SDL_BUTTON(SDL_BUTTON_LEFT)
+#endif
+
 #if BUDOSTACK_HAVE_SDL2
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL2/SDL_opengl.h>
@@ -72,6 +76,7 @@ static int terminal_logical_width = 0;
 static int terminal_logical_height = 0;
 static int terminal_scale_factor = 1;
 static int terminal_margin_pixels = 0;
+static struct terminal_selection terminal_selection_state = {0};
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -176,6 +181,9 @@ static void terminal_release_gl_resources(void);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
+struct terminal_selection;
+struct terminal_viewport_info;
+struct terminal_cell;
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
 static int psf_unicode_map_compare(const void *a, const void *b);
 static int psf_font_lookup_unicode(const struct psf_font *font, uint32_t codepoint, uint32_t *out_index);
@@ -194,6 +202,23 @@ static GLuint terminal_compile_shader(GLenum type, const char *source, const cha
 static void terminal_print_usage(const char *progname);
 static int terminal_resolve_shader_path(const char *root_dir, const char *shader_arg, char *out_path, size_t out_size);
 static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args);
+static const struct terminal_cell *terminal_buffer_row_at(const struct terminal_buffer *buffer, size_t index);
+static void terminal_selection_clear(struct terminal_selection *selection);
+static void terminal_selection_clamp(struct terminal_selection *selection, const struct terminal_buffer *buffer);
+static void terminal_selection_begin(struct terminal_selection *selection, const struct terminal_buffer *buffer, size_t column, size_t row);
+static void terminal_selection_update_focus(struct terminal_selection *selection, const struct terminal_buffer *buffer, size_t column, size_t row);
+static void terminal_selection_finish_drag(struct terminal_selection *selection);
+static int terminal_selection_normalize(const struct terminal_selection *selection, struct terminal_selection_range *range);
+static int terminal_selection_contains(const struct terminal_selection *selection, size_t row, size_t column);
+static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer, const struct terminal_selection *selection);
+static int terminal_paste_from_clipboard(int fd);
+static void terminal_compute_viewport(const struct terminal_buffer *buffer, struct terminal_viewport_info *info);
+static int terminal_map_mouse_to_cell(const struct terminal_buffer *buffer,
+                                      const struct terminal_viewport_info *info,
+                                      int mouse_x,
+                                      int mouse_y,
+                                      size_t *out_row,
+                                      size_t *out_col);
 
 static int terminal_send_response(const char *response) {
     if (!response || response[0] == '\0') {
@@ -672,6 +697,34 @@ struct terminal_buffer {
     uint32_t palette[256];
 };
 
+struct terminal_selection {
+    size_t anchor_row;
+    size_t anchor_column;
+    size_t focus_row;
+    size_t focus_column;
+    int active;
+    int selecting;
+};
+
+struct terminal_selection_range {
+    size_t start_row;
+    size_t start_column;
+    size_t end_row;
+    size_t end_column;
+};
+
+struct terminal_viewport_info {
+    size_t clamped_scroll;
+    size_t top_index;
+    size_t bottom_index;
+};
+
+struct terminal_string_builder {
+    char *data;
+    size_t length;
+    size_t capacity;
+};
+
 static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
 static void terminal_apply_margin(struct terminal_buffer *buffer, int margin);
 
@@ -750,6 +803,448 @@ static uint32_t terminal_bold_variant(uint32_t color) {
     g = terminal_boost_component(g);
     b = terminal_boost_component(b);
     return terminal_pack_rgb(r, g, b);
+}
+
+static void terminal_string_builder_free(struct terminal_string_builder *builder) {
+    if (!builder) {
+        return;
+    }
+    free(builder->data);
+    builder->data = NULL;
+    builder->length = 0u;
+    builder->capacity = 0u;
+}
+
+static int terminal_string_builder_reserve(struct terminal_string_builder *builder, size_t additional) {
+    if (!builder) {
+        return -1;
+    }
+    size_t to_add = additional + 1u;
+    if (to_add <= additional) {
+        return -1;
+    }
+    if (to_add > SIZE_MAX - builder->length) {
+        return -1;
+    }
+    size_t needed = builder->length + to_add;
+    if (needed <= builder->capacity) {
+        return 0;
+    }
+    size_t new_capacity = builder->capacity ? builder->capacity : 64u;
+    while (new_capacity < needed) {
+        if (new_capacity > SIZE_MAX / 2u) {
+            new_capacity = needed;
+            break;
+        }
+        new_capacity *= 2u;
+    }
+    char *new_data = realloc(builder->data, new_capacity);
+    if (!new_data) {
+        return -1;
+    }
+    builder->data = new_data;
+    builder->capacity = new_capacity;
+    if (builder->length == 0u) {
+        builder->data[0] = '\0';
+    }
+    return 0;
+}
+
+static void terminal_string_builder_set_length(struct terminal_string_builder *builder, size_t new_length) {
+    if (!builder || new_length > builder->length) {
+        return;
+    }
+    builder->length = new_length;
+    if (builder->data && builder->capacity > 0u) {
+        builder->data[new_length] = '\0';
+    }
+}
+
+static int terminal_string_builder_append_bytes(struct terminal_string_builder *builder, const char *data, size_t length) {
+    if (!builder || !data) {
+        return -1;
+    }
+    if (length == 0u) {
+        return 0;
+    }
+    if (terminal_string_builder_reserve(builder, length) != 0) {
+        return -1;
+    }
+    memcpy(builder->data + builder->length, data, length);
+    builder->length += length;
+    builder->data[builder->length] = '\0';
+    return 0;
+}
+
+static int terminal_string_builder_append_char(struct terminal_string_builder *builder, char ch) {
+    return terminal_string_builder_append_bytes(builder, &ch, 1u);
+}
+
+static size_t terminal_utf8_encode(uint32_t codepoint, char out[4]) {
+    if (codepoint <= 0x7Fu) {
+        out[0] = (char)codepoint;
+        return 1u;
+    }
+    if (codepoint <= 0x7FFu) {
+        out[0] = (char)(0xC0u | ((codepoint >> 6u) & 0x1Fu));
+        out[1] = (char)(0x80u | (codepoint & 0x3Fu));
+        return 2u;
+    }
+    if (codepoint >= 0xD800u && codepoint <= 0xDFFFu) {
+        codepoint = '?';
+    }
+    if (codepoint <= 0xFFFFu) {
+        out[0] = (char)(0xE0u | ((codepoint >> 12u) & 0x0Fu));
+        out[1] = (char)(0x80u | ((codepoint >> 6u) & 0x3Fu));
+        out[2] = (char)(0x80u | (codepoint & 0x3Fu));
+        return 3u;
+    }
+    if (codepoint > 0x10FFFFu) {
+        codepoint = '?';
+    }
+    out[0] = (char)(0xF0u | ((codepoint >> 18u) & 0x07u));
+    out[1] = (char)(0x80u | ((codepoint >> 12u) & 0x3Fu));
+    out[2] = (char)(0x80u | ((codepoint >> 6u) & 0x3Fu));
+    out[3] = (char)(0x80u | (codepoint & 0x3Fu));
+    return 4u;
+}
+
+static int terminal_string_builder_append_codepoint(struct terminal_string_builder *builder, uint32_t codepoint) {
+    char encoded[4];
+    size_t length = terminal_utf8_encode(codepoint, encoded);
+    return terminal_string_builder_append_bytes(builder, encoded, length);
+}
+
+static size_t terminal_total_rows(const struct terminal_buffer *buffer) {
+    if (!buffer) {
+        return 0u;
+    }
+    return buffer->history_rows + buffer->rows;
+}
+
+static size_t terminal_clamp_column_value(const struct terminal_buffer *buffer, size_t column) {
+    if (!buffer || buffer->columns == 0u) {
+        return 0u;
+    }
+    if (column >= buffer->columns) {
+        return buffer->columns - 1u;
+    }
+    return column;
+}
+
+static size_t terminal_clamp_row_value(const struct terminal_buffer *buffer, size_t row) {
+    size_t total_rows = terminal_total_rows(buffer);
+    if (total_rows == 0u) {
+        return 0u;
+    }
+    if (row >= total_rows) {
+        return total_rows - 1u;
+    }
+    return row;
+}
+
+static void terminal_selection_clear(struct terminal_selection *selection) {
+    if (!selection) {
+        return;
+    }
+    selection->anchor_row = 0u;
+    selection->anchor_column = 0u;
+    selection->focus_row = 0u;
+    selection->focus_column = 0u;
+    selection->active = 0;
+    selection->selecting = 0;
+}
+
+static void terminal_selection_clamp(struct terminal_selection *selection, const struct terminal_buffer *buffer) {
+    if (!selection || !buffer) {
+        return;
+    }
+    size_t total_rows = terminal_total_rows(buffer);
+    if (buffer->columns == 0u || total_rows == 0u) {
+        terminal_selection_clear(selection);
+        return;
+    }
+    selection->anchor_row = terminal_clamp_row_value(buffer, selection->anchor_row);
+    selection->focus_row = terminal_clamp_row_value(buffer, selection->focus_row);
+    selection->anchor_column = terminal_clamp_column_value(buffer, selection->anchor_column);
+    selection->focus_column = terminal_clamp_column_value(buffer, selection->focus_column);
+}
+
+static void terminal_selection_begin(struct terminal_selection *selection, const struct terminal_buffer *buffer, size_t column, size_t row) {
+    if (!selection || !buffer) {
+        return;
+    }
+    if (buffer->columns == 0u || terminal_total_rows(buffer) == 0u) {
+        terminal_selection_clear(selection);
+        return;
+    }
+    selection->anchor_column = terminal_clamp_column_value(buffer, column);
+    selection->anchor_row = terminal_clamp_row_value(buffer, row);
+    selection->focus_column = selection->anchor_column;
+    selection->focus_row = selection->anchor_row;
+    selection->active = 1;
+    selection->selecting = 1;
+}
+
+static void terminal_selection_update_focus(struct terminal_selection *selection, const struct terminal_buffer *buffer, size_t column, size_t row) {
+    if (!selection || !buffer) {
+        return;
+    }
+    if (!selection->active) {
+        terminal_selection_begin(selection, buffer, column, row);
+        return;
+    }
+    selection->focus_column = terminal_clamp_column_value(buffer, column);
+    selection->focus_row = terminal_clamp_row_value(buffer, row);
+}
+
+static void terminal_selection_finish_drag(struct terminal_selection *selection) {
+    if (!selection) {
+        return;
+    }
+    selection->selecting = 0;
+    if (selection->anchor_row == selection->focus_row && selection->anchor_column == selection->focus_column) {
+        terminal_selection_clear(selection);
+    }
+}
+
+static int terminal_selection_normalize(const struct terminal_selection *selection, struct terminal_selection_range *range) {
+    if (!selection || !range || !selection->active) {
+        return 0;
+    }
+    range->start_row = selection->anchor_row;
+    range->start_column = selection->anchor_column;
+    range->end_row = selection->focus_row;
+    range->end_column = selection->focus_column;
+    if (range->start_row > range->end_row ||
+        (range->start_row == range->end_row && range->start_column > range->end_column)) {
+        size_t tmp_row = range->start_row;
+        size_t tmp_col = range->start_column;
+        range->start_row = range->end_row;
+        range->start_column = range->end_column;
+        range->end_row = tmp_row;
+        range->end_column = tmp_col;
+    }
+    return 1;
+}
+
+static int terminal_selection_contains(const struct terminal_selection *selection, size_t row, size_t column) {
+    if (!selection || !selection->active) {
+        return 0;
+    }
+    struct terminal_selection_range range;
+    if (!terminal_selection_normalize(selection, &range)) {
+        return 0;
+    }
+    if (row < range.start_row || row > range.end_row) {
+        return 0;
+    }
+    if (range.start_row == range.end_row) {
+        return column >= range.start_column && column <= range.end_column;
+    }
+    if (row == range.start_row) {
+        return column >= range.start_column;
+    }
+    if (row == range.end_row) {
+        return column <= range.end_column;
+    }
+    return 1;
+}
+
+static void terminal_compute_viewport(const struct terminal_buffer *buffer, struct terminal_viewport_info *info) {
+    if (!info) {
+        return;
+    }
+    info->clamped_scroll = 0u;
+    info->top_index = 0u;
+    info->bottom_index = 0u;
+    if (!buffer) {
+        return;
+    }
+    size_t clamped = buffer->scroll_offset;
+    if (clamped > buffer->history_rows) {
+        clamped = buffer->history_rows;
+    }
+    size_t total_rows = terminal_total_rows(buffer);
+    size_t bottom_index = 0u;
+    if (total_rows > 0u) {
+        bottom_index = total_rows - 1u;
+        if (clamped <= bottom_index) {
+            bottom_index -= clamped;
+        } else {
+            bottom_index = 0u;
+        }
+    }
+    size_t top_index = 0u;
+    if (buffer->rows > 0u && bottom_index + 1u > buffer->rows) {
+        top_index = bottom_index + 1u - buffer->rows;
+    }
+    info->clamped_scroll = clamped;
+    info->bottom_index = bottom_index;
+    info->top_index = top_index;
+}
+
+static int terminal_map_mouse_to_cell(const struct terminal_buffer *buffer,
+                                      const struct terminal_viewport_info *info,
+                                      int mouse_x,
+                                      int mouse_y,
+                                      size_t *out_row,
+                                      size_t *out_col) {
+    if (!buffer || !info || !out_row || !out_col || !terminal_window_handle) {
+        return -1;
+    }
+    if (buffer->columns == 0u || buffer->rows == 0u) {
+        return -1;
+    }
+    if (terminal_cell_pixel_width <= 0 || terminal_cell_pixel_height <= 0) {
+        return -1;
+    }
+    int window_w = 0;
+    int window_h = 0;
+    SDL_GetWindowSize(terminal_window_handle, &window_w, &window_h);
+    if (window_w <= 0 || window_h <= 0) {
+        return -1;
+    }
+    int framebuffer_w = terminal_framebuffer_width;
+    int framebuffer_h = terminal_framebuffer_height;
+    if (framebuffer_w <= 0 || framebuffer_h <= 0) {
+        return -1;
+    }
+    double normalized_x = (double)mouse_x / (double)window_w;
+    double normalized_y = (double)mouse_y / (double)window_h;
+    if (normalized_x < 0.0) {
+        normalized_x = 0.0;
+    }
+    if (normalized_x > 1.0) {
+        normalized_x = 1.0;
+    }
+    if (normalized_y < 0.0) {
+        normalized_y = 0.0;
+    }
+    if (normalized_y > 1.0) {
+        normalized_y = 1.0;
+    }
+    double logical_x = normalized_x * (double)framebuffer_w;
+    double logical_y = normalized_y * (double)framebuffer_h;
+    int margin = terminal_margin_pixels;
+    if (margin < 0) {
+        margin = 0;
+    }
+    logical_x -= margin;
+    logical_y -= margin;
+    double text_width = (double)buffer->columns * (double)terminal_cell_pixel_width;
+    double text_height = (double)buffer->rows * (double)terminal_cell_pixel_height;
+    if (logical_x < 0.0) {
+        logical_x = 0.0;
+    }
+    if (logical_y < 0.0) {
+        logical_y = 0.0;
+    }
+    if (text_width <= 0.0 || text_height <= 0.0) {
+        return -1;
+    }
+    double max_x = text_width - 1.0;
+    double max_y = text_height - 1.0;
+    if (logical_x > max_x) {
+        logical_x = max_x;
+    }
+    if (logical_y > max_y) {
+        logical_y = max_y;
+    }
+    size_t local_col = (size_t)(logical_x / (double)terminal_cell_pixel_width);
+    size_t local_row = (size_t)(logical_y / (double)terminal_cell_pixel_height);
+    if (local_col >= buffer->columns) {
+        local_col = buffer->columns - 1u;
+    }
+    if (local_row >= buffer->rows) {
+        local_row = buffer->rows - 1u;
+    }
+    size_t total_rows = terminal_total_rows(buffer);
+    if (total_rows == 0u) {
+        return -1;
+    }
+    size_t global_row = info->top_index + local_row;
+    if (global_row >= total_rows) {
+        global_row = total_rows - 1u;
+    }
+    *out_row = global_row;
+    *out_col = local_col;
+    return 0;
+}
+
+static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer, const struct terminal_selection *selection) {
+    if (!buffer || !selection || !selection->active || buffer->columns == 0u) {
+        return -1;
+    }
+    struct terminal_selection_range range;
+    if (!terminal_selection_normalize(selection, &range)) {
+        return -1;
+    }
+    struct terminal_string_builder builder = {0};
+    int result = -1;
+    for (size_t row = range.start_row; row <= range.end_row; row++) {
+        const struct terminal_cell *cells = terminal_buffer_row_at(buffer, row);
+        if (!cells) {
+            continue;
+        }
+        size_t start_col = (row == range.start_row) ? range.start_column : 0u;
+        size_t end_col = (row == range.end_row) ? range.end_column : (buffer->columns - 1u);
+        if (end_col >= buffer->columns) {
+            end_col = buffer->columns - 1u;
+        }
+        size_t last_non_space = builder.length;
+        for (size_t col = start_col; col <= end_col; col++) {
+            uint32_t ch = cells[col].ch;
+            if (ch == 0u) {
+                ch = ' ';
+            }
+            if (terminal_string_builder_append_codepoint(&builder, ch) != 0) {
+                goto cleanup;
+            }
+            if (ch != ' ') {
+                last_non_space = builder.length;
+            }
+        }
+        terminal_string_builder_set_length(&builder, last_non_space);
+        if (row != range.end_row) {
+            if (terminal_string_builder_append_char(&builder, '\n') != 0) {
+                goto cleanup;
+            }
+        }
+    }
+    if (!builder.data) {
+        if (terminal_string_builder_reserve(&builder, 0u) != 0) {
+            goto cleanup;
+        }
+        builder.data[0] = '\0';
+    }
+    if (SDL_SetClipboardText(builder.data) != 0) {
+        goto cleanup;
+    }
+    result = 0;
+
+cleanup:
+    terminal_string_builder_free(&builder);
+    return result;
+}
+
+static int terminal_paste_from_clipboard(int fd) {
+    if (fd < 0) {
+        return -1;
+    }
+    char *text = SDL_GetClipboardText();
+    if (!text) {
+        return -1;
+    }
+    size_t length = strlen(text);
+    int result = 0;
+    if (length > 0u) {
+        if (terminal_send_bytes(fd, text, length) < 0) {
+            result = -1;
+        }
+    }
+    SDL_free(text);
+    return result;
 }
 
 static void terminal_buffer_reset_attributes(struct terminal_buffer *buffer) {
@@ -3471,6 +3966,7 @@ static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
         return;
     }
 
+    terminal_selection_clamp(&terminal_selection_state, buffer);
     terminal_scale_factor = scale;
     terminal_update_render_size(new_columns, new_rows);
 
@@ -4012,6 +4508,8 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    terminal_selection_clear(&terminal_selection_state);
+
     update_pty_size(master_fd, columns, rows);
 
     struct ansi_parser parser;
@@ -4028,6 +4526,7 @@ int main(int argc, char **argv) {
     int cursor_phase_visible = 1;
 
     while (running) {
+        terminal_selection_clamp(&terminal_selection_state, &buffer);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
@@ -4066,11 +4565,57 @@ int main(int argc, char **argv) {
                     }
                 }
 #endif
+            } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT) {
+                struct terminal_viewport_info viewport;
+                terminal_compute_viewport(&buffer, &viewport);
+                size_t sel_row = 0u;
+                size_t sel_col = 0u;
+                if (terminal_map_mouse_to_cell(&buffer, &viewport, event.button.x, event.button.y, &sel_row, &sel_col) == 0) {
+                    terminal_selection_begin(&terminal_selection_state, &buffer, sel_col, sel_row);
+                }
+            } else if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) {
+                terminal_selection_finish_drag(&terminal_selection_state);
+            } else if (event.type == SDL_MOUSEMOTION) {
+                if ((event.motion.state & SDL_BUTTON_LMASK) != 0u && terminal_selection_state.selecting) {
+                    struct terminal_viewport_info viewport;
+                    terminal_compute_viewport(&buffer, &viewport);
+                    size_t sel_row = 0u;
+                    size_t sel_col = 0u;
+                    if (terminal_map_mouse_to_cell(&buffer, &viewport, event.motion.x, event.motion.y, &sel_row, &sel_col) == 0) {
+                        terminal_selection_update_focus(&terminal_selection_state, &buffer, sel_col, sel_row);
+                    }
+                }
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = event.key.keysym.mod;
                 int handled = 0;
                 unsigned char ch = 0u;
+
+                int clipboard_action = 0;
+                if ((mod & KMOD_CTRL) != 0 && (mod & KMOD_SHIFT) != 0) {
+                    if (sym == SDLK_c) {
+                        if (terminal_selection_state.active) {
+                            if (terminal_copy_selection_to_clipboard(&buffer, &terminal_selection_state) != 0) {
+                                fprintf(stderr, "terminal: Failed to copy selection to clipboard.\n");
+                            }
+                        }
+                        clipboard_action = 1;
+                    } else if (sym == SDLK_v) {
+                        terminal_selection_clear(&terminal_selection_state);
+                        if (terminal_paste_from_clipboard(master_fd) != 0) {
+                            fprintf(stderr, "terminal: Failed to paste from clipboard.\n");
+                        }
+                        cursor_phase_visible = 1;
+                        cursor_last_toggle = SDL_GetTicks();
+                        clipboard_action = 1;
+                    }
+                }
+
+                if (clipboard_action) {
+                    continue;
+                }
+
+                terminal_selection_clear(&terminal_selection_state);
 
                 if ((mod & KMOD_CTRL) != 0) {
                     if (sym >= 0 && sym <= 127) {
@@ -4376,6 +4921,7 @@ int main(int argc, char **argv) {
                 const char *text = event.text.text;
                 size_t len = strlen(text);
                 if (len > 0u) {
+                    terminal_selection_clear(&terminal_selection_state);
                     SDL_Keymod mod_state = SDL_GetModState();
                     if ((mod_state & KMOD_ALT) != 0 && (mod_state & KMOD_CTRL) == 0) {
                         if (terminal_send_escape_prefix(master_fd) < 0) {
@@ -4417,24 +4963,11 @@ int main(int argc, char **argv) {
             cursor_last_toggle = now;
             cursor_phase_visible = cursor_phase_visible ? 0 : 1;
         }
-        size_t clamped_scroll_offset = buffer.scroll_offset;
-        if (clamped_scroll_offset > buffer.history_rows) {
-            clamped_scroll_offset = buffer.history_rows;
-        }
-        size_t total_available_rows = buffer.history_rows + buffer.rows;
-        size_t bottom_index = 0u;
-        if (total_available_rows > 0u) {
-            bottom_index = total_available_rows - 1u;
-            if (clamped_scroll_offset <= bottom_index) {
-                bottom_index -= clamped_scroll_offset;
-            } else {
-                bottom_index = 0u;
-            }
-        }
-        size_t top_index = 0u;
-        if (bottom_index + 1u > buffer.rows) {
-            top_index = bottom_index + 1u - buffer.rows;
-        }
+        struct terminal_viewport_info viewport;
+        terminal_compute_viewport(&buffer, &viewport);
+        size_t clamped_scroll_offset = viewport.clamped_scroll;
+        size_t bottom_index = viewport.bottom_index;
+        size_t top_index = viewport.top_index;
 
         size_t cursor_global_index = buffer.history_rows + buffer.cursor_row;
         int cursor_render_visible = (clamped_scroll_offset == 0u) && buffer.cursor_visible && cursor_phase_visible;
@@ -4517,6 +5050,12 @@ int main(int argc, char **argv) {
                 }
                 if ((style & TERMINAL_STYLE_BOLD) != 0u) {
                     fg = terminal_bold_variant(fg);
+                }
+
+                if (terminal_selection_contains(&terminal_selection_state, global_index, col)) {
+                    uint32_t tmp = fg;
+                    fg = bg;
+                    bg = tmp;
                 }
 
                 int is_cursor_cell = cursor_render_visible &&

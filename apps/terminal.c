@@ -128,6 +128,15 @@ static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
+static const char *terminal_skip_utf8_bom(const char *src, size_t *size);
+static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end);
+struct terminal_shader_parameter {
+    char *name;
+    float default_value;
+};
+static void terminal_free_shader_parameters(struct terminal_shader_parameter *params, size_t count);
+static int terminal_parse_shader_parameters(const char *source, size_t length, struct terminal_shader_parameter **out_params, size_t *out_count);
+static float terminal_get_parameter_default(const struct terminal_shader_parameter *params, size_t count, const char *name, float fallback);
 static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label);
 static void terminal_print_usage(const char *progname);
 
@@ -614,6 +623,213 @@ static char *terminal_read_text_file(const char *path, size_t *out_size) {
     return buffer;
 }
 
+static const char *terminal_skip_utf8_bom(const char *src, size_t *size) {
+    if (!src || !size) {
+        return src;
+    }
+    if (*size >= 3u) {
+        const unsigned char *bytes = (const unsigned char *)src;
+        if (bytes[0] == 0xEFu && bytes[1] == 0xBBu && bytes[2] == 0xBFu) {
+            *size -= 3u;
+            return src + 3;
+        }
+    }
+    return src;
+}
+
+static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end) {
+    const char *ptr = src;
+    while (ptr < end) {
+        while (ptr < end && isspace((unsigned char)*ptr)) {
+            ptr++;
+        }
+        if ((end - ptr) >= 2 && ptr[0] == '/' && ptr[1] == '/') {
+            ptr += 2;
+            while (ptr < end && *ptr != '\n') {
+                ptr++;
+            }
+            continue;
+        }
+        if ((end - ptr) >= 2 && ptr[0] == '/' && ptr[1] == '*') {
+            ptr += 2;
+            while ((end - ptr) >= 2 && !(ptr[0] == '*' && ptr[1] == '/')) {
+                ptr++;
+            }
+            if ((end - ptr) >= 2) {
+                ptr += 2;
+            }
+            continue;
+        }
+        break;
+    }
+    return ptr;
+}
+
+static void terminal_free_shader_parameters(struct terminal_shader_parameter *params, size_t count) {
+    if (!params) {
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        free(params[i].name);
+    }
+    free(params);
+}
+
+static int terminal_parse_shader_parameters(const char *source, size_t length, struct terminal_shader_parameter **out_params, size_t *out_count) {
+    if (!out_params || !out_count) {
+        return -1;
+    }
+    *out_params = NULL;
+    *out_count = 0u;
+    if (!source || length == 0u) {
+        return 0;
+    }
+
+    struct terminal_shader_parameter *params = NULL;
+    size_t count = 0u;
+    size_t capacity = 0u;
+    const char *ptr = source;
+    const char *end = source + length;
+
+    while (ptr < end) {
+        const char *line_start = ptr;
+        const char *line_end = line_start;
+        while (line_end < end && line_end[0] != '\n' && line_end[0] != '\r') {
+            line_end++;
+        }
+
+        const char *cursor = line_start;
+        while (cursor < line_end && (*cursor == ' ' || *cursor == '\t')) {
+            cursor++;
+        }
+
+        if ((size_t)(line_end - cursor) >= 7u && strncmp(cursor, "#pragma", 7) == 0) {
+            cursor += 7;
+            while (cursor < line_end && isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+
+            const char keyword[] = "parameter";
+            size_t keyword_len = sizeof(keyword) - 1u;
+            if ((size_t)(line_end - cursor) >= keyword_len && strncmp(cursor, keyword, keyword_len) == 0) {
+                const char *after_keyword = cursor + keyword_len;
+                if (after_keyword < line_end && !isspace((unsigned char)*after_keyword)) {
+                    /* Likely parameteri or another pragma, ignore. */
+                } else {
+                    cursor = after_keyword;
+                    while (cursor < line_end && isspace((unsigned char)*cursor)) {
+                        cursor++;
+                    }
+
+                    const char *name_start = cursor;
+                    while (cursor < line_end && (isalnum((unsigned char)*cursor) || *cursor == '_')) {
+                        cursor++;
+                    }
+                    const char *name_end = cursor;
+                    if (name_end > name_start) {
+                        size_t name_len = (size_t)(name_end - name_start);
+                        while (cursor < line_end && isspace((unsigned char)*cursor)) {
+                            cursor++;
+                        }
+                        if (cursor < line_end && *cursor == '"') {
+                            cursor++;
+                            while (cursor < line_end && *cursor != '"') {
+                                cursor++;
+                            }
+                            if (cursor < line_end && *cursor == '"') {
+                                cursor++;
+                                while (cursor < line_end && isspace((unsigned char)*cursor)) {
+                                    cursor++;
+                                }
+                                if (cursor < line_end) {
+                                    const char *value_start = cursor;
+                                    while (cursor < line_end && !isspace((unsigned char)*cursor)) {
+                                        cursor++;
+                                    }
+                                    size_t value_len = (size_t)(cursor - value_start);
+                                    if (value_len > 0u) {
+                                        char stack_buffer[64];
+                                        char *value_str = stack_buffer;
+                                        char *heap_buffer = NULL;
+                                        if (value_len >= sizeof(stack_buffer)) {
+                                            heap_buffer = malloc(value_len + 1u);
+                                            if (!heap_buffer) {
+                                                terminal_free_shader_parameters(params, count);
+                                                return -1;
+                                            }
+                                            value_str = heap_buffer;
+                                        }
+                                        memcpy(value_str, value_start, value_len);
+                                        value_str[value_len] = '\0';
+
+                                        errno = 0;
+                                        char *endptr = NULL;
+                                        double parsed = strtod(value_str, &endptr);
+                                        if (endptr != value_str && errno != ERANGE) {
+                                            char *name_copy = malloc(name_len + 1u);
+                                            if (!name_copy) {
+                                                free(heap_buffer);
+                                                terminal_free_shader_parameters(params, count);
+                                                return -1;
+                                            }
+                                            memcpy(name_copy, name_start, name_len);
+                                            name_copy[name_len] = '\0';
+
+                                            if (count == capacity) {
+                                                size_t new_capacity = capacity == 0u ? 4u : capacity * 2u;
+                                                struct terminal_shader_parameter *new_params = realloc(params, new_capacity * sizeof(*new_params));
+                                                if (!new_params) {
+                                                    free(name_copy);
+                                                    free(heap_buffer);
+                                                    terminal_free_shader_parameters(params, count);
+                                                    return -1;
+                                                }
+                                                params = new_params;
+                                                capacity = new_capacity;
+                                            }
+
+                                            params[count].name = name_copy;
+                                            params[count].default_value = (float)parsed;
+                                            count++;
+                                        }
+                                        free(heap_buffer);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ptr = line_end;
+        while (ptr < end && (*ptr == '\n' || *ptr == '\r')) {
+            ptr++;
+        }
+    }
+
+    if (count == 0u) {
+        free(params);
+        params = NULL;
+    }
+
+    *out_params = params;
+    *out_count = count;
+    return 0;
+}
+
+static float terminal_get_parameter_default(const struct terminal_shader_parameter *params, size_t count, const char *name, float fallback) {
+    if (!params || !name) {
+        return fallback;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (params[i].name && strcmp(params[i].name, name) == 0) {
+            return params[i].default_value;
+        }
+    }
+    return fallback;
+}
+
 static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label) {
     GLuint shader = glCreateShader(type);
     if (shader == 0) {
@@ -660,8 +876,63 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     const char *vertex_define = "#define VERTEX 1\n";
     const char *fragment_define = "#define FRAGMENT 1\n";
 
-    size_t vertex_length = strlen(version_line) + strlen(parameter_define) + strlen(vertex_define) + shader_size;
-    size_t fragment_length = strlen(version_line) + strlen(parameter_define) + strlen(fragment_define) + shader_size;
+    size_t parameter_len = strlen(parameter_define);
+    size_t vertex_define_len = strlen(vertex_define);
+    size_t fragment_define_len = strlen(fragment_define);
+    size_t version_line_len = strlen(version_line);
+
+    size_t content_size = shader_size;
+    const char *content_start = terminal_skip_utf8_bom(shader_source, &content_size);
+    const char *content_end = content_start + content_size;
+
+    struct terminal_shader_parameter *parameters = NULL;
+    size_t parameter_count = 0u;
+    if (terminal_parse_shader_parameters(content_start, content_size, &parameters, &parameter_count) != 0) {
+        free(shader_source);
+        return -1;
+    }
+
+    const char *version_start = NULL;
+    const char *version_end = NULL;
+    const char *scan = terminal_skip_leading_space_and_comments(content_start, content_end);
+    if (scan < content_end) {
+        size_t remaining = (size_t)(content_end - scan);
+        if (remaining >= 8u && strncmp(scan, "#version", 8) == 0) {
+            if (remaining == 8u || isspace((unsigned char)scan[8])) {
+                version_start = scan;
+                version_end = scan;
+                while (version_end < content_end && *version_end != '\n') {
+                    version_end++;
+                }
+                if (version_end < content_end) {
+                    version_end++;
+                }
+            }
+        }
+    }
+
+    const char *version_prefix = version_line;
+    size_t version_prefix_len = version_line_len;
+    const char *shader_body = content_start;
+    size_t shader_body_len = content_size;
+
+    if (version_start && version_end) {
+        version_prefix = content_start;
+        version_prefix_len = (size_t)(version_end - content_start);
+        shader_body = version_end;
+        shader_body_len = (size_t)(content_end - version_end);
+    }
+
+    size_t newline_len = 0u;
+    if (version_prefix_len > 0u) {
+        char last_char = version_prefix[version_prefix_len - 1u];
+        if (last_char != '\n' && last_char != '\r') {
+            newline_len = 1u;
+        }
+    }
+
+    size_t vertex_length = version_prefix_len + newline_len + parameter_len + vertex_define_len + shader_body_len;
+    size_t fragment_length = version_prefix_len + newline_len + parameter_len + fragment_define_len + shader_body_len;
 
     char *vertex_source = malloc(vertex_length + 1u);
     char *fragment_source = malloc(fragment_length + 1u);
@@ -669,18 +940,37 @@ static int terminal_initialize_gl_program(const char *shader_path) {
         free(shader_source);
         free(vertex_source);
         free(fragment_source);
+        terminal_free_shader_parameters(parameters, parameter_count);
         return -1;
     }
 
-    strcpy(vertex_source, version_line);
-    strcat(vertex_source, parameter_define);
-    strcat(vertex_source, vertex_define);
-    strcat(vertex_source, shader_source);
+    size_t offset = 0u;
+    memcpy(vertex_source + offset, version_prefix, version_prefix_len);
+    offset += version_prefix_len;
+    if (newline_len > 0u) {
+        vertex_source[offset++] = '\n';
+    }
+    memcpy(vertex_source + offset, parameter_define, parameter_len);
+    offset += parameter_len;
+    memcpy(vertex_source + offset, vertex_define, vertex_define_len);
+    offset += vertex_define_len;
+    memcpy(vertex_source + offset, shader_body, shader_body_len);
+    offset += shader_body_len;
+    vertex_source[offset] = '\0';
 
-    strcpy(fragment_source, version_line);
-    strcat(fragment_source, parameter_define);
-    strcat(fragment_source, fragment_define);
-    strcat(fragment_source, shader_source);
+    offset = 0u;
+    memcpy(fragment_source + offset, version_prefix, version_prefix_len);
+    offset += version_prefix_len;
+    if (newline_len > 0u) {
+        fragment_source[offset++] = '\n';
+    }
+    memcpy(fragment_source + offset, parameter_define, parameter_len);
+    offset += parameter_len;
+    memcpy(fragment_source + offset, fragment_define, fragment_define_len);
+    offset += fragment_define_len;
+    memcpy(fragment_source + offset, shader_body, shader_body_len);
+    offset += shader_body_len;
+    fragment_source[offset] = '\0';
 
     GLuint vertex_shader = terminal_compile_shader(GL_VERTEX_SHADER, vertex_source, "vertex");
     GLuint fragment_shader = terminal_compile_shader(GL_FRAGMENT_SHADER, fragment_source, "fragment");
@@ -696,6 +986,7 @@ static int terminal_initialize_gl_program(const char *shader_path) {
         if (fragment_shader != 0) {
             glDeleteShader(fragment_shader);
         }
+        terminal_free_shader_parameters(parameters, parameter_count);
         return -1;
     }
 
@@ -703,6 +994,7 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     if (program == 0) {
         glDeleteShader(vertex_shader);
         glDeleteShader(fragment_shader);
+        terminal_free_shader_parameters(parameters, parameter_count);
         return -1;
     }
 
@@ -727,6 +1019,7 @@ static int terminal_initialize_gl_program(const char *shader_path) {
             }
         }
         glDeleteProgram(program);
+        terminal_free_shader_parameters(parameters, parameter_count);
         return -1;
     }
 
@@ -765,62 +1058,92 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     if (terminal_uniform_texture_sampler >= 0) {
         glUniform1i(terminal_uniform_texture_sampler, 0);
     }
+
+    for (size_t i = 0; i < parameter_count; i++) {
+        if (!parameters[i].name) {
+            continue;
+        }
+        GLint location = glGetUniformLocation(program, parameters[i].name);
+        if (location >= 0) {
+            glUniform1f(location, parameters[i].default_value);
+        }
+    }
+
     if (terminal_uniform_crt_gamma >= 0) {
-        glUniform1f(terminal_uniform_crt_gamma, 2.4f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "CRTgamma", 2.4f);
+        glUniform1f(terminal_uniform_crt_gamma, value);
     }
     if (terminal_uniform_monitor_gamma >= 0) {
-        glUniform1f(terminal_uniform_monitor_gamma, 2.2f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "monitorgamma", 2.2f);
+        glUniform1f(terminal_uniform_monitor_gamma, value);
     }
     if (terminal_uniform_distance >= 0) {
-        glUniform1f(terminal_uniform_distance, 1.6f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "d", 1.6f);
+        glUniform1f(terminal_uniform_distance, value);
     }
     if (terminal_uniform_curvature >= 0) {
-        glUniform1f(terminal_uniform_curvature, 1.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "CURVATURE", 1.0f);
+        glUniform1f(terminal_uniform_curvature, value);
     }
     if (terminal_uniform_radius >= 0) {
-        glUniform1f(terminal_uniform_radius, 2.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "R", 2.0f);
+        glUniform1f(terminal_uniform_radius, value);
     }
     if (terminal_uniform_corner_size >= 0) {
-        glUniform1f(terminal_uniform_corner_size, 0.03f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "cornersize", 0.03f);
+        glUniform1f(terminal_uniform_corner_size, value);
     }
     if (terminal_uniform_corner_smooth >= 0) {
-        glUniform1f(terminal_uniform_corner_smooth, 1000.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "cornersmooth", 1000.0f);
+        glUniform1f(terminal_uniform_corner_smooth, value);
     }
     if (terminal_uniform_x_tilt >= 0) {
-        glUniform1f(terminal_uniform_x_tilt, 0.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "x_tilt", 0.0f);
+        glUniform1f(terminal_uniform_x_tilt, value);
     }
     if (terminal_uniform_y_tilt >= 0) {
-        glUniform1f(terminal_uniform_y_tilt, 0.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "y_tilt", 0.0f);
+        glUniform1f(terminal_uniform_y_tilt, value);
     }
     if (terminal_uniform_overscan_x >= 0) {
-        glUniform1f(terminal_uniform_overscan_x, 100.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "overscan_x", 100.0f);
+        glUniform1f(terminal_uniform_overscan_x, value);
     }
     if (terminal_uniform_overscan_y >= 0) {
-        glUniform1f(terminal_uniform_overscan_y, 100.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "overscan_y", 100.0f);
+        glUniform1f(terminal_uniform_overscan_y, value);
     }
     if (terminal_uniform_dotmask >= 0) {
-        glUniform1f(terminal_uniform_dotmask, 0.3f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "DOTMASK", 0.3f);
+        glUniform1f(terminal_uniform_dotmask, value);
     }
     if (terminal_uniform_sharper >= 0) {
-        glUniform1f(terminal_uniform_sharper, 1.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "SHARPER", 1.0f);
+        glUniform1f(terminal_uniform_sharper, value);
     }
     if (terminal_uniform_scanline_weight >= 0) {
-        glUniform1f(terminal_uniform_scanline_weight, 0.3f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "scanline_weight", 0.3f);
+        glUniform1f(terminal_uniform_scanline_weight, value);
     }
     if (terminal_uniform_luminance >= 0) {
-        glUniform1f(terminal_uniform_luminance, 0.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "lum", 0.0f);
+        glUniform1f(terminal_uniform_luminance, value);
     }
     if (terminal_uniform_interlace_detect >= 0) {
-        glUniform1f(terminal_uniform_interlace_detect, 1.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "interlace_detect", 1.0f);
+        glUniform1f(terminal_uniform_interlace_detect, value);
     }
     if (terminal_uniform_saturation >= 0) {
-        glUniform1f(terminal_uniform_saturation, 1.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "SATURATION", 1.0f);
+        glUniform1f(terminal_uniform_saturation, value);
     }
     if (terminal_uniform_inv_gamma >= 0) {
-        glUniform1f(terminal_uniform_inv_gamma, 1.0f);
+        float value = terminal_get_parameter_default(parameters, parameter_count, "INV", 1.0f);
+        glUniform1f(terminal_uniform_inv_gamma, value);
     }
     glUseProgram(0);
 
+    terminal_free_shader_parameters(parameters, parameter_count);
     return 0;
 }
 

@@ -24,7 +24,7 @@ endif
 
 # SDL2-specific flags are only needed for the SDL terminal target.
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
-apps/terminal: LDFLAGS += $(SDL2_LIBS)
+apps/terminal: LDFLAGS += $(SDL2_LIBS) -lGL
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

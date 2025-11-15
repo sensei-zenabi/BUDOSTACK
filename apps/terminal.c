@@ -32,6 +32,11 @@
 #define BUDOSTACK_HAVE_SDL2 1
 #endif
 
+#if BUDOSTACK_HAVE_SDL2
+#define GL_GLEXT_PROTOTYPES 1
+#include <SDL2/SDL_opengl.h>
+#endif
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -56,7 +61,7 @@ _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
 _Static_assert(TERMINAL_ROWS > 0u, "TERMINAL_ROWS must be positive");
 
 static SDL_Window *terminal_window_handle = NULL;
-static SDL_Renderer *terminal_renderer_handle = NULL;
+static SDL_GLContext terminal_gl_context_handle = NULL;
 static int terminal_master_fd_handle = -1;
 static int terminal_cell_pixel_width = 0;
 static int terminal_cell_pixel_height = 0;
@@ -64,9 +69,39 @@ static int terminal_logical_width = 0;
 static int terminal_logical_height = 0;
 static int terminal_scale_factor = 1;
 
+static GLuint terminal_gl_program = 0;
+static GLuint terminal_gl_texture = 0;
+static int terminal_texture_width = 0;
+static int terminal_texture_height = 0;
+static int terminal_gl_ready = 0;
+
+static uint8_t *terminal_framebuffer_pixels = NULL;
+static size_t terminal_framebuffer_capacity = 0u;
+static int terminal_framebuffer_width = 0;
+static int terminal_framebuffer_height = 0;
+
+static GLint terminal_uniform_mvp = -1;
+static GLint terminal_uniform_frame_direction = -1;
+static GLint terminal_uniform_frame_count = -1;
+static GLint terminal_uniform_output_size = -1;
+static GLint terminal_uniform_texture_size = -1;
+static GLint terminal_uniform_input_size = -1;
+static GLint terminal_uniform_texture_sampler = -1;
+
+static GLint terminal_attrib_vertex = -1;
+static GLint terminal_attrib_color = -1;
+static GLint terminal_attrib_texcoord = -1;
+
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);
 static int terminal_send_string(int fd, const char *str);
+static int terminal_initialize_gl_program(const char *shader_path);
+static void terminal_release_gl_resources(void);
+static int terminal_resize_render_targets(int width, int height);
+static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
+static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
+static char *terminal_read_text_file(const char *path, size_t *out_size);
+static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label);
 
 static int terminal_send_response(const char *response) {
     if (!response || response[0] == '\0') {
@@ -513,6 +548,278 @@ static void free_font(struct psf_font *font) {
     font->height = 0;
     font->stride = 0;
     font->glyph_size = 0;
+}
+
+static char *terminal_read_text_file(const char *path, size_t *out_size) {
+    if (!path) {
+        return NULL;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        return NULL;
+    }
+
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+    long file_size = ftell(fp);
+    if (file_size < 0) {
+        fclose(fp);
+        return NULL;
+    }
+    if (fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return NULL;
+    }
+
+    size_t size = (size_t)file_size;
+    char *buffer = malloc(size + 1u);
+    if (!buffer) {
+        fclose(fp);
+        return NULL;
+    }
+
+    size_t read_bytes = fread(buffer, 1, size, fp);
+    fclose(fp);
+    if (read_bytes != size) {
+        free(buffer);
+        return NULL;
+    }
+
+    buffer[size] = '\0';
+    if (out_size) {
+        *out_size = size;
+    }
+    return buffer;
+}
+
+static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label) {
+    GLuint shader = glCreateShader(type);
+    if (shader == 0) {
+        return 0;
+    }
+
+    glShaderSource(shader, 1, &source, NULL);
+    glCompileShader(shader);
+
+    GLint status = 0;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+    if (status != GL_TRUE) {
+        GLint log_length = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_length);
+        if (log_length > 1) {
+            char *log = malloc((size_t)log_length);
+            if (log) {
+                glGetShaderInfoLog(shader, log_length, NULL, log);
+                fprintf(stderr, "Failed to compile %s shader: %s\n", label ? label : "GL", log);
+                free(log);
+            }
+        }
+        glDeleteShader(shader);
+        return 0;
+    }
+
+    return shader;
+}
+
+static int terminal_initialize_gl_program(const char *shader_path) {
+    if (!shader_path) {
+        return -1;
+    }
+
+    size_t shader_size = 0u;
+    char *shader_source = terminal_read_text_file(shader_path, &shader_size);
+    if (!shader_source) {
+        fprintf(stderr, "Failed to read shader from %s\n", shader_path);
+        return -1;
+    }
+
+    const char *version_line = "#version 110\n";
+    const char *vertex_define = "#define VERTEX 1\n";
+    const char *fragment_define = "#define FRAGMENT 1\n";
+
+    size_t vertex_length = strlen(version_line) + strlen(vertex_define) + shader_size;
+    size_t fragment_length = strlen(version_line) + strlen(fragment_define) + shader_size;
+
+    char *vertex_source = malloc(vertex_length + 1u);
+    char *fragment_source = malloc(fragment_length + 1u);
+    if (!vertex_source || !fragment_source) {
+        free(shader_source);
+        free(vertex_source);
+        free(fragment_source);
+        return -1;
+    }
+
+    strcpy(vertex_source, version_line);
+    strcat(vertex_source, vertex_define);
+    strcat(vertex_source, shader_source);
+
+    strcpy(fragment_source, version_line);
+    strcat(fragment_source, fragment_define);
+    strcat(fragment_source, shader_source);
+
+    GLuint vertex_shader = terminal_compile_shader(GL_VERTEX_SHADER, vertex_source, "vertex");
+    GLuint fragment_shader = terminal_compile_shader(GL_FRAGMENT_SHADER, fragment_source, "fragment");
+
+    free(shader_source);
+    free(vertex_source);
+    free(fragment_source);
+
+    if (vertex_shader == 0 || fragment_shader == 0) {
+        if (vertex_shader != 0) {
+            glDeleteShader(vertex_shader);
+        }
+        if (fragment_shader != 0) {
+            glDeleteShader(fragment_shader);
+        }
+        return -1;
+    }
+
+    GLuint program = glCreateProgram();
+    if (program == 0) {
+        glDeleteShader(vertex_shader);
+        glDeleteShader(fragment_shader);
+        return -1;
+    }
+
+    glAttachShader(program, vertex_shader);
+    glAttachShader(program, fragment_shader);
+    glLinkProgram(program);
+
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    GLint link_status = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &link_status);
+    if (link_status != GL_TRUE) {
+        GLint log_length = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
+        if (log_length > 1) {
+            char *log = malloc((size_t)log_length);
+            if (log) {
+                glGetProgramInfoLog(program, log_length, NULL, log);
+                fprintf(stderr, "Failed to link shader program: %s\n", log);
+                free(log);
+            }
+        }
+        glDeleteProgram(program);
+        return -1;
+    }
+
+    terminal_gl_program = program;
+    terminal_attrib_vertex = glGetAttribLocation(program, "VertexCoord");
+    terminal_attrib_color = glGetAttribLocation(program, "COLOR");
+    terminal_attrib_texcoord = glGetAttribLocation(program, "TexCoord");
+
+    terminal_uniform_mvp = glGetUniformLocation(program, "MVPMatrix");
+    terminal_uniform_frame_direction = glGetUniformLocation(program, "FrameDirection");
+    terminal_uniform_frame_count = glGetUniformLocation(program, "FrameCount");
+    terminal_uniform_output_size = glGetUniformLocation(program, "OutputSize");
+    terminal_uniform_texture_size = glGetUniformLocation(program, "TextureSize");
+    terminal_uniform_input_size = glGetUniformLocation(program, "InputSize");
+    terminal_uniform_texture_sampler = glGetUniformLocation(program, "Texture");
+
+    glUseProgram(program);
+    if (terminal_uniform_texture_sampler >= 0) {
+        glUniform1i(terminal_uniform_texture_sampler, 0);
+    }
+    glUseProgram(0);
+
+    return 0;
+}
+
+static int terminal_resize_render_targets(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return -1;
+    }
+
+    size_t required_size = (size_t)width * (size_t)height * 4u;
+    if (required_size > terminal_framebuffer_capacity) {
+        uint8_t *new_pixels = realloc(terminal_framebuffer_pixels, required_size);
+        if (!new_pixels) {
+            return -1;
+        }
+        terminal_framebuffer_pixels = new_pixels;
+        terminal_framebuffer_capacity = required_size;
+    }
+
+    terminal_framebuffer_width = width;
+    terminal_framebuffer_height = height;
+    if (terminal_framebuffer_pixels) {
+        memset(terminal_framebuffer_pixels, 0, required_size);
+    }
+
+    if (terminal_gl_texture == 0) {
+        glGenTextures(1, &terminal_gl_texture);
+    }
+
+    if (terminal_gl_texture == 0) {
+        return -1;
+    }
+
+    terminal_texture_width = width;
+    terminal_texture_height = height;
+
+    glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, terminal_framebuffer_pixels);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    return 0;
+}
+
+static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height) {
+    if (!pixels || width <= 0 || height <= 0 || terminal_gl_texture == 0) {
+        return -1;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return 0;
+}
+
+static void terminal_release_gl_resources(void) {
+    if (terminal_gl_texture != 0) {
+        glDeleteTextures(1, &terminal_gl_texture);
+        terminal_gl_texture = 0;
+    }
+    if (terminal_gl_program != 0) {
+        glDeleteProgram(terminal_gl_program);
+        terminal_gl_program = 0;
+    }
+    free(terminal_framebuffer_pixels);
+    terminal_framebuffer_pixels = NULL;
+    terminal_framebuffer_capacity = 0u;
+    terminal_framebuffer_width = 0;
+    terminal_framebuffer_height = 0;
+    terminal_texture_width = 0;
+    terminal_texture_height = 0;
+    terminal_gl_ready = 0;
+}
+
+static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y) {
+    if (!font || !font->glyphs) {
+        return 0;
+    }
+    if (glyph_index >= font->glyph_count) {
+        return 0;
+    }
+    if (x >= font->width || y >= font->height) {
+        return 0;
+    }
+
+    const uint8_t *glyph = font->glyphs + glyph_index * font->glyph_size;
+    size_t byte_index = (size_t)y * font->stride + (size_t)(x / 8u);
+    uint8_t mask = (uint8_t)(0x80u >> (x % 8u));
+    return (glyph[byte_index] & mask) != 0;
 }
 
 static uint32_t read_u32_le(const unsigned char *p) {
@@ -1562,15 +1869,10 @@ static void terminal_update_render_size(size_t columns, size_t rows) {
     terminal_logical_width = width;
     terminal_logical_height = height;
 
-    if (terminal_renderer_handle) {
-        if (SDL_RenderSetLogicalSize(terminal_renderer_handle, width, height) != 0) {
-            fprintf(stderr, "SDL_RenderSetLogicalSize failed: %s\n", SDL_GetError());
+    if (terminal_gl_ready) {
+        if (terminal_resize_render_targets(width, height) != 0) {
+            fprintf(stderr, "Failed to resize terminal render targets.\n");
         }
-#if SDL_VERSION_ATLEAST(2, 0, 5)
-        if (SDL_RenderSetIntegerScale(terminal_renderer_handle, SDL_TRUE) != 0) {
-            fprintf(stderr, "SDL_RenderSetIntegerScale failed: %s\n", SDL_GetError());
-        }
-#endif
     }
 }
 
@@ -1784,43 +2086,6 @@ static int terminal_send_escape_prefix(int fd) {
     return terminal_send_bytes(fd, &esc, 1u);
 }
 
-static SDL_Texture *create_glyph_texture(SDL_Renderer *renderer, const struct psf_font *font, uint32_t glyph_index) {
-    if (!renderer || !font || !font->glyphs) {
-        return NULL;
-    }
-    if (glyph_index >= font->glyph_count) {
-        glyph_index = '?';
-        if (glyph_index >= font->glyph_count) {
-            glyph_index = 0u;
-        }
-    }
-
-    SDL_Surface *surface = SDL_CreateRGBSurfaceWithFormat(0, (int)font->width, (int)font->height, 32, SDL_PIXELFORMAT_RGBA32);
-    if (!surface) {
-        return NULL;
-    }
-
-    uint32_t *pixels = (uint32_t *)surface->pixels;
-    size_t pitch_pixels = (size_t)surface->pitch / sizeof(uint32_t);
-    const uint8_t *glyph = font->glyphs + glyph_index * font->glyph_size;
-
-    for (uint32_t y = 0u; y < font->height; y++) {
-        for (uint32_t x = 0u; x < font->width; x++) {
-            size_t byte_index = y * font->stride + x / 8u;
-            uint8_t mask = (uint8_t)(0x80u >> (x % 8u));
-            int set = (glyph[byte_index] & mask) != 0;
-            pixels[y * pitch_pixels + x] = set ? 0xFFFFFFFFu : 0x00000000u;
-        }
-    }
-
-    SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
-    SDL_FreeSurface(surface);
-    if (texture) {
-        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-    }
-    return texture;
-}
-
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -1855,6 +2120,13 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    char shader_path[PATH_MAX];
+    if (build_path(shader_path, sizeof(shader_path), root_dir, "shaders/crt-geom.glsl") != 0) {
+        fprintf(stderr, "Failed to resolve shader path.\n");
+        free_font(&font);
+        return EXIT_FAILURE;
+    }
+
     size_t glyph_width_size = (size_t)font.width * (size_t)TERMINAL_FONT_SCALE;
     size_t glyph_height_size = (size_t)font.height * (size_t)TERMINAL_FONT_SCALE;
     if (glyph_width_size == 0u || glyph_height_size == 0u ||
@@ -1876,6 +2148,8 @@ int main(int argc, char **argv) {
     }
     int window_width = (int)window_width_size;
     int window_height = (int)window_height_size;
+    int drawable_width = 0;
+    int drawable_height = 0;
 
     int master_fd = -1;
     pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
@@ -1900,6 +2174,13 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+#ifdef SDL_GL_CONTEXT_PROFILE_MASK
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+#endif
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
 
     SDL_Window *window = SDL_CreateWindow("BUDOSTACK Terminal",
@@ -1907,7 +2188,7 @@ int main(int argc, char **argv) {
                                           SDL_WINDOWPOS_CENTERED,
                                           window_width,
                                           window_height,
-                                          SDL_WINDOW_SHOWN);
+                                          SDL_WINDOW_SHOWN | SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
@@ -1927,9 +2208,9 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-    if (!renderer) {
-        fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
+    SDL_GLContext gl_context = SDL_GL_CreateContext(window);
+    if (!gl_context) {
+        fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
         SDL_DestroyWindow(window);
         SDL_Quit();
         kill(child_pid, SIGKILL);
@@ -1938,39 +2219,50 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    if (SDL_GL_MakeCurrent(window, gl_context) != 0) {
+        fprintf(stderr, "SDL_GL_MakeCurrent failed: %s\n", SDL_GetError());
+        SDL_GL_DeleteContext(gl_context);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    if (SDL_GL_SetSwapInterval(1) != 0) {
+        fprintf(stderr, "Warning: Unable to enable VSync: %s\n", SDL_GetError());
+    }
+
+    if (terminal_initialize_gl_program(shader_path) != 0) {
+        SDL_GL_DeleteContext(gl_context);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
+
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
     terminal_window_handle = window;
-    terminal_renderer_handle = renderer;
+    terminal_gl_context_handle = gl_context;
     terminal_master_fd_handle = master_fd;
     terminal_cell_pixel_width = glyph_width;
     terminal_cell_pixel_height = glyph_height;
     terminal_scale_factor = 1;
+    terminal_gl_ready = 1;
 
-    SDL_Texture *glyph_textures[256];
-    for (size_t i = 0u; i < 256u; i++) {
-        glyph_textures[i] = create_glyph_texture(renderer, &font, (uint32_t)i);
-        if (!glyph_textures[i]) {
-            fprintf(stderr, "Failed to create glyph texture for %zu: %s\n", i, SDL_GetError());
-            for (size_t j = 0u; j < i; j++) {
-                SDL_DestroyTexture(glyph_textures[j]);
-            }
-            SDL_DestroyRenderer(renderer);
-            SDL_DestroyWindow(window);
-            SDL_Quit();
-            kill(child_pid, SIGKILL);
-            free_font(&font);
-            close(master_fd);
-            return EXIT_FAILURE;
-        }
-    }
-
-    int output_width = 0;
-    int output_height = 0;
-    if (SDL_GetRendererOutputSize(renderer, &output_width, &output_height) != 0) {
-        fprintf(stderr, "SDL_GetRendererOutputSize failed: %s\n", SDL_GetError());
-        for (size_t i = 0u; i < 256u; i++) {
-            SDL_DestroyTexture(glyph_textures[i]);
-        }
-        SDL_DestroyRenderer(renderer);
+    drawable_width = 0;
+    drawable_height = 0;
+    SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
+    if (drawable_width <= 0 || drawable_height <= 0) {
+        fprintf(stderr, "Drawable size is invalid.\n");
+        terminal_release_gl_resources();
+        SDL_GL_DeleteContext(gl_context);
         SDL_DestroyWindow(window);
         SDL_Quit();
         kill(child_pid, SIGKILL);
@@ -1978,33 +2270,30 @@ int main(int argc, char **argv) {
         close(master_fd);
         return EXIT_FAILURE;
     }
-    if (output_width <= 0 || output_height <= 0) {
-        fprintf(stderr, "Renderer output size is invalid.\n");
-        for (size_t i = 0u; i < 256u; i++) {
-            SDL_DestroyTexture(glyph_textures[i]);
-        }
-        SDL_DestroyRenderer(renderer);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        kill(child_pid, SIGKILL);
-        free_font(&font);
-        close(master_fd);
-        return EXIT_FAILURE;
-    }
+    glViewport(0, 0, drawable_width, drawable_height);
 
     size_t columns = (size_t)TERMINAL_COLUMNS;
     size_t rows = (size_t)TERMINAL_ROWS;
 
     terminal_update_render_size(columns, rows);
+    if (!terminal_framebuffer_pixels || terminal_framebuffer_width <= 0 || terminal_framebuffer_height <= 0) {
+        fprintf(stderr, "Failed to allocate terminal framebuffer.\n");
+        terminal_release_gl_resources();
+        SDL_GL_DeleteContext(gl_context);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        return EXIT_FAILURE;
+    }
 
     struct terminal_buffer buffer = {0};
     terminal_buffer_initialize_palette(&buffer);
     if (terminal_buffer_init(&buffer, columns, rows) != 0) {
         fprintf(stderr, "Failed to allocate terminal buffer.\n");
-        for (size_t i = 0u; i < 256u; i++) {
-            SDL_DestroyTexture(glyph_textures[i]);
-        }
-        SDL_DestroyRenderer(renderer);
+        terminal_release_gl_resources();
+        SDL_GL_DeleteContext(gl_context);
         SDL_DestroyWindow(window);
         SDL_Quit();
         kill(child_pid, SIGKILL);
@@ -2041,6 +2330,10 @@ int main(int argc, char **argv) {
                     if (terminal_logical_width > 0 && terminal_logical_height > 0) {
                         SDL_SetWindowSize(window, terminal_logical_width, terminal_logical_height);
                     }
+                }
+                SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
+                if (drawable_width > 0 && drawable_height > 0) {
+                    glViewport(0, 0, drawable_width, drawable_height);
                 }
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
@@ -2395,12 +2688,15 @@ int main(int argc, char **argv) {
         }
         int cursor_render_visible = buffer.cursor_visible && cursor_phase_visible;
 
-        SDL_SetRenderDrawColor(renderer,
-                               terminal_color_r(buffer.default_bg),
-                               terminal_color_g(buffer.default_bg),
-                               terminal_color_b(buffer.default_bg),
-                               255);
-        SDL_RenderClear(renderer);
+        uint8_t *framebuffer = terminal_framebuffer_pixels;
+        int frame_width = terminal_framebuffer_width;
+        int frame_height = terminal_framebuffer_height;
+        int frame_pitch = frame_width * 4;
+        if (!framebuffer || frame_width <= 0 || frame_height <= 0) {
+            fprintf(stderr, "Frame buffer unavailable for rendering.\n");
+            running = 0;
+            break;
+        }
 
         for (size_t row = 0u; row < buffer.rows; row++) {
             for (size_t col = 0u; col < buffer.columns; col++) {
@@ -2428,45 +2724,166 @@ int main(int argc, char **argv) {
                     glyph_color = bg;
                 }
 
-                SDL_Rect dst = {(int)(col * glyph_width),
-                                (int)(row * glyph_height),
-                                glyph_width,
-                                glyph_height};
+                int dest_x = (int)(col * (size_t)glyph_width);
+                int dest_y = (int)(row * (size_t)glyph_height);
+                int end_x = dest_x + glyph_width;
+                int end_y = dest_y + glyph_height;
+                if (dest_x < 0) {
+                    dest_x = 0;
+                }
+                if (dest_y < 0) {
+                    dest_y = 0;
+                }
+                if (end_x > frame_width) {
+                    end_x = frame_width;
+                }
+                if (end_y > frame_height) {
+                    end_y = frame_height;
+                }
+                if (dest_x >= end_x || dest_y >= end_y) {
+                    continue;
+                }
 
-                SDL_SetRenderDrawColor(renderer,
-                                       terminal_color_r(fill_color),
-                                       terminal_color_g(fill_color),
-                                       terminal_color_b(fill_color),
-                                       255);
-                SDL_RenderFillRect(renderer, &dst);
+                uint8_t fill_r = terminal_color_r(fill_color);
+                uint8_t fill_g = terminal_color_g(fill_color);
+                uint8_t fill_b = terminal_color_b(fill_color);
+                uint8_t glyph_r = terminal_color_r(glyph_color);
+                uint8_t glyph_g = terminal_color_g(glyph_color);
+                uint8_t glyph_b = terminal_color_b(glyph_color);
+
+                for (int py = dest_y; py < end_y; py++) {
+                    uint8_t *dst = framebuffer + (size_t)py * (size_t)frame_pitch + (size_t)dest_x * 4u;
+                    for (int px = dest_x; px < end_x; px++) {
+                        dst[0] = fill_r;
+                        dst[1] = fill_g;
+                        dst[2] = fill_b;
+                        dst[3] = 255u;
+                        dst += 4;
+                    }
+                }
 
                 if (ch != 0u) {
                     uint32_t glyph_index = ch;
-                    if (glyph_index >= 256u || glyph_textures[glyph_index] == NULL) {
+                    if (glyph_index >= font.glyph_count) {
                         glyph_index = '?';
+                        if (glyph_index >= font.glyph_count) {
+                            glyph_index = 0u;
+                        }
                     }
-                    SDL_Texture *glyph = glyph_textures[glyph_index];
-                    if (glyph) {
-                        SDL_SetTextureColorMod(glyph,
-                                               terminal_color_r(glyph_color),
-                                               terminal_color_g(glyph_color),
-                                               terminal_color_b(glyph_color));
-                        SDL_RenderCopy(renderer, glyph, NULL, &dst);
-                        if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
-                            SDL_Rect underline = {dst.x, dst.y + glyph_height - 1, glyph_width, 1};
-                            SDL_SetRenderDrawColor(renderer,
-                                                   terminal_color_r(glyph_color),
-                                                   terminal_color_g(glyph_color),
-                                                   terminal_color_b(glyph_color),
-                                                   255);
-                            SDL_RenderFillRect(renderer, &underline);
+
+                    for (int py = dest_y; py < end_y; py++) {
+                        uint32_t src_y = (uint32_t)((py - dest_y) / TERMINAL_FONT_SCALE);
+                        if (src_y >= font.height) {
+                            continue;
+                        }
+                        uint8_t *dst = framebuffer + (size_t)py * (size_t)frame_pitch + (size_t)dest_x * 4u;
+                        for (int px = dest_x; px < end_x; px++) {
+                            uint32_t src_x = (uint32_t)((px - dest_x) / TERMINAL_FONT_SCALE);
+                            if (src_x < font.width && glyph_pixel_set(&font, glyph_index, src_x, src_y)) {
+                                dst[0] = glyph_r;
+                                dst[1] = glyph_g;
+                                dst[2] = glyph_b;
+                                dst[3] = 255u;
+                            }
+                            dst += 4;
+                        }
+                    }
+
+                    if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
+                        int underline_y = end_y - 1;
+                        if (underline_y >= dest_y) {
+                            uint8_t *dst = framebuffer + (size_t)underline_y * (size_t)frame_pitch + (size_t)dest_x * 4u;
+                            for (int px = dest_x; px < end_x; px++) {
+                                dst[0] = glyph_r;
+                                dst[1] = glyph_g;
+                                dst[2] = glyph_b;
+                                dst[3] = 255u;
+                                dst += 4;
+                            }
                         }
                     }
                 }
             }
         }
 
-        SDL_RenderPresent(renderer);
+        if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
+            fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
+            running = 0;
+            break;
+        }
+
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(terminal_gl_program);
+
+        const GLfloat identity_mvp[16] = {
+            1.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        };
+
+        if (terminal_uniform_mvp >= 0) {
+            glUniformMatrix4fv(terminal_uniform_mvp, 1, GL_FALSE, identity_mvp);
+        }
+        if (terminal_uniform_frame_direction >= 0) {
+            glUniform1i(terminal_uniform_frame_direction, 1);
+        }
+        static int frame_counter = 0;
+        if (terminal_uniform_frame_count >= 0) {
+            glUniform1i(terminal_uniform_frame_count, frame_counter++);
+        }
+        if (terminal_uniform_output_size >= 0) {
+            glUniform2f(terminal_uniform_output_size, (GLfloat)drawable_width, (GLfloat)drawable_height);
+        }
+        if (terminal_uniform_texture_size >= 0) {
+            glUniform2f(terminal_uniform_texture_size, (GLfloat)terminal_texture_width, (GLfloat)terminal_texture_height);
+        }
+        if (terminal_uniform_input_size >= 0) {
+            glUniform2f(terminal_uniform_input_size, (GLfloat)frame_width, (GLfloat)frame_height);
+        }
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+
+        const GLfloat quad_vertices[16] = {
+            -1.0f, -1.0f, 0.0f, 1.0f,
+             1.0f, -1.0f, 0.0f, 1.0f,
+            -1.0f,  1.0f, 0.0f, 1.0f,
+             1.0f,  1.0f, 0.0f, 1.0f
+        };
+        const GLfloat quad_texcoords[8] = {
+            0.0f, 1.0f,
+            1.0f, 1.0f,
+            0.0f, 0.0f,
+            1.0f, 0.0f
+        };
+
+        if (terminal_attrib_vertex >= 0) {
+            glEnableVertexAttribArray((GLuint)terminal_attrib_vertex);
+            glVertexAttribPointer((GLuint)terminal_attrib_vertex, 4, GL_FLOAT, GL_FALSE, 0, quad_vertices);
+        }
+        if (terminal_attrib_texcoord >= 0) {
+            glEnableVertexAttribArray((GLuint)terminal_attrib_texcoord);
+            glVertexAttribPointer((GLuint)terminal_attrib_texcoord, 2, GL_FLOAT, GL_FALSE, 0, quad_texcoords);
+        }
+        if (terminal_attrib_color >= 0) {
+            glDisableVertexAttribArray((GLuint)terminal_attrib_color);
+            glVertexAttrib4f((GLuint)terminal_attrib_color, 1.0f, 1.0f, 1.0f, 1.0f);
+        }
+
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        if (terminal_attrib_vertex >= 0) {
+            glDisableVertexAttribArray((GLuint)terminal_attrib_vertex);
+        }
+        if (terminal_attrib_texcoord >= 0) {
+            glDisableVertexAttribArray((GLuint)terminal_attrib_texcoord);
+        }
+
+        glBindTexture(GL_TEXTURE_2D, 0);
+        glUseProgram(0);
+
+        SDL_GL_SwapWindow(window);
 
         if (child_exited) {
             running = 0;
@@ -2483,12 +2900,11 @@ int main(int argc, char **argv) {
     }
 
     terminal_buffer_free(&buffer);
-
-    for (size_t i = 0u; i < 256u; i++) {
-        SDL_DestroyTexture(glyph_textures[i]);
+    terminal_release_gl_resources();
+    if (terminal_gl_context_handle) {
+        SDL_GL_DeleteContext(terminal_gl_context_handle);
+        terminal_gl_context_handle = NULL;
     }
-
-    SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
 

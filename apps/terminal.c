@@ -72,6 +72,12 @@ static int terminal_logical_width = 0;
 static int terminal_logical_height = 0;
 static int terminal_scale_factor = 1;
 static int terminal_margin_pixels = 0;
+static size_t terminal_selection_anchor_row = 0u;
+static size_t terminal_selection_anchor_col = 0u;
+static size_t terminal_selection_caret_row = 0u;
+static size_t terminal_selection_caret_col = 0u;
+static int terminal_selection_active = 0;
+static int terminal_selection_dragging = 0;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -171,6 +177,33 @@ struct terminal_buffer;
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);
 static int terminal_send_string(int fd, const char *str);
+static size_t terminal_total_rows(const struct terminal_buffer *buffer);
+static const struct terminal_cell *terminal_buffer_row_at(const struct terminal_buffer *buffer, size_t index);
+static size_t terminal_clamped_scroll_offset(const struct terminal_buffer *buffer);
+static void terminal_visible_row_range(const struct terminal_buffer *buffer, size_t *out_top_index, size_t *out_bottom_index);
+static int terminal_window_point_to_framebuffer(int window_x, int window_y, int *out_x, int *out_y);
+static int terminal_screen_point_to_cell(int x,
+                                         int y,
+                                         size_t columns,
+                                         size_t rows,
+                                         size_t top_index,
+                                         size_t total_rows,
+                                         size_t *out_global_row,
+                                         size_t *out_column,
+                                         int clamp_to_bounds);
+static void terminal_selection_begin(size_t global_row, size_t column);
+static void terminal_selection_update(size_t global_row, size_t column);
+static void terminal_selection_clear(void);
+static void terminal_selection_validate(const struct terminal_buffer *buffer);
+static int terminal_selection_linear_range(const struct terminal_buffer *buffer, size_t *out_start, size_t *out_end);
+static int terminal_selection_contains_cell(size_t global_row,
+                                            size_t column,
+                                            size_t selection_start,
+                                            size_t selection_end,
+                                            size_t columns);
+static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer);
+static int terminal_paste_from_clipboard(int fd);
+static size_t terminal_encode_utf8(uint32_t codepoint, char *dst);
 static int terminal_initialize_gl_program(const char *shader_path);
 static void terminal_release_gl_resources(void);
 static int terminal_resize_render_targets(int width, int height);
@@ -698,6 +731,435 @@ struct ansi_parser {
     uint8_t utf8_bytes_expected;
     uint8_t utf8_bytes_seen;
 };
+
+static size_t terminal_total_rows(const struct terminal_buffer *buffer) {
+    if (!buffer) {
+        return 0u;
+    }
+    return buffer->history_rows + buffer->rows;
+}
+
+static size_t terminal_clamped_scroll_offset(const struct terminal_buffer *buffer) {
+    if (!buffer) {
+        return 0u;
+    }
+    size_t offset = buffer->scroll_offset;
+    if (offset > buffer->history_rows) {
+        offset = buffer->history_rows;
+    }
+    return offset;
+}
+
+static void terminal_visible_row_range(const struct terminal_buffer *buffer, size_t *out_top_index, size_t *out_bottom_index) {
+    size_t top_index = 0u;
+    size_t bottom_index = 0u;
+    if (buffer) {
+        size_t clamped_scroll = terminal_clamped_scroll_offset(buffer);
+        size_t total_available_rows = terminal_total_rows(buffer);
+        if (total_available_rows > 0u) {
+            bottom_index = total_available_rows - 1u;
+            if (clamped_scroll <= bottom_index) {
+                bottom_index -= clamped_scroll;
+            } else {
+                bottom_index = 0u;
+            }
+        } else {
+            bottom_index = 0u;
+        }
+        if (buffer->rows > 0u && bottom_index + 1u > buffer->rows) {
+            top_index = bottom_index + 1u - buffer->rows;
+        } else {
+            top_index = 0u;
+        }
+    }
+    if (out_top_index) {
+        *out_top_index = top_index;
+    }
+    if (out_bottom_index) {
+        *out_bottom_index = bottom_index;
+    }
+}
+
+static int terminal_window_point_to_framebuffer(int window_x, int window_y, int *out_x, int *out_y) {
+    if (!out_x || !out_y) {
+        return -1;
+    }
+    if (!terminal_window_handle || terminal_framebuffer_width <= 0 || terminal_framebuffer_height <= 0) {
+        return -1;
+    }
+
+    int window_width = 0;
+    int window_height = 0;
+    SDL_GetWindowSize(terminal_window_handle, &window_width, &window_height);
+    int drawable_width = 0;
+    int drawable_height = 0;
+    SDL_GL_GetDrawableSize(terminal_window_handle, &drawable_width, &drawable_height);
+
+    double reference_width = (window_width > 0) ? (double)window_width : (double)drawable_width;
+    double reference_height = (window_height > 0) ? (double)window_height : (double)drawable_height;
+    if (reference_width <= 0.0 || reference_height <= 0.0) {
+        return -1;
+    }
+
+    double normalized_x = (double)window_x / reference_width;
+    double normalized_y = (double)window_y / reference_height;
+    double framebuffer_x = normalized_x * (double)terminal_framebuffer_width;
+    double framebuffer_y = normalized_y * (double)terminal_framebuffer_height;
+
+    if (framebuffer_x < (double)INT_MIN) {
+        framebuffer_x = (double)INT_MIN;
+    }
+    if (framebuffer_x > (double)INT_MAX) {
+        framebuffer_x = (double)INT_MAX;
+    }
+    if (framebuffer_y < (double)INT_MIN) {
+        framebuffer_y = (double)INT_MIN;
+    }
+    if (framebuffer_y > (double)INT_MAX) {
+        framebuffer_y = (double)INT_MAX;
+    }
+
+    *out_x = (int)framebuffer_x;
+    *out_y = (int)framebuffer_y;
+    return 0;
+}
+
+static int terminal_screen_point_to_cell(int x,
+                                         int y,
+                                         size_t columns,
+                                         size_t rows,
+                                         size_t top_index,
+                                         size_t total_rows,
+                                         size_t *out_global_row,
+                                         size_t *out_column,
+                                         int clamp_to_bounds) {
+    if (!out_global_row || !out_column || columns == 0u || rows == 0u) {
+        return -1;
+    }
+    if (terminal_cell_pixel_width <= 0 || terminal_cell_pixel_height <= 0) {
+        return -1;
+    }
+
+    int margin = terminal_margin_pixels;
+    if (margin < 0) {
+        margin = 0;
+    }
+
+    int inner_x = x - margin;
+    int inner_y = y - margin;
+    size_t width_pixels = columns * (size_t)terminal_cell_pixel_width;
+    size_t height_pixels = rows * (size_t)terminal_cell_pixel_height;
+
+    if (!clamp_to_bounds) {
+        if (inner_x < 0 || inner_y < 0) {
+            return -1;
+        }
+        if ((size_t)inner_x >= width_pixels || (size_t)inner_y >= height_pixels) {
+            return -1;
+        }
+    } else {
+        if (inner_x < 0) {
+            inner_x = 0;
+        }
+        if (inner_y < 0) {
+            inner_y = 0;
+        }
+        if ((size_t)inner_x > width_pixels) {
+            inner_x = (int)width_pixels;
+        }
+        if ((size_t)inner_y > height_pixels) {
+            inner_y = (int)height_pixels;
+        }
+    }
+
+    size_t column = 0u;
+    size_t row_in_view = 0u;
+    if (terminal_cell_pixel_width > 0) {
+        column = (size_t)inner_x / (size_t)terminal_cell_pixel_width;
+    }
+    if (terminal_cell_pixel_height > 0) {
+        row_in_view = (size_t)inner_y / (size_t)terminal_cell_pixel_height;
+    }
+
+    if (column > columns) {
+        column = columns;
+    }
+    if (row_in_view > rows) {
+        row_in_view = rows;
+    }
+
+    size_t global_row = top_index + row_in_view;
+    if (global_row > total_rows) {
+        global_row = total_rows;
+    }
+    if (global_row == total_rows) {
+        column = 0u;
+    }
+
+    *out_global_row = global_row;
+    *out_column = column;
+    return 0;
+}
+
+static void terminal_selection_clear(void) {
+    terminal_selection_active = 0;
+    terminal_selection_dragging = 0;
+    terminal_selection_anchor_row = 0u;
+    terminal_selection_anchor_col = 0u;
+    terminal_selection_caret_row = 0u;
+    terminal_selection_caret_col = 0u;
+}
+
+static void terminal_selection_begin(size_t global_row, size_t column) {
+    terminal_selection_active = 1;
+    terminal_selection_anchor_row = global_row;
+    terminal_selection_anchor_col = column;
+    terminal_selection_caret_row = global_row;
+    terminal_selection_caret_col = column;
+}
+
+static void terminal_selection_update(size_t global_row, size_t column) {
+    if (!terminal_selection_active) {
+        terminal_selection_begin(global_row, column);
+        return;
+    }
+    terminal_selection_caret_row = global_row;
+    terminal_selection_caret_col = column;
+}
+
+static void terminal_selection_validate(const struct terminal_buffer *buffer) {
+    if (!terminal_selection_active || !buffer) {
+        return;
+    }
+    size_t total_rows = terminal_total_rows(buffer);
+    if (total_rows == 0u) {
+        terminal_selection_clear();
+        return;
+    }
+    if (terminal_selection_anchor_row >= total_rows) {
+        terminal_selection_clear();
+        return;
+    }
+    if (terminal_selection_caret_row > total_rows) {
+        terminal_selection_caret_row = total_rows;
+    }
+    size_t columns = buffer->columns;
+    if (terminal_selection_anchor_col > columns) {
+        terminal_selection_anchor_col = columns;
+    }
+    if (terminal_selection_caret_col > columns) {
+        terminal_selection_caret_col = columns;
+    }
+    if (terminal_selection_caret_row == total_rows) {
+        terminal_selection_caret_col = 0u;
+    }
+}
+
+static int terminal_selection_linear_range(const struct terminal_buffer *buffer, size_t *out_start, size_t *out_end) {
+    if (!buffer || buffer->columns == 0u || !terminal_selection_active) {
+        return 0;
+    }
+    size_t total_rows = terminal_total_rows(buffer);
+    if (total_rows == 0u) {
+        return 0;
+    }
+    size_t columns = buffer->columns;
+    size_t anchor_row = terminal_selection_anchor_row;
+    size_t anchor_col = terminal_selection_anchor_col;
+    size_t caret_row = terminal_selection_caret_row;
+    size_t caret_col = terminal_selection_caret_col;
+    if (anchor_row >= total_rows) {
+        return 0;
+    }
+    if (caret_row > total_rows) {
+        caret_row = total_rows;
+    }
+    if (anchor_col > columns) {
+        anchor_col = columns;
+    }
+    if (caret_col > columns) {
+        caret_col = columns;
+    }
+    size_t anchor_linear = anchor_row * columns + anchor_col;
+    size_t caret_linear = caret_row * columns + caret_col;
+    if (anchor_linear == caret_linear) {
+        return 0;
+    }
+    size_t start = anchor_linear < caret_linear ? anchor_linear : caret_linear;
+    size_t end = anchor_linear < caret_linear ? caret_linear : anchor_linear;
+    if (out_start) {
+        *out_start = start;
+    }
+    if (out_end) {
+        *out_end = end;
+    }
+    return 1;
+}
+
+static int terminal_selection_contains_cell(size_t global_row,
+                                            size_t column,
+                                            size_t selection_start,
+                                            size_t selection_end,
+                                            size_t columns) {
+    if (columns == 0u || selection_end <= selection_start) {
+        return 0;
+    }
+    size_t cell_index = global_row * columns + column;
+    if (cell_index < selection_start || cell_index >= selection_end) {
+        return 0;
+    }
+    return 1;
+}
+
+static size_t terminal_encode_utf8(uint32_t codepoint, char *dst) {
+    if (!dst) {
+        return 0u;
+    }
+    uint32_t cp = codepoint;
+    if (cp > 0x10FFFFu) {
+        cp = 0xFFFDu;
+    }
+    if (cp <= 0x7Fu) {
+        dst[0] = (char)cp;
+        return 1u;
+    }
+    if (cp <= 0x7FFu) {
+        dst[0] = (char)(0xC0u | (cp >> 6u));
+        dst[1] = (char)(0x80u | (cp & 0x3Fu));
+        return 2u;
+    }
+    if (cp <= 0xFFFFu) {
+        dst[0] = (char)(0xE0u | (cp >> 12u));
+        dst[1] = (char)(0x80u | ((cp >> 6u) & 0x3Fu));
+        dst[2] = (char)(0x80u | (cp & 0x3Fu));
+        return 3u;
+    }
+    dst[0] = (char)(0xF0u | (cp >> 18u));
+    dst[1] = (char)(0x80u | ((cp >> 12u) & 0x3Fu));
+    dst[2] = (char)(0x80u | ((cp >> 6u) & 0x3Fu));
+    dst[3] = (char)(0x80u | (cp & 0x3Fu));
+    return 4u;
+}
+
+static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer) {
+    if (!buffer) {
+        return 0;
+    }
+    size_t selection_start = 0u;
+    size_t selection_end = 0u;
+    if (!terminal_selection_linear_range(buffer, &selection_start, &selection_end)) {
+        return 0;
+    }
+    size_t columns = buffer->columns;
+    if (columns == 0u) {
+        return 0;
+    }
+    size_t cell_span = selection_end - selection_start;
+    size_t newline_count = (selection_end / columns > selection_start / columns)
+        ? ((selection_end / columns) - (selection_start / columns))
+        : 0u;
+    if (cell_span > SIZE_MAX / 4u) {
+        return 0;
+    }
+    size_t max_bytes = cell_span * 4u;
+    if (newline_count > SIZE_MAX - max_bytes - 1u) {
+        return 0;
+    }
+    max_bytes += newline_count + 1u;
+    char *output = malloc(max_bytes);
+    if (!output) {
+        return 0;
+    }
+
+    size_t start_row = selection_start / columns;
+    size_t start_col = selection_start % columns;
+    size_t end_row = selection_end / columns;
+    size_t end_col = selection_end % columns;
+
+    size_t out_len = 0u;
+    for (size_t row = start_row;; row++) {
+        size_t first_col = (row == start_row) ? start_col : 0u;
+        size_t last_col = (row == end_row) ? end_col : columns;
+        if (first_col > columns) {
+            first_col = columns;
+        }
+        if (last_col > columns) {
+            last_col = columns;
+        }
+        if (first_col < last_col) {
+            const struct terminal_cell *row_cells = NULL;
+            if (row < terminal_total_rows(buffer)) {
+                row_cells = terminal_buffer_row_at(buffer, row);
+            }
+            size_t row_start_len = out_len;
+            size_t last_non_space_len = row_start_len;
+            int seen_non_space = 0;
+            for (size_t col = first_col; col < last_col; col++) {
+                uint32_t ch = ' ';
+                if (row_cells) {
+                    ch = row_cells[col].ch;
+                }
+                if (ch == 0u) {
+                    ch = ' ';
+                }
+                char encoded[4];
+                size_t encoded_len = terminal_encode_utf8(ch, encoded);
+                if (encoded_len == 0u) {
+                    continue;
+                }
+                if (out_len + encoded_len >= max_bytes) {
+                    free(output);
+                    return 0;
+                }
+                memcpy(output + out_len, encoded, encoded_len);
+                out_len += encoded_len;
+                if (ch != ' ') {
+                    seen_non_space = 1;
+                    last_non_space_len = out_len;
+                }
+            }
+            if (seen_non_space) {
+                out_len = last_non_space_len;
+            } else {
+                out_len = row_start_len;
+            }
+        }
+        if (row < end_row) {
+            if (out_len + 1u >= max_bytes) {
+                free(output);
+                return 0;
+            }
+            output[out_len++] = '\n';
+        }
+        if (row == end_row) {
+            break;
+        }
+    }
+
+    output[out_len] = '\0';
+    if (SDL_SetClipboardText(output) != 0) {
+        free(output);
+        return 0;
+    }
+    free(output);
+    return 1;
+}
+
+static int terminal_paste_from_clipboard(int fd) {
+    char *text = SDL_GetClipboardText();
+    if (!text) {
+        return -1;
+    }
+    size_t len = strlen(text);
+    int result = 0;
+    if (len > 0u) {
+        if (terminal_send_bytes(fd, text, len) < 0) {
+            result = -1;
+        }
+    }
+    SDL_free(text);
+    return result;
+}
 
 static const uint32_t terminal_default_palette16[16] = {
     0x000000u, /* black */
@@ -4028,6 +4490,7 @@ int main(int argc, char **argv) {
     int cursor_phase_visible = 1;
 
     while (running) {
+        terminal_selection_validate(&buffer);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
@@ -4066,11 +4529,87 @@ int main(int argc, char **argv) {
                     }
                 }
 #endif
+            } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    size_t top_index = 0u;
+                    terminal_visible_row_range(&buffer, &top_index, NULL);
+                    size_t total_rows = terminal_total_rows(&buffer);
+                    size_t global_row = 0u;
+                    size_t column = 0u;
+                    int logical_x = 0;
+                    int logical_y = 0;
+                    if (terminal_window_point_to_framebuffer(event.button.x, event.button.y, &logical_x, &logical_y) == 0 &&
+                        terminal_screen_point_to_cell(logical_x,
+                                                      logical_y,
+                                                      buffer.columns,
+                                                      buffer.rows,
+                                                      top_index,
+                                                      total_rows,
+                                                      &global_row,
+                                                      &column,
+                                                      0) == 0) {
+                        terminal_selection_begin(global_row, column);
+                        terminal_selection_dragging = 1;
+                    } else {
+                        terminal_selection_clear();
+                    }
+                } else {
+                    terminal_selection_clear();
+                }
+            } else if (event.type == SDL_MOUSEBUTTONUP) {
+                if (event.button.button == SDL_BUTTON_LEFT) {
+                    terminal_selection_dragging = 0;
+                }
+            } else if (event.type == SDL_MOUSEMOTION) {
+                if (terminal_selection_dragging) {
+                    if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
+                        terminal_selection_dragging = 0;
+                    } else {
+                        size_t top_index = 0u;
+                        terminal_visible_row_range(&buffer, &top_index, NULL);
+                        size_t total_rows = terminal_total_rows(&buffer);
+                        size_t global_row = 0u;
+                        size_t column = 0u;
+                        int logical_x = 0;
+                        int logical_y = 0;
+                        if (terminal_window_point_to_framebuffer(event.motion.x, event.motion.y, &logical_x, &logical_y) == 0 &&
+                            terminal_screen_point_to_cell(logical_x,
+                                                          logical_y,
+                                                          buffer.columns,
+                                                          buffer.rows,
+                                                          top_index,
+                                                          total_rows,
+                                                          &global_row,
+                                                          &column,
+                                                          1) == 0) {
+                            terminal_selection_update(global_row, column);
+                        }
+                    }
+                }
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = event.key.keysym.mod;
                 int handled = 0;
                 unsigned char ch = 0u;
+
+                int clipboard_handled = 0;
+                if ((mod & KMOD_CTRL) != 0 && (mod & KMOD_ALT) == 0 && (mod & KMOD_GUI) == 0) {
+                    if (sym == SDLK_c) {
+                        if (terminal_copy_selection_to_clipboard(&buffer)) {
+                            clipboard_handled = 1;
+                        }
+                    } else if (sym == SDLK_v) {
+                        if (terminal_paste_from_clipboard(master_fd) == 0) {
+                            terminal_selection_clear();
+                            clipboard_handled = 1;
+                        }
+                    }
+                }
+                if (clipboard_handled) {
+                    cursor_phase_visible = 1;
+                    cursor_last_toggle = SDL_GetTicks();
+                    continue;
+                }
 
                 if ((mod & KMOD_CTRL) != 0) {
                     if (sym >= 0 && sym <= 127) {
@@ -4095,6 +4634,7 @@ int main(int argc, char **argv) {
                 }
 
                 if (handled) {
+                    terminal_selection_clear();
                     if (terminal_send_bytes(master_fd, &ch, 1u) < 0) {
                         running = 0;
                     }
@@ -4368,6 +4908,7 @@ int main(int argc, char **argv) {
                 }
 
                 if (handled) {
+                    terminal_selection_clear();
                     cursor_phase_visible = 1;
                     cursor_last_toggle = SDL_GetTicks();
                     continue;
@@ -4377,6 +4918,7 @@ int main(int argc, char **argv) {
                 size_t len = strlen(text);
                 if (len > 0u) {
                     SDL_Keymod mod_state = SDL_GetModState();
+                    terminal_selection_clear();
                     if ((mod_state & KMOD_ALT) != 0 && (mod_state & KMOD_CTRL) == 0) {
                         if (terminal_send_escape_prefix(master_fd) < 0) {
                             running = 0;
@@ -4417,27 +4959,17 @@ int main(int argc, char **argv) {
             cursor_last_toggle = now;
             cursor_phase_visible = cursor_phase_visible ? 0 : 1;
         }
-        size_t clamped_scroll_offset = buffer.scroll_offset;
-        if (clamped_scroll_offset > buffer.history_rows) {
-            clamped_scroll_offset = buffer.history_rows;
-        }
-        size_t total_available_rows = buffer.history_rows + buffer.rows;
-        size_t bottom_index = 0u;
-        if (total_available_rows > 0u) {
-            bottom_index = total_available_rows - 1u;
-            if (clamped_scroll_offset <= bottom_index) {
-                bottom_index -= clamped_scroll_offset;
-            } else {
-                bottom_index = 0u;
-            }
-        }
+        size_t clamped_scroll_offset = terminal_clamped_scroll_offset(&buffer);
         size_t top_index = 0u;
-        if (bottom_index + 1u > buffer.rows) {
-            top_index = bottom_index + 1u - buffer.rows;
-        }
+        size_t bottom_index = 0u;
+        terminal_visible_row_range(&buffer, &top_index, &bottom_index);
 
         size_t cursor_global_index = buffer.history_rows + buffer.cursor_row;
         int cursor_render_visible = (clamped_scroll_offset == 0u) && buffer.cursor_visible && cursor_phase_visible;
+
+        size_t selection_start = 0u;
+        size_t selection_end = 0u;
+        int selection_has_range = terminal_selection_linear_range(&buffer, &selection_start, &selection_end);
 
         uint8_t *framebuffer = terminal_framebuffer_pixels;
         int frame_width = terminal_framebuffer_width;
@@ -4517,6 +5049,12 @@ int main(int argc, char **argv) {
                 }
                 if ((style & TERMINAL_STYLE_BOLD) != 0u) {
                     fg = terminal_bold_variant(fg);
+                }
+
+                if (selection_has_range &&
+                    terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer.columns)) {
+                    fg = buffer.default_bg;
+                    bg = buffer.default_fg;
                 }
 
                 int is_cursor_cell = cursor_render_visible &&

@@ -87,6 +87,24 @@ static GLint terminal_uniform_output_size = -1;
 static GLint terminal_uniform_texture_size = -1;
 static GLint terminal_uniform_input_size = -1;
 static GLint terminal_uniform_texture_sampler = -1;
+static GLint terminal_uniform_crt_gamma = -1;
+static GLint terminal_uniform_monitor_gamma = -1;
+static GLint terminal_uniform_distance = -1;
+static GLint terminal_uniform_curvature = -1;
+static GLint terminal_uniform_radius = -1;
+static GLint terminal_uniform_corner_size = -1;
+static GLint terminal_uniform_corner_smooth = -1;
+static GLint terminal_uniform_x_tilt = -1;
+static GLint terminal_uniform_y_tilt = -1;
+static GLint terminal_uniform_overscan_x = -1;
+static GLint terminal_uniform_overscan_y = -1;
+static GLint terminal_uniform_dotmask = -1;
+static GLint terminal_uniform_sharper = -1;
+static GLint terminal_uniform_scanline_weight = -1;
+static GLint terminal_uniform_luminance = -1;
+static GLint terminal_uniform_interlace_detect = -1;
+static GLint terminal_uniform_saturation = -1;
+static GLint terminal_uniform_inv_gamma = -1;
 
 static GLint terminal_attrib_vertex = -1;
 static GLint terminal_attrib_color = -1;
@@ -637,11 +655,12 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     }
 
     const char *version_line = "#version 110\n";
+    const char *parameter_define = "#define PARAMETER_UNIFORM 1\n";
     const char *vertex_define = "#define VERTEX 1\n";
     const char *fragment_define = "#define FRAGMENT 1\n";
 
-    size_t vertex_length = strlen(version_line) + strlen(vertex_define) + shader_size;
-    size_t fragment_length = strlen(version_line) + strlen(fragment_define) + shader_size;
+    size_t vertex_length = strlen(version_line) + strlen(parameter_define) + strlen(vertex_define) + shader_size;
+    size_t fragment_length = strlen(version_line) + strlen(parameter_define) + strlen(fragment_define) + shader_size;
 
     char *vertex_source = malloc(vertex_length + 1u);
     char *fragment_source = malloc(fragment_length + 1u);
@@ -653,10 +672,12 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     }
 
     strcpy(vertex_source, version_line);
+    strcat(vertex_source, parameter_define);
     strcat(vertex_source, vertex_define);
     strcat(vertex_source, shader_source);
 
     strcpy(fragment_source, version_line);
+    strcat(fragment_source, parameter_define);
     strcat(fragment_source, fragment_define);
     strcat(fragment_source, shader_source);
 
@@ -720,10 +741,82 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     terminal_uniform_texture_size = glGetUniformLocation(program, "TextureSize");
     terminal_uniform_input_size = glGetUniformLocation(program, "InputSize");
     terminal_uniform_texture_sampler = glGetUniformLocation(program, "Texture");
+    terminal_uniform_crt_gamma = glGetUniformLocation(program, "CRTgamma");
+    terminal_uniform_monitor_gamma = glGetUniformLocation(program, "monitorgamma");
+    terminal_uniform_distance = glGetUniformLocation(program, "d");
+    terminal_uniform_curvature = glGetUniformLocation(program, "CURVATURE");
+    terminal_uniform_radius = glGetUniformLocation(program, "R");
+    terminal_uniform_corner_size = glGetUniformLocation(program, "cornersize");
+    terminal_uniform_corner_smooth = glGetUniformLocation(program, "cornersmooth");
+    terminal_uniform_x_tilt = glGetUniformLocation(program, "x_tilt");
+    terminal_uniform_y_tilt = glGetUniformLocation(program, "y_tilt");
+    terminal_uniform_overscan_x = glGetUniformLocation(program, "overscan_x");
+    terminal_uniform_overscan_y = glGetUniformLocation(program, "overscan_y");
+    terminal_uniform_dotmask = glGetUniformLocation(program, "DOTMASK");
+    terminal_uniform_sharper = glGetUniformLocation(program, "SHARPER");
+    terminal_uniform_scanline_weight = glGetUniformLocation(program, "scanline_weight");
+    terminal_uniform_luminance = glGetUniformLocation(program, "lum");
+    terminal_uniform_interlace_detect = glGetUniformLocation(program, "interlace_detect");
+    terminal_uniform_saturation = glGetUniformLocation(program, "SATURATION");
+    terminal_uniform_inv_gamma = glGetUniformLocation(program, "INV");
 
     glUseProgram(program);
     if (terminal_uniform_texture_sampler >= 0) {
         glUniform1i(terminal_uniform_texture_sampler, 0);
+    }
+    if (terminal_uniform_crt_gamma >= 0) {
+        glUniform1f(terminal_uniform_crt_gamma, 2.4f);
+    }
+    if (terminal_uniform_monitor_gamma >= 0) {
+        glUniform1f(terminal_uniform_monitor_gamma, 2.2f);
+    }
+    if (terminal_uniform_distance >= 0) {
+        glUniform1f(terminal_uniform_distance, 1.6f);
+    }
+    if (terminal_uniform_curvature >= 0) {
+        glUniform1f(terminal_uniform_curvature, 1.0f);
+    }
+    if (terminal_uniform_radius >= 0) {
+        glUniform1f(terminal_uniform_radius, 2.0f);
+    }
+    if (terminal_uniform_corner_size >= 0) {
+        glUniform1f(terminal_uniform_corner_size, 0.03f);
+    }
+    if (terminal_uniform_corner_smooth >= 0) {
+        glUniform1f(terminal_uniform_corner_smooth, 1000.0f);
+    }
+    if (terminal_uniform_x_tilt >= 0) {
+        glUniform1f(terminal_uniform_x_tilt, 0.0f);
+    }
+    if (terminal_uniform_y_tilt >= 0) {
+        glUniform1f(terminal_uniform_y_tilt, 0.0f);
+    }
+    if (terminal_uniform_overscan_x >= 0) {
+        glUniform1f(terminal_uniform_overscan_x, 100.0f);
+    }
+    if (terminal_uniform_overscan_y >= 0) {
+        glUniform1f(terminal_uniform_overscan_y, 100.0f);
+    }
+    if (terminal_uniform_dotmask >= 0) {
+        glUniform1f(terminal_uniform_dotmask, 0.3f);
+    }
+    if (terminal_uniform_sharper >= 0) {
+        glUniform1f(terminal_uniform_sharper, 1.0f);
+    }
+    if (terminal_uniform_scanline_weight >= 0) {
+        glUniform1f(terminal_uniform_scanline_weight, 0.3f);
+    }
+    if (terminal_uniform_luminance >= 0) {
+        glUniform1f(terminal_uniform_luminance, 0.0f);
+    }
+    if (terminal_uniform_interlace_detect >= 0) {
+        glUniform1f(terminal_uniform_interlace_detect, 1.0f);
+    }
+    if (terminal_uniform_saturation >= 0) {
+        glUniform1f(terminal_uniform_saturation, 1.0f);
+    }
+    if (terminal_uniform_inv_gamma >= 0) {
+        glUniform1f(terminal_uniform_inv_gamma, 1.0f);
     }
     glUseProgram(0);
 

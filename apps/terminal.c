@@ -148,6 +148,7 @@ struct terminal_sound_channel {
     size_t frame_count;
     size_t position;
     int active;
+    float volume;
 };
 
 static SDL_AudioDeviceID terminal_audio_device = 0;
@@ -161,7 +162,7 @@ static int terminal_initialize_audio(void);
 static void terminal_shutdown_audio(void);
 static int terminal_audio_convert(const SDL_AudioSpec *source_spec, const void *data, size_t length, float **out_samples, size_t *out_frames);
 static int terminal_audio_load_file(const char *path, float **out_samples, size_t *out_frames);
-static int terminal_sound_play(int channel_index, const char *path);
+static int terminal_sound_play(int channel_index, const char *path, float volume);
 static void terminal_sound_stop(int channel_index);
 #endif
 
@@ -217,6 +218,7 @@ static void terminal_audio_channel_clear(struct terminal_sound_channel *channel)
     channel->frame_count = 0u;
     channel->position = 0u;
     channel->active = 0;
+    channel->volume = 1.0f;
 }
 
 static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int len) {
@@ -275,7 +277,7 @@ static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int l
             for (int sample_channel = 0; sample_channel < channel_count; sample_channel++) {
                 size_t sample_index = output_offset + (size_t)sample_channel;
                 size_t input_index = input_offset + (size_t)sample_channel;
-                output[sample_index] += channel->samples[input_index];
+                output[sample_index] += channel->samples[input_index] * channel->volume;
             }
         }
 
@@ -564,7 +566,7 @@ static int terminal_audio_load_file(const char *path, float **out_samples, size_
     return -1;
 }
 
-static int terminal_sound_play(int channel_index, const char *path) {
+static int terminal_sound_play(int channel_index, const char *path, float volume) {
     if (channel_index < 0 || channel_index >= (int)TERMINAL_SOUND_CHANNEL_COUNT) {
         fprintf(stderr, "terminal: Sound channel %d out of range.\n", channel_index + 1);
         return -1;
@@ -596,6 +598,12 @@ static int terminal_sound_play(int channel_index, const char *path) {
     channel->frame_count = frames;
     channel->position = 0u;
     channel->active = 1;
+    if (volume < 0.0f) {
+        volume = 0.0f;
+    } else if (volume > 1.0f) {
+        volume = 1.0f;
+    }
+    channel->volume = volume;
 
     SDL_UnlockMutex(terminal_audio_mutex);
     return 0;
@@ -2779,6 +2787,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             char *sound_action = NULL;
             char *sound_path = NULL;
             int sound_channel = -1;
+            float sound_volume = 1.0f;
+            int sound_volume_set = 0;
 #endif
             while (token) {
                 char *value = strchr(token, '=');
@@ -2812,6 +2822,14 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         if (errno == 0 && endptr && *endptr == '\0' && parsed >= 1 && parsed <= TERMINAL_SOUND_CHANNEL_COUNT) {
                             sound_channel = (int)(parsed - 1);
                         }
+                    } else if (strcmp(key, "volume") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0 && parsed <= 100) {
+                            sound_volume = (float)parsed / 100.0f;
+                            sound_volume_set = 1;
+                        }
                     } else if (strcmp(key, "path") == 0 && value) {
                         sound_path = value;
 #endif
@@ -2824,7 +2842,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             if (sound_action) {
                 if (strcmp(sound_action, "play") == 0) {
                     if (sound_channel >= 0 && sound_path && sound_path[0] != '\0') {
-                        if (terminal_sound_play(sound_channel, sound_path) != 0) {
+                        float play_volume = sound_volume_set ? sound_volume : 1.0f;
+                        if (terminal_sound_play(sound_channel, sound_path, play_volume) != 0) {
                             fprintf(stderr, "terminal: Failed to play sound on channel %d.\n", sound_channel + 1);
                         }
                     } else {

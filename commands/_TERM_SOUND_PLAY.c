@@ -9,14 +9,17 @@
 
 #define TERMINAL_SOUND_MIN_CHANNEL 1L
 #define TERMINAL_SOUND_MAX_CHANNEL 32L
+#define TERMINAL_SOUND_MIN_VOLUME 0L
+#define TERMINAL_SOUND_MAX_VOLUME 100L
 
 static void print_usage(void) {
-    fprintf(stderr, "Usage: _TERM_SOUND_PLAY <channel> <audiofile>\n");
+    fprintf(stderr, "Usage: _TERM_SOUND_PLAY <channel> <audiofile> <volume>\n");
     fprintf(stderr, "  channel must be between %ld and %ld inclusive.\n", TERMINAL_SOUND_MIN_CHANNEL, TERMINAL_SOUND_MAX_CHANNEL);
+    fprintf(stderr, "  volume must be between %ld and %ld inclusive.\n", TERMINAL_SOUND_MIN_VOLUME, TERMINAL_SOUND_MAX_VOLUME);
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
+    if (argc != 4) {
         print_usage();
         return EXIT_FAILURE;
     }
@@ -46,7 +49,21 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (printf("\x1b]777;sound=play;channel=%ld;path=%s\a", channel, path) < 0) {
+    endptr = NULL;
+    errno = 0;
+    long volume = strtol(argv[3], &endptr, 10);
+    if (errno != 0 || !endptr || *endptr != '\0') {
+        fprintf(stderr, "_TERM_SOUND_PLAY: invalid volume '%s'\n", argv[3]);
+        print_usage();
+        return EXIT_FAILURE;
+    }
+
+    if (volume < TERMINAL_SOUND_MIN_VOLUME || volume > TERMINAL_SOUND_MAX_VOLUME) {
+        fprintf(stderr, "_TERM_SOUND_PLAY: volume must be between %ld and %ld.\n", TERMINAL_SOUND_MIN_VOLUME, TERMINAL_SOUND_MAX_VOLUME);
+        return EXIT_FAILURE;
+    }
+
+    if (printf("\x1b]777;sound=play;channel=%ld;path=%s;volume=%ld\a", channel, path, volume) < 0) {
         perror("_TERM_SOUND_PLAY: printf");
         return EXIT_FAILURE;
     }

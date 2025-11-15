@@ -30,10 +30,13 @@ PACKAGE_MANAGER="apt-get install -y"
 PACKAGES=(
     "gcc"               # Mandatory: commands: 'restart', 'build', etc.
     "build-essential"   # Mandatory: commands: 'restart', 'build', etc.
+    "pkg-config"        # Mandatory: terminal: SDL/OpenGL discovery via pkg-config
     "curl"              # Optional: apps: 'news' / nodes: gui_webui
     "git"               # Mandatory: general requirement
     "zip"               # Mandatory: commands: unpack, pack
     "libsdl2-dev"       # Mandatory: for sdl*.c based commands
+    "libgl1-mesa-dev"   # Mandatory: terminal: OpenGL runtime/linker support
+    "mesa-common-dev"   # Mandatory: terminal: OpenGL headers (gl.h, glext.h)
     "espeak"            # Optional: Speech assist
 )
 

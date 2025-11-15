@@ -78,6 +78,10 @@ static uint8_t *terminal_framebuffer_pixels = NULL;
 static size_t terminal_framebuffer_capacity = 0u;
 static int terminal_framebuffer_width = 0;
 static int terminal_framebuffer_height = 0;
+static GLuint terminal_gl_framebuffer = 0;
+static GLuint terminal_gl_intermediate_textures[2] = {0u, 0u};
+static int terminal_intermediate_width = 0;
+static int terminal_intermediate_height = 0;
 
 struct terminal_gl_shader {
     GLuint program;
@@ -130,6 +134,7 @@ static int terminal_initialize_gl_program(const char *shader_path);
 static void terminal_release_gl_resources(void);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
+static int terminal_prepare_intermediate_targets(int width, int height);
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
 static const char *terminal_skip_utf8_bom(const char *src, size_t *size);
@@ -1226,6 +1231,51 @@ static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int hei
     return 0;
 }
 
+static int terminal_prepare_intermediate_targets(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return -1;
+    }
+
+    if (terminal_gl_framebuffer == 0) {
+        glGenFramebuffers(1, &terminal_gl_framebuffer);
+    }
+    if (terminal_gl_framebuffer == 0) {
+        return -1;
+    }
+
+    int resized = 0;
+    for (size_t i = 0; i < 2; i++) {
+        if (terminal_gl_intermediate_textures[i] == 0) {
+            glGenTextures(1, &terminal_gl_intermediate_textures[i]);
+            if (terminal_gl_intermediate_textures[i] == 0) {
+                return -1;
+            }
+            resized = 1;
+        }
+    }
+
+    if (width != terminal_intermediate_width || height != terminal_intermediate_height) {
+        resized = 1;
+    }
+
+    if (resized) {
+        for (size_t i = 0; i < 2; i++) {
+            glBindTexture(GL_TEXTURE_2D, terminal_gl_intermediate_textures[i]);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        }
+        glBindTexture(GL_TEXTURE_2D, 0);
+        terminal_intermediate_width = width;
+        terminal_intermediate_height = height;
+    }
+
+    return 0;
+}
+
 static void terminal_release_gl_resources(void) {
     if (terminal_gl_texture != 0) {
         glDeleteTextures(1, &terminal_gl_texture);
@@ -1241,6 +1291,20 @@ static void terminal_release_gl_resources(void) {
         terminal_gl_shaders = NULL;
         terminal_gl_shader_count = 0u;
     }
+    if (terminal_gl_intermediate_textures[0] != 0) {
+        glDeleteTextures(1, &terminal_gl_intermediate_textures[0]);
+        terminal_gl_intermediate_textures[0] = 0;
+    }
+    if (terminal_gl_intermediate_textures[1] != 0) {
+        glDeleteTextures(1, &terminal_gl_intermediate_textures[1]);
+        terminal_gl_intermediate_textures[1] = 0;
+    }
+    if (terminal_gl_framebuffer != 0) {
+        glDeleteFramebuffers(1, &terminal_gl_framebuffer);
+        terminal_gl_framebuffer = 0;
+    }
+    terminal_intermediate_width = 0;
+    terminal_intermediate_height = 0;
     free(terminal_framebuffer_pixels);
     terminal_framebuffer_pixels = NULL;
     terminal_framebuffer_capacity = 0u;
@@ -3388,10 +3452,49 @@ int main(int argc, char **argv) {
             static int frame_counter = 0;
             int frame_value = frame_counter++;
 
+            GLuint source_texture = terminal_gl_texture;
+            GLfloat source_texture_width = (GLfloat)terminal_texture_width;
+            GLfloat source_texture_height = (GLfloat)terminal_texture_height;
+            GLfloat source_input_width = (GLfloat)frame_width;
+            GLfloat source_input_height = (GLfloat)frame_height;
+            int multipass_failed = 0;
+
             for (size_t shader_index = 0; shader_index < terminal_gl_shader_count; shader_index++) {
                 const struct terminal_gl_shader *shader = &terminal_gl_shaders[shader_index];
                 if (!shader || shader->program == 0) {
                     continue;
+                }
+
+                int last_pass = (shader_index + 1u == terminal_gl_shader_count);
+                GLuint target_texture = 0;
+                int using_intermediate = 0;
+
+                if (!last_pass) {
+                    if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) != 0) {
+                        fprintf(stderr, "Failed to prepare intermediate render targets; skipping remaining shader passes.\n");
+                        multipass_failed = 1;
+                        last_pass = 1;
+                    } else {
+                        target_texture = terminal_gl_intermediate_textures[shader_index % 2u];
+                        glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
+                        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target_texture, 0);
+                        GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+                        if (status != GL_FRAMEBUFFER_COMPLETE) {
+                            fprintf(stderr, "Framebuffer incomplete (0x%04x); skipping remaining shader passes.\n", (unsigned int)status);
+                            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                            multipass_failed = 1;
+                            last_pass = 1;
+                        } else {
+                            using_intermediate = 1;
+                            glViewport(0, 0, drawable_width, drawable_height);
+                            glClear(GL_COLOR_BUFFER_BIT);
+                        }
+                    }
+                }
+
+                if (last_pass && !using_intermediate) {
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    glViewport(0, 0, drawable_width, drawable_height);
                 }
 
                 glUseProgram(shader->program);
@@ -3409,17 +3512,17 @@ int main(int argc, char **argv) {
                     glUniform2f(shader->uniform_output_size, (GLfloat)drawable_width, (GLfloat)drawable_height);
                 }
                 if (shader->uniform_texture_size >= 0) {
-                    glUniform2f(shader->uniform_texture_size, (GLfloat)terminal_texture_width, (GLfloat)terminal_texture_height);
+                    glUniform2f(shader->uniform_texture_size, source_texture_width, source_texture_height);
                 }
                 if (shader->uniform_input_size >= 0) {
-                    glUniform2f(shader->uniform_input_size, (GLfloat)frame_width, (GLfloat)frame_height);
+                    glUniform2f(shader->uniform_input_size, source_input_width, source_input_height);
                 }
                 if (shader->uniform_texture_sampler >= 0) {
                     glUniform1i(shader->uniform_texture_sampler, 0);
                 }
 
                 glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+                glBindTexture(GL_TEXTURE_2D, source_texture);
 
                 if (shader->attrib_vertex >= 0) {
                     glEnableVertexAttribArray((GLuint)shader->attrib_vertex);
@@ -3445,7 +3548,21 @@ int main(int argc, char **argv) {
 
                 glBindTexture(GL_TEXTURE_2D, 0);
                 glUseProgram(0);
+
+                if (using_intermediate) {
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    source_texture = target_texture;
+                    source_texture_width = (GLfloat)drawable_width;
+                    source_texture_height = (GLfloat)drawable_height;
+                    source_input_width = (GLfloat)drawable_width;
+                    source_input_height = (GLfloat)drawable_height;
+                }
+
+                if (multipass_failed) {
+                    break;
+                }
             }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
         } else {
             glMatrixMode(GL_PROJECTION);
             glLoadIdentity();

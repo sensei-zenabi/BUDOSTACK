@@ -76,7 +76,23 @@ static int terminal_logical_width = 0;
 static int terminal_logical_height = 0;
 static int terminal_scale_factor = 1;
 static int terminal_margin_pixels = 0;
-static struct terminal_selection terminal_selection_state = {0};
+struct terminal_selection {
+    size_t anchor_row;
+    size_t anchor_column;
+    size_t focus_row;
+    size_t focus_column;
+    int active;
+    int selecting;
+};
+
+struct terminal_selection_range {
+    size_t start_row;
+    size_t start_column;
+    size_t end_row;
+    size_t end_column;
+};
+
+static struct terminal_selection terminal_selection_state;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -695,22 +711,6 @@ struct terminal_buffer {
     size_t history_start;
     size_t scroll_offset;
     uint32_t palette[256];
-};
-
-struct terminal_selection {
-    size_t anchor_row;
-    size_t anchor_column;
-    size_t focus_row;
-    size_t focus_column;
-    int active;
-    int selecting;
-};
-
-struct terminal_selection_range {
-    size_t start_row;
-    size_t start_column;
-    size_t end_row;
-    size_t end_column;
 };
 
 struct terminal_viewport_info {
@@ -4966,7 +4966,6 @@ int main(int argc, char **argv) {
         struct terminal_viewport_info viewport;
         terminal_compute_viewport(&buffer, &viewport);
         size_t clamped_scroll_offset = viewport.clamped_scroll;
-        size_t bottom_index = viewport.bottom_index;
         size_t top_index = viewport.top_index;
 
         size_t cursor_global_index = buffer.history_rows + buffer.cursor_row;

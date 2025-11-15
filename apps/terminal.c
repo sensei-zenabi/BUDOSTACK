@@ -69,7 +69,6 @@ static int terminal_logical_width = 0;
 static int terminal_logical_height = 0;
 static int terminal_scale_factor = 1;
 
-static GLuint terminal_gl_program = 0;
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
 static int terminal_texture_height = 0;
@@ -80,35 +79,46 @@ static size_t terminal_framebuffer_capacity = 0u;
 static int terminal_framebuffer_width = 0;
 static int terminal_framebuffer_height = 0;
 
-static GLint terminal_uniform_mvp = -1;
-static GLint terminal_uniform_frame_direction = -1;
-static GLint terminal_uniform_frame_count = -1;
-static GLint terminal_uniform_output_size = -1;
-static GLint terminal_uniform_texture_size = -1;
-static GLint terminal_uniform_input_size = -1;
-static GLint terminal_uniform_texture_sampler = -1;
-static GLint terminal_uniform_crt_gamma = -1;
-static GLint terminal_uniform_monitor_gamma = -1;
-static GLint terminal_uniform_distance = -1;
-static GLint terminal_uniform_curvature = -1;
-static GLint terminal_uniform_radius = -1;
-static GLint terminal_uniform_corner_size = -1;
-static GLint terminal_uniform_corner_smooth = -1;
-static GLint terminal_uniform_x_tilt = -1;
-static GLint terminal_uniform_y_tilt = -1;
-static GLint terminal_uniform_overscan_x = -1;
-static GLint terminal_uniform_overscan_y = -1;
-static GLint terminal_uniform_dotmask = -1;
-static GLint terminal_uniform_sharper = -1;
-static GLint terminal_uniform_scanline_weight = -1;
-static GLint terminal_uniform_luminance = -1;
-static GLint terminal_uniform_interlace_detect = -1;
-static GLint terminal_uniform_saturation = -1;
-static GLint terminal_uniform_inv_gamma = -1;
+struct terminal_shader_pass {
+    GLuint program;
+    GLint attrib_vertex;
+    GLint attrib_color;
+    GLint attrib_texcoord;
+    GLint uniform_mvp;
+    GLint uniform_frame_direction;
+    GLint uniform_frame_count;
+    GLint uniform_output_size;
+    GLint uniform_texture_size;
+    GLint uniform_input_size;
+    GLint uniform_texture_sampler;
+    GLint uniform_crt_gamma;
+    GLint uniform_monitor_gamma;
+    GLint uniform_distance;
+    GLint uniform_curvature;
+    GLint uniform_radius;
+    GLint uniform_corner_size;
+    GLint uniform_corner_smooth;
+    GLint uniform_x_tilt;
+    GLint uniform_y_tilt;
+    GLint uniform_overscan_x;
+    GLint uniform_overscan_y;
+    GLint uniform_dotmask;
+    GLint uniform_sharper;
+    GLint uniform_scanline_weight;
+    GLint uniform_luminance;
+    GLint uniform_interlace_detect;
+    GLint uniform_saturation;
+    GLint uniform_inv_gamma;
+};
 
-static GLint terminal_attrib_vertex = -1;
-static GLint terminal_attrib_color = -1;
-static GLint terminal_attrib_texcoord = -1;
+static struct terminal_shader_pass *terminal_shader_passes = NULL;
+static size_t terminal_shader_pass_count = 0u;
+
+static GLuint terminal_pingpong_fbo = 0;
+static GLuint terminal_pingpong_textures[2] = {0u, 0u};
+static int terminal_pingpong_width = 0;
+static int terminal_pingpong_height = 0;
+static int terminal_shader_frame_counter = 0;
 
 struct psf_font {
     uint32_t glyph_count;
@@ -122,12 +132,386 @@ struct psf_font {
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);
 static int terminal_send_string(int fd, const char *str);
-static int terminal_initialize_gl_program(const char *shader_path);
-static void terminal_release_gl_resources(void);
+static int terminal_initialize_gl_program(const char *shader_path, struct terminal_shader_pass *out_pass) {
+    if (!shader_path || !out_pass) {
+        return -1;
+    }
+
+    struct terminal_shader_pass pass;
+    memset(&pass, 0, sizeof(pass));
+    pass.program = 0;
+    pass.attrib_vertex = -1;
+    pass.attrib_color = -1;
+    pass.attrib_texcoord = -1;
+    pass.uniform_mvp = -1;
+    pass.uniform_frame_direction = -1;
+    pass.uniform_frame_count = -1;
+    pass.uniform_output_size = -1;
+    pass.uniform_texture_size = -1;
+    pass.uniform_input_size = -1;
+    pass.uniform_texture_sampler = -1;
+    pass.uniform_crt_gamma = -1;
+    pass.uniform_monitor_gamma = -1;
+    pass.uniform_distance = -1;
+    pass.uniform_curvature = -1;
+    pass.uniform_radius = -1;
+    pass.uniform_corner_size = -1;
+    pass.uniform_corner_smooth = -1;
+    pass.uniform_x_tilt = -1;
+    pass.uniform_y_tilt = -1;
+    pass.uniform_overscan_x = -1;
+    pass.uniform_overscan_y = -1;
+    pass.uniform_dotmask = -1;
+    pass.uniform_sharper = -1;
+    pass.uniform_scanline_weight = -1;
+    pass.uniform_luminance = -1;
+    pass.uniform_interlace_detect = -1;
+    pass.uniform_saturation = -1;
+    pass.uniform_inv_gamma = -1;
+
+    size_t shader_size = 0u;
+    char *shader_source = terminal_read_text_file(shader_path, &shader_size);
+    if (!shader_source) {
+        fprintf(stderr, "Failed to read shader from %s\n", shader_path);
+        return -1;
+    }
+
+    const char *version_line = "#version 110\n";
+    const char *parameter_define = "#define PARAMETER_UNIFORM 1\n";
+    const char *vertex_define = "#define VERTEX 1\n";
+    const char *fragment_define = "#define FRAGMENT 1\n";
+
+    size_t parameter_len = strlen(parameter_define);
+    size_t vertex_define_len = strlen(vertex_define);
+    size_t fragment_define_len = strlen(fragment_define);
+    size_t version_line_len = strlen(version_line);
+
+    size_t content_size = shader_size;
+    const char *content_start = terminal_skip_utf8_bom(shader_source, &content_size);
+    const char *content_end = content_start + content_size;
+
+    struct terminal_shader_parameter *parameters = NULL;
+    size_t parameter_count = 0u;
+    if (terminal_parse_shader_parameters(content_start, content_size, &parameters, &parameter_count) != 0) {
+        free(shader_source);
+        return -1;
+    }
+
+    const char *version_start = NULL;
+    const char *version_end = NULL;
+    const char *scan = terminal_skip_leading_space_and_comments(content_start, content_end);
+    if (scan < content_end) {
+        size_t remaining = (size_t)(content_end - scan);
+        if (remaining >= 8u && strncmp(scan, "#version", 8) == 0) {
+            if (remaining == 8u || isspace((unsigned char)scan[8])) {
+                version_start = scan;
+                version_end = scan;
+                while (version_end < content_end && *version_end != '\n') {
+                    version_end++;
+                }
+                if (version_end < content_end) {
+                    version_end++;
+                }
+            }
+        }
+    }
+
+    const char *version_prefix = version_line;
+    size_t version_prefix_len = version_line_len;
+    const char *shader_body = content_start;
+    size_t shader_body_len = content_size;
+
+    if (version_start && version_end) {
+        version_prefix = content_start;
+        version_prefix_len = (size_t)(version_end - content_start);
+        shader_body = version_end;
+        shader_body_len = (size_t)(content_end - version_end);
+    }
+
+    size_t newline_len = 0u;
+    if (version_prefix_len > 0u) {
+        char last_char = version_prefix[version_prefix_len - 1u];
+        if (last_char != '\n' && last_char != '\r') {
+            newline_len = 1u;
+        }
+    }
+
+    size_t vertex_length = version_prefix_len + newline_len + parameter_len + vertex_define_len + shader_body_len;
+    size_t fragment_length = version_prefix_len + newline_len + parameter_len + fragment_define_len + shader_body_len;
+
+    char *vertex_source = malloc(vertex_length + 1u);
+    char *fragment_source = malloc(fragment_length + 1u);
+    if (!vertex_source || !fragment_source) {
+        free(shader_source);
+        free(vertex_source);
+        free(fragment_source);
+        terminal_free_shader_parameters(parameters, parameter_count);
+        return -1;
+    }
+
+    size_t offset = 0u;
+    memcpy(vertex_source + offset, version_prefix, version_prefix_len);
+    offset += version_prefix_len;
+    if (newline_len > 0u) {
+        vertex_source[offset++] = '\n';
+    }
+    memcpy(vertex_source + offset, parameter_define, parameter_len);
+    offset += parameter_len;
+    memcpy(vertex_source + offset, vertex_define, vertex_define_len);
+    offset += vertex_define_len;
+    memcpy(vertex_source + offset, shader_body, shader_body_len);
+    offset += shader_body_len;
+    vertex_source[offset] = '\0';
+
+    offset = 0u;
+    memcpy(fragment_source + offset, version_prefix, version_prefix_len);
+    offset += version_prefix_len;
+    if (newline_len > 0u) {
+        fragment_source[offset++] = '\n';
+    }
+    memcpy(fragment_source + offset, parameter_define, parameter_len);
+    offset += parameter_len;
+    memcpy(fragment_source + offset, fragment_define, fragment_define_len);
+    offset += fragment_define_len;
+    memcpy(fragment_source + offset, shader_body, shader_body_len);
+    offset += shader_body_len;
+    fragment_source[offset] = '\0';
+
+    GLuint vertex_shader = terminal_compile_shader(GL_VERTEX_SHADER, vertex_source, "vertex");
+    GLuint fragment_shader = terminal_compile_shader(GL_FRAGMENT_SHADER, fragment_source, "fragment");
+    free(vertex_source);
+    free(fragment_source);
+
+    if (vertex_shader == 0 || fragment_shader == 0) {
+        if (vertex_shader != 0) {
+            glDeleteShader(vertex_shader);
+        }
+        if (fragment_shader != 0) {
+            glDeleteShader(fragment_shader);
+        }
+        free(shader_source);
+        terminal_free_shader_parameters(parameters, parameter_count);
+        return -1;
+    }
+
+    GLuint program = glCreateProgram();
+    if (program == 0) {
+        glDeleteShader(vertex_shader);
+        glDeleteShader(fragment_shader);
+        free(shader_source);
+        terminal_free_shader_parameters(parameters, parameter_count);
+        return -1;
+    }
+
+    glAttachShader(program, vertex_shader);
+    glAttachShader(program, fragment_shader);
+    glLinkProgram(program);
+
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    GLint link_status = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &link_status);
+    if (link_status != GL_TRUE) {
+        GLint log_length = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
+        if (log_length > 1) {
+            char *log = malloc((size_t)log_length);
+            if (log) {
+                glGetProgramInfoLog(program, log_length, NULL, log);
+                fprintf(stderr, "Failed to link shader program: %s\n", log);
+                free(log);
+            }
+        }
+        glDeleteProgram(program);
+        terminal_free_shader_parameters(parameters, parameter_count);
+        return -1;
+    }
+
+    pass.program = program;
+    pass.attrib_vertex = glGetAttribLocation(program, "VertexCoord");
+    pass.attrib_color = glGetAttribLocation(program, "COLOR");
+    pass.attrib_texcoord = glGetAttribLocation(program, "TexCoord");
+
+    pass.uniform_mvp = glGetUniformLocation(program, "MVPMatrix");
+    pass.uniform_frame_direction = glGetUniformLocation(program, "FrameDirection");
+    pass.uniform_frame_count = glGetUniformLocation(program, "FrameCount");
+    pass.uniform_output_size = glGetUniformLocation(program, "OutputSize");
+    pass.uniform_texture_size = glGetUniformLocation(program, "TextureSize");
+    pass.uniform_input_size = glGetUniformLocation(program, "InputSize");
+    pass.uniform_texture_sampler = glGetUniformLocation(program, "Texture");
+    pass.uniform_crt_gamma = glGetUniformLocation(program, "CRTgamma");
+    pass.uniform_monitor_gamma = glGetUniformLocation(program, "monitorgamma");
+    pass.uniform_distance = glGetUniformLocation(program, "d");
+    pass.uniform_curvature = glGetUniformLocation(program, "CURVATURE");
+    pass.uniform_radius = glGetUniformLocation(program, "R");
+    pass.uniform_corner_size = glGetUniformLocation(program, "cornersize");
+    pass.uniform_corner_smooth = glGetUniformLocation(program, "cornersmooth");
+    pass.uniform_x_tilt = glGetUniformLocation(program, "x_tilt");
+    pass.uniform_y_tilt = glGetUniformLocation(program, "y_tilt");
+    pass.uniform_overscan_x = glGetUniformLocation(program, "overscan_x");
+    pass.uniform_overscan_y = glGetUniformLocation(program, "overscan_y");
+    pass.uniform_dotmask = glGetUniformLocation(program, "DOTMASK");
+    pass.uniform_sharper = glGetUniformLocation(program, "SHARPER");
+    pass.uniform_scanline_weight = glGetUniformLocation(program, "scanline_weight");
+    pass.uniform_luminance = glGetUniformLocation(program, "lum");
+    pass.uniform_interlace_detect = glGetUniformLocation(program, "interlace_detect");
+    pass.uniform_saturation = glGetUniformLocation(program, "SATURATION");
+    pass.uniform_inv_gamma = glGetUniformLocation(program, "INV");
+
+    glUseProgram(program);
+    if (pass.uniform_texture_sampler >= 0) {
+        glUniform1i(pass.uniform_texture_sampler, 0);
+    }
+
+    for (size_t i = 0; i < parameter_count; i++) {
+        if (!parameters[i].name) {
+            continue;
+        }
+        GLint location = glGetUniformLocation(program, parameters[i].name);
+        if (location >= 0) {
+            glUniform1f(location, parameters[i].default_value);
+        }
+    }
+
+    if (pass.uniform_crt_gamma >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "CRTgamma", 2.4f);
+        glUniform1f(pass.uniform_crt_gamma, value);
+    }
+    if (pass.uniform_monitor_gamma >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "monitorgamma", 2.2f);
+        glUniform1f(pass.uniform_monitor_gamma, value);
+    }
+    if (pass.uniform_distance >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "d", 1.6f);
+        glUniform1f(pass.uniform_distance, value);
+    }
+    if (pass.uniform_curvature >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "CURVATURE", 1.0f);
+        glUniform1f(pass.uniform_curvature, value);
+    }
+    if (pass.uniform_radius >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "R", 2.0f);
+        glUniform1f(pass.uniform_radius, value);
+    }
+    if (pass.uniform_corner_size >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "cornersize", 0.03f);
+        glUniform1f(pass.uniform_corner_size, value);
+    }
+    if (pass.uniform_corner_smooth >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "cornersmooth", 1000.0f);
+        glUniform1f(pass.uniform_corner_smooth, value);
+    }
+    if (pass.uniform_x_tilt >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "x_tilt", 0.0f);
+        glUniform1f(pass.uniform_x_tilt, value);
+    }
+    if (pass.uniform_y_tilt >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "y_tilt", 0.0f);
+        glUniform1f(pass.uniform_y_tilt, value);
+    }
+    if (pass.uniform_overscan_x >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "overscan_x", 100.0f);
+        glUniform1f(pass.uniform_overscan_x, value);
+    }
+    if (pass.uniform_overscan_y >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "overscan_y", 100.0f);
+        glUniform1f(pass.uniform_overscan_y, value);
+    }
+    if (pass.uniform_dotmask >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "DOTMASK", 0.3f);
+        glUniform1f(pass.uniform_dotmask, value);
+    }
+    if (pass.uniform_sharper >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "SHARPER", 1.0f);
+        glUniform1f(pass.uniform_sharper, value);
+    }
+    if (pass.uniform_scanline_weight >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "scanline_weight", 0.3f);
+        glUniform1f(pass.uniform_scanline_weight, value);
+    }
+    if (pass.uniform_luminance >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "lum", 0.0f);
+        glUniform1f(pass.uniform_luminance, value);
+    }
+    if (pass.uniform_interlace_detect >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "interlace_detect", 1.0f);
+        glUniform1f(pass.uniform_interlace_detect, value);
+    }
+    if (pass.uniform_saturation >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "SATURATION", 1.0f);
+        glUniform1f(pass.uniform_saturation, value);
+    }
+    if (pass.uniform_inv_gamma >= 0) {
+        float value = terminal_get_parameter_default(parameters, parameter_count, "INV", 1.0f);
+        glUniform1f(pass.uniform_inv_gamma, value);
+    }
+    glUseProgram(0);
+
+    terminal_free_shader_parameters(parameters, parameter_count);
+    *out_pass = pass;
+    return 0;
+}
+
+static void terminal_release_shader_passes(void) {
+    if (!terminal_shader_passes) {
+        terminal_shader_pass_count = 0u;
+        return;
+    }
+    for (size_t i = 0; i < terminal_shader_pass_count; i++) {
+        if (terminal_shader_passes[i].program != 0) {
+            glDeleteProgram(terminal_shader_passes[i].program);
+            terminal_shader_passes[i].program = 0;
+        }
+    }
+    free(terminal_shader_passes);
+    terminal_shader_passes = NULL;
+    terminal_shader_pass_count = 0u;
+}
+
+static int terminal_load_shader_passes(char **paths, size_t count) {
+    terminal_release_shader_passes();
+    if (!paths || count == 0u) {
+        return 0;
+    }
+
+    struct terminal_shader_pass *passes = calloc(count, sizeof(*passes));
+    if (!passes) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        if (terminal_initialize_gl_program(paths[i], &passes[i]) != 0) {
+            for (size_t j = 0; j < i; j++) {
+                if (passes[j].program != 0) {
+                    glDeleteProgram(passes[j].program);
+                }
+            }
+            free(passes);
+            return -1;
+        }
+    }
+
+    terminal_shader_passes = passes;
+    terminal_shader_pass_count = count;
+    return 0;
+}
+
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
+static int terminal_ensure_postprocess_targets(int width, int height);
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
+static const char *terminal_skip_utf8_bom(const char *src, size_t *size);
+static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end);
+struct terminal_shader_parameter {
+    char *name;
+    float default_value;
+};
+static void terminal_free_shader_parameters(struct terminal_shader_parameter *params, size_t count);
+static void terminal_free_shader_path_list(char **paths, size_t count);
+static int terminal_parse_shader_parameters(const char *source, size_t length, struct terminal_shader_parameter **out_params, size_t *out_count);
+static float terminal_get_parameter_default(const struct terminal_shader_parameter *params, size_t count, const char *name, float fallback);
 static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label);
 static void terminal_print_usage(const char *progname);
 
@@ -614,6 +998,223 @@ static char *terminal_read_text_file(const char *path, size_t *out_size) {
     return buffer;
 }
 
+static const char *terminal_skip_utf8_bom(const char *src, size_t *size) {
+    if (!src || !size) {
+        return src;
+    }
+    if (*size >= 3u) {
+        const unsigned char *bytes = (const unsigned char *)src;
+        if (bytes[0] == 0xEFu && bytes[1] == 0xBBu && bytes[2] == 0xBFu) {
+            *size -= 3u;
+            return src + 3;
+        }
+    }
+    return src;
+}
+
+static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end) {
+    const char *ptr = src;
+    while (ptr < end) {
+        while (ptr < end && isspace((unsigned char)*ptr)) {
+            ptr++;
+        }
+        if ((end - ptr) >= 2 && ptr[0] == '/' && ptr[1] == '/') {
+            ptr += 2;
+            while (ptr < end && *ptr != '\n') {
+                ptr++;
+            }
+            continue;
+        }
+        if ((end - ptr) >= 2 && ptr[0] == '/' && ptr[1] == '*') {
+            ptr += 2;
+            while ((end - ptr) >= 2 && !(ptr[0] == '*' && ptr[1] == '/')) {
+                ptr++;
+            }
+            if ((end - ptr) >= 2) {
+                ptr += 2;
+            }
+            continue;
+        }
+        break;
+    }
+    return ptr;
+}
+
+static void terminal_free_shader_parameters(struct terminal_shader_parameter *params, size_t count) {
+    if (!params) {
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        free(params[i].name);
+    }
+    free(params);
+}
+
+static void terminal_free_shader_path_list(char **paths, size_t count) {
+    if (!paths) {
+        return;
+    }
+    for (size_t i = 0; i < count; i++) {
+        free(paths[i]);
+    }
+    free(paths);
+}
+
+static int terminal_parse_shader_parameters(const char *source, size_t length, struct terminal_shader_parameter **out_params, size_t *out_count) {
+    if (!out_params || !out_count) {
+        return -1;
+    }
+    *out_params = NULL;
+    *out_count = 0u;
+    if (!source || length == 0u) {
+        return 0;
+    }
+
+    struct terminal_shader_parameter *params = NULL;
+    size_t count = 0u;
+    size_t capacity = 0u;
+    const char *ptr = source;
+    const char *end = source + length;
+
+    while (ptr < end) {
+        const char *line_start = ptr;
+        const char *line_end = line_start;
+        while (line_end < end && line_end[0] != '\n' && line_end[0] != '\r') {
+            line_end++;
+        }
+
+        const char *cursor = line_start;
+        while (cursor < line_end && (*cursor == ' ' || *cursor == '\t')) {
+            cursor++;
+        }
+
+        if ((size_t)(line_end - cursor) >= 7u && strncmp(cursor, "#pragma", 7) == 0) {
+            cursor += 7;
+            while (cursor < line_end && isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+
+            const char keyword[] = "parameter";
+            size_t keyword_len = sizeof(keyword) - 1u;
+            if ((size_t)(line_end - cursor) >= keyword_len && strncmp(cursor, keyword, keyword_len) == 0) {
+                const char *after_keyword = cursor + keyword_len;
+                if (after_keyword < line_end && !isspace((unsigned char)*after_keyword)) {
+                    /* Likely parameteri or another pragma, ignore. */
+                } else {
+                    cursor = after_keyword;
+                    while (cursor < line_end && isspace((unsigned char)*cursor)) {
+                        cursor++;
+                    }
+
+                    const char *name_start = cursor;
+                    while (cursor < line_end && (isalnum((unsigned char)*cursor) || *cursor == '_')) {
+                        cursor++;
+                    }
+                    const char *name_end = cursor;
+                    if (name_end > name_start) {
+                        size_t name_len = (size_t)(name_end - name_start);
+                        while (cursor < line_end && isspace((unsigned char)*cursor)) {
+                            cursor++;
+                        }
+                        if (cursor < line_end && *cursor == '"') {
+                            cursor++;
+                            while (cursor < line_end && *cursor != '"') {
+                                cursor++;
+                            }
+                            if (cursor < line_end && *cursor == '"') {
+                                cursor++;
+                                while (cursor < line_end && isspace((unsigned char)*cursor)) {
+                                    cursor++;
+                                }
+                                if (cursor < line_end) {
+                                    const char *value_start = cursor;
+                                    while (cursor < line_end && !isspace((unsigned char)*cursor)) {
+                                        cursor++;
+                                    }
+                                    size_t value_len = (size_t)(cursor - value_start);
+                                    if (value_len > 0u) {
+                                        char stack_buffer[64];
+                                        char *value_str = stack_buffer;
+                                        char *heap_buffer = NULL;
+                                        if (value_len >= sizeof(stack_buffer)) {
+                                            heap_buffer = malloc(value_len + 1u);
+                                            if (!heap_buffer) {
+                                                terminal_free_shader_parameters(params, count);
+                                                return -1;
+                                            }
+                                            value_str = heap_buffer;
+                                        }
+                                        memcpy(value_str, value_start, value_len);
+                                        value_str[value_len] = '\0';
+
+                                        errno = 0;
+                                        char *endptr = NULL;
+                                        double parsed = strtod(value_str, &endptr);
+                                        if (endptr != value_str && errno != ERANGE) {
+                                            char *name_copy = malloc(name_len + 1u);
+                                            if (!name_copy) {
+                                                free(heap_buffer);
+                                                terminal_free_shader_parameters(params, count);
+                                                return -1;
+                                            }
+                                            memcpy(name_copy, name_start, name_len);
+                                            name_copy[name_len] = '\0';
+
+                                            if (count == capacity) {
+                                                size_t new_capacity = capacity == 0u ? 4u : capacity * 2u;
+                                                struct terminal_shader_parameter *new_params = realloc(params, new_capacity * sizeof(*new_params));
+                                                if (!new_params) {
+                                                    free(name_copy);
+                                                    free(heap_buffer);
+                                                    terminal_free_shader_parameters(params, count);
+                                                    return -1;
+                                                }
+                                                params = new_params;
+                                                capacity = new_capacity;
+                                            }
+
+                                            params[count].name = name_copy;
+                                            params[count].default_value = (float)parsed;
+                                            count++;
+                                        }
+                                        free(heap_buffer);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        ptr = line_end;
+        while (ptr < end && (*ptr == '\n' || *ptr == '\r')) {
+            ptr++;
+        }
+    }
+
+    if (count == 0u) {
+        free(params);
+        params = NULL;
+    }
+
+    *out_params = params;
+    *out_count = count;
+    return 0;
+}
+
+static float terminal_get_parameter_default(const struct terminal_shader_parameter *params, size_t count, const char *name, float fallback) {
+    if (!params || !name) {
+        return fallback;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (params[i].name && strcmp(params[i].name, name) == 0) {
+            return params[i].default_value;
+        }
+    }
+    return fallback;
+}
+
 static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label) {
     GLuint shader = glCreateShader(type);
     if (shader == 0) {
@@ -641,187 +1242,6 @@ static GLuint terminal_compile_shader(GLenum type, const char *source, const cha
     }
 
     return shader;
-}
-
-static int terminal_initialize_gl_program(const char *shader_path) {
-    if (!shader_path) {
-        return -1;
-    }
-
-    size_t shader_size = 0u;
-    char *shader_source = terminal_read_text_file(shader_path, &shader_size);
-    if (!shader_source) {
-        fprintf(stderr, "Failed to read shader from %s\n", shader_path);
-        return -1;
-    }
-
-    const char *version_line = "#version 110\n";
-    const char *parameter_define = "#define PARAMETER_UNIFORM 1\n";
-    const char *vertex_define = "#define VERTEX 1\n";
-    const char *fragment_define = "#define FRAGMENT 1\n";
-
-    size_t vertex_length = strlen(version_line) + strlen(parameter_define) + strlen(vertex_define) + shader_size;
-    size_t fragment_length = strlen(version_line) + strlen(parameter_define) + strlen(fragment_define) + shader_size;
-
-    char *vertex_source = malloc(vertex_length + 1u);
-    char *fragment_source = malloc(fragment_length + 1u);
-    if (!vertex_source || !fragment_source) {
-        free(shader_source);
-        free(vertex_source);
-        free(fragment_source);
-        return -1;
-    }
-
-    strcpy(vertex_source, version_line);
-    strcat(vertex_source, parameter_define);
-    strcat(vertex_source, vertex_define);
-    strcat(vertex_source, shader_source);
-
-    strcpy(fragment_source, version_line);
-    strcat(fragment_source, parameter_define);
-    strcat(fragment_source, fragment_define);
-    strcat(fragment_source, shader_source);
-
-    GLuint vertex_shader = terminal_compile_shader(GL_VERTEX_SHADER, vertex_source, "vertex");
-    GLuint fragment_shader = terminal_compile_shader(GL_FRAGMENT_SHADER, fragment_source, "fragment");
-
-    free(shader_source);
-    free(vertex_source);
-    free(fragment_source);
-
-    if (vertex_shader == 0 || fragment_shader == 0) {
-        if (vertex_shader != 0) {
-            glDeleteShader(vertex_shader);
-        }
-        if (fragment_shader != 0) {
-            glDeleteShader(fragment_shader);
-        }
-        return -1;
-    }
-
-    GLuint program = glCreateProgram();
-    if (program == 0) {
-        glDeleteShader(vertex_shader);
-        glDeleteShader(fragment_shader);
-        return -1;
-    }
-
-    glAttachShader(program, vertex_shader);
-    glAttachShader(program, fragment_shader);
-    glLinkProgram(program);
-
-    glDeleteShader(vertex_shader);
-    glDeleteShader(fragment_shader);
-
-    GLint link_status = 0;
-    glGetProgramiv(program, GL_LINK_STATUS, &link_status);
-    if (link_status != GL_TRUE) {
-        GLint log_length = 0;
-        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
-        if (log_length > 1) {
-            char *log = malloc((size_t)log_length);
-            if (log) {
-                glGetProgramInfoLog(program, log_length, NULL, log);
-                fprintf(stderr, "Failed to link shader program: %s\n", log);
-                free(log);
-            }
-        }
-        glDeleteProgram(program);
-        return -1;
-    }
-
-    terminal_gl_program = program;
-    terminal_attrib_vertex = glGetAttribLocation(program, "VertexCoord");
-    terminal_attrib_color = glGetAttribLocation(program, "COLOR");
-    terminal_attrib_texcoord = glGetAttribLocation(program, "TexCoord");
-
-    terminal_uniform_mvp = glGetUniformLocation(program, "MVPMatrix");
-    terminal_uniform_frame_direction = glGetUniformLocation(program, "FrameDirection");
-    terminal_uniform_frame_count = glGetUniformLocation(program, "FrameCount");
-    terminal_uniform_output_size = glGetUniformLocation(program, "OutputSize");
-    terminal_uniform_texture_size = glGetUniformLocation(program, "TextureSize");
-    terminal_uniform_input_size = glGetUniformLocation(program, "InputSize");
-    terminal_uniform_texture_sampler = glGetUniformLocation(program, "Texture");
-    terminal_uniform_crt_gamma = glGetUniformLocation(program, "CRTgamma");
-    terminal_uniform_monitor_gamma = glGetUniformLocation(program, "monitorgamma");
-    terminal_uniform_distance = glGetUniformLocation(program, "d");
-    terminal_uniform_curvature = glGetUniformLocation(program, "CURVATURE");
-    terminal_uniform_radius = glGetUniformLocation(program, "R");
-    terminal_uniform_corner_size = glGetUniformLocation(program, "cornersize");
-    terminal_uniform_corner_smooth = glGetUniformLocation(program, "cornersmooth");
-    terminal_uniform_x_tilt = glGetUniformLocation(program, "x_tilt");
-    terminal_uniform_y_tilt = glGetUniformLocation(program, "y_tilt");
-    terminal_uniform_overscan_x = glGetUniformLocation(program, "overscan_x");
-    terminal_uniform_overscan_y = glGetUniformLocation(program, "overscan_y");
-    terminal_uniform_dotmask = glGetUniformLocation(program, "DOTMASK");
-    terminal_uniform_sharper = glGetUniformLocation(program, "SHARPER");
-    terminal_uniform_scanline_weight = glGetUniformLocation(program, "scanline_weight");
-    terminal_uniform_luminance = glGetUniformLocation(program, "lum");
-    terminal_uniform_interlace_detect = glGetUniformLocation(program, "interlace_detect");
-    terminal_uniform_saturation = glGetUniformLocation(program, "SATURATION");
-    terminal_uniform_inv_gamma = glGetUniformLocation(program, "INV");
-
-    glUseProgram(program);
-    if (terminal_uniform_texture_sampler >= 0) {
-        glUniform1i(terminal_uniform_texture_sampler, 0);
-    }
-    if (terminal_uniform_crt_gamma >= 0) {
-        glUniform1f(terminal_uniform_crt_gamma, 2.4f);
-    }
-    if (terminal_uniform_monitor_gamma >= 0) {
-        glUniform1f(terminal_uniform_monitor_gamma, 2.2f);
-    }
-    if (terminal_uniform_distance >= 0) {
-        glUniform1f(terminal_uniform_distance, 1.6f);
-    }
-    if (terminal_uniform_curvature >= 0) {
-        glUniform1f(terminal_uniform_curvature, 1.0f);
-    }
-    if (terminal_uniform_radius >= 0) {
-        glUniform1f(terminal_uniform_radius, 2.0f);
-    }
-    if (terminal_uniform_corner_size >= 0) {
-        glUniform1f(terminal_uniform_corner_size, 0.03f);
-    }
-    if (terminal_uniform_corner_smooth >= 0) {
-        glUniform1f(terminal_uniform_corner_smooth, 1000.0f);
-    }
-    if (terminal_uniform_x_tilt >= 0) {
-        glUniform1f(terminal_uniform_x_tilt, 0.0f);
-    }
-    if (terminal_uniform_y_tilt >= 0) {
-        glUniform1f(terminal_uniform_y_tilt, 0.0f);
-    }
-    if (terminal_uniform_overscan_x >= 0) {
-        glUniform1f(terminal_uniform_overscan_x, 100.0f);
-    }
-    if (terminal_uniform_overscan_y >= 0) {
-        glUniform1f(terminal_uniform_overscan_y, 100.0f);
-    }
-    if (terminal_uniform_dotmask >= 0) {
-        glUniform1f(terminal_uniform_dotmask, 0.3f);
-    }
-    if (terminal_uniform_sharper >= 0) {
-        glUniform1f(terminal_uniform_sharper, 1.0f);
-    }
-    if (terminal_uniform_scanline_weight >= 0) {
-        glUniform1f(terminal_uniform_scanline_weight, 0.3f);
-    }
-    if (terminal_uniform_luminance >= 0) {
-        glUniform1f(terminal_uniform_luminance, 0.0f);
-    }
-    if (terminal_uniform_interlace_detect >= 0) {
-        glUniform1f(terminal_uniform_interlace_detect, 1.0f);
-    }
-    if (terminal_uniform_saturation >= 0) {
-        glUniform1f(terminal_uniform_saturation, 1.0f);
-    }
-    if (terminal_uniform_inv_gamma >= 0) {
-        glUniform1f(terminal_uniform_inv_gamma, 1.0f);
-    }
-    glUseProgram(0);
-
-    return 0;
 }
 
 static int terminal_resize_render_targets(int width, int height) {
@@ -880,43 +1300,67 @@ static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int hei
     return 0;
 }
 
+static int terminal_ensure_postprocess_targets(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return -1;
+    }
+
+    if (terminal_pingpong_width == width &&
+        terminal_pingpong_height == height &&
+        terminal_pingpong_fbo != 0 &&
+        terminal_pingpong_textures[0] != 0 &&
+        terminal_pingpong_textures[1] != 0) {
+        return 0;
+    }
+
+    if (terminal_pingpong_fbo == 0) {
+        glGenFramebuffers(1, &terminal_pingpong_fbo);
+        if (terminal_pingpong_fbo == 0) {
+            return -1;
+        }
+    }
+
+    for (size_t i = 0; i < 2; i++) {
+        if (terminal_pingpong_textures[i] == 0) {
+            glGenTextures(1, &terminal_pingpong_textures[i]);
+            if (terminal_pingpong_textures[i] == 0) {
+                return -1;
+            }
+        }
+        glBindTexture(GL_TEXTURE_2D, terminal_pingpong_textures[i]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    terminal_pingpong_width = width;
+    terminal_pingpong_height = height;
+    return 0;
+}
+
 static void terminal_release_gl_resources(void) {
     if (terminal_gl_texture != 0) {
         glDeleteTextures(1, &terminal_gl_texture);
         terminal_gl_texture = 0;
     }
-    if (terminal_gl_program != 0) {
-        glDeleteProgram(terminal_gl_program);
-        terminal_gl_program = 0;
+    for (size_t i = 0; i < 2; i++) {
+        if (terminal_pingpong_textures[i] != 0) {
+            glDeleteTextures(1, &terminal_pingpong_textures[i]);
+            terminal_pingpong_textures[i] = 0;
+        }
     }
-    terminal_attrib_vertex = -1;
-    terminal_attrib_color = -1;
-    terminal_attrib_texcoord = -1;
-    terminal_uniform_mvp = -1;
-    terminal_uniform_frame_direction = -1;
-    terminal_uniform_frame_count = -1;
-    terminal_uniform_output_size = -1;
-    terminal_uniform_texture_size = -1;
-    terminal_uniform_input_size = -1;
-    terminal_uniform_texture_sampler = -1;
-    terminal_uniform_crt_gamma = -1;
-    terminal_uniform_monitor_gamma = -1;
-    terminal_uniform_distance = -1;
-    terminal_uniform_curvature = -1;
-    terminal_uniform_radius = -1;
-    terminal_uniform_corner_size = -1;
-    terminal_uniform_corner_smooth = -1;
-    terminal_uniform_x_tilt = -1;
-    terminal_uniform_y_tilt = -1;
-    terminal_uniform_overscan_x = -1;
-    terminal_uniform_overscan_y = -1;
-    terminal_uniform_dotmask = -1;
-    terminal_uniform_sharper = -1;
-    terminal_uniform_scanline_weight = -1;
-    terminal_uniform_luminance = -1;
-    terminal_uniform_interlace_detect = -1;
-    terminal_uniform_saturation = -1;
-    terminal_uniform_inv_gamma = -1;
+    if (terminal_pingpong_fbo != 0) {
+        glDeleteFramebuffers(1, &terminal_pingpong_fbo);
+        terminal_pingpong_fbo = 0;
+    }
+    terminal_pingpong_width = 0;
+    terminal_pingpong_height = 0;
+
+    terminal_release_shader_passes();
+
     free(terminal_framebuffer_pixels);
     terminal_framebuffer_pixels = NULL;
     terminal_framebuffer_capacity = 0u;
@@ -925,11 +1369,12 @@ static void terminal_release_gl_resources(void) {
     terminal_texture_width = 0;
     terminal_texture_height = 0;
     terminal_gl_ready = 0;
+    terminal_shader_frame_counter = 0;
 }
 
 static void terminal_print_usage(const char *progname) {
     const char *name = (progname && progname[0] != '\0') ? progname : "terminal";
-    fprintf(stderr, "Usage: %s [-s shader_path]\n", name);
+    fprintf(stderr, "Usage: %s [-s shader_path ...]\n", name);
 }
 
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y) {
@@ -2215,7 +2660,9 @@ static int terminal_send_escape_prefix(int fd) {
 
 int main(int argc, char **argv) {
     const char *progname = (argc > 0 && argv && argv[0]) ? argv[0] : "terminal";
-    const char *shader_arg = NULL;
+    const char **shader_args = NULL;
+    size_t shader_arg_count = 0u;
+    size_t shader_arg_capacity = 0u;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -2223,15 +2670,30 @@ int main(int argc, char **argv) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "Missing shader path after %s.\n", arg);
                 terminal_print_usage(progname);
+                free((void *)shader_args);
                 return EXIT_FAILURE;
             }
-            shader_arg = argv[++i];
+            const char *value = argv[++i];
+            if (shader_arg_count == shader_arg_capacity) {
+                size_t new_capacity = (shader_arg_capacity == 0u) ? 4u : shader_arg_capacity * 2u;
+                const char **new_args = realloc(shader_args, new_capacity * sizeof(*new_args));
+                if (!new_args) {
+                    fprintf(stderr, "Failed to allocate shader argument list.\n");
+                    free((void *)shader_args);
+                    return EXIT_FAILURE;
+                }
+                shader_args = new_args;
+                shader_arg_capacity = new_capacity;
+            }
+            shader_args[shader_arg_count++] = value;
         } else if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+            free((void *)shader_args);
             terminal_print_usage(progname);
             return EXIT_SUCCESS;
         } else {
             fprintf(stderr, "Unrecognized argument: %s\n", arg);
             terminal_print_usage(progname);
+            free((void *)shader_args);
             return EXIT_FAILURE;
         }
     }
@@ -2263,40 +2725,77 @@ int main(int argc, char **argv) {
     char errbuf[256];
     if (load_psf_font(font_path, &font, errbuf, sizeof(errbuf)) != 0) {
         fprintf(stderr, "Failed to load font: %s\n", errbuf);
+        free((void *)shader_args);
         return EXIT_FAILURE;
     }
 
-    char shader_path[PATH_MAX];
-    shader_path[0] = '\0';
-    if (shader_arg) {
-        if (shader_arg[0] == '/') {
-            size_t len = strlen(shader_arg);
-            if (len >= sizeof(shader_path)) {
-                fprintf(stderr, "Shader path is too long.\n");
-                free_font(&font);
-                return EXIT_FAILURE;
+    char **shader_paths = NULL;
+    size_t shader_path_count = 0u;
+    if (shader_arg_count > 0u) {
+        shader_paths = calloc(shader_arg_count, sizeof(*shader_paths));
+        if (!shader_paths) {
+            fprintf(stderr, "Failed to allocate shader path list.\n");
+            free((void *)shader_args);
+            free_font(&font);
+            return EXIT_FAILURE;
+        }
+        for (size_t idx = 0; idx < shader_arg_count; idx++) {
+            const char *candidate = shader_args[idx];
+            if (!candidate) {
+                continue;
             }
-            memcpy(shader_path, shader_arg, len + 1u);
-        } else {
-            if (build_path(shader_path, sizeof(shader_path), root_dir, shader_arg) == 0 && access(shader_path, R_OK) == 0) {
-                /* Path resolved relative to the repository root. */
-            } else {
-                size_t len = strlen(shader_arg);
-                if (len >= sizeof(shader_path)) {
+
+            char resolved[PATH_MAX];
+            if (candidate[0] == '/') {
+                size_t len = strlen(candidate);
+                if (len >= sizeof(resolved)) {
                     fprintf(stderr, "Shader path is too long.\n");
+                    terminal_free_shader_path_list(shader_paths, shader_path_count);
+                    free((void *)shader_args);
                     free_font(&font);
                     return EXIT_FAILURE;
                 }
-                memcpy(shader_path, shader_arg, len + 1u);
+                memcpy(resolved, candidate, len + 1u);
+            } else {
+                if (build_path(resolved, sizeof(resolved), root_dir, candidate) == 0 && access(resolved, R_OK) == 0) {
+                    /* Path resolved relative to the repository root. */
+                } else {
+                    size_t len = strlen(candidate);
+                    if (len >= sizeof(resolved)) {
+                        fprintf(stderr, "Shader path is too long.\n");
+                        terminal_free_shader_path_list(shader_paths, shader_path_count);
+                        free((void *)shader_args);
+                        free_font(&font);
+                        return EXIT_FAILURE;
+                    }
+                    memcpy(resolved, candidate, len + 1u);
+                }
             }
+
+            size_t resolved_len = strlen(resolved);
+            char *stored = malloc(resolved_len + 1u);
+            if (!stored) {
+                fprintf(stderr, "Failed to allocate shader path buffer.\n");
+                terminal_free_shader_path_list(shader_paths, shader_path_count);
+                free((void *)shader_args);
+                free_font(&font);
+                return EXIT_FAILURE;
+            }
+            memcpy(stored, resolved, resolved_len + 1u);
+            shader_paths[shader_path_count++] = stored;
         }
     }
+
+    free((void *)shader_args);
+    shader_args = NULL;
+    shader_arg_capacity = 0u;
 
     size_t glyph_width_size = (size_t)font.width * (size_t)TERMINAL_FONT_SCALE;
     size_t glyph_height_size = (size_t)font.height * (size_t)TERMINAL_FONT_SCALE;
     if (glyph_width_size == 0u || glyph_height_size == 0u ||
         glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
         fprintf(stderr, "Scaled font dimensions invalid.\n");
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
         free_font(&font);
         return EXIT_FAILURE;
     }
@@ -2308,6 +2807,7 @@ int main(int argc, char **argv) {
     if (window_width_size == 0u || window_height_size == 0u ||
         window_width_size > (size_t)INT_MAX || window_height_size > (size_t)INT_MAX) {
         fprintf(stderr, "Computed window dimensions invalid.\n");
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
         free_font(&font);
         return EXIT_FAILURE;
     }
@@ -2319,6 +2819,7 @@ int main(int argc, char **argv) {
     int master_fd = -1;
     pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
     if (child_pid < 0) {
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
         free_font(&font);
         return EXIT_FAILURE;
     }
@@ -2326,6 +2827,7 @@ int main(int argc, char **argv) {
     if (fcntl(master_fd, F_SETFL, O_NONBLOCK) < 0) {
         perror("fcntl");
         kill(child_pid, SIGKILL);
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
         free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
@@ -2334,6 +2836,7 @@ int main(int argc, char **argv) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         kill(child_pid, SIGKILL);
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
         free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
@@ -2358,6 +2861,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
         kill(child_pid, SIGKILL);
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
         free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
@@ -2368,6 +2872,7 @@ int main(int argc, char **argv) {
         SDL_DestroyWindow(window);
         SDL_Quit();
         kill(child_pid, SIGKILL);
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
         free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
@@ -2379,6 +2884,7 @@ int main(int argc, char **argv) {
         SDL_DestroyWindow(window);
         SDL_Quit();
         kill(child_pid, SIGKILL);
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
         free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
@@ -2390,6 +2896,7 @@ int main(int argc, char **argv) {
         SDL_DestroyWindow(window);
         SDL_Quit();
         kill(child_pid, SIGKILL);
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
         free_font(&font);
         close(master_fd);
         return EXIT_FAILURE;
@@ -2399,8 +2906,9 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Warning: Unable to enable VSync: %s\n", SDL_GetError());
     }
 
-    if (shader_path[0] != '\0') {
-        if (terminal_initialize_gl_program(shader_path) != 0) {
+    if (shader_path_count > 0u) {
+        if (terminal_load_shader_passes(shader_paths, shader_path_count) != 0) {
+            terminal_free_shader_path_list(shader_paths, shader_path_count);
             SDL_GL_DeleteContext(gl_context);
             SDL_DestroyWindow(window);
             SDL_Quit();
@@ -2409,6 +2917,9 @@ int main(int argc, char **argv) {
             close(master_fd);
             return EXIT_FAILURE;
         }
+        terminal_free_shader_path_list(shader_paths, shader_path_count);
+        shader_paths = NULL;
+        shader_path_count = 0u;
     }
 
     glDisable(GL_DEPTH_TEST);
@@ -2980,39 +3491,13 @@ int main(int argc, char **argv) {
         }
 
         glClear(GL_COLOR_BUFFER_BIT);
-        if (terminal_gl_program != 0) {
-            glUseProgram(terminal_gl_program);
-
+        if (terminal_shader_pass_count > 0u && terminal_shader_passes) {
             const GLfloat identity_mvp[16] = {
                 1.0f, 0.0f, 0.0f, 0.0f,
                 0.0f, 1.0f, 0.0f, 0.0f,
                 0.0f, 0.0f, 1.0f, 0.0f,
                 0.0f, 0.0f, 0.0f, 1.0f
             };
-
-            if (terminal_uniform_mvp >= 0) {
-                glUniformMatrix4fv(terminal_uniform_mvp, 1, GL_FALSE, identity_mvp);
-            }
-            if (terminal_uniform_frame_direction >= 0) {
-                glUniform1i(terminal_uniform_frame_direction, 1);
-            }
-            static int frame_counter = 0;
-            if (terminal_uniform_frame_count >= 0) {
-                glUniform1i(terminal_uniform_frame_count, frame_counter++);
-            }
-            if (terminal_uniform_output_size >= 0) {
-                glUniform2f(terminal_uniform_output_size, (GLfloat)drawable_width, (GLfloat)drawable_height);
-            }
-            if (terminal_uniform_texture_size >= 0) {
-                glUniform2f(terminal_uniform_texture_size, (GLfloat)terminal_texture_width, (GLfloat)terminal_texture_height);
-            }
-            if (terminal_uniform_input_size >= 0) {
-                glUniform2f(terminal_uniform_input_size, (GLfloat)frame_width, (GLfloat)frame_height);
-            }
-
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
-
             const GLfloat quad_vertices[16] = {
                 -1.0f, -1.0f, 0.0f, 1.0f,
                  1.0f, -1.0f, 0.0f, 1.0f,
@@ -3026,31 +3511,110 @@ int main(int argc, char **argv) {
                 1.0f, 0.0f
             };
 
-            if (terminal_attrib_vertex >= 0) {
-                glEnableVertexAttribArray((GLuint)terminal_attrib_vertex);
-                glVertexAttribPointer((GLuint)terminal_attrib_vertex, 4, GL_FLOAT, GL_FALSE, 0, quad_vertices);
-            }
-            if (terminal_attrib_texcoord >= 0) {
-                glEnableVertexAttribArray((GLuint)terminal_attrib_texcoord);
-                glVertexAttribPointer((GLuint)terminal_attrib_texcoord, 2, GL_FLOAT, GL_FALSE, 0, quad_texcoords);
-            }
-            if (terminal_attrib_color >= 0) {
-                glDisableVertexAttribArray((GLuint)terminal_attrib_color);
-                glVertexAttrib4f((GLuint)terminal_attrib_color, 1.0f, 1.0f, 1.0f, 1.0f);
+            GLuint source_texture = terminal_gl_texture;
+            int source_width = terminal_texture_width;
+            int source_height = terminal_texture_height;
+            int input_width = frame_width;
+            int input_height = frame_height;
+            int ping_index = 0;
+            int passes_ok = 1;
+            int frame_value = terminal_shader_frame_counter++;
+
+            for (size_t pass_index = 0; pass_index < terminal_shader_pass_count; pass_index++) {
+                struct terminal_shader_pass *pass = &terminal_shader_passes[pass_index];
+                int last_pass = (pass_index + 1u == terminal_shader_pass_count);
+                int output_width = drawable_width;
+                int output_height = drawable_height;
+
+                if (!last_pass) {
+                    if (terminal_ensure_postprocess_targets(drawable_width, drawable_height) != 0) {
+                        fprintf(stderr, "Failed to prepare post-process targets.\n");
+                        passes_ok = 0;
+                        break;
+                    }
+                    GLuint target_texture = terminal_pingpong_textures[ping_index];
+                    glBindFramebuffer(GL_FRAMEBUFFER, terminal_pingpong_fbo);
+                    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target_texture, 0);
+                    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+                    if (status != GL_FRAMEBUFFER_COMPLETE) {
+                        fprintf(stderr, "Framebuffer incomplete for shader pass %zu.\n", pass_index + 1u);
+                        passes_ok = 0;
+                        break;
+                    }
+                    glViewport(0, 0, terminal_pingpong_width, terminal_pingpong_height);
+                    output_width = terminal_pingpong_width;
+                    output_height = terminal_pingpong_height;
+                } else {
+                    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                    glViewport(0, 0, drawable_width, drawable_height);
+                }
+
+                glUseProgram(pass->program);
+
+                if (pass->uniform_mvp >= 0) {
+                    glUniformMatrix4fv(pass->uniform_mvp, 1, GL_FALSE, identity_mvp);
+                }
+                if (pass->uniform_frame_direction >= 0) {
+                    glUniform1i(pass->uniform_frame_direction, 1);
+                }
+                if (pass->uniform_frame_count >= 0) {
+                    glUniform1i(pass->uniform_frame_count, frame_value);
+                }
+                if (pass->uniform_output_size >= 0) {
+                    glUniform2f(pass->uniform_output_size, (GLfloat)output_width, (GLfloat)output_height);
+                }
+                if (pass->uniform_texture_size >= 0) {
+                    glUniform2f(pass->uniform_texture_size, (GLfloat)source_width, (GLfloat)source_height);
+                }
+                if (pass->uniform_input_size >= 0) {
+                    glUniform2f(pass->uniform_input_size, (GLfloat)input_width, (GLfloat)input_height);
+                }
+
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, source_texture);
+
+                if (pass->attrib_vertex >= 0) {
+                    glEnableVertexAttribArray((GLuint)pass->attrib_vertex);
+                    glVertexAttribPointer((GLuint)pass->attrib_vertex, 4, GL_FLOAT, GL_FALSE, 0, quad_vertices);
+                }
+                if (pass->attrib_texcoord >= 0) {
+                    glEnableVertexAttribArray((GLuint)pass->attrib_texcoord);
+                    glVertexAttribPointer((GLuint)pass->attrib_texcoord, 2, GL_FLOAT, GL_FALSE, 0, quad_texcoords);
+                }
+                if (pass->attrib_color >= 0) {
+                    glDisableVertexAttribArray((GLuint)pass->attrib_color);
+                    glVertexAttrib4f((GLuint)pass->attrib_color, 1.0f, 1.0f, 1.0f, 1.0f);
+                }
+
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+                if (pass->attrib_vertex >= 0) {
+                    glDisableVertexAttribArray((GLuint)pass->attrib_vertex);
+                }
+                if (pass->attrib_texcoord >= 0) {
+                    glDisableVertexAttribArray((GLuint)pass->attrib_texcoord);
+                }
+
+                glBindTexture(GL_TEXTURE_2D, 0);
+                glUseProgram(0);
+
+                if (!last_pass) {
+                    GLuint produced = terminal_pingpong_textures[ping_index];
+                    source_texture = produced;
+                    source_width = terminal_pingpong_width;
+                    source_height = terminal_pingpong_height;
+                    ping_index = (ping_index + 1) % 2;
+                }
             }
 
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-
-            if (terminal_attrib_vertex >= 0) {
-                glDisableVertexAttribArray((GLuint)terminal_attrib_vertex);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            if (!passes_ok) {
+                running = 0;
+                break;
             }
-            if (terminal_attrib_texcoord >= 0) {
-                glDisableVertexAttribArray((GLuint)terminal_attrib_texcoord);
-            }
-
-            glBindTexture(GL_TEXTURE_2D, 0);
-            glUseProgram(0);
         } else {
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, drawable_width, drawable_height);
             glMatrixMode(GL_PROJECTION);
             glLoadIdentity();
             glMatrixMode(GL_MODELVIEW);

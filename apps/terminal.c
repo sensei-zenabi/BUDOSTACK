@@ -119,6 +119,8 @@ struct terminal_gl_shader {
 static struct terminal_gl_shader *terminal_gl_shaders = NULL;
 static size_t terminal_gl_shader_count = 0u;
 
+struct psf_unicode_map;
+
 struct psf_font {
     uint32_t glyph_count;
     uint32_t width;
@@ -126,6 +128,13 @@ struct psf_font {
     uint32_t stride;
     uint32_t glyph_size;
     uint8_t *glyphs;
+    struct psf_unicode_map *unicode_map;
+    size_t unicode_map_count;
+};
+
+struct psf_unicode_map {
+    uint32_t codepoint;
+    uint32_t glyph_index;
 };
 
 static ssize_t safe_write(int fd, const void *buf, size_t count);
@@ -137,6 +146,9 @@ static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
+static int psf_unicode_map_compare(const void *a, const void *b);
+static int psf_font_lookup_unicode(const struct psf_font *font, uint32_t codepoint, uint32_t *out_index);
+static uint32_t psf_font_resolve_glyph(const struct psf_font *font, uint32_t codepoint);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
 static const char *terminal_skip_utf8_bom(const char *src, size_t *size);
 static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end);
@@ -596,6 +608,9 @@ static void free_font(struct psf_font *font) {
     font->height = 0;
     font->stride = 0;
     font->glyph_size = 0;
+    free(font->unicode_map);
+    font->unicode_map = NULL;
+    font->unicode_map_count = 0u;
 }
 
 static char *terminal_read_text_file(const char *path, size_t *out_size) {
@@ -1347,6 +1362,76 @@ static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, ui
     return (glyph[byte_index] & mask) != 0;
 }
 
+static int psf_unicode_map_compare(const void *a, const void *b) {
+    const struct psf_unicode_map *ma = (const struct psf_unicode_map *)a;
+    const struct psf_unicode_map *mb = (const struct psf_unicode_map *)b;
+    if (ma->codepoint < mb->codepoint) {
+        return -1;
+    }
+    if (ma->codepoint > mb->codepoint) {
+        return 1;
+    }
+    if (ma->glyph_index < mb->glyph_index) {
+        return -1;
+    }
+    if (ma->glyph_index > mb->glyph_index) {
+        return 1;
+    }
+    return 0;
+}
+
+static int psf_font_lookup_unicode(const struct psf_font *font, uint32_t codepoint, uint32_t *out_index) {
+    if (!font) {
+        return 0;
+    }
+    size_t count = font->unicode_map_count;
+    const struct psf_unicode_map *map = font->unicode_map;
+    if (count > 0u && map) {
+        size_t left = 0u;
+        size_t right = count;
+        while (left < right) {
+            size_t mid = left + (right - left) / 2u;
+            uint32_t mid_code = map[mid].codepoint;
+            if (mid_code == codepoint) {
+                if (out_index) {
+                    *out_index = map[mid].glyph_index;
+                }
+                return 1;
+            }
+            if (mid_code < codepoint) {
+                left = mid + 1u;
+            } else {
+                right = mid;
+            }
+        }
+        return 0;
+    }
+    if (codepoint < font->glyph_count) {
+        if (out_index) {
+            *out_index = codepoint;
+        }
+        return 1;
+    }
+    return 0;
+}
+
+static uint32_t psf_font_resolve_glyph(const struct psf_font *font, uint32_t codepoint) {
+    if (!font) {
+        return 0u;
+    }
+    uint32_t glyph_index = 0u;
+    if (psf_font_lookup_unicode(font, codepoint, &glyph_index)) {
+        return glyph_index;
+    }
+    if (psf_font_lookup_unicode(font, '?', &glyph_index)) {
+        return glyph_index;
+    }
+    if ((uint32_t)'?' < font->glyph_count) {
+        return (uint32_t)'?';
+    }
+    return 0u;
+}
+
 static uint32_t read_u32_le(const unsigned char *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8u) | ((uint32_t)p[2] << 16u) | ((uint32_t)p[3] << 24u);
 }
@@ -1432,6 +1517,66 @@ static int load_psf_font(const char *path, struct psf_font *out_font, char *errb
             fclose(fp);
             return -1;
         }
+
+        if ((header[2] & 0x02u) != 0u) {
+            size_t map_capacity = 0u;
+            size_t map_count = 0u;
+            struct psf_unicode_map *map = NULL;
+            uint32_t glyph_index = 0u;
+            while (glyph_index < glyph_count) {
+                unsigned char entry[2];
+                if (fread(entry, 1, sizeof(entry), fp) != sizeof(entry)) {
+                    if (errbuf && errbuf_size > 0) {
+                        snprintf(errbuf, errbuf_size, "Failed to read PSF1 Unicode table");
+                    }
+                    free(map);
+                    free_font(&font);
+                    fclose(fp);
+                    return -1;
+                }
+                uint16_t code = (uint16_t)entry[0] | ((uint16_t)entry[1] << 8u);
+                if (code == 0xFFFFu) {
+                    glyph_index++;
+                    continue;
+                }
+                if (code == 0xFFFEu) {
+                    glyph_index++;
+                    continue;
+                }
+                if (map_count == map_capacity) {
+                    size_t new_capacity = map_capacity ? map_capacity * 2u : 128u;
+                    if (new_capacity > SIZE_MAX / sizeof(*map)) {
+                        if (errbuf && errbuf_size > 0) {
+                            snprintf(errbuf, errbuf_size, "Unicode map too large");
+                        }
+                        free(map);
+                        free_font(&font);
+                        fclose(fp);
+                        return -1;
+                    }
+                    struct psf_unicode_map *new_map = realloc(map, new_capacity * sizeof(*map));
+                    if (!new_map) {
+                        if (errbuf && errbuf_size > 0) {
+                            snprintf(errbuf, errbuf_size, "Out of memory for Unicode map");
+                        }
+                        free(map);
+                        free_font(&font);
+                        fclose(fp);
+                        return -1;
+                    }
+                    map = new_map;
+                    map_capacity = new_capacity;
+                }
+                map[map_count].codepoint = (uint32_t)code;
+                map[map_count].glyph_index = glyph_index;
+                map_count++;
+            }
+            if (map_count > 1u) {
+                qsort(map, map_count, sizeof(*map), psf_unicode_map_compare);
+            }
+            font.unicode_map = map;
+            font.unicode_map_count = map_count;
+        }
     } else if (read_u32_le(header) == PSF2_MAGIC) {
         if (header_read < PSF2_HEADER_SIZE) {
             if (errbuf && errbuf_size > 0) {
@@ -1490,13 +1635,74 @@ static int load_psf_font(const char *path, struct psf_font *out_font, char *errb
             return -1;
         }
 
-        if (fread(font.glyphs, 1, (size_t)glyph_count * glyph_size, fp) != (size_t)glyph_count * glyph_size) {
+        size_t glyph_bytes = (size_t)glyph_count * glyph_size;
+        if (fread(font.glyphs, 1, glyph_bytes, fp) != glyph_bytes) {
             if (errbuf && errbuf_size > 0) {
                 snprintf(errbuf, errbuf_size, "Failed to read glyph data");
             }
             free_font(&font);
             fclose(fp);
             return -1;
+        }
+
+        if ((flags & 0x01u) != 0u) {
+            size_t map_capacity = 0u;
+            size_t map_count = 0u;
+            struct psf_unicode_map *map = NULL;
+            uint32_t glyph_index = 0u;
+            while (glyph_index < glyph_count) {
+                unsigned char entry[4];
+                if (fread(entry, 1, sizeof(entry), fp) != sizeof(entry)) {
+                    if (errbuf && errbuf_size > 0) {
+                        snprintf(errbuf, errbuf_size, "Failed to read PSF2 Unicode table");
+                    }
+                    free(map);
+                    free_font(&font);
+                    fclose(fp);
+                    return -1;
+                }
+                uint32_t code = read_u32_le(entry);
+                if (code == 0xFFFFFFFFu) {
+                    glyph_index++;
+                    continue;
+                }
+                if (code == 0xFFFEu) {
+                    glyph_index++;
+                    continue;
+                }
+                if (map_count == map_capacity) {
+                    size_t new_capacity = map_capacity ? map_capacity * 2u : 128u;
+                    if (new_capacity > SIZE_MAX / sizeof(*map)) {
+                        if (errbuf && errbuf_size > 0) {
+                            snprintf(errbuf, errbuf_size, "Unicode map too large");
+                        }
+                        free(map);
+                        free_font(&font);
+                        fclose(fp);
+                        return -1;
+                    }
+                    struct psf_unicode_map *new_map = realloc(map, new_capacity * sizeof(*map));
+                    if (!new_map) {
+                        if (errbuf && errbuf_size > 0) {
+                            snprintf(errbuf, errbuf_size, "Out of memory for Unicode map");
+                        }
+                        free(map);
+                        free_font(&font);
+                        fclose(fp);
+                        return -1;
+                    }
+                    map = new_map;
+                    map_capacity = new_capacity;
+                }
+                map[map_count].codepoint = code;
+                map[map_count].glyph_index = glyph_index;
+                map_count++;
+            }
+            if (map_count > 1u) {
+                qsort(map, map_count, sizeof(*map), psf_unicode_map_compare);
+            }
+            font.unicode_map = map;
+            font.unicode_map_count = map_count;
         }
     } else {
         if (errbuf && errbuf_size > 0) {
@@ -3669,12 +3875,9 @@ int main(int argc, char **argv) {
                 }
 
                 if (ch != 0u) {
-                    uint32_t glyph_index = ch;
+                    uint32_t glyph_index = psf_font_resolve_glyph(&font, ch);
                     if (glyph_index >= font.glyph_count) {
-                        glyph_index = '?';
-                        if (glyph_index >= font.glyph_count) {
-                            glyph_index = 0u;
-                        }
+                        glyph_index = 0u;
                     }
 
                     for (int py = dest_y; py < end_y; py++) {

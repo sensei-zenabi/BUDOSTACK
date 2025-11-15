@@ -4615,8 +4615,6 @@ int main(int argc, char **argv) {
                     continue;
                 }
 
-                terminal_selection_clear(&terminal_selection_state);
-
                 if ((mod & KMOD_CTRL) != 0) {
                     if (sym >= 0 && sym <= 127) {
                         int ascii = (int)sym;
@@ -4913,6 +4911,7 @@ int main(int argc, char **argv) {
                 }
 
                 if (handled) {
+                    terminal_selection_clear(&terminal_selection_state);
                     cursor_phase_visible = 1;
                     cursor_last_toggle = SDL_GetTicks();
                     continue;

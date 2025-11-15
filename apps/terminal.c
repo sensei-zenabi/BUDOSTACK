@@ -128,6 +128,8 @@ static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
+static const char *terminal_skip_utf8_bom(const char *src, size_t *size);
+static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end);
 static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label);
 static void terminal_print_usage(const char *progname);
 
@@ -614,6 +616,48 @@ static char *terminal_read_text_file(const char *path, size_t *out_size) {
     return buffer;
 }
 
+static const char *terminal_skip_utf8_bom(const char *src, size_t *size) {
+    if (!src || !size) {
+        return src;
+    }
+    if (*size >= 3u) {
+        const unsigned char *bytes = (const unsigned char *)src;
+        if (bytes[0] == 0xEFu && bytes[1] == 0xBBu && bytes[2] == 0xBFu) {
+            *size -= 3u;
+            return src + 3;
+        }
+    }
+    return src;
+}
+
+static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end) {
+    const char *ptr = src;
+    while (ptr < end) {
+        while (ptr < end && isspace((unsigned char)*ptr)) {
+            ptr++;
+        }
+        if ((end - ptr) >= 2 && ptr[0] == '/' && ptr[1] == '/') {
+            ptr += 2;
+            while (ptr < end && *ptr != '\n') {
+                ptr++;
+            }
+            continue;
+        }
+        if ((end - ptr) >= 2 && ptr[0] == '/' && ptr[1] == '*') {
+            ptr += 2;
+            while ((end - ptr) >= 2 && !(ptr[0] == '*' && ptr[1] == '/')) {
+                ptr++;
+            }
+            if ((end - ptr) >= 2) {
+                ptr += 2;
+            }
+            continue;
+        }
+        break;
+    }
+    return ptr;
+}
+
 static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label) {
     GLuint shader = glCreateShader(type);
     if (shader == 0) {
@@ -660,8 +704,56 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     const char *vertex_define = "#define VERTEX 1\n";
     const char *fragment_define = "#define FRAGMENT 1\n";
 
-    size_t vertex_length = strlen(version_line) + strlen(parameter_define) + strlen(vertex_define) + shader_size;
-    size_t fragment_length = strlen(version_line) + strlen(parameter_define) + strlen(fragment_define) + shader_size;
+    size_t parameter_len = strlen(parameter_define);
+    size_t vertex_define_len = strlen(vertex_define);
+    size_t fragment_define_len = strlen(fragment_define);
+    size_t version_line_len = strlen(version_line);
+
+    size_t content_size = shader_size;
+    const char *content_start = terminal_skip_utf8_bom(shader_source, &content_size);
+    const char *content_end = content_start + content_size;
+
+    const char *version_start = NULL;
+    const char *version_end = NULL;
+    const char *scan = terminal_skip_leading_space_and_comments(content_start, content_end);
+    if (scan < content_end) {
+        size_t remaining = (size_t)(content_end - scan);
+        if (remaining >= 8u && strncmp(scan, "#version", 8) == 0) {
+            if (remaining == 8u || isspace((unsigned char)scan[8])) {
+                version_start = scan;
+                version_end = scan;
+                while (version_end < content_end && *version_end != '\n') {
+                    version_end++;
+                }
+                if (version_end < content_end) {
+                    version_end++;
+                }
+            }
+        }
+    }
+
+    const char *version_prefix = version_line;
+    size_t version_prefix_len = version_line_len;
+    const char *shader_body = content_start;
+    size_t shader_body_len = content_size;
+
+    if (version_start && version_end) {
+        version_prefix = content_start;
+        version_prefix_len = (size_t)(version_end - content_start);
+        shader_body = version_end;
+        shader_body_len = (size_t)(content_end - version_end);
+    }
+
+    size_t newline_len = 0u;
+    if (version_prefix_len > 0u) {
+        char last_char = version_prefix[version_prefix_len - 1u];
+        if (last_char != '\n' && last_char != '\r') {
+            newline_len = 1u;
+        }
+    }
+
+    size_t vertex_length = version_prefix_len + newline_len + parameter_len + vertex_define_len + shader_body_len;
+    size_t fragment_length = version_prefix_len + newline_len + parameter_len + fragment_define_len + shader_body_len;
 
     char *vertex_source = malloc(vertex_length + 1u);
     char *fragment_source = malloc(fragment_length + 1u);
@@ -672,15 +764,33 @@ static int terminal_initialize_gl_program(const char *shader_path) {
         return -1;
     }
 
-    strcpy(vertex_source, version_line);
-    strcat(vertex_source, parameter_define);
-    strcat(vertex_source, vertex_define);
-    strcat(vertex_source, shader_source);
+    size_t offset = 0u;
+    memcpy(vertex_source + offset, version_prefix, version_prefix_len);
+    offset += version_prefix_len;
+    if (newline_len > 0u) {
+        vertex_source[offset++] = '\n';
+    }
+    memcpy(vertex_source + offset, parameter_define, parameter_len);
+    offset += parameter_len;
+    memcpy(vertex_source + offset, vertex_define, vertex_define_len);
+    offset += vertex_define_len;
+    memcpy(vertex_source + offset, shader_body, shader_body_len);
+    offset += shader_body_len;
+    vertex_source[offset] = '\0';
 
-    strcpy(fragment_source, version_line);
-    strcat(fragment_source, parameter_define);
-    strcat(fragment_source, fragment_define);
-    strcat(fragment_source, shader_source);
+    offset = 0u;
+    memcpy(fragment_source + offset, version_prefix, version_prefix_len);
+    offset += version_prefix_len;
+    if (newline_len > 0u) {
+        fragment_source[offset++] = '\n';
+    }
+    memcpy(fragment_source + offset, parameter_define, parameter_len);
+    offset += parameter_len;
+    memcpy(fragment_source + offset, fragment_define, fragment_define_len);
+    offset += fragment_define_len;
+    memcpy(fragment_source + offset, shader_body, shader_body_len);
+    offset += shader_body_len;
+    fragment_source[offset] = '\0';
 
     GLuint vertex_shader = terminal_compile_shader(GL_VERTEX_SHADER, vertex_source, "vertex");
     GLuint fragment_shader = terminal_compile_shader(GL_FRAGMENT_SHADER, fragment_source, "fragment");

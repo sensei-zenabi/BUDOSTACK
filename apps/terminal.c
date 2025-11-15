@@ -21,22 +21,34 @@
 #define GL_GLEXT_PROTOTYPES 1
 #endif
 
+#if !defined(BUDOSTACK_HAVE_SDL2)
 #if defined(__has_include)
 #if __has_include(<SDL2/SDL.h>)
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_opengl.h>
 #define BUDOSTACK_HAVE_SDL2 1
+#define BUDOSTACK_SDL_HEADER_STYLE 2
 #elif __has_include(<SDL.h>)
-#include <SDL.h>
-#include <SDL_opengl.h>
 #define BUDOSTACK_HAVE_SDL2 1
+#define BUDOSTACK_SDL_HEADER_STYLE 1
 #else
 #define BUDOSTACK_HAVE_SDL2 0
 #endif
 #else
+#define BUDOSTACK_HAVE_SDL2 1
+#define BUDOSTACK_SDL_HEADER_STYLE 2
+#endif
+#endif
+
+#if BUDOSTACK_HAVE_SDL2
+#if !defined(BUDOSTACK_SDL_HEADER_STYLE)
+#define BUDOSTACK_SDL_HEADER_STYLE 2
+#endif
+#if BUDOSTACK_SDL_HEADER_STYLE == 2
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_opengl.h>
-#define BUDOSTACK_HAVE_SDL2 1
+#else
+#include <SDL.h>
+#include <SDL_opengl.h>
+#endif
 #endif
 
 #ifndef PATH_MAX

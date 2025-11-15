@@ -9,34 +9,43 @@ ifneq ($(strip $(ALSA_LIBS)),)
 LDFLAGS += $(ALSA_LIBS)
 endif
 
-SDL2_CFLAGS = $(shell pkg-config --cflags sdl2 2>/dev/null)
-SDL2_LIBS = $(shell pkg-config --libs sdl2 2>/dev/null)
+SDL2_FOUND := 0
+SDL2_CFLAGS :=
+SDL2_LIBS :=
 
-ifeq ($(strip $(SDL2_CFLAGS)),)
-SDL2_CFLAGS = $(shell sdl2-config --cflags 2>/dev/null)
+ifneq ($(strip $(shell pkg-config --exists sdl2 && echo yes 2>/dev/null)),)
+SDL2_CFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null)
+SDL2_LIBS := $(shell pkg-config --libs sdl2 2>/dev/null)
+SDL2_FOUND := 1
+else ifneq ($(strip $(shell command -v sdl2-config 2>/dev/null)),)
+SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
+SDL2_LIBS := $(shell sdl2-config --libs 2>/dev/null)
+SDL2_FOUND := 1
 endif
 
-ifeq ($(strip $(SDL2_LIBS)),)
-SDL2_LIBS = $(shell sdl2-config --libs 2>/dev/null)
+OPENGL_LIBS :=
+OPENGL_FOUND := 0
+
+ifneq ($(strip $(shell pkg-config --exists gl && echo yes 2>/dev/null)),)
+OPENGL_LIBS := $(shell pkg-config --libs gl 2>/dev/null)
+OPENGL_FOUND := 1
+else ifneq ($(wildcard /usr/lib*/libGL.so*),)
+OPENGL_LIBS := -lGL
+OPENGL_FOUND := 1
 endif
 
-ifeq ($(strip $(SDL2_CFLAGS)),)
-SDL2_CFLAGS = -I/usr/include/SDL2
+TERMINAL_USE_SDL := $(and $(SDL2_FOUND),$(OPENGL_FOUND))
+
+ifeq ($(TERMINAL_USE_SDL),)
+TERMINAL_USE_SDL := 0
 endif
 
-ifeq ($(strip $(SDL2_LIBS)),)
-SDL2_LIBS = -lSDL2
-endif
-
-OPENGL_LIBS = $(shell pkg-config --libs gl 2>/dev/null)
-
-ifeq ($(strip $(OPENGL_LIBS)),)
-OPENGL_LIBS = -lGL
-endif
-
-# SDL2-specific flags are only needed for the SDL terminal target.
+ifeq ($(TERMINAL_USE_SDL),1)
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS) $(OPENGL_LIBS)
+else
+apps/terminal.o: CFLAGS += -DBUDOSTACK_HAVE_SDL2=0
+endif
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

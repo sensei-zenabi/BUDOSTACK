@@ -4611,7 +4611,7 @@ int main(int argc, char **argv) {
                     continue;
                 }
 
-                if ((mod & KMOD_CTRL) != 0) {
+                if ((mod & KMOD_CTRL) != 0 && (mod & (KMOD_ALT | KMOD_GUI)) == 0) {
                     if (sym >= 0 && sym <= 127) {
                         int ascii = (int)sym;
                         if (ascii >= 'a' && ascii <= 'z') {

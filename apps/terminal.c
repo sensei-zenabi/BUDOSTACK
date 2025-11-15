@@ -129,6 +129,7 @@ static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int hei
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
 static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label);
+static void terminal_print_usage(const char *progname);
 
 static int terminal_send_response(const char *response) {
     if (!response || response[0] == '\0') {
@@ -888,6 +889,34 @@ static void terminal_release_gl_resources(void) {
         glDeleteProgram(terminal_gl_program);
         terminal_gl_program = 0;
     }
+    terminal_attrib_vertex = -1;
+    terminal_attrib_color = -1;
+    terminal_attrib_texcoord = -1;
+    terminal_uniform_mvp = -1;
+    terminal_uniform_frame_direction = -1;
+    terminal_uniform_frame_count = -1;
+    terminal_uniform_output_size = -1;
+    terminal_uniform_texture_size = -1;
+    terminal_uniform_input_size = -1;
+    terminal_uniform_texture_sampler = -1;
+    terminal_uniform_crt_gamma = -1;
+    terminal_uniform_monitor_gamma = -1;
+    terminal_uniform_distance = -1;
+    terminal_uniform_curvature = -1;
+    terminal_uniform_radius = -1;
+    terminal_uniform_corner_size = -1;
+    terminal_uniform_corner_smooth = -1;
+    terminal_uniform_x_tilt = -1;
+    terminal_uniform_y_tilt = -1;
+    terminal_uniform_overscan_x = -1;
+    terminal_uniform_overscan_y = -1;
+    terminal_uniform_dotmask = -1;
+    terminal_uniform_sharper = -1;
+    terminal_uniform_scanline_weight = -1;
+    terminal_uniform_luminance = -1;
+    terminal_uniform_interlace_detect = -1;
+    terminal_uniform_saturation = -1;
+    terminal_uniform_inv_gamma = -1;
     free(terminal_framebuffer_pixels);
     terminal_framebuffer_pixels = NULL;
     terminal_framebuffer_capacity = 0u;
@@ -896,6 +925,11 @@ static void terminal_release_gl_resources(void) {
     terminal_texture_width = 0;
     terminal_texture_height = 0;
     terminal_gl_ready = 0;
+}
+
+static void terminal_print_usage(const char *progname) {
+    const char *name = (progname && progname[0] != '\0') ? progname : "terminal";
+    fprintf(stderr, "Usage: %s [-s shader_path]\n", name);
 }
 
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y) {
@@ -2180,8 +2214,27 @@ static int terminal_send_escape_prefix(int fd) {
 }
 
 int main(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
+    const char *progname = (argc > 0 && argv && argv[0]) ? argv[0] : "terminal";
+    const char *shader_arg = NULL;
+
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "-s") == 0 || strcmp(arg, "--shader") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing shader path after %s.\n", arg);
+                terminal_print_usage(progname);
+                return EXIT_FAILURE;
+            }
+            shader_arg = argv[++i];
+        } else if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+            terminal_print_usage(progname);
+            return EXIT_SUCCESS;
+        } else {
+            fprintf(stderr, "Unrecognized argument: %s\n", arg);
+            terminal_print_usage(progname);
+            return EXIT_FAILURE;
+        }
+    }
 
     char root_dir[PATH_MAX];
     if (compute_root_directory(argv[0], root_dir, sizeof(root_dir)) != 0) {
@@ -2214,10 +2267,29 @@ int main(int argc, char **argv) {
     }
 
     char shader_path[PATH_MAX];
-    if (build_path(shader_path, sizeof(shader_path), root_dir, "shaders/crt-geom.glsl") != 0) {
-        fprintf(stderr, "Failed to resolve shader path.\n");
-        free_font(&font);
-        return EXIT_FAILURE;
+    shader_path[0] = '\0';
+    if (shader_arg) {
+        if (shader_arg[0] == '/') {
+            size_t len = strlen(shader_arg);
+            if (len >= sizeof(shader_path)) {
+                fprintf(stderr, "Shader path is too long.\n");
+                free_font(&font);
+                return EXIT_FAILURE;
+            }
+            memcpy(shader_path, shader_arg, len + 1u);
+        } else {
+            if (build_path(shader_path, sizeof(shader_path), root_dir, shader_arg) == 0 && access(shader_path, R_OK) == 0) {
+                /* Path resolved relative to the repository root. */
+            } else {
+                size_t len = strlen(shader_arg);
+                if (len >= sizeof(shader_path)) {
+                    fprintf(stderr, "Shader path is too long.\n");
+                    free_font(&font);
+                    return EXIT_FAILURE;
+                }
+                memcpy(shader_path, shader_arg, len + 1u);
+            }
+        }
     }
 
     size_t glyph_width_size = (size_t)font.width * (size_t)TERMINAL_FONT_SCALE;
@@ -2327,14 +2399,16 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Warning: Unable to enable VSync: %s\n", SDL_GetError());
     }
 
-    if (terminal_initialize_gl_program(shader_path) != 0) {
-        SDL_GL_DeleteContext(gl_context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        kill(child_pid, SIGKILL);
-        free_font(&font);
-        close(master_fd);
-        return EXIT_FAILURE;
+    if (shader_path[0] != '\0') {
+        if (terminal_initialize_gl_program(shader_path) != 0) {
+            SDL_GL_DeleteContext(gl_context);
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            kill(child_pid, SIGKILL);
+            free_font(&font);
+            close(master_fd);
+            return EXIT_FAILURE;
+        }
     }
 
     glDisable(GL_DEPTH_TEST);
@@ -2906,75 +2980,100 @@ int main(int argc, char **argv) {
         }
 
         glClear(GL_COLOR_BUFFER_BIT);
-        glUseProgram(terminal_gl_program);
+        if (terminal_gl_program != 0) {
+            glUseProgram(terminal_gl_program);
 
-        const GLfloat identity_mvp[16] = {
-            1.0f, 0.0f, 0.0f, 0.0f,
-            0.0f, 1.0f, 0.0f, 0.0f,
-            0.0f, 0.0f, 1.0f, 0.0f,
-            0.0f, 0.0f, 0.0f, 1.0f
-        };
+            const GLfloat identity_mvp[16] = {
+                1.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 1.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 1.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, 1.0f
+            };
 
-        if (terminal_uniform_mvp >= 0) {
-            glUniformMatrix4fv(terminal_uniform_mvp, 1, GL_FALSE, identity_mvp);
-        }
-        if (terminal_uniform_frame_direction >= 0) {
-            glUniform1i(terminal_uniform_frame_direction, 1);
-        }
-        static int frame_counter = 0;
-        if (terminal_uniform_frame_count >= 0) {
-            glUniform1i(terminal_uniform_frame_count, frame_counter++);
-        }
-        if (terminal_uniform_output_size >= 0) {
-            glUniform2f(terminal_uniform_output_size, (GLfloat)drawable_width, (GLfloat)drawable_height);
-        }
-        if (terminal_uniform_texture_size >= 0) {
-            glUniform2f(terminal_uniform_texture_size, (GLfloat)terminal_texture_width, (GLfloat)terminal_texture_height);
-        }
-        if (terminal_uniform_input_size >= 0) {
-            glUniform2f(terminal_uniform_input_size, (GLfloat)frame_width, (GLfloat)frame_height);
-        }
+            if (terminal_uniform_mvp >= 0) {
+                glUniformMatrix4fv(terminal_uniform_mvp, 1, GL_FALSE, identity_mvp);
+            }
+            if (terminal_uniform_frame_direction >= 0) {
+                glUniform1i(terminal_uniform_frame_direction, 1);
+            }
+            static int frame_counter = 0;
+            if (terminal_uniform_frame_count >= 0) {
+                glUniform1i(terminal_uniform_frame_count, frame_counter++);
+            }
+            if (terminal_uniform_output_size >= 0) {
+                glUniform2f(terminal_uniform_output_size, (GLfloat)drawable_width, (GLfloat)drawable_height);
+            }
+            if (terminal_uniform_texture_size >= 0) {
+                glUniform2f(terminal_uniform_texture_size, (GLfloat)terminal_texture_width, (GLfloat)terminal_texture_height);
+            }
+            if (terminal_uniform_input_size >= 0) {
+                glUniform2f(terminal_uniform_input_size, (GLfloat)frame_width, (GLfloat)frame_height);
+            }
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
 
-        const GLfloat quad_vertices[16] = {
-            -1.0f, -1.0f, 0.0f, 1.0f,
-             1.0f, -1.0f, 0.0f, 1.0f,
-            -1.0f,  1.0f, 0.0f, 1.0f,
-             1.0f,  1.0f, 0.0f, 1.0f
-        };
-        const GLfloat quad_texcoords[8] = {
-            0.0f, 1.0f,
-            1.0f, 1.0f,
-            0.0f, 0.0f,
-            1.0f, 0.0f
-        };
+            const GLfloat quad_vertices[16] = {
+                -1.0f, -1.0f, 0.0f, 1.0f,
+                 1.0f, -1.0f, 0.0f, 1.0f,
+                -1.0f,  1.0f, 0.0f, 1.0f,
+                 1.0f,  1.0f, 0.0f, 1.0f
+            };
+            const GLfloat quad_texcoords[8] = {
+                0.0f, 1.0f,
+                1.0f, 1.0f,
+                0.0f, 0.0f,
+                1.0f, 0.0f
+            };
 
-        if (terminal_attrib_vertex >= 0) {
-            glEnableVertexAttribArray((GLuint)terminal_attrib_vertex);
-            glVertexAttribPointer((GLuint)terminal_attrib_vertex, 4, GL_FLOAT, GL_FALSE, 0, quad_vertices);
-        }
-        if (terminal_attrib_texcoord >= 0) {
-            glEnableVertexAttribArray((GLuint)terminal_attrib_texcoord);
-            glVertexAttribPointer((GLuint)terminal_attrib_texcoord, 2, GL_FLOAT, GL_FALSE, 0, quad_texcoords);
-        }
-        if (terminal_attrib_color >= 0) {
-            glDisableVertexAttribArray((GLuint)terminal_attrib_color);
-            glVertexAttrib4f((GLuint)terminal_attrib_color, 1.0f, 1.0f, 1.0f, 1.0f);
-        }
+            if (terminal_attrib_vertex >= 0) {
+                glEnableVertexAttribArray((GLuint)terminal_attrib_vertex);
+                glVertexAttribPointer((GLuint)terminal_attrib_vertex, 4, GL_FLOAT, GL_FALSE, 0, quad_vertices);
+            }
+            if (terminal_attrib_texcoord >= 0) {
+                glEnableVertexAttribArray((GLuint)terminal_attrib_texcoord);
+                glVertexAttribPointer((GLuint)terminal_attrib_texcoord, 2, GL_FLOAT, GL_FALSE, 0, quad_texcoords);
+            }
+            if (terminal_attrib_color >= 0) {
+                glDisableVertexAttribArray((GLuint)terminal_attrib_color);
+                glVertexAttrib4f((GLuint)terminal_attrib_color, 1.0f, 1.0f, 1.0f, 1.0f);
+            }
 
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
-        if (terminal_attrib_vertex >= 0) {
-            glDisableVertexAttribArray((GLuint)terminal_attrib_vertex);
-        }
-        if (terminal_attrib_texcoord >= 0) {
-            glDisableVertexAttribArray((GLuint)terminal_attrib_texcoord);
-        }
+            if (terminal_attrib_vertex >= 0) {
+                glDisableVertexAttribArray((GLuint)terminal_attrib_vertex);
+            }
+            if (terminal_attrib_texcoord >= 0) {
+                glDisableVertexAttribArray((GLuint)terminal_attrib_texcoord);
+            }
 
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glUseProgram(0);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glUseProgram(0);
+        } else {
+            glMatrixMode(GL_PROJECTION);
+            glLoadIdentity();
+            glMatrixMode(GL_MODELVIEW);
+            glLoadIdentity();
+
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+            glEnable(GL_TEXTURE_2D);
+
+            glBegin(GL_TRIANGLE_STRIP);
+            glTexCoord2f(0.0f, 1.0f);
+            glVertex2f(-1.0f, -1.0f);
+            glTexCoord2f(1.0f, 1.0f);
+            glVertex2f(1.0f, -1.0f);
+            glTexCoord2f(0.0f, 0.0f);
+            glVertex2f(-1.0f, 1.0f);
+            glTexCoord2f(1.0f, 0.0f);
+            glVertex2f(1.0f, 1.0f);
+            glEnd();
+
+            glDisable(GL_TEXTURE_2D);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
 
         SDL_GL_SwapWindow(window);
 

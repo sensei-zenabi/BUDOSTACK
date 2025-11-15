@@ -58,6 +58,7 @@ void abFree(struct abuf *ab) {
 /* Prototype for the syntax highlighter from libedit.c */
 char *highlight_c_line(const char *line, int hl_in_comment);
 char *highlight_other_line(const char *line);
+int libedit_is_plain_text(const char *filename);
 
 /* Enumeration for editor keys.
    New keys added:
@@ -271,9 +272,16 @@ void update_syntax(void) {
     }
 }
 
+int is_plain_text_file(void) {
+    return libedit_is_plain_text(E.filename);
+}
+
 /* Returns nonzero when the current file should use C-style highlighting.
    Markdown files opt out and receive the generic highlighter. */
 int is_c_source(void) {
+    if (is_plain_text_file())
+        return 0;
+
     if (!E.filename)
         return 1;
 
@@ -288,6 +296,9 @@ int is_c_source(void) {
 }
 
 int is_other_source(void) {
+    if (is_plain_text_file())
+        return 0;
+
     return !is_c_source();
 }
 
@@ -475,6 +486,7 @@ void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, stru
 
 void editorDrawRows(struct abuf *ab, int rn_width) {
     int text_width = E.screencols - rn_width - 1;
+    int skip_highlight = is_plain_text_file();
     char numbuf[16];
     for (int y = 0; y < E.textrows; y++) {
         int file_row = E.rowoff + y;
@@ -485,24 +497,22 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
             
             if (E.selecting) {
                 editorRenderRowWithSelection(&E.row[file_row], file_row, text_width, ab);
-            } else if (E.coloff == 0) {
-                if (is_c_source()) {
-                    /* Pass the current multi-line comment state for this line */
-                    char *highlighted = highlight_c_line(E.row[file_row].chars, E.row[file_row].hl_in_comment);
-                    if (highlighted) {
-                        abAppendHighlighted(ab, highlighted, text_width);
-                        free(highlighted);
-                    }
-                } else {
-                    // Use this for all other files
-                    char *highlighted = highlight_other_line(E.row[file_row].chars);
-                    if (highlighted) {
-                        abAppendHighlighted(ab, highlighted, text_width);
-                        free(highlighted);
-                    }
+            } else if (skip_highlight || E.coloff != 0) {
+                editorRenderRow(&E.row[file_row], text_width, ab);
+            } else if (is_c_source()) {
+                /* Pass the current multi-line comment state for this line */
+                char *highlighted = highlight_c_line(E.row[file_row].chars, E.row[file_row].hl_in_comment);
+                if (highlighted) {
+                    abAppendHighlighted(ab, highlighted, text_width);
+                    free(highlighted);
                 }
             } else {
-                editorRenderRow(&E.row[file_row], text_width, ab);
+                // Use this for all other files
+                char *highlighted = highlight_other_line(E.row[file_row].chars);
+                if (highlighted) {
+                    abAppendHighlighted(ab, highlighted, text_width);
+                    free(highlighted);
+                }
             }
             
             int printed_width = editorDisplayWidth(E.row[file_row].chars) - E.coloff;

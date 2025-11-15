@@ -23,7 +23,19 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <ctype.h>
+
+int libedit_is_plain_text(const char *filename) {
+    if (!filename)
+        return 0;
+
+    const char *ext = strrchr(filename, '.');
+    if (!ext)
+        return 0;
+
+    return strcasecmp(ext, ".txt") == 0;
+}
 
 char *highlight_c_line(const char *line, int hl_in_comment) {
     size_t len = strlen(line);

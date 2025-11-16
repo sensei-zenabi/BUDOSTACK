@@ -1,0 +1,17 @@
+
+================================== TODO =======================================
+
+PERFORMANCE MONITORING
+
+How to measure?
+  
+  1. set color scheme as c64
+  2. runtask screen.task --> quit with CTRL + C --> see the CPU usage
+
+Metrics:
+
+  commit ba816d54de5561bb4c0d456ee9aa49da510432eb = 16.6%
+  = the amount of characters on the screen seem to affect to the CPU load
+
+-------------------------------------------------------------------------------
+

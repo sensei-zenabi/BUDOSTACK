@@ -5494,7 +5494,7 @@ int main(int argc, char **argv) {
             int multipass_failed = 0;
 
             for (size_t shader_index = 0; shader_index < terminal_gl_shader_count; shader_index++) {
-                const struct terminal_gl_shader *shader = &terminal_gl_shaders[shader_index];
+                struct terminal_gl_shader *shader = &terminal_gl_shaders[shader_index];
                 if (!shader || shader->program == 0) {
                     continue;
                 }

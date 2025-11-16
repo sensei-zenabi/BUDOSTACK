@@ -10,8 +10,8 @@ RUN _TERM_MARGIN 10
 # Change terminal color scheme
 PRINT "\nSelect BUDOSTACK colorscheme:"
 PRINT "\n[0] Commodore 64"
-PRINT "\n[1] IBM 5150"
-PRINT "\n[2] VT220-Amber (Recommended)"
+PRINT "\n[1] IBM 5150 (Recommended)"
+PRINT "\n[2] VT220-Amber"
 PRINT "\n[3] VT220-Green"
 PRINT "\nEnter Selection: "
 INPUT $SELECTION

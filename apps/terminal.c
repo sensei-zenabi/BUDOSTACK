@@ -87,6 +87,10 @@ static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
 static int terminal_texture_height = 0;
 static int terminal_gl_ready = 0;
+#define TERMINAL_PIXEL_UNPACK_BUFFER_COUNT 2u
+static GLuint terminal_gl_pbo_ids[TERMINAL_PIXEL_UNPACK_BUFFER_COUNT] = {0u, 0u};
+static size_t terminal_gl_pbo_size = 0u;
+static size_t terminal_gl_pbo_index = 0u;
 
 static uint8_t *terminal_framebuffer_pixels = NULL;
 static size_t terminal_framebuffer_capacity = 0u;
@@ -213,6 +217,8 @@ static void terminal_release_gl_resources(void);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
+static int terminal_initialize_pixel_buffers(size_t required_size);
+static void terminal_destroy_pixel_buffers(void);
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
 static int psf_unicode_map_compare(const void *a, const void *b);
 static int psf_font_lookup_unicode(const struct psf_font *font, uint32_t codepoint, uint32_t *out_index);
@@ -2247,6 +2253,10 @@ static int terminal_resize_render_targets(int width, int height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, terminal_framebuffer_pixels);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    if (terminal_initialize_pixel_buffers(required_size) != 0) {
+        fprintf(stderr, "Warning: Failed to initialize pixel unpack buffers; falling back to direct texture uploads.\n");
+    }
+
     return 0;
 }
 
@@ -2255,10 +2265,46 @@ static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int hei
         return -1;
     }
 
-    glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    size_t upload_size = (size_t)width * (size_t)height * 4u;
+    if (upload_size == 0u) {
+        return 0;
+    }
+
+    if ((terminal_gl_pbo_ids[0] == 0u || upload_size > terminal_gl_pbo_size) &&
+        terminal_initialize_pixel_buffers(upload_size) != 0) {
+        terminal_destroy_pixel_buffers();
+    }
+
+    int used_pbo = 0;
+    if (terminal_gl_pbo_ids[0] != 0u && terminal_gl_pbo_size >= upload_size) {
+        GLuint pbo = terminal_gl_pbo_ids[terminal_gl_pbo_index];
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
+        glBufferData(GL_PIXEL_UNPACK_BUFFER, (GLsizeiptr)terminal_gl_pbo_size, NULL, GL_STREAM_DRAW);
+        void *ptr = glMapBuffer(GL_PIXEL_UNPACK_BUFFER, GL_WRITE_ONLY);
+        if (ptr) {
+            memcpy(ptr, pixels, upload_size);
+            glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+
+            glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+
+            terminal_gl_pbo_index = (terminal_gl_pbo_index + 1u) % TERMINAL_PIXEL_UNPACK_BUFFER_COUNT;
+            used_pbo = 1;
+        } else {
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        }
+    }
+
+    if (!used_pbo) {
+        glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+
     return 0;
 }
 
@@ -2307,11 +2353,59 @@ static int terminal_prepare_intermediate_targets(int width, int height) {
     return 0;
 }
 
+static int terminal_initialize_pixel_buffers(size_t required_size) {
+    if (required_size == 0u) {
+        terminal_destroy_pixel_buffers();
+        return 0;
+    }
+
+    for (size_t i = 0; i < TERMINAL_PIXEL_UNPACK_BUFFER_COUNT; i++) {
+        if (terminal_gl_pbo_ids[i] == 0) {
+            glGenBuffers(1, &terminal_gl_pbo_ids[i]);
+            if (terminal_gl_pbo_ids[i] == 0) {
+                terminal_destroy_pixel_buffers();
+                return -1;
+            }
+        }
+    }
+
+    if (required_size > terminal_gl_pbo_size) {
+        for (size_t i = 0; i < TERMINAL_PIXEL_UNPACK_BUFFER_COUNT; i++) {
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, terminal_gl_pbo_ids[i]);
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, (GLsizeiptr)required_size, NULL, GL_STREAM_DRAW);
+        }
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        terminal_gl_pbo_size = required_size;
+    }
+
+    terminal_gl_pbo_index = 0u;
+    return 0;
+}
+
+static void terminal_destroy_pixel_buffers(void) {
+    int have_buffers = 0;
+    for (size_t i = 0; i < TERMINAL_PIXEL_UNPACK_BUFFER_COUNT; i++) {
+        if (terminal_gl_pbo_ids[i] != 0) {
+            have_buffers = 1;
+            break;
+        }
+    }
+    if (have_buffers) {
+        glDeleteBuffers((GLsizei)TERMINAL_PIXEL_UNPACK_BUFFER_COUNT, terminal_gl_pbo_ids);
+    }
+    for (size_t i = 0; i < TERMINAL_PIXEL_UNPACK_BUFFER_COUNT; i++) {
+        terminal_gl_pbo_ids[i] = 0u;
+    }
+    terminal_gl_pbo_size = 0u;
+    terminal_gl_pbo_index = 0u;
+}
+
 static void terminal_release_gl_resources(void) {
     if (terminal_gl_texture != 0) {
         glDeleteTextures(1, &terminal_gl_texture);
         terminal_gl_texture = 0;
     }
+    terminal_destroy_pixel_buffers();
     if (terminal_gl_shaders) {
         for (size_t i = 0; i < terminal_gl_shader_count; i++) {
             if (terminal_gl_shaders[i].program != 0) {

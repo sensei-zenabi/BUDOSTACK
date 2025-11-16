@@ -17,19 +17,27 @@
 #include <termios.h>
 #include <unistd.h>
 
+#if !defined(BUDOSTACK_HAVE_SDL2)
 #if defined(__has_include)
 #if __has_include(<SDL2/SDL.h>)
-#include <SDL2/SDL.h>
 #define BUDOSTACK_HAVE_SDL2 1
+#define BUDOSTACK_SDL_HEADER <SDL2/SDL.h>
 #elif __has_include(<SDL.h>)
-#include <SDL.h>
 #define BUDOSTACK_HAVE_SDL2 1
+#define BUDOSTACK_SDL_HEADER <SDL.h>
 #else
 #define BUDOSTACK_HAVE_SDL2 0
 #endif
 #else
-#include <SDL2/SDL.h>
 #define BUDOSTACK_HAVE_SDL2 1
+#define BUDOSTACK_SDL_HEADER <SDL2/SDL.h>
+#endif
+#elif BUDOSTACK_HAVE_SDL2 && !defined(BUDOSTACK_SDL_HEADER)
+#define BUDOSTACK_SDL_HEADER <SDL2/SDL.h>
+#endif
+
+#if BUDOSTACK_HAVE_SDL2
+#include BUDOSTACK_SDL_HEADER
 #endif
 
 #if BUDOSTACK_HAVE_SDL2
@@ -229,6 +237,10 @@ static GLuint terminal_compile_shader(GLenum type, const char *source, const cha
 static void terminal_print_usage(const char *progname);
 static int terminal_resolve_shader_path(const char *root_dir, const char *shader_arg, char *out_path, size_t out_size);
 static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args);
+
+struct ansi_parser;
+enum terminal_charset;
+
 static void ansi_parser_reset_charsets(struct ansi_parser *parser);
 static void ansi_parser_set_gl(struct ansi_parser *parser, int gl_index);
 static enum terminal_charset ansi_charset_from_designator(unsigned char designator);

@@ -1,30 +1,45 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic
-LDFLAGS = -lasound -lm -pthread
+LDFLAGS = -lm -pthread
 
-SDL2_CFLAGS = $(shell pkg-config --cflags sdl2 2>/dev/null)
-SDL2_LIBS = $(shell pkg-config --libs sdl2 2>/dev/null)
-
-ifeq ($(strip $(SDL2_CFLAGS)),)
-SDL2_CFLAGS = $(shell sdl2-config --cflags 2>/dev/null)
+ALSA_AVAILABLE := $(shell pkg-config --exists alsa >/dev/null 2>&1 && echo 1 || echo 0)
+ifeq ($(ALSA_AVAILABLE),1)
+ALSA_CFLAGS := $(shell pkg-config --cflags alsa 2>/dev/null)
+ALSA_LIBS := $(shell pkg-config --libs alsa 2>/dev/null)
+else
+ALSA_CFLAGS :=
+ALSA_LIBS :=
 endif
 
-ifeq ($(strip $(SDL2_LIBS)),)
-SDL2_LIBS = $(shell sdl2-config --libs 2>/dev/null)
+ifeq ($(ALSA_AVAILABLE),1)
+CFLAGS += $(ALSA_CFLAGS) -DBUDOSTACK_HAVE_ALSA=1
+LDFLAGS += $(ALSA_LIBS)
+else
+CFLAGS += -DBUDOSTACK_HAVE_ALSA=0
 endif
 
-ifeq ($(strip $(SDL2_CFLAGS)),)
-SDL2_CFLAGS = -I/usr/include/SDL2
+SDL2_AVAILABLE := $(shell pkg-config --exists sdl2 >/dev/null 2>&1 && echo 1 || echo 0)
+ifeq ($(SDL2_AVAILABLE),1)
+SDL2_CFLAGS := $(shell pkg-config --cflags sdl2 2>/dev/null)
+SDL2_LIBS := $(shell pkg-config --libs sdl2 2>/dev/null)
+else
+SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null)
+SDL2_LIBS := $(shell sdl2-config --libs 2>/dev/null)
+ifeq ($(strip $(SDL2_CFLAGS)$(SDL2_LIBS)),)
+SDL2_AVAILABLE := 0
+else
+SDL2_AVAILABLE := 1
+endif
 endif
 
-ifeq ($(strip $(SDL2_LIBS)),)
-SDL2_LIBS = -lSDL2
-endif
-
-# SDL2-specific flags are only needed for the SDL terminal target.
-apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
+ifeq ($(SDL2_AVAILABLE),1)
+# SDL2-specific flags are only needed for the SDL terminal target when SDL2 is available.
+apps/terminal.o: CFLAGS += $(SDL2_CFLAGS) -DBUDOSTACK_HAVE_SDL2=1
 apps/terminal: LDFLAGS += $(SDL2_LIBS) -lGL
+else
+apps/terminal.o: CFLAGS += -DBUDOSTACK_HAVE_SDL2=0
+endif
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.

@@ -14,7 +14,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#if defined(__has_include)
+#if defined(BUDOSTACK_HAVE_ALSA)
+#define HAVE_ALSA (BUDOSTACK_HAVE_ALSA)
+#elif defined(__has_include)
 #if __has_include(<alsa/asoundlib.h>)
 #define HAVE_ALSA 1
 #else
@@ -913,7 +915,7 @@ int main(void)
 #else
 int main(void)
 {
-    fprintf(stderr, "spectrum: ALSA development headers not available at build time\n");
+    fprintf(stderr, "spectrum: ALSA support not available in this build\n");
     return EXIT_FAILURE;
 }
 #endif

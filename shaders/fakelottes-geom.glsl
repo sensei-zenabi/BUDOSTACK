@@ -25,15 +25,31 @@
 ///////////////////////  Runtime Parameters  ///////////////////////
 #pragma parameter SCANLINE_SINE_COMP_B "Scanline Intensity" 0.4 0.0 1.0 0.05
 #pragma parameter shadowMask "shadowMask" 1.0 0.0 4.0 1.0
+
 #pragma parameter warpX "warpX" 0.031 0.0 0.125 0.01
+//#pragma parameter warpX "warpX" 0.01 0.0 0.01 0.005
+
 #pragma parameter warpY "warpY" 0.041 0.0 0.125 0.01
+//#pragma parameter warpY "warpY" 0.01 0.0 0.01 0.005
+
+//#pragma parameter maskDark "maskDark" 0.5 0.0 2.0 0.1
 #pragma parameter maskDark "maskDark" 0.5 0.0 2.0 0.1
+
+//#pragma parameter maskLight "maskLight" 1.5 0.0 2.0 0.1
 #pragma parameter maskLight "maskLight" 1.5 0.0 2.0 0.1
+
+//#pragma parameter crt_gamma "CRT Gamma" 2.5 1.0 4.0 0.05
 #pragma parameter crt_gamma "CRT Gamma" 2.5 1.0 4.0 0.05
+
+//#pragma parameter monitor_gamma "Monitor Gamma" 2.2 1.0 4.0 0.05
 #pragma parameter monitor_gamma "Monitor Gamma" 2.2 1.0 4.0 0.05
+
 #pragma parameter SCANLINE_SINE_COMP_A "Scanline Sine Comp A" 0.0 0.0 0.10 0.01
 #pragma parameter SCANLINE_BASE_BRIGHTNESS "Scanline Base Brightness" 0.95 0.0 3.0 0.01
-#pragma parameter bsmooth "Border Smoothness" 150.0 40.0 1000.0 25.0
+
+//#pragma parameter bsmooth "Border Smoothness" 150.0 40.0 1000.0 25.0
+#pragma parameter bsmooth "Border Smoothness" 250.0 80.0 2000.0 50.0
+
 #pragma parameter a_corner "Corner Roundness" 0.03 0.0 0.2 0.01
 
 // prevent stupid behavior

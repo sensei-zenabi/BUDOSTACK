@@ -119,6 +119,32 @@ static GLuint terminal_gl_framebuffer = 0;
 static GLuint terminal_gl_intermediate_textures[2] = {0u, 0u};
 static int terminal_intermediate_width = 0;
 static int terminal_intermediate_height = 0;
+static int terminal_framebuffer_dirty = 1;
+
+static void terminal_mark_framebuffer_dirty(void) {
+    terminal_framebuffer_dirty = 1;
+}
+
+static void terminal_set_cursor_phase_visible_flag(int *cursor_phase_flag, int visible) {
+    if (!cursor_phase_flag) {
+        return;
+    }
+    int normalized = visible ? 1 : 0;
+    if (*cursor_phase_flag != normalized) {
+        *cursor_phase_flag = normalized;
+        terminal_mark_framebuffer_dirty();
+    } else {
+        *cursor_phase_flag = normalized;
+    }
+}
+
+static void terminal_toggle_cursor_phase_visible_flag(int *cursor_phase_flag) {
+    if (!cursor_phase_flag) {
+        return;
+    }
+    *cursor_phase_flag = *cursor_phase_flag ? 0 : 1;
+    terminal_mark_framebuffer_dirty();
+}
 
 struct terminal_gl_shader {
     GLuint program;
@@ -1031,20 +1057,30 @@ static int terminal_screen_point_to_cell(int x,
 }
 
 static void terminal_selection_clear(void) {
+    int was_active = terminal_selection_active;
     terminal_selection_active = 0;
     terminal_selection_dragging = 0;
     terminal_selection_anchor_row = 0u;
     terminal_selection_anchor_col = 0u;
     terminal_selection_caret_row = 0u;
     terminal_selection_caret_col = 0u;
+    if (was_active) {
+        terminal_mark_framebuffer_dirty();
+    }
 }
 
 static void terminal_selection_begin(size_t global_row, size_t column) {
+    int had_active_range = terminal_selection_active &&
+                           (terminal_selection_anchor_row != terminal_selection_caret_row ||
+                            terminal_selection_anchor_col != terminal_selection_caret_col);
     terminal_selection_active = 1;
     terminal_selection_anchor_row = global_row;
     terminal_selection_anchor_col = column;
     terminal_selection_caret_row = global_row;
     terminal_selection_caret_col = column;
+    if (had_active_range) {
+        terminal_mark_framebuffer_dirty();
+    }
 }
 
 static void terminal_selection_update(size_t global_row, size_t column) {
@@ -1052,8 +1088,11 @@ static void terminal_selection_update(size_t global_row, size_t column) {
         terminal_selection_begin(global_row, column);
         return;
     }
-    terminal_selection_caret_row = global_row;
-    terminal_selection_caret_col = column;
+    if (terminal_selection_caret_row != global_row || terminal_selection_caret_col != column) {
+        terminal_selection_caret_row = global_row;
+        terminal_selection_caret_col = column;
+        terminal_mark_framebuffer_dirty();
+    }
 }
 
 static void terminal_selection_validate(const struct terminal_buffer *buffer) {
@@ -4187,6 +4226,8 @@ static void terminal_update_render_size(size_t columns, size_t rows) {
             fprintf(stderr, "Failed to resize terminal render targets.\n");
         }
     }
+
+    terminal_mark_framebuffer_dirty();
 }
 
 static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
@@ -4843,6 +4884,7 @@ int main(int argc, char **argv) {
                     wheel_y = -wheel_y;
                 }
 #endif
+                size_t previous_offset = buffer.scroll_offset;
                 if (wheel_y > 0) {
                     size_t delta = (size_t)wheel_y;
                     buffer.scroll_offset += delta;
@@ -4854,6 +4896,9 @@ int main(int argc, char **argv) {
                     } else {
                         buffer.scroll_offset -= delta;
                     }
+                }
+                if (buffer.scroll_offset != previous_offset) {
+                    terminal_mark_framebuffer_dirty();
                 }
 #endif
             } else if (event.type == SDL_MOUSEBUTTONDOWN) {
@@ -4933,7 +4978,7 @@ int main(int argc, char **argv) {
                     }
                 }
                 if (clipboard_handled) {
-                    cursor_phase_visible = 1;
+                    terminal_set_cursor_phase_visible_flag(&cursor_phase_visible, 1);
                     cursor_last_toggle = SDL_GetTicks();
                     continue;
                 }
@@ -4965,7 +5010,7 @@ int main(int argc, char **argv) {
                     if (terminal_send_bytes(master_fd, &ch, 1u) < 0) {
                         running = 0;
                     }
-                    cursor_phase_visible = 1;
+                    terminal_set_cursor_phase_visible_flag(&cursor_phase_visible, 1);
                     cursor_last_toggle = SDL_GetTicks();
                     continue;
                 }
@@ -5236,7 +5281,7 @@ int main(int argc, char **argv) {
 
                 if (handled) {
                     terminal_selection_clear();
-                    cursor_phase_visible = 1;
+                    terminal_set_cursor_phase_visible_flag(&cursor_phase_visible, 1);
                     cursor_last_toggle = SDL_GetTicks();
                     continue;
                 }
@@ -5257,7 +5302,7 @@ int main(int argc, char **argv) {
                     if (terminal_send_bytes(master_fd, text, len) < 0) {
                         running = 0;
                     }
-                    cursor_phase_visible = 1;
+                    terminal_set_cursor_phase_visible_flag(&cursor_phase_visible, 1);
                     cursor_last_toggle = SDL_GetTicks();
                 }
             }
@@ -5270,7 +5315,8 @@ int main(int argc, char **argv) {
                 for (ssize_t i = 0; i < bytes_read; i++) {
                     ansi_parser_feed(&parser, &buffer, input_buffer[i]);
                 }
-                cursor_phase_visible = 1;
+                terminal_set_cursor_phase_visible_flag(&cursor_phase_visible, 1);
+                terminal_mark_framebuffer_dirty();
                 cursor_last_toggle = SDL_GetTicks();
             } else if (bytes_read < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 running = 0;
@@ -5286,7 +5332,7 @@ int main(int argc, char **argv) {
         Uint32 now = SDL_GetTicks();
         if (cursor_blink_interval > 0u && (Uint32)(now - cursor_last_toggle) >= cursor_blink_interval) {
             cursor_last_toggle = now;
-            cursor_phase_visible = cursor_phase_visible ? 0 : 1;
+            terminal_toggle_cursor_phase_visible_flag(&cursor_phase_visible);
         }
         size_t clamped_scroll_offset = terminal_clamped_scroll_offset(&buffer);
         size_t top_index = 0u;
@@ -5310,175 +5356,179 @@ int main(int argc, char **argv) {
             break;
         }
 
-        int margin_pixels = terminal_margin_pixels;
-        if (margin_pixels < 0) {
-            margin_pixels = 0;
-        }
-        if (margin_pixels > 0) {
-            if (margin_pixels * 2 > frame_width) {
-                margin_pixels = frame_width / 2;
+        if (terminal_framebuffer_dirty) {
+            int margin_pixels = terminal_margin_pixels;
+            if (margin_pixels < 0) {
+                margin_pixels = 0;
             }
-            if (margin_pixels * 2 > frame_height) {
-                margin_pixels = frame_height / 2;
-            }
-            uint32_t margin_color_value = buffer.default_bg;
-            uint8_t margin_r = terminal_color_r(margin_color_value);
-            uint8_t margin_g = terminal_color_g(margin_color_value);
-            uint8_t margin_b = terminal_color_b(margin_color_value);
-            for (int py = 0; py < frame_height; py++) {
-                uint8_t *row_ptr = framebuffer + (size_t)py * (size_t)frame_pitch;
-                if (py < margin_pixels || py >= frame_height - margin_pixels) {
-                    uint8_t *dst = row_ptr;
-                    for (int px = 0; px < frame_width; px++) {
-                        dst[0] = margin_r;
-                        dst[1] = margin_g;
-                        dst[2] = margin_b;
-                        dst[3] = 255u;
-                        dst += 4;
-                    }
-                } else {
-                    uint8_t *dst_left = row_ptr;
-                    for (int px = 0; px < margin_pixels; px++) {
-                        dst_left[0] = margin_r;
-                        dst_left[1] = margin_g;
-                        dst_left[2] = margin_b;
-                        dst_left[3] = 255u;
-                        dst_left += 4;
-                    }
-                    if (margin_pixels < frame_width) {
-                        uint8_t *dst_right = row_ptr + (size_t)(frame_width - margin_pixels) * 4u;
+            if (margin_pixels > 0) {
+                if (margin_pixels * 2 > frame_width) {
+                    margin_pixels = frame_width / 2;
+                }
+                if (margin_pixels * 2 > frame_height) {
+                    margin_pixels = frame_height / 2;
+                }
+                uint32_t margin_color_value = buffer.default_bg;
+                uint8_t margin_r = terminal_color_r(margin_color_value);
+                uint8_t margin_g = terminal_color_g(margin_color_value);
+                uint8_t margin_b = terminal_color_b(margin_color_value);
+                for (int py = 0; py < frame_height; py++) {
+                    uint8_t *row_ptr = framebuffer + (size_t)py * (size_t)frame_pitch;
+                    if (py < margin_pixels || py >= frame_height - margin_pixels) {
+                        uint8_t *dst = row_ptr;
+                        for (int px = 0; px < frame_width; px++) {
+                            dst[0] = margin_r;
+                            dst[1] = margin_g;
+                            dst[2] = margin_b;
+                            dst[3] = 255u;
+                            dst += 4;
+                        }
+                    } else {
+                        uint8_t *dst_left = row_ptr;
                         for (int px = 0; px < margin_pixels; px++) {
-                            dst_right[0] = margin_r;
-                            dst_right[1] = margin_g;
-                            dst_right[2] = margin_b;
-                            dst_right[3] = 255u;
-                            dst_right += 4;
+                            dst_left[0] = margin_r;
+                            dst_left[1] = margin_g;
+                            dst_left[2] = margin_b;
+                            dst_left[3] = 255u;
+                            dst_left += 4;
+                        }
+                        if (margin_pixels < frame_width) {
+                            uint8_t *dst_right = row_ptr + (size_t)(frame_width - margin_pixels) * 4u;
+                            for (int px = 0; px < margin_pixels; px++) {
+                                dst_right[0] = margin_r;
+                                dst_right[1] = margin_g;
+                                dst_right[2] = margin_b;
+                                dst_right[3] = 255u;
+                                dst_right += 4;
+                            }
                         }
                     }
                 }
             }
-        }
 
-        for (size_t row = 0u; row < buffer.rows; row++) {
-            size_t global_index = top_index + row;
-            const struct terminal_cell *row_cells = terminal_buffer_row_at(&buffer, global_index);
-            if (!row_cells) {
-                continue;
-            }
-            for (size_t col = 0u; col < buffer.columns; col++) {
-                const struct terminal_cell *cell = &row_cells[col];
-                uint32_t ch = cell->ch;
-                uint32_t fg = cell->fg;
-                uint32_t bg = cell->bg;
-                uint8_t style = cell->style;
-                if ((style & TERMINAL_STYLE_REVERSE) != 0u) {
-                    uint32_t tmp = fg;
-                    fg = bg;
-                    bg = tmp;
-                }
-                if ((style & TERMINAL_STYLE_BOLD) != 0u) {
-                    fg = terminal_bold_variant(fg);
-                }
-
-                if (selection_has_range &&
-                    terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer.columns)) {
-                    fg = buffer.default_bg;
-                    bg = buffer.default_fg;
-                }
-
-                int is_cursor_cell = cursor_render_visible &&
-                                     global_index == cursor_global_index &&
-                                     col == buffer.cursor_column;
-                uint32_t fill_color = bg;
-                uint32_t glyph_color = fg;
-                if (is_cursor_cell) {
-                    fill_color = buffer.cursor_color;
-                    glyph_color = bg;
-                }
-
-                int dest_x = margin_pixels + (int)(col * (size_t)glyph_width);
-                int dest_y = margin_pixels + (int)(row * (size_t)glyph_height);
-                int end_x = dest_x + glyph_width;
-                int end_y = dest_y + glyph_height;
-                if (dest_x < 0) {
-                    dest_x = 0;
-                }
-                if (dest_y < 0) {
-                    dest_y = 0;
-                }
-                if (end_x > frame_width) {
-                    end_x = frame_width;
-                }
-                if (end_y > frame_height) {
-                    end_y = frame_height;
-                }
-                if (dest_x >= end_x || dest_y >= end_y) {
+            for (size_t row = 0u; row < buffer.rows; row++) {
+                size_t global_index = top_index + row;
+                const struct terminal_cell *row_cells = terminal_buffer_row_at(&buffer, global_index);
+                if (!row_cells) {
                     continue;
                 }
-
-                uint8_t fill_r = terminal_color_r(fill_color);
-                uint8_t fill_g = terminal_color_g(fill_color);
-                uint8_t fill_b = terminal_color_b(fill_color);
-                uint8_t glyph_r = terminal_color_r(glyph_color);
-                uint8_t glyph_g = terminal_color_g(glyph_color);
-                uint8_t glyph_b = terminal_color_b(glyph_color);
-
-                for (int py = dest_y; py < end_y; py++) {
-                    uint8_t *dst = framebuffer + (size_t)py * (size_t)frame_pitch + (size_t)dest_x * 4u;
-                    for (int px = dest_x; px < end_x; px++) {
-                        dst[0] = fill_r;
-                        dst[1] = fill_g;
-                        dst[2] = fill_b;
-                        dst[3] = 255u;
-                        dst += 4;
+                for (size_t col = 0u; col < buffer.columns; col++) {
+                    const struct terminal_cell *cell = &row_cells[col];
+                    uint32_t ch = cell->ch;
+                    uint32_t fg = cell->fg;
+                    uint32_t bg = cell->bg;
+                    uint8_t style = cell->style;
+                    if ((style & TERMINAL_STYLE_REVERSE) != 0u) {
+                        uint32_t tmp = fg;
+                        fg = bg;
+                        bg = tmp;
                     }
-                }
-
-                if (ch != 0u) {
-                    uint32_t glyph_index = psf_font_resolve_glyph(&font, ch);
-                    if (glyph_index >= font.glyph_count) {
-                        glyph_index = 0u;
+                    if ((style & TERMINAL_STYLE_BOLD) != 0u) {
+                        fg = terminal_bold_variant(fg);
                     }
+
+                    if (selection_has_range &&
+                        terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer.columns)) {
+                        fg = buffer.default_bg;
+                        bg = buffer.default_fg;
+                    }
+
+                    int is_cursor_cell = cursor_render_visible &&
+                                         global_index == cursor_global_index &&
+                                         col == buffer.cursor_column;
+                    uint32_t fill_color = bg;
+                    uint32_t glyph_color = fg;
+                    if (is_cursor_cell) {
+                        fill_color = buffer.cursor_color;
+                        glyph_color = bg;
+                    }
+
+                    int dest_x = margin_pixels + (int)(col * (size_t)glyph_width);
+                    int dest_y = margin_pixels + (int)(row * (size_t)glyph_height);
+                    int end_x = dest_x + glyph_width;
+                    int end_y = dest_y + glyph_height;
+                    if (dest_x < 0) {
+                        dest_x = 0;
+                    }
+                    if (dest_y < 0) {
+                        dest_y = 0;
+                    }
+                    if (end_x > frame_width) {
+                        end_x = frame_width;
+                    }
+                    if (end_y > frame_height) {
+                        end_y = frame_height;
+                    }
+                    if (dest_x >= end_x || dest_y >= end_y) {
+                        continue;
+                    }
+
+                    uint8_t fill_r = terminal_color_r(fill_color);
+                    uint8_t fill_g = terminal_color_g(fill_color);
+                    uint8_t fill_b = terminal_color_b(fill_color);
+                    uint8_t glyph_r = terminal_color_r(glyph_color);
+                    uint8_t glyph_g = terminal_color_g(glyph_color);
+                    uint8_t glyph_b = terminal_color_b(glyph_color);
 
                     for (int py = dest_y; py < end_y; py++) {
-                        uint32_t src_y = (uint32_t)((py - dest_y) / TERMINAL_FONT_SCALE);
-                        if (src_y >= font.height) {
-                            continue;
-                        }
                         uint8_t *dst = framebuffer + (size_t)py * (size_t)frame_pitch + (size_t)dest_x * 4u;
                         for (int px = dest_x; px < end_x; px++) {
-                            uint32_t src_x = (uint32_t)((px - dest_x) / TERMINAL_FONT_SCALE);
-                            if (src_x < font.width && glyph_pixel_set(&font, glyph_index, src_x, src_y)) {
-                                dst[0] = glyph_r;
-                                dst[1] = glyph_g;
-                                dst[2] = glyph_b;
-                                dst[3] = 255u;
-                            }
+                            dst[0] = fill_r;
+                            dst[1] = fill_g;
+                            dst[2] = fill_b;
+                            dst[3] = 255u;
                             dst += 4;
                         }
                     }
 
-                    if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
-                        int underline_y = end_y - 1;
-                        if (underline_y >= dest_y) {
-                            uint8_t *dst = framebuffer + (size_t)underline_y * (size_t)frame_pitch + (size_t)dest_x * 4u;
+                    if (ch != 0u) {
+                        uint32_t glyph_index = psf_font_resolve_glyph(&font, ch);
+                        if (glyph_index >= font.glyph_count) {
+                            glyph_index = 0u;
+                        }
+
+                        for (int py = dest_y; py < end_y; py++) {
+                            uint32_t src_y = (uint32_t)((py - dest_y) / TERMINAL_FONT_SCALE);
+                            if (src_y >= font.height) {
+                                continue;
+                            }
+                            uint8_t *dst = framebuffer + (size_t)py * (size_t)frame_pitch + (size_t)dest_x * 4u;
                             for (int px = dest_x; px < end_x; px++) {
-                                dst[0] = glyph_r;
-                                dst[1] = glyph_g;
-                                dst[2] = glyph_b;
-                                dst[3] = 255u;
+                                uint32_t src_x = (uint32_t)((px - dest_x) / TERMINAL_FONT_SCALE);
+                                if (src_x < font.width && glyph_pixel_set(&font, glyph_index, src_x, src_y)) {
+                                    dst[0] = glyph_r;
+                                    dst[1] = glyph_g;
+                                    dst[2] = glyph_b;
+                                    dst[3] = 255u;
+                                }
                                 dst += 4;
+                            }
+                        }
+
+                        if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
+                            int underline_y = end_y - 1;
+                            if (underline_y >= dest_y) {
+                                uint8_t *dst = framebuffer + (size_t)underline_y * (size_t)frame_pitch + (size_t)dest_x * 4u;
+                                for (int px = dest_x; px < end_x; px++) {
+                                    dst[0] = glyph_r;
+                                    dst[1] = glyph_g;
+                                    dst[2] = glyph_b;
+                                    dst[3] = 255u;
+                                    dst += 4;
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
-            fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
-            running = 0;
-            break;
+            if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
+                fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
+                running = 0;
+                break;
+            }
+
+            terminal_framebuffer_dirty = 0;
         }
 
         glClear(GL_COLOR_BUFFER_BIT);

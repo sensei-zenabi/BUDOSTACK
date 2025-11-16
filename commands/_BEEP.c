@@ -12,7 +12,13 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifndef BUDOSTACK_HAVE_ALSA
+#define BUDOSTACK_HAVE_ALSA 0
+#endif
+
+#if BUDOSTACK_HAVE_ALSA
 #include <alsa/asoundlib.h>
+#endif
 
 static void sleep_ms(unsigned int milliseconds) {
     struct timespec request = {milliseconds / 1000U, (long)(milliseconds % 1000U) * 1000000L};
@@ -178,6 +184,7 @@ static int play_tone(double frequency, unsigned int duration_ms) {
         return -1;
     }
 
+#if BUDOSTACK_HAVE_ALSA
     const unsigned int sample_rate = 48000U;
     const double amplitude = 0.2;
     const double two_pi = 6.28318530717958647692;
@@ -252,6 +259,10 @@ static int play_tone(double frequency, unsigned int duration_ms) {
     snd_pcm_drain(handle);
     snd_pcm_close(handle);
     return 0;
+#else
+    fprintf(stderr, "_BEEP: built without ALSA support; using terminal bell\n");
+    return fallback_bell(duration_ms);
+#endif
 }
 
 int main(int argc, char *argv[]) {

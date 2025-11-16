@@ -14,17 +14,11 @@
 #include <time.h>
 #include <unistd.h>
 
-#if defined(__has_include)
-#if __has_include(<alsa/asoundlib.h>)
-#define HAVE_ALSA 1
-#else
-#define HAVE_ALSA 0
-#endif
-#else
-#define HAVE_ALSA 1
+#ifndef BUDOSTACK_HAVE_ALSA
+#define BUDOSTACK_HAVE_ALSA 0
 #endif
 
-#if HAVE_ALSA
+#if BUDOSTACK_HAVE_ALSA
 #include <alsa/asoundlib.h>
 
 #define MIN_FFT_SIZE 256
@@ -913,7 +907,7 @@ int main(void)
 #else
 int main(void)
 {
-    fprintf(stderr, "spectrum: ALSA development headers not available at build time\n");
+    fprintf(stderr, "spectrum: built without ALSA support\n");
     return EXIT_FAILURE;
 }
 #endif

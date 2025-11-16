@@ -1,30 +1,68 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic
-LDFLAGS = -lasound -lm -pthread
+LDFLAGS = -lm -pthread
+
+# Detect optional ALSA development files so ALSA-dependent tools can be built
+# when the system provides them while keeping the build warning/error free when
+# it does not.
+ALSA_CFLAGS ?= $(shell pkg-config --cflags alsa 2>/dev/null)
+ALSA_LIBS ?= $(shell pkg-config --libs alsa 2>/dev/null)
+
+ifeq ($(strip $(ALSA_LIBS)),)
+ALSA_FILES_DETECTED := $(wildcard /usr/lib*/libasound.so*)
+ifneq ($(strip $(ALSA_FILES_DETECTED)),)
+ALSA_LIBS = -lasound
+endif
+endif
+
+ifeq ($(strip $(ALSA_LIBS)),)
+CFLAGS += -DBUDOSTACK_HAVE_ALSA=0
+else
+CFLAGS += $(ALSA_CFLAGS) -DBUDOSTACK_HAVE_ALSA=1
+LDFLAGS += $(ALSA_LIBS)
+endif
 
 SDL2_CFLAGS = $(shell pkg-config --cflags sdl2 2>/dev/null)
 SDL2_LIBS = $(shell pkg-config --libs sdl2 2>/dev/null)
-
-ifeq ($(strip $(SDL2_CFLAGS)),)
-SDL2_CFLAGS = $(shell sdl2-config --cflags 2>/dev/null)
-endif
+SDL2_ENABLED = 1
 
 ifeq ($(strip $(SDL2_LIBS)),)
+SDL2_CFLAGS = $(shell sdl2-config --cflags 2>/dev/null)
 SDL2_LIBS = $(shell sdl2-config --libs 2>/dev/null)
 endif
 
-ifeq ($(strip $(SDL2_CFLAGS)),)
-SDL2_CFLAGS = -I/usr/include/SDL2
+ifeq ($(strip $(SDL2_LIBS)),)
+SDL2_INCLUDE_DIR := $(wildcard /usr/include/SDL2)
+ifneq ($(strip $(SDL2_INCLUDE_DIR)),)
+SDL2_CFLAGS = -I$(SDL2_INCLUDE_DIR)
+endif
+SDL2_LIB_FILES := $(wildcard /usr/lib*/libSDL2.so*)
+ifneq ($(strip $(SDL2_LIB_FILES)),)
+SDL2_LIBS = -lSDL2
+endif
+endif
+
+SDL2_GL_LIBS = $(shell pkg-config --libs gl 2>/dev/null)
+ifeq ($(strip $(SDL2_GL_LIBS)),)
+SDL2_GL_FILES := $(wildcard /usr/lib*/libGL.so*)
+ifneq ($(strip $(SDL2_GL_FILES)),)
+SDL2_GL_LIBS = -lGL
+endif
 endif
 
 ifeq ($(strip $(SDL2_LIBS)),)
-SDL2_LIBS = -lSDL2
+SDL2_ENABLED = 0
 endif
 
-# SDL2-specific flags are only needed for the SDL terminal target.
+ifeq ($(strip $(SDL2_GL_LIBS)),)
+SDL2_ENABLED = 0
+endif
+
+ifeq ($(SDL2_ENABLED),1)
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
-apps/terminal: LDFLAGS += $(SDL2_LIBS) -lGL
+apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
+endif
 
 # --------------------------------------------------------------------
 # Design principle: Separate compilation of library sources from main sources.
@@ -50,6 +88,11 @@ COMMANDS_EXES = $(COMMANDS_SRCS:.c=)
 # Find all .c files in the apps folder
 APPS_SRCS = $(shell find ./apps -type f -name '*.c')
 APPS_EXES = $(APPS_SRCS:.c=)
+
+ifeq ($(SDL2_ENABLED),0)
+APPS_SRCS := $(filter-out ./apps/terminal.c, $(APPS_SRCS))
+APPS_EXES := $(filter-out ./apps/terminal, $(APPS_EXES))
+endif
 
 # Find all .c files in the games folder
 GAMES_SRCS = $(shell find ./games -type f -name '*.c')

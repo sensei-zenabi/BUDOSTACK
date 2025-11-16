@@ -58,10 +58,18 @@ sure it is either built into the core binary or excluded from the automatic
 
 ## Testing & build expectations
 
+* **Always run `make clean all` (or an equivalent full rebuild) locally before
+  requesting a review/creating a PR.** The top-level `makefile` already
+  configures the strict warning flags (`-std=c11 -Wall -Wextra -Werror
+  -Wpedantic`), so running `make` from the repo root guarantees you test with
+  the same build settings the CI expects.
 * Ensure `make` completes without warnings. Because every warning is an error,
   compilation failures usually indicate a style or portability issue.
 * Prefer fast, self-contained checks. Avoid adding scripts that require
   long-running daemons or non-standard dependencies.
+* When applicable, run `make clean` again after successful builds if you plan to
+  switch branches. This avoids accidentally skipping a translation unit because
+  an outdated `.o` file already existed.
 
 These guidelines apply to the entire repository. Add a nested `AGENTS.md` if a
 subdirectory needs stricter or different rules.

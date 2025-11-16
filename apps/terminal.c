@@ -1249,13 +1249,17 @@ static int terminal_paste_from_clipboard(int fd) {
         for (size_t i = 0u; i < len; i++) {
             unsigned char ch = (unsigned char)text[i];
             if (ch == '\r') {
-                normalized[out_len++] = '\n';
+                normalized[out_len++] = '\r';
                 if (i + 1u < len && text[i + 1u] == '\n') {
                     i++;
                 }
-            } else {
-                normalized[out_len++] = (char)ch;
+                continue;
             }
+            if (ch == '\n') {
+                normalized[out_len++] = '\r';
+                continue;
+            }
+            normalized[out_len++] = (char)ch;
         }
         if (out_len > 0u) {
             if (terminal_send_bytes(fd, normalized, out_len) < 0) {

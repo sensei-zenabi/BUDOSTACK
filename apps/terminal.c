@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #include <ctype.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
@@ -85,6 +86,30 @@ static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
 static int terminal_texture_height = 0;
 static int terminal_gl_ready = 0;
+static GLuint terminal_bound_texture = 0;
+
+struct terminal_quad_vertex {
+    GLfloat position[4];
+    GLfloat texcoord_cpu[2];
+    GLfloat texcoord_fbo[2];
+};
+
+static const struct terminal_quad_vertex terminal_quad_vertices[4] = {
+    { { -1.0f, -1.0f, 0.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 0.0f } },
+    { {  1.0f, -1.0f, 0.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f } },
+    { { -1.0f,  1.0f, 0.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 1.0f } },
+    { {  1.0f,  1.0f, 0.0f, 1.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f } }
+};
+
+static GLuint terminal_quad_vbo = 0;
+static const GLsizei terminal_quad_vertex_count = 4;
+
+static const GLfloat terminal_identity_mvp[16] = {
+    1.0f, 0.0f, 0.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 0.0f,
+    0.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 0.0f, 0.0f, 1.0f
+};
 
 static uint8_t *terminal_framebuffer_pixels = NULL;
 static size_t terminal_framebuffer_capacity = 0u;
@@ -125,6 +150,15 @@ struct terminal_gl_shader {
     GLint uniform_interlace_detect;
     GLint uniform_saturation;
     GLint uniform_inv_gamma;
+    GLuint quad_vaos[2];
+    int has_cached_mvp;
+    GLfloat cached_mvp[16];
+    int has_cached_output_size;
+    GLfloat cached_output_size[2];
+    int has_cached_texture_size;
+    GLfloat cached_texture_size[2];
+    int has_cached_input_size;
+    GLfloat cached_input_size[2];
 };
 
 static struct terminal_gl_shader *terminal_gl_shaders = NULL;
@@ -208,6 +242,14 @@ static int terminal_paste_from_clipboard(int fd);
 static size_t terminal_encode_utf8(uint32_t codepoint, char *dst);
 static int terminal_initialize_gl_program(const char *shader_path);
 static void terminal_release_gl_resources(void);
+static int terminal_initialize_quad_geometry(void);
+static void terminal_destroy_quad_geometry(void);
+static int terminal_shader_configure_vaos(struct terminal_gl_shader *shader);
+static void terminal_shader_clear_vaos(struct terminal_gl_shader *shader);
+static void terminal_shader_reset_uniform_cache(struct terminal_gl_shader *shader);
+static void terminal_shader_set_matrix(GLint location, GLfloat *cache, int *has_cache, const GLfloat *matrix);
+static void terminal_shader_set_vec2(GLint location, GLfloat *cache, int *has_cache, GLfloat x, GLfloat y);
+static void terminal_bind_texture(GLuint texture);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
@@ -1857,6 +1899,133 @@ static int terminal_parse_shader_parameters(const char *source, size_t length, s
     return 0;
 }
 
+static void terminal_shader_reset_uniform_cache(struct terminal_gl_shader *shader) {
+    if (!shader) {
+        return;
+    }
+    shader->has_cached_mvp = 0;
+    shader->has_cached_output_size = 0;
+    shader->has_cached_texture_size = 0;
+    shader->has_cached_input_size = 0;
+}
+
+static void terminal_shader_set_matrix(GLint location, GLfloat *cache, int *has_cache, const GLfloat *matrix) {
+    if (location < 0 || !cache || !has_cache || !matrix) {
+        return;
+    }
+    if (*has_cache && memcmp(cache, matrix, sizeof(GLfloat) * 16u) == 0) {
+        return;
+    }
+    memcpy(cache, matrix, sizeof(GLfloat) * 16u);
+    *has_cache = 1;
+    glUniformMatrix4fv(location, 1, GL_FALSE, matrix);
+}
+
+static void terminal_shader_set_vec2(GLint location, GLfloat *cache, int *has_cache, GLfloat x, GLfloat y) {
+    if (location < 0 || !cache || !has_cache) {
+        return;
+    }
+    if (*has_cache && cache[0] == x && cache[1] == y) {
+        return;
+    }
+    cache[0] = x;
+    cache[1] = y;
+    *has_cache = 1;
+    glUniform2f(location, x, y);
+}
+
+static void terminal_shader_clear_vaos(struct terminal_gl_shader *shader) {
+    if (!shader) {
+        return;
+    }
+    for (size_t i = 0; i < 2; i++) {
+        if (shader->quad_vaos[i] != 0) {
+            glDeleteVertexArrays(1, &shader->quad_vaos[i]);
+            shader->quad_vaos[i] = 0;
+        }
+    }
+    terminal_shader_reset_uniform_cache(shader);
+}
+
+static int terminal_initialize_quad_geometry(void) {
+    if (terminal_quad_vbo != 0) {
+        return 0;
+    }
+    glGenBuffers(1, &terminal_quad_vbo);
+    if (terminal_quad_vbo == 0) {
+        return -1;
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, terminal_quad_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(terminal_quad_vertices), terminal_quad_vertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    return 0;
+}
+
+static void terminal_destroy_quad_geometry(void) {
+    if (terminal_quad_vbo != 0) {
+        glDeleteBuffers(1, &terminal_quad_vbo);
+        terminal_quad_vbo = 0;
+    }
+}
+
+static int terminal_shader_configure_vaos(struct terminal_gl_shader *shader) {
+    if (!shader) {
+        return -1;
+    }
+    if (terminal_quad_vbo == 0) {
+        return -1;
+    }
+
+    GLuint vaos[2] = {0u, 0u};
+    glGenVertexArrays(2, vaos);
+    if (vaos[0] == 0u || vaos[1] == 0u) {
+        if (vaos[0] != 0u) {
+            glDeleteVertexArrays(1, &vaos[0]);
+        }
+        if (vaos[1] != 0u) {
+            glDeleteVertexArrays(1, &vaos[1]);
+        }
+        return -1;
+    }
+
+    const GLsizei stride = (GLsizei)sizeof(struct terminal_quad_vertex);
+    const void *position_offset = (const void *)offsetof(struct terminal_quad_vertex, position);
+    const void *cpu_offset = (const void *)offsetof(struct terminal_quad_vertex, texcoord_cpu);
+    const void *fbo_offset = (const void *)offsetof(struct terminal_quad_vertex, texcoord_fbo);
+
+    GLuint *targets[2] = {&vaos[0], &vaos[1]};
+    const void *texcoord_offsets[2] = {cpu_offset, fbo_offset};
+
+    for (size_t i = 0; i < 2; i++) {
+        glBindVertexArray(*targets[i]);
+        glBindBuffer(GL_ARRAY_BUFFER, terminal_quad_vbo);
+        if (shader->attrib_vertex >= 0) {
+            glEnableVertexAttribArray((GLuint)shader->attrib_vertex);
+            glVertexAttribPointer((GLuint)shader->attrib_vertex, 4, GL_FLOAT, GL_FALSE, stride, position_offset);
+        }
+        if (shader->attrib_texcoord >= 0) {
+            glEnableVertexAttribArray((GLuint)shader->attrib_texcoord);
+            glVertexAttribPointer((GLuint)shader->attrib_texcoord, 2, GL_FLOAT, GL_FALSE, stride, texcoord_offsets[i]);
+        }
+        if (shader->attrib_color >= 0) {
+            glDisableVertexAttribArray((GLuint)shader->attrib_color);
+        }
+    }
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    shader->quad_vaos[0] = vaos[0];
+    shader->quad_vaos[1] = vaos[1];
+    return 0;
+}
+
+static void terminal_bind_texture(GLuint texture) {
+    if (terminal_bound_texture != texture) {
+        glBindTexture(GL_TEXTURE_2D, texture);
+        terminal_bound_texture = texture;
+    }
+}
+
 static float terminal_get_parameter_default(const struct terminal_shader_parameter *params, size_t count, const char *name, float fallback) {
     if (!params || !name) {
         return fallback;
@@ -2053,6 +2222,8 @@ static int terminal_initialize_gl_program(const char *shader_path) {
 
     struct terminal_gl_shader shader_info;
     memset(&shader_info, 0, sizeof(shader_info));
+    terminal_shader_reset_uniform_cache(&shader_info);
+    int shader_registered = 0;
     shader_info.program = program;
     shader_info.attrib_vertex = glGetAttribLocation(program, "VertexCoord");
     shader_info.attrib_color = glGetAttribLocation(program, "COLOR");
@@ -2087,6 +2258,15 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     glUseProgram(program);
     if (shader_info.uniform_texture_sampler >= 0) {
         glUniform1i(shader_info.uniform_texture_sampler, 0);
+    }
+    if (shader_info.uniform_frame_direction >= 0) {
+        glUniform1i(shader_info.uniform_frame_direction, 1);
+    }
+    if (shader_info.uniform_mvp >= 0) {
+        terminal_shader_set_matrix(shader_info.uniform_mvp,
+                                   shader_info.cached_mvp,
+                                   &shader_info.has_cached_mvp,
+                                   terminal_identity_mvp);
     }
 
     for (size_t i = 0; i < parameter_count; i++) {
@@ -2173,6 +2353,10 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     }
     glUseProgram(0);
 
+    if (terminal_shader_configure_vaos(&shader_info) != 0) {
+        goto cleanup;
+    }
+
     terminal_free_shader_parameters(parameters, parameter_count);
     parameters = NULL;
     parameter_count = 0u;
@@ -2184,10 +2368,14 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     terminal_gl_shaders = new_array;
     terminal_gl_shaders[terminal_gl_shader_count] = shader_info;
     terminal_gl_shader_count++;
+    shader_registered = 1;
     program = 0;
     result = 0;
 
 cleanup:
+    if (!shader_registered) {
+        terminal_shader_clear_vaos(&shader_info);
+    }
     if (program != 0) {
         glDeleteProgram(program);
     }
@@ -2236,14 +2424,14 @@ static int terminal_resize_render_targets(int width, int height) {
     terminal_texture_width = width;
     terminal_texture_height = height;
 
-    glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+    terminal_bind_texture(terminal_gl_texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, terminal_framebuffer_pixels);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    terminal_bind_texture(0);
 
     return 0;
 }
@@ -2253,10 +2441,16 @@ static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int hei
         return -1;
     }
 
-    glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+    terminal_bind_texture(terminal_gl_texture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    GLenum error = glGetError();
+    if (error != GL_NO_ERROR) {
+        fprintf(stderr, "glTexSubImage2D failed with error 0x%x\n", error);
+        terminal_bind_texture(0);
+        return -1;
+    }
+    terminal_bind_texture(0);
     return 0;
 }
 
@@ -2289,7 +2483,7 @@ static int terminal_prepare_intermediate_targets(int width, int height) {
 
     if (resized) {
         for (size_t i = 0; i < 2; i++) {
-            glBindTexture(GL_TEXTURE_2D, terminal_gl_intermediate_textures[i]);
+            terminal_bind_texture(terminal_gl_intermediate_textures[i]);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -2297,7 +2491,7 @@ static int terminal_prepare_intermediate_targets(int width, int height) {
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
         }
-        glBindTexture(GL_TEXTURE_2D, 0);
+        terminal_bind_texture(0);
         terminal_intermediate_width = width;
         terminal_intermediate_height = height;
     }
@@ -2315,6 +2509,7 @@ static void terminal_release_gl_resources(void) {
             if (terminal_gl_shaders[i].program != 0) {
                 glDeleteProgram(terminal_gl_shaders[i].program);
             }
+            terminal_shader_clear_vaos(&terminal_gl_shaders[i]);
         }
         free(terminal_gl_shaders);
         terminal_gl_shaders = NULL;
@@ -2341,6 +2536,8 @@ static void terminal_release_gl_resources(void) {
     terminal_framebuffer_height = 0;
     terminal_texture_width = 0;
     terminal_texture_height = 0;
+    terminal_bind_texture(0);
+    terminal_destroy_quad_geometry();
     terminal_gl_ready = 0;
 }
 
@@ -4497,12 +4694,29 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
+    if (terminal_initialize_quad_geometry() != 0) {
+        fprintf(stderr, "Failed to initialize fullscreen quad geometry.\n");
+        terminal_release_gl_resources();
+        SDL_GL_DeleteContext(gl_context);
+        SDL_DestroyWindow(window);
+#if BUDOSTACK_HAVE_SDL2
+        terminal_shutdown_audio();
+#endif
+        SDL_Quit();
+        kill(child_pid, SIGKILL);
+        free_font(&font);
+        close(master_fd);
+        free(shader_paths);
+        return EXIT_FAILURE;
+    }
+
     if (SDL_GL_SetSwapInterval(1) != 0) {
         fprintf(stderr, "Warning: Unable to enable VSync: %s\n", SDL_GetError());
     }
 
     for (size_t i = 0; i < shader_path_count; i++) {
         if (terminal_initialize_gl_program(shader_paths[i].path) != 0) {
+            terminal_release_gl_resources();
             SDL_GL_DeleteContext(gl_context);
             SDL_DestroyWindow(window);
 #if BUDOSTACK_HAVE_SDL2
@@ -5269,32 +5483,6 @@ int main(int argc, char **argv) {
 
         glClear(GL_COLOR_BUFFER_BIT);
         if (terminal_gl_shader_count > 0u) {
-            const GLfloat identity_mvp[16] = {
-                1.0f, 0.0f, 0.0f, 0.0f,
-                0.0f, 1.0f, 0.0f, 0.0f,
-                0.0f, 0.0f, 1.0f, 0.0f,
-                0.0f, 0.0f, 0.0f, 1.0f
-            };
-
-            const GLfloat quad_vertices[16] = {
-                -1.0f, -1.0f, 0.0f, 1.0f,
-                 1.0f, -1.0f, 0.0f, 1.0f,
-                -1.0f,  1.0f, 0.0f, 1.0f,
-                 1.0f,  1.0f, 0.0f, 1.0f
-            };
-            const GLfloat quad_texcoords_cpu[8] = {
-                0.0f, 1.0f,
-                1.0f, 1.0f,
-                0.0f, 0.0f,
-                1.0f, 0.0f
-            };
-            const GLfloat quad_texcoords_fbo[8] = {
-                0.0f, 0.0f,
-                1.0f, 0.0f,
-                0.0f, 1.0f,
-                1.0f, 1.0f
-            };
-
             static int frame_counter = 0;
             int frame_value = frame_counter++;
 
@@ -5345,58 +5533,81 @@ int main(int argc, char **argv) {
 
                 glUseProgram(shader->program);
 
-                if (shader->uniform_mvp >= 0) {
-                    glUniformMatrix4fv(shader->uniform_mvp, 1, GL_FALSE, identity_mvp);
-                }
-                if (shader->uniform_frame_direction >= 0) {
-                    glUniform1i(shader->uniform_frame_direction, 1);
-                }
+                terminal_shader_set_vec2(shader->uniform_output_size,
+                                         shader->cached_output_size,
+                                         &shader->has_cached_output_size,
+                                         (GLfloat)drawable_width,
+                                         (GLfloat)drawable_height);
                 if (shader->uniform_frame_count >= 0) {
                     glUniform1i(shader->uniform_frame_count, frame_value);
                 }
-                if (shader->uniform_output_size >= 0) {
-                    glUniform2f(shader->uniform_output_size, (GLfloat)drawable_width, (GLfloat)drawable_height);
-                }
-                if (shader->uniform_texture_size >= 0) {
-                    glUniform2f(shader->uniform_texture_size, source_texture_width, source_texture_height);
-                }
-                if (shader->uniform_input_size >= 0) {
-                    glUniform2f(shader->uniform_input_size, source_input_width, source_input_height);
-                }
-                if (shader->uniform_texture_sampler >= 0) {
-                    glUniform1i(shader->uniform_texture_sampler, 0);
-                }
+                terminal_shader_set_vec2(shader->uniform_texture_size,
+                                         shader->cached_texture_size,
+                                         &shader->has_cached_texture_size,
+                                         source_texture_width,
+                                         source_texture_height);
+                terminal_shader_set_vec2(shader->uniform_input_size,
+                                         shader->cached_input_size,
+                                         &shader->has_cached_input_size,
+                                         source_input_width,
+                                         source_input_height);
 
                 glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, source_texture);
+                terminal_bind_texture(source_texture);
 
-                if (shader->attrib_vertex >= 0) {
-                    glEnableVertexAttribArray((GLuint)shader->attrib_vertex);
-                    glVertexAttribPointer((GLuint)shader->attrib_vertex, 4, GL_FLOAT, GL_FALSE, 0, quad_vertices);
-                }
-                if (shader->attrib_texcoord >= 0) {
-                    const GLfloat *quad_texcoords = (source_texture == terminal_gl_texture)
-                        ? quad_texcoords_cpu
-                        : quad_texcoords_fbo;
-                    glEnableVertexAttribArray((GLuint)shader->attrib_texcoord);
-                    glVertexAttribPointer((GLuint)shader->attrib_texcoord, 2, GL_FLOAT, GL_FALSE, 0, quad_texcoords);
+                GLuint vao = (source_texture == terminal_gl_texture) ? shader->quad_vaos[0] : shader->quad_vaos[1];
+                int using_vao = 0;
+                if (vao != 0) {
+                    glBindVertexArray(vao);
+                    using_vao = 1;
+                } else {
+                    static const GLfloat fallback_quad_vertices[16] = {
+                        -1.0f, -1.0f, 0.0f, 1.0f,
+                         1.0f, -1.0f, 0.0f, 1.0f,
+                        -1.0f,  1.0f, 0.0f, 1.0f,
+                         1.0f,  1.0f, 0.0f, 1.0f
+                    };
+                    static const GLfloat fallback_texcoords_cpu[8] = {
+                        0.0f, 1.0f,
+                        1.0f, 1.0f,
+                        0.0f, 0.0f,
+                        1.0f, 0.0f
+                    };
+                    static const GLfloat fallback_texcoords_fbo[8] = {
+                        0.0f, 0.0f,
+                        1.0f, 0.0f,
+                        0.0f, 1.0f,
+                        1.0f, 1.0f
+                    };
+                    if (shader->attrib_vertex >= 0) {
+                        glEnableVertexAttribArray((GLuint)shader->attrib_vertex);
+                        glVertexAttribPointer((GLuint)shader->attrib_vertex, 4, GL_FLOAT, GL_FALSE, 0, fallback_quad_vertices);
+                    }
+                    if (shader->attrib_texcoord >= 0) {
+                        const GLfloat *quad_texcoords = (source_texture == terminal_gl_texture)
+                            ? fallback_texcoords_cpu
+                            : fallback_texcoords_fbo;
+                        glEnableVertexAttribArray((GLuint)shader->attrib_texcoord);
+                        glVertexAttribPointer((GLuint)shader->attrib_texcoord, 2, GL_FLOAT, GL_FALSE, 0, quad_texcoords);
+                    }
                 }
                 if (shader->attrib_color >= 0) {
                     glDisableVertexAttribArray((GLuint)shader->attrib_color);
                     glVertexAttrib4f((GLuint)shader->attrib_color, 1.0f, 1.0f, 1.0f, 1.0f);
                 }
 
-                glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+                glDrawArrays(GL_TRIANGLE_STRIP, 0, terminal_quad_vertex_count);
 
-                if (shader->attrib_vertex >= 0) {
-                    glDisableVertexAttribArray((GLuint)shader->attrib_vertex);
+                if (using_vao) {
+                    glBindVertexArray(0);
+                } else {
+                    if (shader->attrib_vertex >= 0) {
+                        glDisableVertexAttribArray((GLuint)shader->attrib_vertex);
+                    }
+                    if (shader->attrib_texcoord >= 0) {
+                        glDisableVertexAttribArray((GLuint)shader->attrib_texcoord);
+                    }
                 }
-                if (shader->attrib_texcoord >= 0) {
-                    glDisableVertexAttribArray((GLuint)shader->attrib_texcoord);
-                }
-
-                glBindTexture(GL_TEXTURE_2D, 0);
-                glUseProgram(0);
 
                 if (using_intermediate) {
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -5419,7 +5630,7 @@ int main(int argc, char **argv) {
             glLoadIdentity();
 
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+            terminal_bind_texture(terminal_gl_texture);
             glEnable(GL_TEXTURE_2D);
 
             glBegin(GL_TRIANGLE_STRIP);
@@ -5434,7 +5645,7 @@ int main(int argc, char **argv) {
             glEnd();
 
             glDisable(GL_TEXTURE_2D);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            terminal_bind_texture(0);
         }
 
         SDL_GL_SwapWindow(window);

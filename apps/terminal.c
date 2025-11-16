@@ -37,6 +37,8 @@
 #include <SDL2/SDL_opengl.h>
 #define DR_MP3_IMPLEMENTATION
 #include "../lib/dr_mp3.h"
+#define STB_VORBIS_IMPLEMENTATION
+#include "../lib/stb_vorbis.h"
 #endif
 
 #ifndef PATH_MAX
@@ -592,6 +594,91 @@ static int terminal_audio_load_file(const char *path, float **out_samples, size_
         int result = terminal_audio_convert(&file_spec, temp, decoded_samples * sizeof(float), out_samples, out_frames);
         free(temp);
         drmp3_uninit(&mp3);
+        return result;
+    } else if (strcmp(lower_ext, ".ogg") == 0) {
+        int vorbis_error = 0;
+        stb_vorbis *vorbis = stb_vorbis_open_filename(path, &vorbis_error, NULL);
+        if (!vorbis) {
+            fprintf(stderr, "terminal: Failed to open OGG '%s' (error %d).\n", path, vorbis_error);
+            return -1;
+        }
+
+        stb_vorbis_info info = stb_vorbis_get_info(vorbis);
+        if (info.channels <= 0) {
+            stb_vorbis_close(vorbis);
+            fprintf(stderr, "terminal: OGG '%s' has invalid channel count.\n", path);
+            return -1;
+        }
+
+        unsigned int total_frames_u = stb_vorbis_stream_length_in_samples(vorbis);
+        if (total_frames_u == 0u) {
+            stb_vorbis_close(vorbis);
+            fprintf(stderr, "terminal: OGG '%s' contains no audio frames.\n", path);
+            return -1;
+        }
+
+        size_t channel_count = (size_t)info.channels;
+        size_t total_frames = (size_t)total_frames_u;
+        if (channel_count > 0u) {
+            size_t max_frames = SIZE_MAX / (sizeof(float) * channel_count);
+            if (total_frames > max_frames) {
+                stb_vorbis_close(vorbis);
+                fprintf(stderr, "terminal: OGG '%s' is too large to decode.\n", path);
+                return -1;
+            }
+        }
+
+        float *temp = malloc(total_frames * channel_count * sizeof(float));
+        if (!temp) {
+            stb_vorbis_close(vorbis);
+            return -1;
+        }
+
+        size_t decoded_frames = 0u;
+        while (decoded_frames < total_frames) {
+            size_t remaining_frames = total_frames - decoded_frames;
+            size_t max_request_frames = (size_t)INT_MAX / channel_count;
+            if (max_request_frames == 0u) {
+                break;
+            }
+            if (remaining_frames > max_request_frames) {
+                remaining_frames = max_request_frames;
+            }
+            int frames = stb_vorbis_get_samples_float_interleaved(
+                vorbis,
+                info.channels,
+                temp + decoded_frames * channel_count,
+                (int)(remaining_frames * channel_count));
+            if (frames <= 0) {
+                break;
+            }
+            decoded_frames += (size_t)frames;
+        }
+
+        stb_vorbis_close(vorbis);
+
+        if (decoded_frames == 0u) {
+            free(temp);
+            fprintf(stderr, "terminal: Failed to decode OGG '%s'.\n", path);
+            return -1;
+        }
+
+        if (decoded_frames < total_frames) {
+            size_t used_samples = decoded_frames * channel_count;
+            float *shrunk = realloc(temp, used_samples * sizeof(float));
+            if (shrunk) {
+                temp = shrunk;
+            }
+        }
+
+        SDL_AudioSpec file_spec;
+        SDL_zero(file_spec);
+        file_spec.format = AUDIO_F32SYS;
+        file_spec.channels = (Uint8)info.channels;
+        file_spec.freq = (int)info.sample_rate;
+
+        int result = terminal_audio_convert(&file_spec, temp, decoded_frames * channel_count * sizeof(float), out_samples, out_frames);
+        free(temp);
         return result;
     }
 

@@ -163,10 +163,17 @@ char* read_input(void) {
             if (token_len == 0)
                 continue; /* Nothing to complete */
 
-            /* If first token, autocomplete a command; otherwise, a filename */
+            /* If first token, try command completion first. If that fails, fall back to filenames. */
             if (token_start == 0) {
                 char completion[INPUT_SIZE] = {0};
                 int count = autocomplete_command(token, completion, sizeof(completion));
+                int used_filenames = 0;
+                if (count == 0) {
+                    count = autocomplete_filename(token, completion, sizeof(completion));
+                    if (count > 0) {
+                        used_filenames = 1;
+                    }
+                }
                 if (count == 1) {
                     size_t comp_len = strlen(completion);
                     size_t num_backspaces = pos - token_start;
@@ -188,7 +195,23 @@ char* read_input(void) {
                     cursor = pos;
                 } else if (count > 1) {
                     printf("\n");
-                    list_command_matches(token);
+                    if (used_filenames) {
+                        char dir[INPUT_SIZE];
+                        char prefix[INPUT_SIZE];
+                        const char *last_slash = strrchr(token, '/');
+                        if (last_slash) {
+                            size_t dir_len = last_slash - token + 1;
+                            strncpy(dir, token, dir_len);
+                            dir[dir_len] = '\0';
+                            strcpy(prefix, last_slash + 1);
+                        } else {
+                            strcpy(dir, "./");
+                            strcpy(prefix, token);
+                        }
+                        list_filename_matches(dir, prefix);
+                    } else {
+                        list_command_matches(token);
+                    }
                     printf("%s", buffer);
                     fflush(stdout);
                     cursor = pos;

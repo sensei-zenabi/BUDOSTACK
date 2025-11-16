@@ -30,7 +30,7 @@ extern void say();
  * 0: paging disabled (used for realtime commands)
  */
 int paging_enabled = 1;
-int espeak_enable = 1;
+int espeak_enable = 0;
 
 /* Global variable to store the base directory (extracted from the executable path)
  * so that relative paths like apps/ can be resolved.

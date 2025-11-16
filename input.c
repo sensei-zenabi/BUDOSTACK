@@ -1,3 +1,4 @@
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
 #include <stdio.h>
@@ -6,6 +7,9 @@
 #include <termios.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <wchar.h>
+#include <locale.h>
+#include <limits.h>
 #include "input.h"
 
 #define INPUT_SIZE 1024
@@ -25,6 +29,8 @@ static int autocomplete_command(const char *token, char *completion, size_t comp
 static int autocomplete_filename(const char *token, char *completion, size_t completion_size);
 static void list_command_matches(const char *token);
 static void list_filename_matches(const char *dir, const char *prefix);
+static int utf8_string_display_width(const char *s);
+static size_t utf8_prev_char_start(const char *buffer, size_t cursor);
 
 /*
  * read_input()
@@ -233,12 +239,24 @@ char* read_input(void) {
         /* Handle backspace */
         else if (c == 127 || c == 8) {
             if (cursor > 0) {
-                memmove(buffer + cursor - 1, buffer + cursor, pos - cursor + 1);
-                cursor--;
-                pos--;
-                printf("\b");
+                size_t char_start = utf8_prev_char_start(buffer, cursor);
+                size_t removed_bytes = cursor - char_start;
+                size_t copy_len = removed_bytes;
+                if (copy_len > MB_LEN_MAX)
+                    copy_len = MB_LEN_MAX;
+                char removed[MB_LEN_MAX + 1];
+                memcpy(removed, buffer + char_start, copy_len);
+                removed[copy_len] = '\0';
+                int removed_width = utf8_string_display_width(removed);
+                memmove(buffer + char_start, buffer + cursor, pos - cursor + 1);
+                cursor = char_start;
+                pos -= removed_bytes;
+                for (int i = 0; i < removed_width; i++) {
+                    printf("\b");
+                }
                 printf("%s ", buffer + cursor);
-                for (size_t i = cursor; i <= pos; i++) {
+                int tail_width = utf8_string_display_width(buffer + cursor);
+                for (int i = 0; i < tail_width + 1; i++) {
                     printf("\b");
                 }
                 fflush(stdout);
@@ -363,4 +381,44 @@ static void list_filename_matches(const char *dir, const char *prefix) {
     }
     closedir(d);
     printf("\n");
+}
+
+static int utf8_string_display_width(const char *s) {
+    if (!s)
+        return 0;
+    mbstate_t state;
+    memset(&state, 0, sizeof(state));
+    int width = 0;
+    const char *p = s;
+    while (*p != '\0') {
+        wchar_t wc;
+        size_t consumed = mbrtowc(&wc, p, MB_CUR_MAX, &state);
+        if (consumed == (size_t)-1) {
+            memset(&state, 0, sizeof(state));
+            consumed = 1;
+            width++;
+        } else if (consumed == (size_t)-2) {
+            /* Incomplete sequence at end; treat remaining bytes individually */
+            width += (int)strlen(p);
+            break;
+        } else if (consumed == 0) {
+            break;
+        } else {
+            int char_width = wcwidth(wc);
+            if (char_width < 0)
+                char_width = 1;
+            width += char_width;
+        }
+        p += consumed;
+    }
+    return width;
+}
+
+static size_t utf8_prev_char_start(const char *buffer, size_t cursor) {
+    if (cursor == 0)
+        return 0;
+    size_t index = cursor - 1;
+    while (index > 0 && ((unsigned char)buffer[index] & 0xC0) == 0x80)
+        index--;
+    return index;
 }

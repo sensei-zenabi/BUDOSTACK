@@ -16,6 +16,7 @@
 #include <sys/select.h> // For select()
 #include <dirent.h>     // For directory handling
 #include <sys/stat.h>   // For stat()
+#include <locale.h>
 
 #include "commandparser.h"
 #include "input.h"      // Include the input handling header
@@ -518,6 +519,8 @@ static void run_shell_command(const char *shell_command) {
 int main(int argc, char *argv[]) {
     char *input;
     CommandStruct cmd;
+
+    setlocale(LC_CTYPE, "");
 
     /* 
      * Ignore SIGINT in the shell so that CTRL+C does not quit BUDOSTACK.

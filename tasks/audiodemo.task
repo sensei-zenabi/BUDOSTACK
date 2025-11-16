@@ -1,0 +1,4 @@
+# audiodemo.task
+
+# Play wav file
+RUN _TERM_SOUND_PLAY 1 sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100

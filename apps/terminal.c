@@ -80,6 +80,7 @@ static size_t terminal_selection_caret_row = 0u;
 static size_t terminal_selection_caret_col = 0u;
 static int terminal_selection_active = 0;
 static int terminal_selection_dragging = 0;
+static int terminal_bracketed_paste_enabled = 0;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -1240,9 +1241,45 @@ static int terminal_paste_from_clipboard(int fd) {
     size_t len = strlen(text);
     int result = 0;
     if (len > 0u) {
-        if (terminal_send_bytes(fd, text, len) < 0) {
-            result = -1;
+        char *converted = (char *)malloc(len);
+        if (!converted) {
+            SDL_free(text);
+            return -1;
         }
+        size_t out_len = 0u;
+        for (size_t i = 0u; i < len; i++) {
+            unsigned char ch = (unsigned char)text[i];
+            if (ch == '\r') {
+                converted[out_len++] = '\r';
+                if (i + 1u < len && text[i + 1u] == '\n') {
+                    i++;
+                }
+            } else if (ch == '\n') {
+                converted[out_len++] = '\r';
+            } else {
+                converted[out_len++] = (char)ch;
+            }
+        }
+
+        if (terminal_bracketed_paste_enabled) {
+            if (terminal_send_string(fd, "\x1b[200~") < 0) {
+                result = -1;
+            }
+        }
+
+        if (result == 0 && out_len > 0u) {
+            if (terminal_send_bytes(fd, converted, out_len) < 0) {
+                result = -1;
+            }
+        }
+
+        if (result == 0 && terminal_bracketed_paste_enabled) {
+            if (terminal_send_string(fd, "\x1b[201~") < 0) {
+                result = -1;
+            }
+        }
+
+        free(converted);
     }
     SDL_free(text);
     return result;
@@ -3676,7 +3713,7 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                     }
                     break;
                 case 2004: /* bracketed paste */
-                    /* This does not affect our simple renderer. */
+                    terminal_bracketed_paste_enabled = (command == 'h');
                     break;
                 case 47:
                 case 1047:

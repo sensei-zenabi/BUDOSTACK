@@ -239,7 +239,11 @@ static int terminal_resolve_shader_path(const char *root_dir, const char *shader
 static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args);
 
 struct ansi_parser;
-enum terminal_charset;
+
+enum terminal_charset {
+    TERMINAL_CHARSET_US_ASCII = 0,
+    TERMINAL_CHARSET_DEC_SPECIAL
+};
 
 static void ansi_parser_reset_charsets(struct ansi_parser *parser);
 static void ansi_parser_set_gl(struct ansi_parser *parser, int gl_index);
@@ -818,11 +822,6 @@ enum ansi_parser_state {
     ANSI_STATE_OSC,
     ANSI_STATE_OSC_ESCAPE,
     ANSI_STATE_SCS
-};
-
-enum terminal_charset {
-    TERMINAL_CHARSET_US_ASCII = 0,
-    TERMINAL_CHARSET_DEC_SPECIAL
 };
 
 #define ANSI_MAX_PARAMS 16

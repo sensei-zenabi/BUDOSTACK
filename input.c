@@ -31,6 +31,7 @@ static void list_command_matches(const char *token);
 static void list_filename_matches(const char *dir, const char *prefix);
 static int utf8_string_display_width(const char *s);
 static size_t utf8_prev_char_start(const char *buffer, size_t cursor);
+static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space);
 
 /*
  * read_input()
@@ -277,12 +278,7 @@ char* read_input(void) {
                 for (int i = 0; i < removed_width; i++) {
                     printf("\b");
                 }
-                printf("%s ", buffer + cursor);
-                int tail_width = utf8_string_display_width(buffer + cursor);
-                for (int i = 0; i < tail_width + 1; i++) {
-                    printf("\b");
-                }
-                fflush(stdout);
+                redraw_from_cursor(buffer, cursor, 1);
             }
         }
         /* Regular character input */
@@ -292,11 +288,8 @@ char* read_input(void) {
                 buffer[cursor] = (char)c;
                 pos++;
                 cursor++;
-                printf("%s", buffer + cursor - 1);
-                for (size_t i = cursor; i < pos; i++) {
-                    printf("\b");
-                }
-                fflush(stdout);
+                putchar((char)c);
+                redraw_from_cursor(buffer, cursor, 0);
             }
         }
     }
@@ -404,6 +397,16 @@ static void list_filename_matches(const char *dir, const char *prefix) {
     }
     closedir(d);
     printf("\n");
+}
+
+static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space) {
+    printf("\033[s");
+    printf("%s", buffer + cursor);
+    if (clear_extra_space) {
+        printf(" ");
+    }
+    printf("\033[u");
+    fflush(stdout);
 }
 
 static int utf8_string_display_width(const char *s) {

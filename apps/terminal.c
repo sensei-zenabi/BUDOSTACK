@@ -4,14 +4,12 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <math.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <stddef.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -88,65 +86,14 @@ static int terminal_texture_width = 0;
 static int terminal_texture_height = 0;
 static int terminal_gl_ready = 0;
 
+static uint8_t *terminal_framebuffer_pixels = NULL;
+static size_t terminal_framebuffer_capacity = 0u;
 static int terminal_framebuffer_width = 0;
 static int terminal_framebuffer_height = 0;
 static GLuint terminal_gl_framebuffer = 0;
 static GLuint terminal_gl_intermediate_textures[2] = {0u, 0u};
 static int terminal_intermediate_width = 0;
 static int terminal_intermediate_height = 0;
-static GLuint terminal_cell_framebuffer = 0;
-
-static GLuint terminal_glyph_texture = 0;
-static int terminal_glyph_texture_width = 0;
-static int terminal_glyph_texture_height = 0;
-static int terminal_glyphs_per_row = 0;
-static int terminal_glyph_row_count = 0;
-
-#define TERMINAL_CELL_ATTR_POSITION 0
-#define TERMINAL_CELL_ATTR_GLYPH_UV 1
-#define TERMINAL_CELL_ATTR_CELL_UV 2
-#define TERMINAL_CELL_ATTR_FG_COLOR 3
-#define TERMINAL_CELL_ATTR_BG_COLOR 4
-#define TERMINAL_CELL_ATTR_STYLE 5
-
-struct terminal_cell_vertex {
-    float position[2];
-    float glyph_uv[2];
-    float cell_uv[2];
-    uint8_t fg_color[4];
-    uint8_t bg_color[4];
-    uint8_t style_flags[4];
-};
-
-static struct terminal_cell_vertex *terminal_cell_vertices = NULL;
-static size_t terminal_cell_vertex_capacity = 0u;
-static GLuint terminal_cell_vbo = 0;
-static GLuint terminal_cell_program = 0;
-static GLint terminal_cell_uniform_texture = -1;
-
-static void terminal_assign_vertex(struct terminal_cell_vertex *vertex,
-                                   float px,
-                                   float py,
-                                   float glyph_u,
-                                   float glyph_v,
-                                   float cell_u,
-                                   float cell_v,
-                                   const uint8_t fg_color[4],
-                                   const uint8_t bg_color[4],
-                                   const uint8_t style_flags[4]) {
-    if (!vertex || !fg_color || !bg_color || !style_flags) {
-        return;
-    }
-    vertex->position[0] = px;
-    vertex->position[1] = py;
-    vertex->glyph_uv[0] = glyph_u;
-    vertex->glyph_uv[1] = glyph_v;
-    vertex->cell_uv[0] = cell_u;
-    vertex->cell_uv[1] = cell_v;
-    memcpy(vertex->fg_color, fg_color, 4u);
-    memcpy(vertex->bg_color, bg_color, 4u);
-    memcpy(vertex->style_flags, style_flags, 4u);
-}
 
 struct terminal_gl_shader {
     GLuint program;
@@ -251,22 +198,6 @@ static void terminal_selection_update(size_t global_row, size_t column);
 static void terminal_selection_clear(void);
 static void terminal_selection_validate(const struct terminal_buffer *buffer);
 static int terminal_selection_linear_range(const struct terminal_buffer *buffer, size_t *out_start, size_t *out_end);
-static void terminal_pack_color(uint32_t color, uint8_t out_color[4]);
-static int terminal_create_glyph_texture(const struct psf_font *font);
-static void terminal_destroy_glyph_texture(void);
-static int terminal_initialize_cell_renderer(void);
-static void terminal_shutdown_cell_renderer(void);
-static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
-                                     const struct psf_font *font,
-                                     size_t top_index,
-                                     size_t selection_start,
-                                     size_t selection_end,
-                                     int selection_has_range,
-                                     size_t cursor_global_index,
-                                     int cursor_render_visible,
-                                     int glyph_pixel_width,
-                                     int glyph_pixel_height,
-                                     int margin_pixels);
 static int terminal_selection_contains_cell(size_t global_row,
                                             size_t column,
                                             size_t selection_start,
@@ -278,6 +209,7 @@ static size_t terminal_encode_utf8(uint32_t codepoint, char *dst);
 static int terminal_initialize_gl_program(const char *shader_path);
 static void terminal_release_gl_resources(void);
 static int terminal_resize_render_targets(int width, int height);
+static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
 static int psf_unicode_map_compare(const void *a, const void *b);
@@ -1369,16 +1301,6 @@ static uint32_t terminal_bold_variant(uint32_t color) {
     return terminal_pack_rgb(r, g, b);
 }
 
-static void terminal_pack_color(uint32_t color, uint8_t out_color[4]) {
-    if (!out_color) {
-        return;
-    }
-    out_color[0] = terminal_color_r(color);
-    out_color[1] = terminal_color_g(color);
-    out_color[2] = terminal_color_b(color);
-    out_color[3] = 255u;
-}
-
 static void terminal_buffer_reset_attributes(struct terminal_buffer *buffer) {
     if (!buffer) {
         return;
@@ -2287,6 +2209,22 @@ static int terminal_resize_render_targets(int width, int height) {
         return -1;
     }
 
+    size_t required_size = (size_t)width * (size_t)height * 4u;
+    if (required_size > terminal_framebuffer_capacity) {
+        uint8_t *new_pixels = realloc(terminal_framebuffer_pixels, required_size);
+        if (!new_pixels) {
+            return -1;
+        }
+        terminal_framebuffer_pixels = new_pixels;
+        terminal_framebuffer_capacity = required_size;
+    }
+
+    terminal_framebuffer_width = width;
+    terminal_framebuffer_height = height;
+    if (terminal_framebuffer_pixels) {
+        memset(terminal_framebuffer_pixels, 0, required_size);
+    }
+
     if (terminal_gl_texture == 0) {
         glGenTextures(1, &terminal_gl_texture);
     }
@@ -2295,28 +2233,30 @@ static int terminal_resize_render_targets(int width, int height) {
         return -1;
     }
 
+    terminal_texture_width = width;
+    terminal_texture_height = height;
+
     glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, terminal_framebuffer_pixels);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    terminal_framebuffer_width = width;
-    terminal_framebuffer_height = height;
-    terminal_texture_width = width;
-    terminal_texture_height = height;
+    return 0;
+}
 
-    if (terminal_cell_framebuffer == 0) {
-        glGenFramebuffers(1, &terminal_cell_framebuffer);
-    }
-
-    if (terminal_cell_framebuffer == 0) {
+static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height) {
+    if (!pixels || width <= 0 || height <= 0 || terminal_gl_texture == 0) {
         return -1;
     }
 
+    glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glBindTexture(GL_TEXTURE_2D, 0);
     return 0;
 }
 
@@ -2394,583 +2334,14 @@ static void terminal_release_gl_resources(void) {
     }
     terminal_intermediate_width = 0;
     terminal_intermediate_height = 0;
-    if (terminal_cell_framebuffer != 0) {
-        glDeleteFramebuffers(1, &terminal_cell_framebuffer);
-        terminal_cell_framebuffer = 0;
-    }
-    terminal_shutdown_cell_renderer();
-    terminal_destroy_glyph_texture();
+    free(terminal_framebuffer_pixels);
+    terminal_framebuffer_pixels = NULL;
+    terminal_framebuffer_capacity = 0u;
     terminal_framebuffer_width = 0;
     terminal_framebuffer_height = 0;
     terminal_texture_width = 0;
     terminal_texture_height = 0;
     terminal_gl_ready = 0;
-}
-
-static GLuint terminal_compile_inline_shader(GLenum type, const char *source) {
-    if (!source) {
-        return 0;
-    }
-
-    GLuint shader = glCreateShader(type);
-    if (shader == 0) {
-        return 0;
-    }
-
-    glShaderSource(shader, 1, &source, NULL);
-    glCompileShader(shader);
-
-    GLint status = GL_FALSE;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
-    if (status != GL_TRUE) {
-        GLint log_length = 0;
-        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &log_length);
-        if (log_length > 1) {
-            char *log = malloc((size_t)log_length);
-            if (log) {
-                glGetShaderInfoLog(shader, log_length, NULL, log);
-                fprintf(stderr, "Shader compile error: %s\n", log);
-                free(log);
-            }
-        }
-        glDeleteShader(shader);
-        return 0;
-    }
-
-    return shader;
-}
-
-static int terminal_create_glyph_texture(const struct psf_font *font) {
-    if (!font || !font->glyphs || font->glyph_count == 0u || font->width == 0u || font->height == 0u) {
-        return -1;
-    }
-    if (terminal_glyph_texture != 0) {
-        return 0;
-    }
-
-    double glyph_count = (double)font->glyph_count;
-    int per_row = (int)ceil(sqrt(glyph_count));
-    if (per_row <= 0) {
-        per_row = 1;
-    }
-    uint32_t glyphs_per_row_u = (uint32_t)per_row;
-    if (glyphs_per_row_u == 0u) {
-        glyphs_per_row_u = 1u;
-    }
-    uint32_t glyph_rows_u = (font->glyph_count + glyphs_per_row_u - 1u) / glyphs_per_row_u;
-    if (glyph_rows_u == 0u) {
-        glyph_rows_u = 1u;
-    }
-
-    size_t atlas_width_size = (size_t)glyphs_per_row_u * (size_t)font->width;
-    size_t atlas_height_size = (size_t)glyph_rows_u * (size_t)font->height;
-    if (atlas_width_size == 0u || atlas_height_size == 0u) {
-        return -1;
-    }
-    if (atlas_width_size > (size_t)INT_MAX || atlas_height_size > (size_t)INT_MAX) {
-        return -1;
-    }
-
-    size_t total_pixels = atlas_width_size * atlas_height_size;
-    if (total_pixels == 0u) {
-        return -1;
-    }
-
-    uint8_t *pixels = calloc(total_pixels, sizeof(uint8_t));
-    if (!pixels) {
-        return -1;
-    }
-
-    for (uint32_t glyph_index = 0u; glyph_index < font->glyph_count; glyph_index++) {
-        uint32_t row = glyph_index / glyphs_per_row_u;
-        uint32_t col = glyph_index % glyphs_per_row_u;
-        size_t dest_x = (size_t)col * (size_t)font->width;
-        size_t dest_y = (size_t)row * (size_t)font->height;
-        for (uint32_t y = 0u; y < font->height; y++) {
-            for (uint32_t x = 0u; x < font->width; x++) {
-                if (glyph_pixel_set(font, glyph_index, x, y)) {
-                    size_t dst_index = (dest_y + y) * atlas_width_size + (dest_x + x);
-                    if (dst_index < total_pixels) {
-                        pixels[dst_index] = 255u;
-                    }
-                }
-            }
-        }
-    }
-
-    GLuint texture = 0;
-    glGenTextures(1, &texture);
-    if (texture == 0) {
-        free(pixels);
-        return -1;
-    }
-
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D,
-                 0,
-                 GL_ALPHA,
-                 (GLsizei)atlas_width_size,
-                 (GLsizei)atlas_height_size,
-                 0,
-                 GL_ALPHA,
-                 GL_UNSIGNED_BYTE,
-                 pixels);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    free(pixels);
-
-    terminal_glyph_texture = texture;
-    terminal_glyph_texture_width = (int)atlas_width_size;
-    terminal_glyph_texture_height = (int)atlas_height_size;
-    terminal_glyphs_per_row = (int)glyphs_per_row_u;
-    terminal_glyph_row_count = (int)glyph_rows_u;
-    return 0;
-}
-
-static void terminal_destroy_glyph_texture(void) {
-    if (terminal_glyph_texture != 0) {
-        glDeleteTextures(1, &terminal_glyph_texture);
-        terminal_glyph_texture = 0;
-    }
-    terminal_glyph_texture_width = 0;
-    terminal_glyph_texture_height = 0;
-    terminal_glyphs_per_row = 0;
-    terminal_glyph_row_count = 0;
-}
-
-static int terminal_initialize_cell_renderer(void) {
-    if (terminal_cell_program != 0) {
-        return 0;
-    }
-
-    static const char *vertex_source =
-        "#version 120\n"
-        "attribute vec2 aPosition;\n"
-        "attribute vec2 aGlyphUV;\n"
-        "attribute vec2 aCellUV;\n"
-        "attribute vec4 aFGColor;\n"
-        "attribute vec4 aBGColor;\n"
-        "attribute vec4 aStyle;\n"
-        "varying vec2 vGlyphUV;\n"
-        "varying vec2 vCellUV;\n"
-        "varying vec4 vFGColor;\n"
-        "varying vec4 vBGColor;\n"
-        "varying vec4 vStyle;\n"
-        "void main() {\n"
-        "    gl_Position = vec4(aPosition, 0.0, 1.0);\n"
-        "    vGlyphUV = aGlyphUV;\n"
-        "    vCellUV = aCellUV;\n"
-        "    vFGColor = aFGColor;\n"
-        "    vBGColor = aBGColor;\n"
-        "    vStyle = aStyle;\n"
-        "}\n";
-
-    static const char *fragment_source =
-        "#version 120\n"
-        "uniform sampler2D uGlyphAtlas;\n"
-        "varying vec2 vGlyphUV;\n"
-        "varying vec2 vCellUV;\n"
-        "varying vec4 vFGColor;\n"
-        "varying vec4 vBGColor;\n"
-        "varying vec4 vStyle;\n"
-        "void main() {\n"
-        "    float glyphAlpha = texture2D(uGlyphAtlas, vGlyphUV).a * vStyle.y;\n"
-        "    vec4 color = mix(vBGColor, vFGColor, glyphAlpha);\n"
-        "    if (vStyle.x > 0.0 && vCellUV.y > 0.85) {\n"
-        "        color = vFGColor;\n"
-        "    }\n"
-        "    gl_FragColor = color;\n"
-        "}\n";
-
-    GLuint vertex_shader = terminal_compile_inline_shader(GL_VERTEX_SHADER, vertex_source);
-    if (vertex_shader == 0) {
-        return -1;
-    }
-    GLuint fragment_shader = terminal_compile_inline_shader(GL_FRAGMENT_SHADER, fragment_source);
-    if (fragment_shader == 0) {
-        glDeleteShader(vertex_shader);
-        return -1;
-    }
-
-    GLuint program = glCreateProgram();
-    if (program == 0) {
-        glDeleteShader(vertex_shader);
-        glDeleteShader(fragment_shader);
-        return -1;
-    }
-
-    glAttachShader(program, vertex_shader);
-    glAttachShader(program, fragment_shader);
-    glBindAttribLocation(program, TERMINAL_CELL_ATTR_POSITION, "aPosition");
-    glBindAttribLocation(program, TERMINAL_CELL_ATTR_GLYPH_UV, "aGlyphUV");
-    glBindAttribLocation(program, TERMINAL_CELL_ATTR_CELL_UV, "aCellUV");
-    glBindAttribLocation(program, TERMINAL_CELL_ATTR_FG_COLOR, "aFGColor");
-    glBindAttribLocation(program, TERMINAL_CELL_ATTR_BG_COLOR, "aBGColor");
-    glBindAttribLocation(program, TERMINAL_CELL_ATTR_STYLE, "aStyle");
-    glLinkProgram(program);
-
-    GLint link_status = GL_FALSE;
-    glGetProgramiv(program, GL_LINK_STATUS, &link_status);
-    if (link_status != GL_TRUE) {
-        GLint log_length = 0;
-        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &log_length);
-        if (log_length > 1) {
-            char *log = malloc((size_t)log_length);
-            if (log) {
-                glGetProgramInfoLog(program, log_length, NULL, log);
-                fprintf(stderr, "Program link error: %s\n", log);
-                free(log);
-            }
-        }
-        glDeleteProgram(program);
-        glDeleteShader(vertex_shader);
-        glDeleteShader(fragment_shader);
-        return -1;
-    }
-
-    glDetachShader(program, vertex_shader);
-    glDetachShader(program, fragment_shader);
-    glDeleteShader(vertex_shader);
-    glDeleteShader(fragment_shader);
-
-    terminal_cell_program = program;
-    terminal_cell_uniform_texture = glGetUniformLocation(program, "uGlyphAtlas");
-
-    if (terminal_cell_vbo == 0) {
-        glGenBuffers(1, &terminal_cell_vbo);
-        if (terminal_cell_vbo == 0) {
-            glDeleteProgram(program);
-            terminal_cell_program = 0;
-            terminal_cell_uniform_texture = -1;
-            return -1;
-        }
-    }
-
-    return 0;
-}
-
-static void terminal_shutdown_cell_renderer(void) {
-    if (terminal_cell_vbo != 0) {
-        glDeleteBuffers(1, &terminal_cell_vbo);
-        terminal_cell_vbo = 0;
-    }
-    if (terminal_cell_program != 0) {
-        glDeleteProgram(terminal_cell_program);
-        terminal_cell_program = 0;
-    }
-    terminal_cell_uniform_texture = -1;
-    free(terminal_cell_vertices);
-    terminal_cell_vertices = NULL;
-    terminal_cell_vertex_capacity = 0u;
-}
-
-static int terminal_reserve_cell_vertices(size_t vertex_count) {
-    if (vertex_count == 0u) {
-        return 0;
-    }
-
-    if (vertex_count > SIZE_MAX / sizeof(struct terminal_cell_vertex)) {
-        return -1;
-    }
-
-    if (terminal_cell_vertex_capacity >= vertex_count && terminal_cell_vertices && terminal_cell_vbo != 0) {
-        return 0;
-    }
-
-    size_t required_bytes = vertex_count * sizeof(struct terminal_cell_vertex);
-    struct terminal_cell_vertex *new_vertices = realloc(terminal_cell_vertices, required_bytes);
-    if (!new_vertices) {
-        return -1;
-    }
-    terminal_cell_vertices = new_vertices;
-    terminal_cell_vertex_capacity = vertex_count;
-
-    if (terminal_cell_vbo == 0) {
-        glGenBuffers(1, &terminal_cell_vbo);
-        if (terminal_cell_vbo == 0) {
-            return -1;
-        }
-    }
-
-    glBindBuffer(GL_ARRAY_BUFFER, terminal_cell_vbo);
-    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)required_bytes, NULL, GL_DYNAMIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    return 0;
-}
-
-static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
-                                     const struct psf_font *font,
-                                     size_t top_index,
-                                     size_t selection_start,
-                                     size_t selection_end,
-                                     int selection_has_range,
-                                     size_t cursor_global_index,
-                                     int cursor_render_visible,
-                                     int glyph_pixel_width,
-                                     int glyph_pixel_height,
-                                     int margin_pixels) {
-    if (!buffer || !font) {
-        return -1;
-    }
-    if (glyph_pixel_width <= 0 || glyph_pixel_height <= 0) {
-        return -1;
-    }
-    if (terminal_gl_texture == 0 || terminal_cell_program == 0 || terminal_cell_vbo == 0 || terminal_cell_framebuffer == 0 ||
-        terminal_glyph_texture == 0) {
-        return -1;
-    }
-
-    int frame_width = terminal_framebuffer_width;
-    int frame_height = terminal_framebuffer_height;
-    if (frame_width <= 0 || frame_height <= 0) {
-        return -1;
-    }
-
-    int margin = margin_pixels;
-    if (margin < 0) {
-        margin = 0;
-    }
-    if (margin * 2 > frame_width) {
-        margin = frame_width / 2;
-    }
-    if (margin * 2 > frame_height) {
-        margin = frame_height / 2;
-    }
-
-    size_t columns = buffer->columns;
-    size_t rows = buffer->rows;
-    size_t vertex_target = 0u;
-    if (columns > 0u && rows > 0u) {
-        if (columns > SIZE_MAX / rows) {
-            return -1;
-        }
-        size_t cell_count = columns * rows;
-        if (cell_count > SIZE_MAX / 6u) {
-            return -1;
-        }
-        vertex_target = cell_count * 6u;
-        if (vertex_target > 0u) {
-            if (terminal_reserve_cell_vertices(vertex_target) != 0) {
-                return -1;
-            }
-        }
-    }
-
-    size_t vertices_used = 0u;
-    if (vertex_target > 0u) {
-        if (!terminal_cell_vertices) {
-            return -1;
-        }
-        int glyphs_per_row = terminal_glyphs_per_row;
-        if (glyphs_per_row <= 0) {
-            return -1;
-        }
-        float atlas_width = (float)terminal_glyph_texture_width;
-        float atlas_height = (float)terminal_glyph_texture_height;
-        if (atlas_width <= 0.0f || atlas_height <= 0.0f) {
-            return -1;
-        }
-        float inv_frame_width = 2.0f / (float)frame_width;
-        float inv_frame_height = 2.0f / (float)frame_height;
-
-        for (size_t row = 0u; row < rows; row++) {
-            if (row > SIZE_MAX - top_index) {
-                break;
-            }
-            size_t global_index = top_index + row;
-            const struct terminal_cell *row_cells = terminal_buffer_row_at(buffer, global_index);
-            if (!row_cells) {
-                continue;
-            }
-            for (size_t col = 0u; col < columns; col++) {
-                const struct terminal_cell *cell = &row_cells[col];
-                uint32_t ch = cell->ch;
-                uint32_t fg = cell->fg;
-                uint32_t bg = cell->bg;
-                uint8_t style = cell->style;
-                if ((style & TERMINAL_STYLE_REVERSE) != 0u) {
-                    uint32_t tmp = fg;
-                    fg = bg;
-                    bg = tmp;
-                }
-                if ((style & TERMINAL_STYLE_BOLD) != 0u) {
-                    fg = terminal_bold_variant(fg);
-                }
-
-                if (selection_has_range &&
-                    terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer->columns)) {
-                    fg = buffer->default_bg;
-                    bg = buffer->default_fg;
-                }
-
-                int is_cursor_cell = cursor_render_visible &&
-                                     global_index == cursor_global_index &&
-                                     col == buffer->cursor_column;
-                uint32_t fill_color = bg;
-                uint32_t glyph_color = fg;
-                if (is_cursor_cell) {
-                    fill_color = buffer->cursor_color;
-                    glyph_color = bg;
-                }
-
-                size_t offset_x = col * (size_t)glyph_pixel_width;
-                size_t offset_y = row * (size_t)glyph_pixel_height;
-                if (offset_x > (size_t)INT_MAX || offset_y > (size_t)INT_MAX) {
-                    continue;
-                }
-                int dest_x = margin + (int)offset_x;
-                int dest_y = margin + (int)offset_y;
-                int end_x = dest_x + glyph_pixel_width;
-                int end_y = dest_y + glyph_pixel_height;
-                if (dest_x < 0) {
-                    dest_x = 0;
-                }
-                if (dest_y < 0) {
-                    dest_y = 0;
-                }
-                if (end_x > frame_width) {
-                    end_x = frame_width;
-                }
-                if (end_y > frame_height) {
-                    end_y = frame_height;
-                }
-                if (dest_x >= end_x || dest_y >= end_y) {
-                    continue;
-                }
-
-                float clip_x0 = (float)dest_x * inv_frame_width - 1.0f;
-                float clip_x1 = (float)end_x * inv_frame_width - 1.0f;
-                float clip_y0 = 1.0f - (float)dest_y * inv_frame_height;
-                float clip_y1 = 1.0f - (float)end_y * inv_frame_height;
-
-                uint8_t fg_rgba[4];
-                uint8_t bg_rgba[4];
-                uint8_t style_flags[4] = {0u, 0u, 0u, 0u};
-                terminal_pack_color(glyph_color, fg_rgba);
-                terminal_pack_color(fill_color, bg_rgba);
-                if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
-                    style_flags[0] = 255u;
-                }
-
-                uint32_t glyph_index = 0u;
-                if (ch != 0u) {
-                    glyph_index = psf_font_resolve_glyph(font, ch);
-                    if (glyph_index >= font->glyph_count) {
-                        glyph_index = 0u;
-                    }
-                    style_flags[1] = 255u;
-                }
-
-                int glyph_column = (int)(glyph_index % (uint32_t)glyphs_per_row);
-                int glyph_row = (int)(glyph_index / (uint32_t)glyphs_per_row);
-                float glyph_u0 = ((float)glyph_column * (float)font->width) / atlas_width;
-                float glyph_u1 = ((float)(glyph_column + 1) * (float)font->width) / atlas_width;
-                float glyph_v_top = ((float)glyph_row * (float)font->height) / atlas_height;
-                float glyph_v_bottom = ((float)(glyph_row + 1) * (float)font->height) / atlas_height;
-                float glyph_v0 = 1.0f - glyph_v_top;
-                float glyph_v1 = 1.0f - glyph_v_bottom;
-
-                const float cell_u0 = 0.0f;
-                const float cell_u1 = 1.0f;
-                const float cell_v0 = 0.0f;
-                const float cell_v1 = 1.0f;
-
-                if (vertices_used + 6u > terminal_cell_vertex_capacity) {
-                    return -1;
-                }
-
-                struct terminal_cell_vertex *dst = &terminal_cell_vertices[vertices_used];
-                terminal_assign_vertex(&dst[0], clip_x0, clip_y0, glyph_u0, glyph_v0, cell_u0, cell_v0, fg_rgba, bg_rgba, style_flags);
-                terminal_assign_vertex(&dst[1], clip_x1, clip_y0, glyph_u1, glyph_v0, cell_u1, cell_v0, fg_rgba, bg_rgba, style_flags);
-                terminal_assign_vertex(&dst[2], clip_x0, clip_y1, glyph_u0, glyph_v1, cell_u0, cell_v1, fg_rgba, bg_rgba, style_flags);
-                terminal_assign_vertex(&dst[3], clip_x1, clip_y0, glyph_u1, glyph_v0, cell_u1, cell_v0, fg_rgba, bg_rgba, style_flags);
-                terminal_assign_vertex(&dst[4], clip_x1, clip_y1, glyph_u1, glyph_v1, cell_u1, cell_v1, fg_rgba, bg_rgba, style_flags);
-                terminal_assign_vertex(&dst[5], clip_x0, clip_y1, glyph_u0, glyph_v1, cell_u0, cell_v1, fg_rgba, bg_rgba, style_flags);
-                vertices_used += 6u;
-            }
-        }
-    }
-
-    glBindFramebuffer(GL_FRAMEBUFFER, terminal_cell_framebuffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, terminal_gl_texture, 0);
-    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    if (status != GL_FRAMEBUFFER_COMPLETE) {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        return -1;
-    }
-
-    uint32_t margin_color = buffer->default_bg;
-    float clear_r = (float)terminal_color_r(margin_color) / 255.0f;
-    float clear_g = (float)terminal_color_g(margin_color) / 255.0f;
-    float clear_b = (float)terminal_color_b(margin_color) / 255.0f;
-    glViewport(0, 0, frame_width, frame_height);
-    glClearColor(clear_r, clear_g, clear_b, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    if (vertices_used > 0u) {
-        if (vertices_used > (size_t)INT_MAX) {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            return -1;
-        }
-        size_t vertex_bytes = vertices_used * sizeof(struct terminal_cell_vertex);
-        glUseProgram(terminal_cell_program);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, terminal_glyph_texture);
-        if (terminal_cell_uniform_texture >= 0) {
-            glUniform1i(terminal_cell_uniform_texture, 0);
-        }
-        glBindBuffer(GL_ARRAY_BUFFER, terminal_cell_vbo);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)vertex_bytes, terminal_cell_vertices);
-
-        GLsizei stride = (GLsizei)sizeof(struct terminal_cell_vertex);
-        glEnableVertexAttribArray(TERMINAL_CELL_ATTR_POSITION);
-        glVertexAttribPointer(TERMINAL_CELL_ATTR_POSITION, 2, GL_FLOAT, GL_FALSE, stride, (const void *)offsetof(struct terminal_cell_vertex, position));
-        glEnableVertexAttribArray(TERMINAL_CELL_ATTR_GLYPH_UV);
-        glVertexAttribPointer(TERMINAL_CELL_ATTR_GLYPH_UV, 2, GL_FLOAT, GL_FALSE, stride, (const void *)offsetof(struct terminal_cell_vertex, glyph_uv));
-        glEnableVertexAttribArray(TERMINAL_CELL_ATTR_CELL_UV);
-        glVertexAttribPointer(TERMINAL_CELL_ATTR_CELL_UV, 2, GL_FLOAT, GL_FALSE, stride, (const void *)offsetof(struct terminal_cell_vertex, cell_uv));
-        glEnableVertexAttribArray(TERMINAL_CELL_ATTR_FG_COLOR);
-        glVertexAttribPointer(TERMINAL_CELL_ATTR_FG_COLOR,
-                              4,
-                              GL_UNSIGNED_BYTE,
-                              GL_TRUE,
-                              stride,
-                              (const void *)offsetof(struct terminal_cell_vertex, fg_color));
-        glEnableVertexAttribArray(TERMINAL_CELL_ATTR_BG_COLOR);
-        glVertexAttribPointer(TERMINAL_CELL_ATTR_BG_COLOR,
-                              4,
-                              GL_UNSIGNED_BYTE,
-                              GL_TRUE,
-                              stride,
-                              (const void *)offsetof(struct terminal_cell_vertex, bg_color));
-        glEnableVertexAttribArray(TERMINAL_CELL_ATTR_STYLE);
-        glVertexAttribPointer(TERMINAL_CELL_ATTR_STYLE,
-                              4,
-                              GL_UNSIGNED_BYTE,
-                              GL_TRUE,
-                              stride,
-                              (const void *)offsetof(struct terminal_cell_vertex, style_flags));
-
-        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices_used);
-
-        glDisableVertexAttribArray(TERMINAL_CELL_ATTR_STYLE);
-        glDisableVertexAttribArray(TERMINAL_CELL_ATTR_BG_COLOR);
-        glDisableVertexAttribArray(TERMINAL_CELL_ATTR_FG_COLOR);
-        glDisableVertexAttribArray(TERMINAL_CELL_ATTR_CELL_UV);
-        glDisableVertexAttribArray(TERMINAL_CELL_ATTR_GLYPH_UV);
-        glDisableVertexAttribArray(TERMINAL_CELL_ATTR_POSITION);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        glUseProgram(0);
-    }
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    return 0;
 }
 
 static void terminal_print_usage(const char *progname) {
@@ -5184,23 +4555,8 @@ int main(int argc, char **argv) {
     size_t rows = (size_t)TERMINAL_ROWS;
 
     terminal_update_render_size(columns, rows);
-    if (terminal_framebuffer_width <= 0 || terminal_framebuffer_height <= 0) {
+    if (!terminal_framebuffer_pixels || terminal_framebuffer_width <= 0 || terminal_framebuffer_height <= 0) {
         fprintf(stderr, "Failed to allocate terminal framebuffer.\n");
-        terminal_release_gl_resources();
-        SDL_GL_DeleteContext(gl_context);
-        SDL_DestroyWindow(window);
-#if BUDOSTACK_HAVE_SDL2
-        terminal_shutdown_audio();
-#endif
-        SDL_Quit();
-        kill(child_pid, SIGKILL);
-        free_font(&font);
-        close(master_fd);
-        return EXIT_FAILURE;
-    }
-
-    if (terminal_create_glyph_texture(&font) != 0 || terminal_initialize_cell_renderer() != 0) {
-        fprintf(stderr, "Failed to initialize GPU text renderer.\n");
         terminal_release_gl_resources();
         SDL_GL_DeleteContext(gl_context);
         SDL_DestroyWindow(window);
@@ -5730,27 +5086,183 @@ int main(int argc, char **argv) {
         size_t selection_end = 0u;
         int selection_has_range = terminal_selection_linear_range(&buffer, &selection_start, &selection_end);
 
+        uint8_t *framebuffer = terminal_framebuffer_pixels;
         int frame_width = terminal_framebuffer_width;
         int frame_height = terminal_framebuffer_height;
-        if (frame_width <= 0 || frame_height <= 0) {
+        int frame_pitch = frame_width * 4;
+        if (!framebuffer || frame_width <= 0 || frame_height <= 0) {
             fprintf(stderr, "Frame buffer unavailable for rendering.\n");
             running = 0;
             break;
         }
 
         int margin_pixels = terminal_margin_pixels;
-        if (terminal_render_cells_gpu(&buffer,
-                                      &font,
-                                      top_index,
-                                      selection_start,
-                                      selection_end,
-                                      selection_has_range,
-                                      cursor_global_index,
-                                      cursor_render_visible,
-                                      glyph_width,
-                                      glyph_height,
-                                      margin_pixels) != 0) {
-            fprintf(stderr, "Failed to render terminal cells.\n");
+        if (margin_pixels < 0) {
+            margin_pixels = 0;
+        }
+        if (margin_pixels > 0) {
+            if (margin_pixels * 2 > frame_width) {
+                margin_pixels = frame_width / 2;
+            }
+            if (margin_pixels * 2 > frame_height) {
+                margin_pixels = frame_height / 2;
+            }
+            uint32_t margin_color_value = buffer.default_bg;
+            uint8_t margin_r = terminal_color_r(margin_color_value);
+            uint8_t margin_g = terminal_color_g(margin_color_value);
+            uint8_t margin_b = terminal_color_b(margin_color_value);
+            for (int py = 0; py < frame_height; py++) {
+                uint8_t *row_ptr = framebuffer + (size_t)py * (size_t)frame_pitch;
+                if (py < margin_pixels || py >= frame_height - margin_pixels) {
+                    uint8_t *dst = row_ptr;
+                    for (int px = 0; px < frame_width; px++) {
+                        dst[0] = margin_r;
+                        dst[1] = margin_g;
+                        dst[2] = margin_b;
+                        dst[3] = 255u;
+                        dst += 4;
+                    }
+                } else {
+                    uint8_t *dst_left = row_ptr;
+                    for (int px = 0; px < margin_pixels; px++) {
+                        dst_left[0] = margin_r;
+                        dst_left[1] = margin_g;
+                        dst_left[2] = margin_b;
+                        dst_left[3] = 255u;
+                        dst_left += 4;
+                    }
+                    if (margin_pixels < frame_width) {
+                        uint8_t *dst_right = row_ptr + (size_t)(frame_width - margin_pixels) * 4u;
+                        for (int px = 0; px < margin_pixels; px++) {
+                            dst_right[0] = margin_r;
+                            dst_right[1] = margin_g;
+                            dst_right[2] = margin_b;
+                            dst_right[3] = 255u;
+                            dst_right += 4;
+                        }
+                    }
+                }
+            }
+        }
+
+        for (size_t row = 0u; row < buffer.rows; row++) {
+            size_t global_index = top_index + row;
+            const struct terminal_cell *row_cells = terminal_buffer_row_at(&buffer, global_index);
+            if (!row_cells) {
+                continue;
+            }
+            for (size_t col = 0u; col < buffer.columns; col++) {
+                const struct terminal_cell *cell = &row_cells[col];
+                uint32_t ch = cell->ch;
+                uint32_t fg = cell->fg;
+                uint32_t bg = cell->bg;
+                uint8_t style = cell->style;
+                if ((style & TERMINAL_STYLE_REVERSE) != 0u) {
+                    uint32_t tmp = fg;
+                    fg = bg;
+                    bg = tmp;
+                }
+                if ((style & TERMINAL_STYLE_BOLD) != 0u) {
+                    fg = terminal_bold_variant(fg);
+                }
+
+                if (selection_has_range &&
+                    terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer.columns)) {
+                    fg = buffer.default_bg;
+                    bg = buffer.default_fg;
+                }
+
+                int is_cursor_cell = cursor_render_visible &&
+                                     global_index == cursor_global_index &&
+                                     col == buffer.cursor_column;
+                uint32_t fill_color = bg;
+                uint32_t glyph_color = fg;
+                if (is_cursor_cell) {
+                    fill_color = buffer.cursor_color;
+                    glyph_color = bg;
+                }
+
+                int dest_x = margin_pixels + (int)(col * (size_t)glyph_width);
+                int dest_y = margin_pixels + (int)(row * (size_t)glyph_height);
+                int end_x = dest_x + glyph_width;
+                int end_y = dest_y + glyph_height;
+                if (dest_x < 0) {
+                    dest_x = 0;
+                }
+                if (dest_y < 0) {
+                    dest_y = 0;
+                }
+                if (end_x > frame_width) {
+                    end_x = frame_width;
+                }
+                if (end_y > frame_height) {
+                    end_y = frame_height;
+                }
+                if (dest_x >= end_x || dest_y >= end_y) {
+                    continue;
+                }
+
+                uint8_t fill_r = terminal_color_r(fill_color);
+                uint8_t fill_g = terminal_color_g(fill_color);
+                uint8_t fill_b = terminal_color_b(fill_color);
+                uint8_t glyph_r = terminal_color_r(glyph_color);
+                uint8_t glyph_g = terminal_color_g(glyph_color);
+                uint8_t glyph_b = terminal_color_b(glyph_color);
+
+                for (int py = dest_y; py < end_y; py++) {
+                    uint8_t *dst = framebuffer + (size_t)py * (size_t)frame_pitch + (size_t)dest_x * 4u;
+                    for (int px = dest_x; px < end_x; px++) {
+                        dst[0] = fill_r;
+                        dst[1] = fill_g;
+                        dst[2] = fill_b;
+                        dst[3] = 255u;
+                        dst += 4;
+                    }
+                }
+
+                if (ch != 0u) {
+                    uint32_t glyph_index = psf_font_resolve_glyph(&font, ch);
+                    if (glyph_index >= font.glyph_count) {
+                        glyph_index = 0u;
+                    }
+
+                    for (int py = dest_y; py < end_y; py++) {
+                        uint32_t src_y = (uint32_t)((py - dest_y) / TERMINAL_FONT_SCALE);
+                        if (src_y >= font.height) {
+                            continue;
+                        }
+                        uint8_t *dst = framebuffer + (size_t)py * (size_t)frame_pitch + (size_t)dest_x * 4u;
+                        for (int px = dest_x; px < end_x; px++) {
+                            uint32_t src_x = (uint32_t)((px - dest_x) / TERMINAL_FONT_SCALE);
+                            if (src_x < font.width && glyph_pixel_set(&font, glyph_index, src_x, src_y)) {
+                                dst[0] = glyph_r;
+                                dst[1] = glyph_g;
+                                dst[2] = glyph_b;
+                                dst[3] = 255u;
+                            }
+                            dst += 4;
+                        }
+                    }
+
+                    if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
+                        int underline_y = end_y - 1;
+                        if (underline_y >= dest_y) {
+                            uint8_t *dst = framebuffer + (size_t)underline_y * (size_t)frame_pitch + (size_t)dest_x * 4u;
+                            for (int px = dest_x; px < end_x; px++) {
+                                dst[0] = glyph_r;
+                                dst[1] = glyph_g;
+                                dst[2] = glyph_b;
+                                dst[3] = 255u;
+                                dst += 4;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
+            fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
             running = 0;
             break;
         }
@@ -5771,10 +5283,10 @@ int main(int argc, char **argv) {
                  1.0f,  1.0f, 0.0f, 1.0f
             };
             const GLfloat quad_texcoords_cpu[8] = {
-                0.0f, 0.0f,
-                1.0f, 0.0f,
                 0.0f, 1.0f,
-                1.0f, 1.0f
+                1.0f, 1.0f,
+                0.0f, 0.0f,
+                1.0f, 0.0f
             };
             const GLfloat quad_texcoords_fbo[8] = {
                 0.0f, 0.0f,
@@ -5911,13 +5423,13 @@ int main(int argc, char **argv) {
             glEnable(GL_TEXTURE_2D);
 
             glBegin(GL_TRIANGLE_STRIP);
-            glTexCoord2f(0.0f, 0.0f);
-            glVertex2f(-1.0f, -1.0f);
-            glTexCoord2f(1.0f, 0.0f);
-            glVertex2f(1.0f, -1.0f);
             glTexCoord2f(0.0f, 1.0f);
-            glVertex2f(-1.0f, 1.0f);
+            glVertex2f(-1.0f, -1.0f);
             glTexCoord2f(1.0f, 1.0f);
+            glVertex2f(1.0f, -1.0f);
+            glTexCoord2f(0.0f, 0.0f);
+            glVertex2f(-1.0f, 1.0f);
+            glTexCoord2f(1.0f, 0.0f);
             glVertex2f(1.0f, 1.0f);
             glEnd();
 

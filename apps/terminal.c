@@ -4080,15 +4080,23 @@ static int terminal_send_string(int fd, const char *str) {
     return terminal_send_bytes(fd, str, strlen(str));
 }
 
+static SDL_Keymod terminal_normalize_modifiers(SDL_Keymod mod) {
+    if ((mod & KMOD_MODE) != 0) {
+        mod = (SDL_Keymod)(mod & ~(KMOD_CTRL | KMOD_ALT));
+    }
+    return mod;
+}
+
 static unsigned int terminal_modifier_param(SDL_Keymod mod) {
+    SDL_Keymod normalized = terminal_normalize_modifiers(mod);
     unsigned int value = 1u;
-    if ((mod & KMOD_SHIFT) != 0) {
+    if ((normalized & KMOD_SHIFT) != 0) {
         value += 1u;
     }
-    if ((mod & KMOD_ALT) != 0) {
+    if ((normalized & KMOD_ALT) != 0) {
         value += 2u;
     }
-    if ((mod & KMOD_CTRL) != 0) {
+    if ((normalized & KMOD_CTRL) != 0) {
         value += 4u;
     }
     return value;
@@ -4588,7 +4596,7 @@ int main(int argc, char **argv) {
                 }
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
-                SDL_Keymod mod = event.key.keysym.mod;
+                SDL_Keymod mod = terminal_normalize_modifiers(event.key.keysym.mod);
                 int handled = 0;
                 unsigned char ch = 0u;
 
@@ -4917,7 +4925,7 @@ int main(int argc, char **argv) {
                 const char *text = event.text.text;
                 size_t len = strlen(text);
                 if (len > 0u) {
-                    SDL_Keymod mod_state = SDL_GetModState();
+                    SDL_Keymod mod_state = terminal_normalize_modifiers(SDL_GetModState());
                     terminal_selection_clear();
                     if ((mod_state & KMOD_ALT) != 0 && (mod_state & KMOD_CTRL) == 0) {
                         if (terminal_send_escape_prefix(master_fd) < 0) {

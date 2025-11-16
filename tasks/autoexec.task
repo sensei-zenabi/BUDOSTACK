@@ -2,6 +2,7 @@
 
 SET $SELECTION = 0
 SET $SCHEME = "c64"
+SET $LOAD = 0
 
 # Adjust the margin
 RUN _TERM_MARGIN 10
@@ -23,14 +24,22 @@ IF $SELECTION == 2
 IF $SELECTION == 3
   $SCHEME = "vt220-green"
 RUN _RETROPROFILE apply $SCHEME
-RUN clear
+RUN cls
 
-# Display logo and wait for the sound to finish
+RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
+@LOADING
+RUN _BAR -x 47 -y 32 -title LOADING: -progress $LOAD
+IF $LOAD < 100
+  SET $LOAD = $LOAD + 10
+  RUN _WAIT 250
+  GOTO LOADING
+
+
+@INTRO
+RUN clear
 RUN _RECT -x 0 -y 0 -width 118 -height 66 -color 0 -fill on
 RUN _WAIT 200
 RUN _DISPLAY -x 20 -y 15 -file tasks/assets/login_logo.png
-RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
-RUN _WAIT 500
 RUN _TERM_SOUND_PLAY 2 sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
 RUN _WAIT 1500
 RUN _TEXT -x 46 -y 31 -text "...WELCOME BACK TO 1980s..."

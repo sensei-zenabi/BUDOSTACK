@@ -94,6 +94,10 @@ static GLuint terminal_gl_framebuffer = 0;
 static GLuint terminal_gl_intermediate_textures[2] = {0u, 0u};
 static int terminal_intermediate_width = 0;
 static int terminal_intermediate_height = 0;
+static int terminal_framebuffer_dirty = 1;
+static int terminal_framebuffer_full_redraw = 1;
+static size_t terminal_dirty_row_start = 0u;
+static size_t terminal_dirty_row_end = 0u;
 
 struct terminal_gl_shader {
     GLuint program;
@@ -198,6 +202,11 @@ static void terminal_selection_update(size_t global_row, size_t column);
 static void terminal_selection_clear(void);
 static void terminal_selection_validate(const struct terminal_buffer *buffer);
 static int terminal_selection_linear_range(const struct terminal_buffer *buffer, size_t *out_start, size_t *out_end);
+static void terminal_mark_full_redraw(void);
+static void terminal_mark_rows_dirty(size_t start_row, size_t end_row);
+static void terminal_mark_visible_rows_dirty(const struct terminal_buffer *buffer, size_t start_row, size_t end_row);
+static void terminal_mark_cursor_row_dirty(const struct terminal_buffer *buffer);
+static void terminal_reset_dirty_state(void);
 static int terminal_selection_contains_cell(size_t global_row,
                                             size_t column,
                                             size_t selection_start,
@@ -210,6 +219,11 @@ static int terminal_initialize_gl_program(const char *shader_path);
 static void terminal_release_gl_resources(void);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
+static int terminal_upload_framebuffer_region(const uint8_t *pixels,
+                                              int width,
+                                              int height,
+                                              int region_y,
+                                              int region_height);
 static int terminal_prepare_intermediate_targets(int width, int height);
 static int glyph_pixel_set(const struct psf_font *font, uint32_t glyph_index, uint32_t x, uint32_t y);
 static int psf_unicode_map_compare(const void *a, const void *b);
@@ -989,20 +1003,32 @@ static int terminal_screen_point_to_cell(int x,
 }
 
 static void terminal_selection_clear(void) {
+    int was_active = terminal_selection_active;
     terminal_selection_active = 0;
     terminal_selection_dragging = 0;
     terminal_selection_anchor_row = 0u;
     terminal_selection_anchor_col = 0u;
     terminal_selection_caret_row = 0u;
     terminal_selection_caret_col = 0u;
+    if (was_active) {
+        terminal_mark_full_redraw();
+    }
 }
 
 static void terminal_selection_begin(size_t global_row, size_t column) {
+    int changed = (!terminal_selection_active) ||
+                  terminal_selection_anchor_row != global_row ||
+                  terminal_selection_anchor_col != column ||
+                  terminal_selection_caret_row != global_row ||
+                  terminal_selection_caret_col != column;
     terminal_selection_active = 1;
     terminal_selection_anchor_row = global_row;
     terminal_selection_anchor_col = column;
     terminal_selection_caret_row = global_row;
     terminal_selection_caret_col = column;
+    if (changed) {
+        terminal_mark_full_redraw();
+    }
 }
 
 static void terminal_selection_update(size_t global_row, size_t column) {
@@ -1010,8 +1036,12 @@ static void terminal_selection_update(size_t global_row, size_t column) {
         terminal_selection_begin(global_row, column);
         return;
     }
+    if (terminal_selection_caret_row == global_row && terminal_selection_caret_col == column) {
+        return;
+    }
     terminal_selection_caret_row = global_row;
     terminal_selection_caret_col = column;
+    terminal_mark_full_redraw();
 }
 
 static void terminal_selection_validate(const struct terminal_buffer *buffer) {
@@ -1027,18 +1057,26 @@ static void terminal_selection_validate(const struct terminal_buffer *buffer) {
         terminal_selection_clear();
         return;
     }
+    int changed = 0;
     if (terminal_selection_caret_row > total_rows) {
         terminal_selection_caret_row = total_rows;
+        changed = 1;
     }
     size_t columns = buffer->columns;
     if (terminal_selection_anchor_col > columns) {
         terminal_selection_anchor_col = columns;
+        changed = 1;
     }
     if (terminal_selection_caret_col > columns) {
         terminal_selection_caret_col = columns;
+        changed = 1;
     }
-    if (terminal_selection_caret_row == total_rows) {
+    if (terminal_selection_caret_row == total_rows && terminal_selection_caret_col != 0u) {
         terminal_selection_caret_col = 0u;
+        changed = 1;
+    }
+    if (changed) {
+        terminal_mark_full_redraw();
     }
 }
 
@@ -1081,6 +1119,71 @@ static int terminal_selection_linear_range(const struct terminal_buffer *buffer,
         *out_end = end;
     }
     return 1;
+}
+
+static void terminal_mark_full_redraw(void) {
+    terminal_framebuffer_dirty = 1;
+    terminal_framebuffer_full_redraw = 1;
+    terminal_dirty_row_start = 0u;
+    terminal_dirty_row_end = 0u;
+}
+
+static void terminal_mark_rows_dirty(size_t start_row, size_t end_row) {
+    if (start_row > end_row) {
+        size_t tmp = start_row;
+        start_row = end_row;
+        end_row = tmp;
+    }
+    if (!terminal_framebuffer_dirty) {
+        terminal_framebuffer_dirty = 1;
+        terminal_framebuffer_full_redraw = 0;
+        terminal_dirty_row_start = start_row;
+        terminal_dirty_row_end = end_row;
+        return;
+    }
+    if (terminal_framebuffer_full_redraw) {
+        return;
+    }
+    if (start_row < terminal_dirty_row_start) {
+        terminal_dirty_row_start = start_row;
+    }
+    if (end_row > terminal_dirty_row_end) {
+        terminal_dirty_row_end = end_row;
+    }
+}
+
+static void terminal_mark_visible_rows_dirty(const struct terminal_buffer *buffer,
+                                             size_t start_row,
+                                             size_t end_row) {
+    if (!buffer || buffer->rows == 0u) {
+        terminal_mark_full_redraw();
+        return;
+    }
+    if (start_row >= buffer->rows) {
+        start_row = buffer->rows - 1u;
+    }
+    if (end_row >= buffer->rows) {
+        end_row = buffer->rows - 1u;
+    }
+    terminal_mark_rows_dirty(start_row, end_row);
+}
+
+static void terminal_mark_cursor_row_dirty(const struct terminal_buffer *buffer) {
+    if (!buffer) {
+        terminal_mark_full_redraw();
+        return;
+    }
+    if (buffer->rows == 0u) {
+        return;
+    }
+    terminal_mark_visible_rows_dirty(buffer, buffer->cursor_row, buffer->cursor_row);
+}
+
+static void terminal_reset_dirty_state(void) {
+    terminal_framebuffer_dirty = 0;
+    terminal_framebuffer_full_redraw = 0;
+    terminal_dirty_row_start = 0u;
+    terminal_dirty_row_end = 0u;
 }
 
 static int terminal_selection_contains_cell(size_t global_row,
@@ -1446,6 +1549,7 @@ static void terminal_update_default_fg(struct terminal_buffer *buffer, uint32_t 
             }
         }
     }
+    terminal_mark_full_redraw();
 }
 
 static void terminal_update_default_bg(struct terminal_buffer *buffer, uint32_t color) {
@@ -1468,6 +1572,7 @@ static void terminal_update_default_bg(struct terminal_buffer *buffer, uint32_t 
             }
         }
     }
+    terminal_mark_full_redraw();
 }
 
 static void terminal_update_cursor_color(struct terminal_buffer *buffer, uint32_t color) {
@@ -1475,6 +1580,7 @@ static void terminal_update_cursor_color(struct terminal_buffer *buffer, uint32_
         return;
     }
     buffer->cursor_color = color;
+    terminal_mark_cursor_row_dirty(buffer);
 }
 
 static int terminal_parse_hex_color(const char *text, uint32_t *out_color) {
@@ -2245,6 +2351,7 @@ static int terminal_resize_render_targets(int width, int height) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, terminal_framebuffer_pixels);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    terminal_mark_full_redraw();
     return 0;
 }
 
@@ -2256,6 +2363,33 @@ static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int hei
     glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    return 0;
+}
+
+static int terminal_upload_framebuffer_region(const uint8_t *pixels,
+                                              int width,
+                                              int height,
+                                              int region_y,
+                                              int region_height) {
+    if (!pixels || width <= 0 || height <= 0 || region_height <= 0 || terminal_gl_texture == 0) {
+        return -1;
+    }
+    if (region_y < 0) {
+        region_height += region_y;
+        region_y = 0;
+    }
+    if (region_y >= height || region_height <= 0) {
+        return 0;
+    }
+    if (region_y + region_height > height) {
+        region_height = height - region_y;
+    }
+
+    const uint8_t *start = pixels + (size_t)region_y * (size_t)width * 4u;
+    glBindTexture(GL_TEXTURE_2D, terminal_gl_texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, region_y, width, region_height, GL_RGBA, GL_UNSIGNED_BYTE, start);
     glBindTexture(GL_TEXTURE_2D, 0);
     return 0;
 }
@@ -2781,6 +2915,7 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     }
 
     terminal_buffer_reset_attributes(buffer);
+    terminal_mark_full_redraw();
     return 0;
 }
 
@@ -2865,6 +3000,7 @@ static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_col
     buffer->history_start = 0u;
     buffer->scroll_offset = 0u;
 
+    terminal_mark_full_redraw();
     return 0;
 }
 
@@ -2894,8 +3030,12 @@ static void terminal_buffer_clamp_scroll(struct terminal_buffer *buffer) {
     if (!buffer) {
         return;
     }
+    size_t old_offset = buffer->scroll_offset;
     if (buffer->scroll_offset > buffer->history_rows) {
         buffer->scroll_offset = buffer->history_rows;
+    }
+    if (buffer->scroll_offset != old_offset) {
+        terminal_mark_full_redraw();
     }
 }
 
@@ -2944,6 +3084,7 @@ static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
         buffer->scroll_offset++;
         terminal_buffer_clamp_scroll(buffer);
     }
+    terminal_mark_full_redraw();
 }
 
 static const struct terminal_cell *terminal_buffer_row_at(const struct terminal_buffer *buffer, size_t index) {
@@ -2968,6 +3109,8 @@ static void terminal_buffer_set_cursor(struct terminal_buffer *buffer, size_t co
     if (!buffer || buffer->rows == 0u || buffer->columns == 0u) {
         return;
     }
+    size_t old_column = buffer->cursor_column;
+    size_t old_row = buffer->cursor_row;
     if (column >= buffer->columns) {
         column = buffer->columns - 1u;
     }
@@ -2976,6 +3119,14 @@ static void terminal_buffer_set_cursor(struct terminal_buffer *buffer, size_t co
     }
     buffer->cursor_column = column;
     buffer->cursor_row = row;
+    if (old_column != buffer->cursor_column || old_row != buffer->cursor_row) {
+        if (buffer->rows == 0u) {
+            terminal_mark_full_redraw();
+        } else {
+            terminal_mark_visible_rows_dirty(buffer, old_row, old_row);
+            terminal_mark_visible_rows_dirty(buffer, buffer->cursor_row, buffer->cursor_row);
+        }
+    }
 }
 
 static void terminal_buffer_move_relative(struct terminal_buffer *buffer, int column_delta, int row_delta) {
@@ -2996,8 +3147,7 @@ static void terminal_buffer_move_relative(struct terminal_buffer *buffer, int co
     if (buffer->rows > 0u && (size_t)new_row >= buffer->rows) {
         new_row = (int)buffer->rows - 1;
     }
-    buffer->cursor_column = (size_t)new_column;
-    buffer->cursor_row = (size_t)new_row;
+    terminal_buffer_set_cursor(buffer, (size_t)new_column, (size_t)new_row);
 }
 
 static void terminal_buffer_clear_line_segment(struct terminal_buffer *buffer,
@@ -3016,6 +3166,7 @@ static void terminal_buffer_clear_line_segment(struct terminal_buffer *buffer,
     if (end_column > buffer->columns) {
         end_column = buffer->columns;
     }
+    terminal_mark_visible_rows_dirty(buffer, row, row);
     struct terminal_cell *line = buffer->cells + row * buffer->columns;
     for (size_t col = start_column; col < end_column; col++) {
         terminal_cell_apply_defaults(buffer, &line[col]);
@@ -3029,6 +3180,7 @@ static void terminal_buffer_clear_entire_line(struct terminal_buffer *buffer, si
     if (row >= buffer->rows) {
         return;
     }
+    terminal_mark_visible_rows_dirty(buffer, row, row);
     struct terminal_cell *line = buffer->cells + row * buffer->columns;
     for (size_t col = 0u; col < buffer->columns; col++) {
         terminal_cell_apply_defaults(buffer, &line[col]);
@@ -3046,6 +3198,12 @@ static void terminal_buffer_clear_to_end_of_display(struct terminal_buffer *buff
     for (size_t row = buffer->cursor_row + 1u; row < buffer->rows; row++) {
         terminal_buffer_clear_entire_line(buffer, row);
     }
+    if (buffer->rows > 0u) {
+        size_t end_row = buffer->rows - 1u;
+        terminal_mark_visible_rows_dirty(buffer, buffer->cursor_row, end_row);
+    } else {
+        terminal_mark_full_redraw();
+    }
 }
 
 static void terminal_buffer_clear_from_start_of_display(struct terminal_buffer *buffer) {
@@ -3056,6 +3214,7 @@ static void terminal_buffer_clear_from_start_of_display(struct terminal_buffer *
         terminal_buffer_clear_entire_line(buffer, row);
     }
     terminal_buffer_clear_line_segment(buffer, buffer->cursor_row, 0u, buffer->cursor_column + 1u);
+    terminal_mark_visible_rows_dirty(buffer, 0u, buffer->cursor_row);
 }
 
 static void terminal_buffer_clear_display(struct terminal_buffer *buffer) {
@@ -3068,6 +3227,7 @@ static void terminal_buffer_clear_display(struct terminal_buffer *buffer) {
     }
     buffer->cursor_column = 0u;
     buffer->cursor_row = 0u;
+    terminal_mark_full_redraw();
 }
 
 static void terminal_buffer_clear_line_from_cursor(struct terminal_buffer *buffer) {
@@ -3115,12 +3275,23 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
 
     switch (ch) {
     case '\r':
+        if (buffer->cursor_row < buffer->rows) {
+            terminal_mark_visible_rows_dirty(buffer, buffer->cursor_row, buffer->cursor_row);
+        }
         buffer->cursor_column = 0u;
         return;
-    case '\n':
+    case '\n': {
+        size_t previous_row = buffer->cursor_row;
+        if (previous_row < buffer->rows) {
+            terminal_mark_visible_rows_dirty(buffer, previous_row, previous_row);
+        }
         buffer->cursor_column = 0u;
         buffer->cursor_row++;
+        if (buffer->cursor_row < buffer->rows) {
+            terminal_mark_visible_rows_dirty(buffer, buffer->cursor_row, buffer->cursor_row);
+        }
         break;
+    }
     case '\t': {
         size_t next_tab = ((buffer->cursor_column / 8u) + 1u) * 8u;
         size_t spaces = 0u;
@@ -3147,6 +3318,7 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         if (buffer->cursor_row < buffer->rows && buffer->cursor_column < buffer->columns) {
             terminal_cell_apply_defaults(buffer,
                                          &buffer->cells[buffer->cursor_row * buffer->columns + buffer->cursor_column]);
+            terminal_mark_visible_rows_dirty(buffer, buffer->cursor_row, buffer->cursor_row);
         }
         return;
     default:
@@ -3182,6 +3354,7 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         struct terminal_cell *cell = &buffer->cells[buffer->cursor_row * buffer->columns + buffer->cursor_column];
         terminal_cell_apply_current(buffer, cell, ch);
         buffer->cursor_column++;
+        terminal_mark_visible_rows_dirty(buffer, buffer->cursor_row, buffer->cursor_row);
         return;
     }
 
@@ -3674,6 +3847,7 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                     } else {
                         buffer->cursor_visible = 0;
                     }
+                    terminal_mark_cursor_row_dirty(buffer);
                     break;
                 case 2004: /* bracketed paste */
                     /* This does not affect our simple renderer. */
@@ -4033,6 +4207,7 @@ static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
     if (terminal_master_fd_handle >= 0) {
         update_pty_size(terminal_master_fd_handle, new_columns, new_rows);
     }
+    terminal_mark_full_redraw();
 }
 
 static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {
@@ -4064,6 +4239,7 @@ static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {
             SDL_SetWindowSize(terminal_window_handle, terminal_logical_width, terminal_logical_height);
         }
     }
+    terminal_mark_full_redraw();
 }
 
 static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
@@ -4629,6 +4805,7 @@ int main(int argc, char **argv) {
                     wheel_y = -wheel_y;
                 }
 #endif
+                size_t old_offset = buffer.scroll_offset;
                 if (wheel_y > 0) {
                     size_t delta = (size_t)wheel_y;
                     buffer.scroll_offset += delta;
@@ -4640,6 +4817,9 @@ int main(int argc, char **argv) {
                     } else {
                         buffer.scroll_offset -= delta;
                     }
+                }
+                if (buffer.scroll_offset != old_offset) {
+                    terminal_mark_full_redraw();
                 }
 #endif
             } else if (event.type == SDL_MOUSEBUTTONDOWN) {
@@ -4721,6 +4901,7 @@ int main(int argc, char **argv) {
                 if (clipboard_handled) {
                     cursor_phase_visible = 1;
                     cursor_last_toggle = SDL_GetTicks();
+                    terminal_mark_cursor_row_dirty(&buffer);
                     continue;
                 }
 
@@ -4753,6 +4934,7 @@ int main(int argc, char **argv) {
                     }
                     cursor_phase_visible = 1;
                     cursor_last_toggle = SDL_GetTicks();
+                    terminal_mark_cursor_row_dirty(&buffer);
                     continue;
                 }
 
@@ -5024,6 +5206,7 @@ int main(int argc, char **argv) {
                     terminal_selection_clear();
                     cursor_phase_visible = 1;
                     cursor_last_toggle = SDL_GetTicks();
+                    terminal_mark_cursor_row_dirty(&buffer);
                     continue;
                 }
             } else if (event.type == SDL_TEXTINPUT) {
@@ -5045,6 +5228,7 @@ int main(int argc, char **argv) {
                     }
                     cursor_phase_visible = 1;
                     cursor_last_toggle = SDL_GetTicks();
+                    terminal_mark_cursor_row_dirty(&buffer);
                 }
             }
         }
@@ -5058,6 +5242,7 @@ int main(int argc, char **argv) {
                 }
                 cursor_phase_visible = 1;
                 cursor_last_toggle = SDL_GetTicks();
+                terminal_mark_cursor_row_dirty(&buffer);
             } else if (bytes_read < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 running = 0;
                 break;
@@ -5069,12 +5254,17 @@ int main(int argc, char **argv) {
             child_exited = 1;
         }
 
+        int cursor_blink_toggled = 0;
         Uint32 now = SDL_GetTicks();
         if (cursor_blink_interval > 0u && (Uint32)(now - cursor_last_toggle) >= cursor_blink_interval) {
             cursor_last_toggle = now;
             cursor_phase_visible = cursor_phase_visible ? 0 : 1;
+            cursor_blink_toggled = 1;
         }
         size_t clamped_scroll_offset = terminal_clamped_scroll_offset(&buffer);
+        if (cursor_blink_toggled && clamped_scroll_offset == 0u && buffer.cursor_visible) {
+            terminal_mark_visible_rows_dirty(&buffer, buffer.cursor_row, buffer.cursor_row);
+        }
         size_t top_index = 0u;
         size_t bottom_index = 0u;
         terminal_visible_row_range(&buffer, &top_index, &bottom_index);
@@ -5096,17 +5286,52 @@ int main(int argc, char **argv) {
             break;
         }
 
+        if (!terminal_framebuffer_dirty) {
+            if (child_exited) {
+                running = 0;
+            }
+            SDL_Delay(8);
+            continue;
+        }
+
+        size_t render_row_start = 0u;
+        size_t render_row_end = buffer.rows;
+        if (!terminal_framebuffer_full_redraw) {
+            render_row_start = terminal_dirty_row_start;
+            if (render_row_start > buffer.rows) {
+                render_row_start = buffer.rows;
+            }
+            render_row_end = terminal_dirty_row_end + 1u;
+            if (render_row_end > buffer.rows) {
+                render_row_end = buffer.rows;
+            }
+            if (render_row_start >= render_row_end) {
+                render_row_start = 0u;
+                render_row_end = buffer.rows;
+                terminal_framebuffer_full_redraw = 1;
+            }
+        }
+
+        if (render_row_start >= render_row_end) {
+            terminal_reset_dirty_state();
+            if (child_exited) {
+                running = 0;
+            }
+            SDL_Delay(8);
+            continue;
+        }
+
         int margin_pixels = terminal_margin_pixels;
         if (margin_pixels < 0) {
             margin_pixels = 0;
         }
-        if (margin_pixels > 0) {
-            if (margin_pixels * 2 > frame_width) {
-                margin_pixels = frame_width / 2;
-            }
-            if (margin_pixels * 2 > frame_height) {
-                margin_pixels = frame_height / 2;
-            }
+        if (margin_pixels * 2 > frame_width) {
+            margin_pixels = frame_width / 2;
+        }
+        if (margin_pixels * 2 > frame_height) {
+            margin_pixels = frame_height / 2;
+        }
+        if (margin_pixels > 0 && terminal_framebuffer_full_redraw) {
             uint32_t margin_color_value = buffer.default_bg;
             uint8_t margin_r = terminal_color_r(margin_color_value);
             uint8_t margin_g = terminal_color_g(margin_color_value);
@@ -5145,7 +5370,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        for (size_t row = 0u; row < buffer.rows; row++) {
+        for (size_t row = render_row_start; row < render_row_end; row++) {
             size_t global_index = top_index + row;
             const struct terminal_cell *row_cells = terminal_buffer_row_at(&buffer, global_index);
             if (!row_cells) {
@@ -5261,7 +5486,27 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
+        int upload_result = 0;
+        if (terminal_framebuffer_full_redraw) {
+            upload_result = terminal_upload_framebuffer(framebuffer, frame_width, frame_height);
+        } else {
+            size_t dirty_rows = render_row_end - render_row_start;
+            int dirty_y = margin_pixels + (int)((size_t)render_row_start * (size_t)glyph_height);
+            int dirty_height = (int)(dirty_rows * (size_t)glyph_height);
+            if (dirty_y < 0) {
+                dirty_height += dirty_y;
+                dirty_y = 0;
+            }
+            if (dirty_height <= 0) {
+                dirty_height = frame_height;
+                dirty_y = 0;
+            }
+            if (dirty_y + dirty_height > frame_height) {
+                dirty_height = frame_height - dirty_y;
+            }
+            upload_result = terminal_upload_framebuffer_region(framebuffer, frame_width, frame_height, dirty_y, dirty_height);
+        }
+        if (upload_result != 0) {
             fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
             running = 0;
             break;
@@ -5438,6 +5683,7 @@ int main(int argc, char **argv) {
         }
 
         SDL_GL_SwapWindow(window);
+        terminal_reset_dirty_state();
 
         if (child_exited) {
             running = 0;

@@ -61,6 +61,9 @@
 #define TERMINAL_FONT_SCALE 1
 #endif
 #define TERMINAL_CURSOR_BLINK_INTERVAL 500u
+#ifndef TERMINAL_SHADER_TARGET_FPS
+#define TERMINAL_SHADER_TARGET_FPS 30u
+#endif
 
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
@@ -81,6 +84,8 @@ static size_t terminal_selection_caret_row = 0u;
 static size_t terminal_selection_caret_col = 0u;
 static int terminal_selection_active = 0;
 static int terminal_selection_dragging = 0;
+static Uint32 terminal_shader_last_frame_tick = 0u;
+static Uint32 terminal_shader_frame_interval_ms = 0u;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -4883,6 +4888,16 @@ int main(int argc, char **argv) {
 
     SDL_StartTextInput();
 
+    if (TERMINAL_SHADER_TARGET_FPS > 0u) {
+        terminal_shader_frame_interval_ms = 1000u / (Uint32)TERMINAL_SHADER_TARGET_FPS;
+        if (terminal_shader_frame_interval_ms == 0u) {
+            terminal_shader_frame_interval_ms = 1u;
+        }
+    } else {
+        terminal_shader_frame_interval_ms = 0u;
+    }
+    terminal_shader_last_frame_tick = SDL_GetTicks();
+
     int status = 0;
     int child_exited = 0;
     unsigned char input_buffer[512];
@@ -5394,6 +5409,8 @@ int main(int argc, char **argv) {
         int full_redraw = terminal_force_full_redraw;
         terminal_force_full_redraw = 0;
         int frame_dirty = 0;
+        int shader_timing_enabled = 0;
+        int shader_requires_frame = 0;
 
         int margin_pixels = terminal_margin_pixels;
         if (margin_pixels < 0) {
@@ -5571,15 +5588,27 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (!frame_dirty) {
+        shader_timing_enabled = (terminal_gl_shader_count > 0u &&
+                                 terminal_shader_frame_interval_ms > 0u);
+        if (shader_timing_enabled) {
+            Uint32 elapsed = now - terminal_shader_last_frame_tick;
+            if (elapsed >= terminal_shader_frame_interval_ms) {
+                shader_requires_frame = 1;
+            }
+        }
+
+        int need_gpu_draw = frame_dirty || shader_requires_frame;
+        if (!need_gpu_draw) {
             SDL_Delay(1);
             continue;
         }
 
-        if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
-            fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
-            running = 0;
-            break;
+        if (frame_dirty) {
+            if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
+                fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
+                running = 0;
+                break;
+            }
         }
 
         glClear(GL_COLOR_BUFFER_BIT);
@@ -5750,6 +5779,10 @@ int main(int argc, char **argv) {
         }
 
         SDL_GL_SwapWindow(window);
+
+        if (shader_timing_enabled && need_gpu_draw) {
+            terminal_shader_last_frame_tick = now;
+        }
 
         if (child_exited) {
             running = 0;

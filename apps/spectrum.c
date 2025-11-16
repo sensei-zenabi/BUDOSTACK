@@ -86,11 +86,6 @@ static void enable_raw_mode(void)
     raw_mode_enabled = 1;
 }
 
-static void clear_screen(void)
-{
-    write(STDOUT_FILENO, "\x1b[2J\x1b[H", 7);
-}
-
 static void get_terminal_size(int *rows, int *cols)
 {
     struct winsize ws;
@@ -332,7 +327,7 @@ static void draw_waterfall_row(const struct analyzer_state *state,
     int use_log_frequency,
     int use_log_amplitude)
 {
-    printf("\r\x1b[0m\x1b[2K");
+    printf("\r\x1b[0m");
     if (columns <= 0 || state->bin_count == 0) {
         printf("\r\n");
         return;
@@ -391,7 +386,7 @@ static void draw_frequency_axis_baseline(const struct analyzer_state *state,
     int use_log_frequency,
     unsigned int sample_rate)
 {
-    printf("\r\x1b[0m\x1b[2K");
+    printf("\r\x1b[0m");
     if (columns <= 0) {
         printf("\r\n");
         return;
@@ -424,7 +419,7 @@ static void draw_frequency_axis_labels(const struct analyzer_state *state,
     int use_log_frequency,
     unsigned int sample_rate)
 {
-    printf("\r\x1b[0m\x1b[2K");
+    printf("\r\x1b[0m");
     if (columns <= 0) {
         printf("\r\n");
         return;
@@ -520,7 +515,7 @@ static void ensure_line_capacity(int columns)
 
 static void write_padded_line(const char *text, int columns, int newline)
 {
-    printf("\r\x1b[0m\x1b[2K");
+    printf("\r\x1b[0m");
     if (columns <= 0) {
         if (newline) {
             printf("\r\n");
@@ -561,7 +556,7 @@ static void draw_ui(const struct analyzer_state *state,
     }
     ensure_line_capacity(columns);
 
-    printf("\x1b[H\x1b[0m\x1b[J");
+    printf("\x1b[H\x1b[0m");
     char header_line[512];
     int header_len = snprintf(header_line,
         sizeof(header_line),
@@ -591,7 +586,7 @@ static void draw_ui(const struct analyzer_state *state,
     size_t padding_rows = waterfall_rows > slices_available ? waterfall_rows - slices_available : 0;
 
     for (size_t i = 0; i < padding_rows; ++i) {
-        printf("\r\x1b[2K\r\n");
+        write_padded_line("", columns, 1);
     }
 
     if (slices_available > 0 && state->history_capacity > 0) {
@@ -694,7 +689,6 @@ int main(void)
     }
 
     enable_raw_mode();
-    clear_screen();
 
     snd_pcm_t *pcm_handle = NULL;
     int err = snd_pcm_open(&pcm_handle, "default", SND_PCM_STREAM_CAPTURE, 0);
@@ -777,11 +771,14 @@ int main(void)
 
         get_terminal_size(&rows, &cols);
         if (cols < 80) {
-            printf("\x1b[H\x1b[0m\x1b[J");
-            printf("\r\x1b[2KSpectrum Analyzer requires at least 80 columns. Current width: %d\r\n", cols);
-            printf("\r\x1b[2K\r\n");
-            printf("\r\x1b[2KPlease resize the terminal.\r\n");
-            printf("\r\x1b[2K");
+            printf("\x1b[H\x1b[0m");
+            write_padded_line("Spectrum Analyzer requires at least 80 columns.", cols, 1);
+            char width_line[64];
+            snprintf(width_line, sizeof(width_line), "Current width: %d", cols);
+            write_padded_line(width_line, cols, 1);
+            write_padded_line("", cols, 1);
+            write_padded_line("Please resize the terminal.", cols, 1);
+            write_padded_line("", cols, 0);
             fflush(stdout);
         } else {
             size_t new_history = compute_history_capacity(rows);
@@ -897,7 +894,6 @@ int main(void)
     line_buffer = NULL;
     line_capacity = 0;
 
-    clear_screen();
     disable_raw_mode();
 
     snd_pcm_close(pcm_handle);

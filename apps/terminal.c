@@ -82,6 +82,7 @@ static size_t terminal_selection_caret_row = 0u;
 static size_t terminal_selection_caret_col = 0u;
 static int terminal_selection_active = 0;
 static int terminal_selection_dragging = 0;
+static int terminal_vsync_active = 0;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -123,6 +124,28 @@ static size_t terminal_cell_vertex_capacity = 0u;
 static GLuint terminal_cell_vbo = 0;
 static GLuint terminal_cell_program = 0;
 static GLint terminal_cell_uniform_texture = -1;
+#define TERMINAL_RENDER_CACHE_INVALID_TOKEN UINT32_MAX
+
+struct terminal_cached_cell {
+    uint32_t ch;
+    uint32_t fg;
+    uint32_t bg;
+    uint8_t style;
+    uint8_t selected;
+    uint8_t cursor;
+    uint8_t padding;
+    uint32_t row_token;
+};
+
+static struct terminal_cached_cell *terminal_cached_cells = NULL;
+static size_t terminal_cached_cell_count = 0u;
+static size_t terminal_cached_columns = 0u;
+static size_t terminal_cached_rows = 0u;
+static int terminal_cached_margin_pixels = 0;
+static int terminal_cached_glyph_width = 0;
+static int terminal_cached_glyph_height = 0;
+static int terminal_cached_frame_width = 0;
+static int terminal_cached_frame_height = 0;
 
 static void terminal_assign_vertex(struct terminal_cell_vertex *vertex,
                                    float px,
@@ -256,6 +279,9 @@ static int terminal_create_glyph_texture(const struct psf_font *font);
 static void terminal_destroy_glyph_texture(void);
 static int terminal_initialize_cell_renderer(void);
 static void terminal_shutdown_cell_renderer(void);
+static void terminal_render_cache_reset(void);
+static void terminal_render_cache_mark_all_invalid(void);
+static int terminal_render_cache_reserve(size_t columns, size_t rows);
 static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
                                      const struct psf_font *font,
                                      size_t top_index,
@@ -2667,6 +2693,7 @@ static void terminal_shutdown_cell_renderer(void) {
     free(terminal_cell_vertices);
     terminal_cell_vertices = NULL;
     terminal_cell_vertex_capacity = 0u;
+    terminal_render_cache_reset();
 }
 
 static int terminal_reserve_cell_vertices(size_t vertex_count) {
@@ -2700,6 +2727,52 @@ static int terminal_reserve_cell_vertices(size_t vertex_count) {
     glBindBuffer(GL_ARRAY_BUFFER, terminal_cell_vbo);
     glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)required_bytes, NULL, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
+    return 0;
+}
+
+static void terminal_render_cache_reset(void) {
+    free(terminal_cached_cells);
+    terminal_cached_cells = NULL;
+    terminal_cached_cell_count = 0u;
+    terminal_cached_columns = 0u;
+    terminal_cached_rows = 0u;
+    terminal_cached_margin_pixels = 0;
+    terminal_cached_glyph_width = 0;
+    terminal_cached_glyph_height = 0;
+    terminal_cached_frame_width = 0;
+    terminal_cached_frame_height = 0;
+}
+
+static void terminal_render_cache_mark_all_invalid(void) {
+    if (!terminal_cached_cells) {
+        return;
+    }
+    for (size_t i = 0u; i < terminal_cached_cell_count; i++) {
+        terminal_cached_cells[i].row_token = TERMINAL_RENDER_CACHE_INVALID_TOKEN;
+    }
+}
+
+static int terminal_render_cache_reserve(size_t columns, size_t rows) {
+    if (columns == 0u || rows == 0u) {
+        terminal_render_cache_reset();
+        return 0;
+    }
+    if (columns > SIZE_MAX / rows) {
+        return -1;
+    }
+    size_t cell_count = columns * rows;
+    if (!terminal_cached_cells || terminal_cached_columns != columns || terminal_cached_rows != rows) {
+        struct terminal_cached_cell *new_cells = calloc(cell_count, sizeof(*new_cells));
+        if (!new_cells) {
+            return -1;
+        }
+        free(terminal_cached_cells);
+        terminal_cached_cells = new_cells;
+        terminal_cached_cell_count = cell_count;
+        terminal_cached_columns = columns;
+        terminal_cached_rows = rows;
+        terminal_render_cache_mark_all_invalid();
+    }
     return 0;
 }
 
@@ -2758,14 +2831,27 @@ static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
             if (terminal_reserve_cell_vertices(vertex_target) != 0) {
                 return -1;
             }
+            if (terminal_render_cache_reserve(columns, rows) != 0) {
+                return -1;
+            }
         }
+    } else {
+        terminal_render_cache_reset();
     }
 
-    size_t vertices_used = 0u;
+    GLsizei vertex_count = 0;
+    int any_dirty = 0;
+    size_t dirty_vertex_start = SIZE_MAX;
+    size_t dirty_vertex_end = 0u;
     if (vertex_target > 0u) {
-        if (!terminal_cell_vertices) {
+        if (!terminal_cell_vertices || !terminal_cached_cells) {
             return -1;
         }
+        if (vertex_target > (size_t)INT_MAX) {
+            return -1;
+        }
+        vertex_count = (GLsizei)vertex_target;
+
         int glyphs_per_row = terminal_glyphs_per_row;
         if (glyphs_per_row <= 0) {
             return -1;
@@ -2777,6 +2863,19 @@ static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
         }
         float inv_frame_width = 2.0f / (float)frame_width;
         float inv_frame_height = 2.0f / (float)frame_height;
+
+        if (terminal_cached_margin_pixels != margin ||
+            terminal_cached_glyph_width != glyph_pixel_width ||
+            terminal_cached_glyph_height != glyph_pixel_height ||
+            terminal_cached_frame_width != frame_width ||
+            terminal_cached_frame_height != frame_height) {
+            terminal_cached_margin_pixels = margin;
+            terminal_cached_glyph_width = glyph_pixel_width;
+            terminal_cached_glyph_height = glyph_pixel_height;
+            terminal_cached_frame_width = frame_width;
+            terminal_cached_frame_height = frame_height;
+            terminal_render_cache_mark_all_invalid();
+        }
 
         for (size_t row = 0u; row < rows; row++) {
             if (row > SIZE_MAX - top_index) {
@@ -2802,8 +2901,9 @@ static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
                     fg = terminal_bold_variant(fg);
                 }
 
-                if (selection_has_range &&
-                    terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer->columns)) {
+                int cell_selected = selection_has_range &&
+                                    terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer->columns);
+                if (cell_selected) {
                     fg = buffer->default_bg;
                     bg = buffer->default_fg;
                 }
@@ -2816,6 +2916,44 @@ static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
                 if (is_cursor_cell) {
                     fill_color = buffer->cursor_color;
                     glyph_color = bg;
+                }
+
+                uint64_t row_token64 = (uint64_t)global_index;
+                if (row_token64 > (uint64_t)UINT32_MAX) {
+                    row_token64 = UINT32_MAX;
+                }
+                struct terminal_cached_cell desired = {0};
+                desired.ch = ch;
+                desired.fg = glyph_color;
+                desired.bg = fill_color;
+                desired.style = style;
+                desired.selected = (uint8_t)(cell_selected ? 1 : 0);
+                desired.cursor = (uint8_t)(is_cursor_cell ? 1 : 0);
+                desired.row_token = (uint32_t)row_token64;
+
+                size_t cell_index = row * columns + col;
+                if (cell_index >= terminal_cached_cell_count) {
+                    return -1;
+                }
+                struct terminal_cached_cell *cached = &terminal_cached_cells[cell_index];
+                int cell_dirty = 0;
+                if (cached->row_token != desired.row_token ||
+                    cached->ch != desired.ch ||
+                    cached->fg != desired.fg ||
+                    cached->bg != desired.bg ||
+                    cached->style != desired.style ||
+                    cached->selected != desired.selected ||
+                    cached->cursor != desired.cursor) {
+                    cell_dirty = 1;
+                }
+
+                if (!cell_dirty) {
+                    continue;
+                }
+
+                size_t vertex_index = cell_index * 6u;
+                if (vertex_index + 6u > terminal_cell_vertex_capacity) {
+                    return -1;
                 }
 
                 size_t offset_x = col * (size_t)glyph_pixel_width;
@@ -2880,18 +3018,24 @@ static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
                 const float cell_v0 = 0.0f;
                 const float cell_v1 = 1.0f;
 
-                if (vertices_used + 6u > terminal_cell_vertex_capacity) {
-                    return -1;
-                }
-
-                struct terminal_cell_vertex *dst = &terminal_cell_vertices[vertices_used];
+                struct terminal_cell_vertex *dst = &terminal_cell_vertices[vertex_index];
                 terminal_assign_vertex(&dst[0], clip_x0, clip_y0, glyph_u0, glyph_v0, cell_u0, cell_v0, fg_rgba, bg_rgba, style_flags);
                 terminal_assign_vertex(&dst[1], clip_x1, clip_y0, glyph_u1, glyph_v0, cell_u1, cell_v0, fg_rgba, bg_rgba, style_flags);
                 terminal_assign_vertex(&dst[2], clip_x0, clip_y1, glyph_u0, glyph_v1, cell_u0, cell_v1, fg_rgba, bg_rgba, style_flags);
                 terminal_assign_vertex(&dst[3], clip_x1, clip_y0, glyph_u1, glyph_v0, cell_u1, cell_v0, fg_rgba, bg_rgba, style_flags);
                 terminal_assign_vertex(&dst[4], clip_x1, clip_y1, glyph_u1, glyph_v1, cell_u1, cell_v1, fg_rgba, bg_rgba, style_flags);
                 terminal_assign_vertex(&dst[5], clip_x0, clip_y1, glyph_u0, glyph_v1, cell_u0, cell_v1, fg_rgba, bg_rgba, style_flags);
-                vertices_used += 6u;
+
+                *cached = desired;
+
+                size_t cell_vertex_end = vertex_index + 6u;
+                if (vertex_index < dirty_vertex_start) {
+                    dirty_vertex_start = vertex_index;
+                }
+                if (cell_vertex_end > dirty_vertex_end) {
+                    dirty_vertex_end = cell_vertex_end;
+                }
+                any_dirty = 1;
             }
         }
     }
@@ -2912,12 +3056,7 @@ static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
     glClearColor(clear_r, clear_g, clear_b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    if (vertices_used > 0u) {
-        if (vertices_used > (size_t)INT_MAX) {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            return -1;
-        }
-        size_t vertex_bytes = vertices_used * sizeof(struct terminal_cell_vertex);
+    if (vertex_count > 0) {
         glUseProgram(terminal_cell_program);
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, terminal_glyph_texture);
@@ -2925,7 +3064,25 @@ static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
             glUniform1i(terminal_cell_uniform_texture, 0);
         }
         glBindBuffer(GL_ARRAY_BUFFER, terminal_cell_vbo);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, (GLsizeiptr)vertex_bytes, terminal_cell_vertices);
+        if (any_dirty) {
+            size_t upload_start = (dirty_vertex_start == SIZE_MAX) ? 0u : dirty_vertex_start;
+            size_t upload_end = dirty_vertex_end;
+            if (upload_end < upload_start) {
+                upload_end = upload_start;
+            }
+            if (upload_end > vertex_target) {
+                upload_end = vertex_target;
+            }
+            size_t upload_vertices = upload_end - upload_start;
+            if (upload_vertices > 0u) {
+                GLsizeiptr upload_bytes = (GLsizeiptr)(upload_vertices * sizeof(struct terminal_cell_vertex));
+                const struct terminal_cell_vertex *src = terminal_cell_vertices + upload_start;
+                glBufferSubData(GL_ARRAY_BUFFER,
+                                (GLintptr)(upload_start * sizeof(struct terminal_cell_vertex)),
+                                upload_bytes,
+                                src);
+            }
+        }
 
         GLsizei stride = (GLsizei)sizeof(struct terminal_cell_vertex);
         glEnableVertexAttribArray(TERMINAL_CELL_ATTR_POSITION);
@@ -2956,7 +3113,7 @@ static int terminal_render_cells_gpu(const struct terminal_buffer *buffer,
                               stride,
                               (const void *)offsetof(struct terminal_cell_vertex, style_flags));
 
-        glDrawArrays(GL_TRIANGLES, 0, (GLsizei)vertices_used);
+        glDrawArrays(GL_TRIANGLES, 0, vertex_count);
 
         glDisableVertexAttribArray(TERMINAL_CELL_ATTR_STYLE);
         glDisableVertexAttribArray(TERMINAL_CELL_ATTR_BG_COLOR);
@@ -5128,6 +5285,9 @@ int main(int argc, char **argv) {
 
     if (SDL_GL_SetSwapInterval(1) != 0) {
         fprintf(stderr, "Warning: Unable to enable VSync: %s\n", SDL_GetError());
+        terminal_vsync_active = 0;
+    } else {
+        terminal_vsync_active = 1;
     }
 
     for (size_t i = 0; i < shader_path_count; i++) {
@@ -5931,7 +6091,9 @@ int main(int argc, char **argv) {
             running = 0;
         }
 
-        SDL_Delay(16);
+        if (!terminal_vsync_active) {
+            SDL_Delay(1);
+        }
     }
 
     SDL_StopTextInput();

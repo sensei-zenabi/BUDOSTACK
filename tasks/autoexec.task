@@ -29,11 +29,13 @@ RUN clear
 RUN _RECT -x 0 -y 0 -width 118 -height 66 -color 0 -fill on
 RUN _WAIT 200
 RUN _DISPLAY -x 20 -y 15 -file tasks/assets/login_logo.png
-RUN _TERM_SOUND_PLAY 1 sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
+RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
+RUN _WAIT 500
+RUN _TERM_SOUND_PLAY 2 sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
 RUN _WAIT 1500
 RUN _TEXT -x 46 -y 31 -text "...WELCOME BACK TO 1980s..."
 RUN _WAIT 1000
 RUN _TEXT -x 2 -y 64 -text "Created by: Ville Suoranta"
 RUN _TEXT -x 2 -y 65 -text "email: ville.m.suoranta(at)gmail.com"
-RUN _WAIT 2000                                                                                                                      
+RUN _WAIT 1600                                                                                                                      
                                                                                                                       

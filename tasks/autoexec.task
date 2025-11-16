@@ -29,6 +29,8 @@ RUN cls
 RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
 @LOADING
 RUN _BAR -x 47 -y 32 -title LOADING: -progress $LOAD
+IF $LOAD == 50
+  RUN _TERM_SOUND_PLAY 2 sounds/628246__asiekierka__floppy_access6.ogg 100
 IF $LOAD < 100
   SET $LOAD = $LOAD + 10
   RUN _WAIT 250

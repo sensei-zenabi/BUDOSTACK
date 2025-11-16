@@ -23,6 +23,8 @@
 
 #define MIN_FFT_SIZE 256
 #define MAX_FFT_SIZE 8192
+#define SPECTRUM_MAX_REFRESH_RATE 4
+#define SPECTRUM_REFRESH_INTERVAL_NS (1000000000LL / SPECTRUM_MAX_REFRESH_RATE)
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -53,6 +55,7 @@ static char *line_buffer = NULL;
 static size_t line_capacity = 0;
 
 static void ensure_line_capacity(int columns);
+static int should_draw_frame(struct timespec *last_draw, int *initialized);
 
 static void disable_raw_mode(void)
 {
@@ -518,6 +521,38 @@ static void ensure_line_capacity(int columns)
     line_capacity = needed;
 }
 
+static int should_draw_frame(struct timespec *last_draw, int *initialized)
+{
+    if (!last_draw || !initialized) {
+        return 1;
+    }
+
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+        return 1;
+    }
+
+    if (!*initialized) {
+        *initialized = 1;
+        *last_draw = now;
+        return 1;
+    }
+
+    long long sec_diff = (long long)now.tv_sec - (long long)last_draw->tv_sec;
+    long long nsec_diff = (long long)now.tv_nsec - (long long)last_draw->tv_nsec;
+    long long elapsed = (sec_diff * 1000000000LL) + nsec_diff;
+    if (elapsed < 0) {
+        elapsed = 0;
+    }
+
+    if (elapsed >= SPECTRUM_REFRESH_INTERVAL_NS) {
+        *last_draw = now;
+        return 1;
+    }
+
+    return 0;
+}
+
 static void write_padded_line(const char *text, int columns, int newline)
 {
     printf("\r\x1b[0m\x1b[2K");
@@ -756,6 +791,10 @@ int main(void)
     input_fd.events = POLLIN;
 
     int running = 1;
+    struct timespec last_draw_time;
+    last_draw_time.tv_sec = 0;
+    last_draw_time.tv_nsec = 0;
+    int draw_time_initialized = 0;
 
     while (running) {
         if (read_audio_block(pcm_handle, &state, status_buffer, sizeof(status_buffer), &status_timeout) == 0) {
@@ -776,13 +815,16 @@ int main(void)
         }
 
         get_terminal_size(&rows, &cols);
+        int should_draw = should_draw_frame(&last_draw_time, &draw_time_initialized);
         if (cols < 80) {
-            printf("\x1b[H\x1b[0m\x1b[J");
-            printf("\r\x1b[2KSpectrum Analyzer requires at least 80 columns. Current width: %d\r\n", cols);
-            printf("\r\x1b[2K\r\n");
-            printf("\r\x1b[2KPlease resize the terminal.\r\n");
-            printf("\r\x1b[2K");
-            fflush(stdout);
+            if (should_draw) {
+                printf("\x1b[H\x1b[0m\x1b[J");
+                printf("\r\x1b[2KSpectrum Analyzer requires at least 80 columns. Current width: %d\r\n", cols);
+                printf("\r\x1b[2K\r\n");
+                printf("\r\x1b[2KPlease resize the terminal.\r\n");
+                printf("\r\x1b[2K");
+                fflush(stdout);
+            }
         } else {
             size_t new_history = compute_history_capacity(rows);
             if (new_history != state.history_capacity) {
@@ -797,7 +839,9 @@ int main(void)
                     return EXIT_FAILURE;
                 }
             }
-            draw_ui(&state, rows, cols, use_log_frequency, use_log_amplitude, recording, status_buffer, sample_rate);
+            if (should_draw) {
+                draw_ui(&state, rows, cols, use_log_frequency, use_log_amplitude, recording, status_buffer, sample_rate);
+            }
         }
 
         if (status_timeout > 0) {

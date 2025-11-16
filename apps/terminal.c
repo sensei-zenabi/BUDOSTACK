@@ -3,6 +3,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <float.h>
 #include <limits.h>
 #include <signal.h>
 #include <stdint.h>
@@ -61,6 +62,10 @@
 #define TERMINAL_FONT_SCALE 1
 #endif
 #define TERMINAL_CURSOR_BLINK_INTERVAL 500u
+#define TERMINAL_TARGET_FPS 60.0
+#define TERMINAL_TARGET_FRAME_MS (1000.0 / TERMINAL_TARGET_FPS)
+#define TERMINAL_SLOW_FRAME_THRESHOLD_MS 17.0
+#define TERMINAL_TIMING_REPORT_INTERVAL_MS 5000u
 
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
@@ -271,6 +276,26 @@ static GLuint terminal_compile_shader(GLenum type, const char *source, const cha
 static void terminal_print_usage(const char *progname);
 static int terminal_resolve_shader_path(const char *root_dir, const char *shader_arg, char *out_path, size_t out_size);
 static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args);
+struct terminal_frame_metrics {
+    Uint64 perf_frequency;
+    double counter_to_ms;
+    double target_frame_ms;
+    double slow_frame_threshold_ms;
+    Uint32 report_interval_ms;
+    Uint32 last_report_ticks;
+    double accum_ms;
+    double min_ms;
+    double max_ms;
+    size_t sample_count;
+    size_t slow_frame_count;
+    double last_slow_frame_ms;
+    int vsync_enabled;
+};
+
+static void terminal_frame_metrics_init(struct terminal_frame_metrics *metrics, int vsync_enabled);
+static void terminal_frame_metrics_record(struct terminal_frame_metrics *metrics, double frame_ms);
+static void terminal_frame_metrics_report_if_needed(struct terminal_frame_metrics *metrics);
+static void terminal_frame_metrics_frame_limit(struct terminal_frame_metrics *metrics, double frame_ms);
 
 static int terminal_send_response(const char *response) {
     if (!response || response[0] == '\0') {
@@ -3626,6 +3651,94 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     }
 }
 
+static void terminal_frame_metrics_init(struct terminal_frame_metrics *metrics, int vsync_enabled) {
+    if (!metrics) {
+        return;
+    }
+    metrics->perf_frequency = SDL_GetPerformanceFrequency();
+    if (metrics->perf_frequency == 0u) {
+        metrics->perf_frequency = 1u;
+    }
+    metrics->counter_to_ms = 1000.0 / (double)metrics->perf_frequency;
+    metrics->target_frame_ms = TERMINAL_TARGET_FRAME_MS;
+    metrics->slow_frame_threshold_ms = TERMINAL_SLOW_FRAME_THRESHOLD_MS;
+    metrics->report_interval_ms = TERMINAL_TIMING_REPORT_INTERVAL_MS;
+    metrics->last_report_ticks = SDL_GetTicks();
+    metrics->accum_ms = 0.0;
+    metrics->min_ms = DBL_MAX;
+    metrics->max_ms = 0.0;
+    metrics->sample_count = 0u;
+    metrics->slow_frame_count = 0u;
+    metrics->last_slow_frame_ms = 0.0;
+    metrics->vsync_enabled = vsync_enabled;
+}
+
+static void terminal_frame_metrics_record(struct terminal_frame_metrics *metrics, double frame_ms) {
+    if (!metrics) {
+        return;
+    }
+    metrics->accum_ms += frame_ms;
+    metrics->sample_count++;
+    if (frame_ms < metrics->min_ms) {
+        metrics->min_ms = frame_ms;
+    }
+    if (frame_ms > metrics->max_ms) {
+        metrics->max_ms = frame_ms;
+    }
+    if (frame_ms > metrics->slow_frame_threshold_ms) {
+        metrics->slow_frame_count++;
+        metrics->last_slow_frame_ms = frame_ms;
+    }
+}
+
+static void terminal_frame_metrics_report_if_needed(struct terminal_frame_metrics *metrics) {
+    if (!metrics || metrics->sample_count == 0u || metrics->report_interval_ms == 0u) {
+        return;
+    }
+    Uint32 now = SDL_GetTicks();
+    Uint32 elapsed = now - metrics->last_report_ticks;
+    if (elapsed < metrics->report_interval_ms) {
+        return;
+    }
+    double average_ms = metrics->accum_ms / (double)metrics->sample_count;
+    double min_ms = (metrics->min_ms == DBL_MAX) ? 0.0 : metrics->min_ms;
+    double max_ms = metrics->max_ms;
+    fprintf(stderr,
+            "terminal: frame avg %.2f ms (min %.2f / max %.2f), slow frames %zu",
+            average_ms,
+            min_ms,
+            max_ms,
+            metrics->slow_frame_count);
+    if (metrics->slow_frame_count > 0u) {
+        fprintf(stderr, " (last slow %.2f ms)", metrics->last_slow_frame_ms);
+    }
+    fputc('\n', stderr);
+    metrics->accum_ms = 0.0;
+    metrics->min_ms = DBL_MAX;
+    metrics->max_ms = 0.0;
+    metrics->sample_count = 0u;
+    metrics->slow_frame_count = 0u;
+    metrics->last_slow_frame_ms = 0.0;
+    metrics->last_report_ticks = now;
+}
+
+static void terminal_frame_metrics_frame_limit(struct terminal_frame_metrics *metrics, double frame_ms) {
+    if (!metrics || metrics->vsync_enabled) {
+        return;
+    }
+    double remaining_ms = metrics->target_frame_ms - frame_ms;
+    if (remaining_ms <= 0.0) {
+        return;
+    }
+    Uint32 delay_ms = 0u;
+    if (remaining_ms >= 1.0) {
+        delay_ms = (Uint32)remaining_ms;
+    } else {
+        delay_ms = 1u;
+    }
+    SDL_Delay(delay_ms);
+}
+
 static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *buffer) {
     if (!parser || !buffer) {
         return;
@@ -4589,6 +4702,7 @@ int main(int argc, char **argv) {
     int window_height = (int)window_height_size;
     int drawable_width = 0;
     int drawable_height = 0;
+    int vsync_enabled = 0;
 
     int master_fd = -1;
     pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
@@ -4712,6 +4826,9 @@ int main(int argc, char **argv) {
 
     if (SDL_GL_SetSwapInterval(1) != 0) {
         fprintf(stderr, "Warning: Unable to enable VSync: %s\n", SDL_GetError());
+        vsync_enabled = 0;
+    } else {
+        vsync_enabled = 1;
     }
 
     for (size_t i = 0; i < shader_path_count; i++) {
@@ -4808,6 +4925,9 @@ int main(int argc, char **argv) {
 
     SDL_StartTextInput();
 
+    struct terminal_frame_metrics frame_metrics;
+    terminal_frame_metrics_init(&frame_metrics, vsync_enabled);
+
     int status = 0;
     int child_exited = 0;
     unsigned char input_buffer[512];
@@ -4817,6 +4937,7 @@ int main(int argc, char **argv) {
     int cursor_phase_visible = 1;
 
     while (running) {
+        Uint64 frame_start_counter = SDL_GetPerformanceCounter();
         terminal_selection_validate(&buffer);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -5650,11 +5771,18 @@ int main(int argc, char **argv) {
 
         SDL_GL_SwapWindow(window);
 
+        Uint64 frame_end_counter = SDL_GetPerformanceCounter();
+        double frame_ms = (double)(frame_end_counter - frame_start_counter) * frame_metrics.counter_to_ms;
+        terminal_frame_metrics_record(&frame_metrics, frame_ms);
+        terminal_frame_metrics_report_if_needed(&frame_metrics);
+
         if (child_exited) {
             running = 0;
         }
 
-        SDL_Delay(16);
+        if (running) {
+            terminal_frame_metrics_frame_limit(&frame_metrics, frame_ms);
+        }
     }
 
     SDL_StopTextInput();

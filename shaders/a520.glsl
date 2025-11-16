@@ -15,7 +15,10 @@
 #pragma parameter sat "Saturation" 1.0 0.0 2.0 0.01
 #pragma parameter crawl "Dot Crawl" 1.0 0.0 1.0 1.0
 #pragma parameter blur "Blur Size" 0.5 0.0 2.0 0.05
-#pragma parameter SCAN "Scanline" 0.5 0.0 1.0 0.05
+
+//#pragma parameter SCAN "Scanline" 0.5 0.0 1.0 0.05
+#pragma parameter SCAN "Scanline" 0.0 0.0 0.0 0.00
+
 #pragma parameter BLUR "Texel Size" 0.07 0.0 1.0 0.01
 
 #if defined(VERTEX)
@@ -145,9 +148,9 @@ uniform COMPAT_PRECISION float BLUR;
 
 #define FIRTAPS 20
 const float FIR[20] = float[20] (-0.008030271,0.003107906,0.016841352,0.032545161,0.049360136,
-											0.066256720,0.082120150,0.095848433,0.106453014,0.113151423,
-											0.115441842,0.113151423,0.106453014,0.095848433,0.082120150,
-											0.066256720,0.049360136,0.032545161,0.016841352,0.003107906);
+                                            0.066256720,0.082120150,0.095848433,0.106453014,0.113151423,
+                                            0.115441842,0.113151423,0.106453014,0.095848433,0.082120150,
+                                            0.066256720,0.049360136,0.032545161,0.016841352,0.003107906);
 
 //#define FIR_GAIN 2.0
 //#define FIR_INVGAIN 1.02

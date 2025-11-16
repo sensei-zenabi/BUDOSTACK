@@ -60,10 +60,12 @@
 #define TERMINAL_FONT_SCALE 1
 #endif
 #define TERMINAL_CURSOR_BLINK_INTERVAL 500u
+#define TERMINAL_MIN_FRAME_TIME_MS 16u
 
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
 _Static_assert(TERMINAL_ROWS > 0u, "TERMINAL_ROWS must be positive");
+_Static_assert(TERMINAL_MIN_FRAME_TIME_MS > 0u, "TERMINAL_MIN_FRAME_TIME_MS must be positive");
 
 static SDL_Window *terminal_window_handle = NULL;
 static SDL_GLContext terminal_gl_context_handle = NULL;
@@ -4599,10 +4601,12 @@ int main(int argc, char **argv) {
     unsigned char input_buffer[512];
     int running = 1;
     const Uint32 cursor_blink_interval = TERMINAL_CURSOR_BLINK_INTERVAL;
+    const Uint32 min_frame_time_ms = TERMINAL_MIN_FRAME_TIME_MS;
     Uint32 cursor_last_toggle = SDL_GetTicks();
     int cursor_phase_visible = 1;
 
     while (running) {
+        Uint32 frame_start = SDL_GetTicks();
         terminal_selection_validate(&buffer);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -5443,7 +5447,12 @@ int main(int argc, char **argv) {
             running = 0;
         }
 
-        SDL_Delay(16);
+        if (min_frame_time_ms > 0u) {
+            Uint32 frame_elapsed = SDL_GetTicks() - frame_start;
+            if (frame_elapsed < min_frame_time_ms) {
+                SDL_Delay(min_frame_time_ms - frame_elapsed);
+            }
+        }
     }
 
     SDL_StopTextInput();

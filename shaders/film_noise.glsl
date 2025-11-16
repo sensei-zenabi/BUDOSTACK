@@ -10,7 +10,9 @@
 #pragma parameter y_off_g "Y Offset Green" -0.05 -1.0 1.0 0.01
 #pragma parameter x_off_b "X Offset Blue" -0.05 -1.0 1.0 0.01
 #pragma parameter y_off_b "Y Offset Blue" 0.05 -1.0 1.0 0.01
-#pragma parameter grain_str "Grain Strength" 12.0 0.0 16.0 1.0
+
+//#pragma parameter grain_str "Grain Strength" 12.0 0.0 16.0 1.0
+#pragma parameter grain_str "Grain Strength" 8.0 0.0 16.0 1.0
 
 #pragma parameter hotspot "Hotspot Toggle" 1.0 0.0 1.0 1.0
 //#pragma parameter hotspot "Hotspot Toggle" 0.0 0.0 0.0 0.0

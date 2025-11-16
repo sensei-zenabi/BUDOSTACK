@@ -4,7 +4,9 @@
 // https://www.shadertoy.com/view/XlsczN
 
 // Parameter lines go here:
-#pragma parameter wiggle "Wiggle" 0.0 0.0 10.0 1.0
+//#pragma parameter wiggle "Wiggle" 0.0 0.0 10.0 1.0
+#pragma parameter wiggle "Wiggle" 0.0 0.0 0.0 0.0
+
 #pragma parameter smear "Chroma Smear" 0.25 0.0 0.5 0.025
 
 #if defined(VERTEX)
@@ -185,7 +187,8 @@ vec2 jumpy(vec2 uv, float framecount)
     float vShift = (0.1*wiggle) * 0.4*onOff(2.,3.,.9, framecount)*(sin(framecount)*sin(framecount*20.) +
                                          (0.5 + 0.1*sin(framecount*200.)*cos(framecount)));
     look.y = mod(look.y - 0.01 * vShift, 1.);
-    return look;
+    //return look;
+    return uv; // removing the jumpy effect by returning the original uv
 }
 
 void main()

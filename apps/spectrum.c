@@ -47,12 +47,22 @@ struct analyzer_state {
     double amplitude_normalizer;
 };
 
+struct frame_timer {
+    struct timespec last_paint;
+    int initialized;
+};
+
 static struct termios orig_termios;
 static int raw_mode_enabled = 0;
 static char *line_buffer = NULL;
 static size_t line_capacity = 0;
+static const long long nanos_per_second = 1000000000LL;
+static const long long frame_interval_ns = 1000000000LL / 30LL;
 
 static void ensure_line_capacity(int columns);
+static long long timespec_diff_ns(const struct timespec *a, const struct timespec *b);
+static void sleep_remaining_ns(long long nanoseconds);
+static void throttle_frame_rate(struct frame_timer *timer);
 
 static void disable_raw_mode(void)
 {
@@ -518,6 +528,58 @@ static void ensure_line_capacity(int columns)
     line_capacity = needed;
 }
 
+static long long timespec_diff_ns(const struct timespec *a, const struct timespec *b)
+{
+    if (!a || !b) {
+        return 0;
+    }
+    long long sec_diff = (long long)a->tv_sec - (long long)b->tv_sec;
+    long long nsec_diff = (long long)a->tv_nsec - (long long)b->tv_nsec;
+    return (sec_diff * nanos_per_second) + nsec_diff;
+}
+
+static void sleep_remaining_ns(long long nanoseconds)
+{
+    if (nanoseconds <= 0) {
+        return;
+    }
+    struct timespec ts;
+    ts.tv_sec = (time_t)(nanoseconds / nanos_per_second);
+    ts.tv_nsec = (long)(nanoseconds % nanos_per_second);
+    while (nanosleep(&ts, &ts) == -1 && errno == EINTR) {
+        continue;
+    }
+}
+
+static void throttle_frame_rate(struct frame_timer *timer)
+{
+    if (!timer || frame_interval_ns <= 0) {
+        return;
+    }
+
+    if (!timer->initialized) {
+        if (clock_gettime(CLOCK_MONOTONIC, &timer->last_paint) == 0) {
+            timer->initialized = 1;
+        }
+        return;
+    }
+
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return;
+    }
+
+    long long elapsed_ns = timespec_diff_ns(&now, &timer->last_paint);
+    if (elapsed_ns < frame_interval_ns) {
+        sleep_remaining_ns(frame_interval_ns - elapsed_ns);
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+            return;
+        }
+    }
+
+    timer->last_paint = now;
+}
+
 static void write_padded_line(const char *text, int columns, int newline)
 {
     printf("\r\x1b[0m\x1b[2K");
@@ -756,6 +818,8 @@ int main(void)
     input_fd.events = POLLIN;
 
     int running = 1;
+    struct frame_timer frame_timer;
+    memset(&frame_timer, 0, sizeof(frame_timer));
 
     while (running) {
         if (read_audio_block(pcm_handle, &state, status_buffer, sizeof(status_buffer), &status_timeout) == 0) {
@@ -797,6 +861,7 @@ int main(void)
                     return EXIT_FAILURE;
                 }
             }
+            throttle_frame_rate(&frame_timer);
             draw_ui(&state, rows, cols, use_log_frequency, use_log_amplitude, recording, status_buffer, sample_rate);
         }
 

@@ -520,7 +520,9 @@ int main(int argc, char *argv[]) {
     char *input;
     CommandStruct cmd;
 
-    setlocale(LC_CTYPE, "");
+    if (!setlocale(LC_ALL, "")) {
+        fprintf(stderr, "Warning: failed to configure locale; Unicode I/O may be limited.\n");
+    }
 
     /* 
      * Ignore SIGINT in the shell so that CTRL+C does not quit BUDOSTACK.

@@ -4589,6 +4589,7 @@ int main(int argc, char **argv) {
             } else if (event.type == SDL_KEYDOWN) {
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = event.key.keysym.mod;
+                int altgr_active = ((mod & KMOD_CTRL) != 0) && ((mod & KMOD_RALT) != 0);
                 int handled = 0;
                 unsigned char ch = 0u;
 
@@ -4611,7 +4612,7 @@ int main(int argc, char **argv) {
                     continue;
                 }
 
-                if ((mod & KMOD_CTRL) != 0) {
+                if ((mod & KMOD_CTRL) != 0 && !altgr_active) {
                     if (sym >= 0 && sym <= 127) {
                         int ascii = (int)sym;
                         if (ascii >= 'a' && ascii <= 'z') {
@@ -4918,8 +4919,9 @@ int main(int argc, char **argv) {
                 size_t len = strlen(text);
                 if (len > 0u) {
                     SDL_Keymod mod_state = SDL_GetModState();
+                    int altgr_active = ((mod_state & KMOD_CTRL) != 0) && ((mod_state & KMOD_RALT) != 0);
                     terminal_selection_clear();
-                    if ((mod_state & KMOD_ALT) != 0 && (mod_state & KMOD_CTRL) == 0) {
+                    if ((mod_state & KMOD_ALT) != 0 && (mod_state & KMOD_CTRL) == 0 && !altgr_active) {
                         if (terminal_send_escape_prefix(master_fd) < 0) {
                             running = 0;
                             continue;

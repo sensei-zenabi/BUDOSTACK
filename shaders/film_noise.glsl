@@ -124,7 +124,8 @@ uniform COMPAT_PRECISION float noise_toggle;
 #define x_off_b -0.05
 #define y_off_b 0.05
 #define grain_str 12.0
-#define hotspot 0.25
+//#define hotspot 0.25
+#define hotspot 0.5
 #define vignette 1.0
 #define noise_toggle 1.0
 #endif
@@ -141,13 +142,13 @@ float hash( float n ){
 
 void main()
 {
-// a simple calculation for the vignette/hotspot effects
-    //vec2 middle = TEX0.xy - 0.25;
+	// a simple calculation for the vignette/hotspot effects
     vec2 middle = TEX0.xy - 0.5;
     float len = length(middle);
     float vig = smoothstep(0.3, 1.25, len);
+	float hot = smoothstep(0.15, 1.25, len); // NEW: own region for hotspot
 
-// create the noise effects from a LUT of actual film noise
+	// create the noise effects from a LUT of actual film noise
     vec4 film_noise1 = COMPAT_TEXTURE(noise1, vTexCoord.xx * 2.0 *
         sin(hash(mod(float(FrameCount), 47.0))));
     vec4 film_noise2 = COMPAT_TEXTURE(noise1, vTexCoord.xy * 2.0 *
@@ -164,9 +165,9 @@ void main()
     film += filmGrain(vTexCoord.xy, grain_str, float(FrameCount)); // Film grain
 
     film *= (vignette > 0.5) ? (1.0 - vig) : 1.0; // Vignette
-    film += ((1.0 - vig) * 0.2) * hotspot; // Hotspot
+    film += ((1.0 - hot) * 0.2) * hotspot; // Hotspot
 
-// Apply noise effects (or not)
+	// Apply noise effects (or not)
     if (hash(float(FrameCount)) > 0.99 && noise_toggle > 0.5)
         FragColor = vec4(mix(film, film_noise1.rgb, film_noise1.a), 1.0);
     else if (hash(float(FrameCount)) < 0.01 && noise_toggle > 0.5)

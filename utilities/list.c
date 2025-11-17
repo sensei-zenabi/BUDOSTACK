@@ -91,7 +91,7 @@ int filter(const struct dirent *entry) {
     if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
         return show_all;
 
-    if (!show_all && entry->d_name[0] == '.' && is_dir)
+    if (!show_all && entry->d_name[0] == '.')
         return 0;
 
     // Determine if entry is a directory using stat for portability
@@ -202,6 +202,9 @@ void recursive_collect(const char *dir_path, const char *pattern) {
     struct dirent *entry;
     while ((entry = readdir(dp)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        if (!show_all && entry->d_name[0] == '.')
             continue;
         char fullpath[1024];
         snprintf(fullpath, sizeof(fullpath), "%s/%s", dir_path, entry->d_name);

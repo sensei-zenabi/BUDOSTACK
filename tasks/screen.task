@@ -1,9 +1,23 @@
 # screen.task
+SET $ROWS = 0
+SET $COLS = 0
+SET $XRES = 0
+SET $YRES = 0
+
+RUN _GETHEIGHT TO $ROWS
+RUN _GETWIDTH TO $COLS
+RUN _CALC $COLS * 8 TO $XRES
+RUN _CALC $ROWS * 8 TO $YRES
+
 
 RUN cls
-PRINT "\n- SCREEN CALIBRATION TASK -\n\n"
-PRINT "\nTo exit the program, press CTRL+C"
-PRINT "\nPress any key to start"
+PRINT "\n"
+PRINT "- SCREEN CALIBRATION TASK -\n"
+PRINT "\n"
+PRINT "The active screen resolution is " + $XRES + " x " + $YRES + "\n"
+PRINT "\n"
+PRINT "To exit the program, press CTRL+C\n"
+PRINT "Press any key to start...\n"
 RUN _KEYS
 @START
 RUN _TEST

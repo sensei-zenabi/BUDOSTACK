@@ -77,6 +77,9 @@ static int terminal_cell_pixel_height = 0;
 static int terminal_logical_width = 0;
 static int terminal_logical_height = 0;
 static int terminal_scale_factor = 1;
+static int terminal_resolution_override_active = 0;
+static int terminal_resolution_width = 0;
+static int terminal_resolution_height = 0;
 static int terminal_margin_pixels = 0;
 static size_t terminal_selection_anchor_row = 0u;
 static size_t terminal_selection_anchor_col = 0u;
@@ -880,6 +883,8 @@ struct terminal_buffer {
 
 static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
 static void terminal_apply_margin(struct terminal_buffer *buffer, int margin);
+static void terminal_apply_resolution(struct terminal_buffer *buffer, int width, int height);
+static int terminal_resize_buffer(struct terminal_buffer *buffer, size_t columns, size_t rows);
 
 enum ansi_parser_state {
     ANSI_STATE_GROUND = 0,
@@ -3697,6 +3702,11 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
 
     int scale = 0;
     int margin = -1;
+    int resolution_width = -1;
+    int resolution_height = -1;
+    int resolution_width_set = 0;
+    int resolution_height_set = 0;
+    int resolution_requested = 0;
 
     if (args && args[0] != '\0') {
         char *copy = strdup(args);
@@ -3742,6 +3752,50 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         long parsed = strtol(value, &endptr, 10);
                         if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0 && parsed <= INT_MAX) {
                             margin = (int)parsed;
+                        }
+                    } else if (strcmp(key, "resolution") == 0 && value && *value != '\0') {
+                        char *sep = strchr(value, 'x');
+                        if (!sep) {
+                            sep = strchr(value, 'X');
+                        }
+                        if (sep) {
+                            *sep = '\0';
+                            const char *height_str = sep + 1;
+                            char *endptr = NULL;
+                            errno = 0;
+                            long parsed_width = strtol(value, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0' && parsed_width >= 0 && parsed_width <= INT_MAX) {
+                                resolution_width = (int)parsed_width;
+                                resolution_width_set = 1;
+                            }
+                            errno = 0;
+                            endptr = NULL;
+                            long parsed_height = strtol(height_str, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0' && parsed_height >= 0 && parsed_height <= INT_MAX) {
+                                resolution_height = (int)parsed_height;
+                                resolution_height_set = 1;
+                            }
+                            if (resolution_width_set && resolution_height_set) {
+                                resolution_requested = 1;
+                            }
+                        }
+                    } else if (strcmp(key, "resolution_width") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0 && parsed <= INT_MAX) {
+                            resolution_width = (int)parsed;
+                            resolution_width_set = 1;
+                            resolution_requested = 1;
+                        }
+                    } else if (strcmp(key, "resolution_height") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0 && parsed <= INT_MAX) {
+                            resolution_height = (int)parsed;
+                            resolution_height_set = 1;
+                            resolution_requested = 1;
                         }
 #if BUDOSTACK_HAVE_SDL2
                     } else if (strcmp(key, "sound") == 0 && value && *value != '\0') {
@@ -3866,6 +3920,9 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     }
     if (margin >= 0) {
         terminal_apply_margin(buffer, margin);
+    }
+    if (resolution_requested && resolution_width_set && resolution_height_set) {
+        terminal_apply_resolution(buffer, resolution_width, resolution_height);
     }
 }
 
@@ -4435,6 +4492,31 @@ static void terminal_update_render_size(size_t columns, size_t rows) {
     terminal_mark_full_redraw();
 }
 
+static int terminal_resize_buffer(struct terminal_buffer *buffer, size_t columns, size_t rows) {
+    if (!buffer || columns == 0u || rows == 0u) {
+        return -1;
+    }
+
+    if (terminal_buffer_resize(buffer, columns, rows) != 0) {
+        return -1;
+    }
+
+    terminal_update_render_size(columns, rows);
+
+    if (terminal_window_handle && terminal_logical_width > 0 && terminal_logical_height > 0) {
+        Uint32 flags = SDL_GetWindowFlags(terminal_window_handle);
+        if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+            SDL_SetWindowSize(terminal_window_handle, terminal_logical_width, terminal_logical_height);
+        }
+    }
+
+    if (terminal_master_fd_handle >= 0) {
+        update_pty_size(terminal_master_fd_handle, columns, rows);
+    }
+
+    return 0;
+}
+
 static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
     if (!buffer || scale <= 0) {
         return;
@@ -4444,7 +4526,7 @@ static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
         scale = 4;
     }
 
-    if (scale == terminal_scale_factor) {
+    if (scale == terminal_scale_factor && !terminal_resolution_override_active) {
         return;
     }
 
@@ -4459,23 +4541,68 @@ static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
     size_t new_columns = base_columns * scale_value;
     size_t new_rows = base_rows * scale_value;
 
-    if (terminal_buffer_resize(buffer, new_columns, new_rows) != 0) {
+    if (terminal_resize_buffer(buffer, new_columns, new_rows) != 0) {
         return;
     }
 
     terminal_scale_factor = scale;
-    terminal_update_render_size(new_columns, new_rows);
+    terminal_resolution_override_active = 0;
+    terminal_resolution_width = 0;
+    terminal_resolution_height = 0;
+}
 
-    if (terminal_window_handle && terminal_logical_width > 0 && terminal_logical_height > 0) {
-        Uint32 flags = SDL_GetWindowFlags(terminal_window_handle);
-        if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
-            SDL_SetWindowSize(terminal_window_handle, terminal_logical_width, terminal_logical_height);
+static void terminal_apply_resolution(struct terminal_buffer *buffer, int width, int height) {
+    if (!buffer) {
+        return;
+    }
+
+    if (width <= 0 || height <= 0) {
+        if (terminal_resolution_override_active) {
+            int scale = terminal_scale_factor;
+            if (scale <= 0) {
+                scale = 1;
+            }
+            terminal_apply_scale(buffer, scale);
         }
+        return;
     }
 
-    if (terminal_master_fd_handle >= 0) {
-        update_pty_size(terminal_master_fd_handle, new_columns, new_rows);
+    if (terminal_cell_pixel_width <= 0 || terminal_cell_pixel_height <= 0) {
+        return;
     }
+
+    size_t cell_width = (size_t)terminal_cell_pixel_width;
+    size_t cell_height = (size_t)terminal_cell_pixel_height;
+    size_t requested_width = (size_t)width;
+    size_t requested_height = (size_t)height;
+    size_t columns = requested_width / cell_width;
+    size_t rows = requested_height / cell_height;
+
+    if (columns == 0u && requested_width > 0u) {
+        columns = 1u;
+    }
+    if (rows == 0u && requested_height > 0u) {
+        rows = 1u;
+    }
+
+    if (columns == 0u || rows == 0u) {
+        return;
+    }
+
+    if (buffer->columns == columns && buffer->rows == rows) {
+        terminal_resolution_override_active = 1;
+        terminal_resolution_width = width;
+        terminal_resolution_height = height;
+        return;
+    }
+
+    if (terminal_resize_buffer(buffer, columns, rows) != 0) {
+        return;
+    }
+
+    terminal_resolution_override_active = 1;
+    terminal_resolution_width = width;
+    terminal_resolution_height = height;
 }
 
 static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {

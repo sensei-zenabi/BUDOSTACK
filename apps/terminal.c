@@ -5534,7 +5534,8 @@ int main(int argc, char **argv) {
                     }
                 }
 
-                if (ch != 0u) {
+                int draw_glyph_pixels = (ch != 0u) && (glyph_color != fill_color);
+                if (draw_glyph_pixels) {
                     uint32_t glyph_index = psf_font_resolve_glyph(&font, ch);
                     if (glyph_index >= font.glyph_count) {
                         glyph_index = 0u;
@@ -5582,6 +5583,17 @@ int main(int argc, char **argv) {
                             for (int px = 0; px < cell_width; px++) {
                                 dst32[px] = glyph_pixel_value;
                             }
+                        }
+                    }
+                } else if ((style & TERMINAL_STYLE_UNDERLINE) != 0u && ch != 0u) {
+                    uint32_t glyph_pixel_value = terminal_rgba_from_color(glyph_color);
+                    int underline_y = end_y - 1;
+                    if (underline_y >= dest_y) {
+                        uint32_t *dst32 = (uint32_t *)(framebuffer +
+                                                        (size_t)underline_y * (size_t)frame_pitch +
+                                                        (size_t)dest_x * 4u);
+                        for (int px = 0; px < cell_width; px++) {
+                            dst32[px] = glyph_pixel_value;
                         }
                     }
                 }

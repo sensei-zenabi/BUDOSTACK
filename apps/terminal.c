@@ -56,6 +56,8 @@
 
 #define TERMINAL_COLUMNS 118u
 #define TERMINAL_ROWS 66u
+#define TERMINAL_TARGET_PIXEL_WIDTH 320u
+#define TERMINAL_TARGET_PIXEL_HEIGHT 200u
 #define TERMINAL_HISTORY_LIMIT 10000u
 #ifndef TERMINAL_FONT_SCALE
 #define TERMINAL_FONT_SCALE 1
@@ -68,6 +70,8 @@
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
 _Static_assert(TERMINAL_ROWS > 0u, "TERMINAL_ROWS must be positive");
+_Static_assert(TERMINAL_TARGET_PIXEL_WIDTH > 0u, "TERMINAL_TARGET_PIXEL_WIDTH must be positive");
+_Static_assert(TERMINAL_TARGET_PIXEL_HEIGHT > 0u, "TERMINAL_TARGET_PIXEL_HEIGHT must be positive");
 
 static SDL_Window *terminal_window_handle = NULL;
 static SDL_GLContext terminal_gl_context_handle = NULL;
@@ -78,6 +82,8 @@ static int terminal_logical_width = 0;
 static int terminal_logical_height = 0;
 static int terminal_scale_factor = 1;
 static int terminal_margin_pixels = 0;
+static size_t terminal_base_columns = (size_t)TERMINAL_COLUMNS;
+static size_t terminal_base_rows = (size_t)TERMINAL_ROWS;
 static size_t terminal_selection_anchor_row = 0u;
 static size_t terminal_selection_anchor_col = 0u;
 static size_t terminal_selection_caret_row = 0u;
@@ -4274,6 +4280,10 @@ static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
         return;
     }
 
+    if (terminal_cell_pixel_width <= 0 || terminal_cell_pixel_height <= 0) {
+        return;
+    }
+
     if (scale > 4) {
         scale = 4;
     }
@@ -4282,8 +4292,11 @@ static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
         return;
     }
 
-    size_t base_columns = (size_t)TERMINAL_COLUMNS;
-    size_t base_rows = (size_t)TERMINAL_ROWS;
+    size_t base_columns = terminal_base_columns;
+    size_t base_rows = terminal_base_rows;
+    if (base_columns == 0u || base_rows == 0u) {
+        return;
+    }
     size_t scale_value = (size_t)scale;
     if (scale_value > 0u) {
         if (scale_value > SIZE_MAX / base_columns || scale_value > SIZE_MAX / base_rows) {
@@ -4292,6 +4305,25 @@ static void terminal_apply_scale(struct terminal_buffer *buffer, int scale) {
     }
     size_t new_columns = base_columns * scale_value;
     size_t new_rows = base_rows * scale_value;
+
+    size_t max_columns = 0u;
+    size_t max_rows = 0u;
+    if (terminal_cell_pixel_width > 0) {
+        max_columns = (size_t)TERMINAL_TARGET_PIXEL_WIDTH /
+                      (size_t)terminal_cell_pixel_width;
+    }
+    if (terminal_cell_pixel_height > 0) {
+        max_rows = (size_t)TERMINAL_TARGET_PIXEL_HEIGHT /
+                   (size_t)terminal_cell_pixel_height;
+    }
+
+    if (max_columns == 0u || max_rows == 0u) {
+        return;
+    }
+
+    if (new_columns > max_columns || new_rows > max_rows) {
+        return;
+    }
 
     if (terminal_buffer_resize(buffer, new_columns, new_rows) != 0) {
         return;
@@ -4319,6 +4351,30 @@ static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {
 
     if (margin < 0) {
         margin = 0;
+    }
+
+    if (terminal_cell_pixel_width > 0 && terminal_cell_pixel_height > 0 &&
+        buffer->columns > 0u && buffer->rows > 0u) {
+        size_t base_width = buffer->columns * (size_t)terminal_cell_pixel_width;
+        size_t base_height = buffer->rows * (size_t)terminal_cell_pixel_height;
+        size_t width_allowance = 0u;
+        size_t height_allowance = 0u;
+
+        if ((size_t)TERMINAL_TARGET_PIXEL_WIDTH > base_width) {
+            width_allowance = ((size_t)TERMINAL_TARGET_PIXEL_WIDTH - base_width) / 2u;
+        }
+        if ((size_t)TERMINAL_TARGET_PIXEL_HEIGHT > base_height) {
+            height_allowance = ((size_t)TERMINAL_TARGET_PIXEL_HEIGHT - base_height) / 2u;
+        }
+
+        size_t margin_cap = width_allowance;
+        if (height_allowance < margin_cap) {
+            margin_cap = height_allowance;
+        }
+
+        if ((size_t)margin > margin_cap) {
+            margin = (int)margin_cap;
+        }
     }
 
     if (margin > 0) {
@@ -4646,8 +4702,47 @@ int main(int argc, char **argv) {
     int glyph_width = (int)glyph_width_size;
     int glyph_height = (int)glyph_height_size;
 
-    size_t window_width_size = glyph_width_size * (size_t)TERMINAL_COLUMNS;
-    size_t window_height_size = glyph_height_size * (size_t)TERMINAL_ROWS;
+    size_t base_columns = (size_t)TERMINAL_COLUMNS;
+    size_t base_rows = (size_t)TERMINAL_ROWS;
+    size_t max_columns = 0u;
+    size_t max_rows = 0u;
+
+    if (glyph_width_size > 0u) {
+        max_columns = (size_t)TERMINAL_TARGET_PIXEL_WIDTH / glyph_width_size;
+    }
+    if (glyph_height_size > 0u) {
+        max_rows = (size_t)TERMINAL_TARGET_PIXEL_HEIGHT / glyph_height_size;
+    }
+
+    if (max_columns == 0u || max_rows == 0u) {
+        fprintf(stderr,
+                "Font is too large for target resolution %ux%u.\n",
+                (unsigned int)TERMINAL_TARGET_PIXEL_WIDTH,
+                (unsigned int)TERMINAL_TARGET_PIXEL_HEIGHT);
+        free_font(&font);
+        free(shader_paths);
+        return EXIT_FAILURE;
+    }
+
+    if (base_columns > max_columns) {
+        base_columns = max_columns;
+    }
+    if (base_rows > max_rows) {
+        base_rows = max_rows;
+    }
+
+    if (base_columns == 0u || base_rows == 0u) {
+        fprintf(stderr, "Computed terminal dimensions are invalid.\n");
+        free_font(&font);
+        free(shader_paths);
+        return EXIT_FAILURE;
+    }
+
+    terminal_base_columns = base_columns;
+    terminal_base_rows = base_rows;
+
+    size_t window_width_size = glyph_width_size * base_columns;
+    size_t window_height_size = glyph_height_size * base_rows;
     int initial_margin = terminal_margin_pixels;
     if (initial_margin < 0) {
         initial_margin = 0;
@@ -4845,8 +4940,8 @@ int main(int argc, char **argv) {
     }
     glViewport(0, 0, drawable_width, drawable_height);
 
-    size_t columns = (size_t)TERMINAL_COLUMNS;
-    size_t rows = (size_t)TERMINAL_ROWS;
+    size_t columns = terminal_base_columns;
+    size_t rows = terminal_base_rows;
 
     terminal_update_render_size(columns, rows);
     if (!terminal_framebuffer_pixels || terminal_framebuffer_width <= 0 || terminal_framebuffer_height <= 0) {

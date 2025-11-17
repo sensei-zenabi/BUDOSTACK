@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stddef.h>
 #include <ctype.h>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -4531,6 +4532,44 @@ static int terminal_send_ss3_final(int fd, SDL_Keymod mod, char final_char) {
     return terminal_send_string(fd, sequence);
 }
 
+static int terminal_idle_wait_timeout(Uint32 now,
+                                      Uint32 cursor_last_toggle,
+                                      Uint32 cursor_blink_interval,
+                                      int shader_timing_enabled,
+                                      Uint32 shader_last_tick,
+                                      Uint32 shader_interval) {
+    const int default_timeout = 16;
+    int timeout = default_timeout;
+
+    if (cursor_blink_interval > 0u) {
+        Uint32 elapsed = now - cursor_last_toggle;
+        if (elapsed >= cursor_blink_interval) {
+            return 0;
+        }
+        Uint32 remaining = cursor_blink_interval - elapsed;
+        if ((Uint32)timeout > remaining) {
+            timeout = (int)remaining;
+        }
+    }
+
+    if (shader_timing_enabled && shader_interval > 0u) {
+        Uint32 elapsed = now - shader_last_tick;
+        if (elapsed >= shader_interval) {
+            return 0;
+        }
+        Uint32 remaining = shader_interval - elapsed;
+        if ((Uint32)timeout > remaining) {
+            timeout = (int)remaining;
+        }
+    }
+
+    if (timeout < 0) {
+        timeout = 0;
+    }
+
+    return timeout;
+}
+
 static int terminal_send_escape_prefix(int fd) {
     const unsigned char esc = 0x1Bu;
     return terminal_send_bytes(fd, &esc, 1u);
@@ -4907,9 +4946,13 @@ int main(int argc, char **argv) {
     int cursor_phase_visible = 1;
 
     while (running) {
+        int shader_timing_possible = (terminal_gl_shader_count > 0u &&
+                                      terminal_shader_frame_interval_ms > 0u);
         terminal_selection_validate(&buffer);
         SDL_Event event;
+        int processed_event = 0;
         while (SDL_PollEvent(&event)) {
+            processed_event = 1;
             if (event.type == SDL_QUIT) {
                 running = 0;
             } else if (event.type == SDL_WINDOWEVENT &&
@@ -5353,6 +5396,29 @@ int main(int argc, char **argv) {
             }
         }
 
+        if (!processed_event) {
+            struct pollfd wait_fd;
+            wait_fd.fd = master_fd;
+            wait_fd.events = POLLIN;
+            wait_fd.revents = 0;
+            Uint32 wait_reference = SDL_GetTicks();
+            int wait_timeout = terminal_idle_wait_timeout(wait_reference,
+                                                          cursor_last_toggle,
+                                                          cursor_blink_interval,
+                                                          shader_timing_possible,
+                                                          terminal_shader_last_frame_tick,
+                                                          terminal_shader_frame_interval_ms);
+            int poll_result = poll(&wait_fd, 1, wait_timeout);
+            if (poll_result < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                perror("poll");
+                running = 0;
+                break;
+            }
+        }
+
         ssize_t bytes_read;
         do {
             bytes_read = read(master_fd, input_buffer, sizeof(input_buffer));
@@ -5588,8 +5654,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        shader_timing_enabled = (terminal_gl_shader_count > 0u &&
-                                 terminal_shader_frame_interval_ms > 0u);
+        shader_timing_enabled = shader_timing_possible;
         if (shader_timing_enabled) {
             Uint32 elapsed = now - terminal_shader_last_frame_tick;
             if (elapsed >= terminal_shader_frame_interval_ms) {
@@ -5599,7 +5664,6 @@ int main(int argc, char **argv) {
 
         int need_gpu_draw = frame_dirty || shader_requires_frame;
         if (!need_gpu_draw) {
-            SDL_Delay(1);
             continue;
         }
 
@@ -5787,8 +5851,6 @@ int main(int argc, char **argv) {
         if (child_exited) {
             running = 0;
         }
-
-        SDL_Delay(16);
     }
 
     SDL_StopTextInput();

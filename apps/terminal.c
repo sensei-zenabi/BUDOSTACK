@@ -335,7 +335,6 @@ static uint32_t psf_font_resolve_glyph(const struct psf_font *font, uint32_t cod
 static void terminal_mark_full_redraw(void);
 static void terminal_mark_background_dirty(void);
 static void terminal_color_to_vec4(uint32_t color, GLfloat out_rgba[4]);
-static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
@@ -1440,14 +1439,6 @@ static void terminal_mark_full_redraw(void) {
 
 static void terminal_mark_background_dirty(void) {
     terminal_background_dirty = 1;
-}
-
-static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b) {
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-    return ((uint32_t)r << 24u) | ((uint32_t)g << 16u) | ((uint32_t)b << 8u) | 0xFFu;
-#else
-    return (uint32_t)r | ((uint32_t)g << 8u) | ((uint32_t)b << 16u) | 0xFF000000u;
-#endif
 }
 
 static int terminal_ensure_render_cache(size_t columns, size_t rows) {

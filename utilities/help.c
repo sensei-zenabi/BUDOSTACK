@@ -143,9 +143,9 @@ int main(int argc, char *argv[]) {
     printf("-----------------------------------------------------------------------------\n"); 
     printf("                              - BUILT-IN GAMES -\n");
     printf("\n");
-    printf(" All games under ./games/ -folder are built with C-language. The preferred\n");
-    printf(" folder structure should contain matching folder name for all game assets and\n");
-    printf(" libraries.\n");
+    printf(" All apps under ./games/ folder are built using C-language and SDL framework.\n");
+    printf(" The preferred folder structure should contain matching folder name for all\n");
+    printf(" game assets and libraries.\n");
     printf("\n");
     printf(" Example: ./mygame --> ./mygame/<assets here>.\n"); 
     printf("\n");
@@ -159,7 +159,7 @@ int main(int argc, char *argv[]) {
     printf("-----------------------------------------------------------------------------\n"); 
     printf("                               - TASK LANGUAGE -\n");
     printf("\n");
-    printf(" BUDOSTACK contains in-built TASK scripting language that can be used to\n");
+    printf(" BUDOSTACK contains built-in TASK scripting language that can be used to\n");
     printf(" develop various applications. The instruction set is located in ./commands/\n");
     printf(" folder and all the commands contain help when executed without arguments.\n");
     printf("\n");

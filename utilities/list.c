@@ -86,11 +86,16 @@ static int entry_is_directory(const struct dirent *entry) {
 
 // Filter function for scandir
 int filter(const struct dirent *entry) {
+    int is_dir = entry_is_directory(entry);
+
     if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
-        return 1;
+        return show_all;
+
+    if (!show_all && entry->d_name[0] == '.' && is_dir)
+        return 0;
 
     // Determine if entry is a directory using stat for portability
-    if (entry_is_directory(entry))
+    if (is_dir)
         return 1;
 
     if (show_all)

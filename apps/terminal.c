@@ -1309,9 +1309,31 @@ static int terminal_paste_from_clipboard(int fd) {
     size_t len = strlen(text);
     int result = 0;
     if (len > 0u) {
-        if (terminal_send_bytes(fd, text, len) < 0) {
-            result = -1;
+        char *converted = malloc(len + 1u);
+        if (!converted) {
+            SDL_free(text);
+            return -1;
         }
+        size_t out_len = 0u;
+        for (size_t i = 0u; i < len; i++) {
+            unsigned char ch = (unsigned char)text[i];
+            if (ch == '\r') {
+                converted[out_len++] = '\r';
+                if (i + 1u < len && text[i + 1u] == '\n') {
+                    i++;
+                }
+            } else if (ch == '\n') {
+                converted[out_len++] = '\r';
+            } else {
+                converted[out_len++] = (char)ch;
+            }
+        }
+        if (out_len > 0u) {
+            if (terminal_send_bytes(fd, converted, out_len) < 0) {
+                result = -1;
+            }
+        }
+        free(converted);
     }
     SDL_free(text);
     return result;

@@ -336,7 +336,6 @@ static void terminal_mark_full_redraw(void);
 static void terminal_mark_background_dirty(void);
 static void terminal_color_to_vec4(uint32_t color, GLfloat out_rgba[4]);
 static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
-static uint32_t terminal_rgba_from_color(uint32_t color);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
@@ -1449,12 +1448,6 @@ static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b) {
 #else
     return (uint32_t)r | ((uint32_t)g << 8u) | ((uint32_t)b << 16u) | 0xFF000000u;
 #endif
-}
-
-static uint32_t terminal_rgba_from_color(uint32_t color) {
-    return terminal_rgba_from_components(terminal_color_r(color),
-                                         terminal_color_g(color),
-                                         terminal_color_b(color));
 }
 
 static int terminal_ensure_render_cache(size_t columns, size_t rows) {

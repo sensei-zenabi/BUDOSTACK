@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <errno.h>
 #include <fnmatch.h>
@@ -73,16 +74,23 @@ void mode_to_string(mode_t mode, char *str) {
     str[10] = '\0';
 }
 
+static int entry_is_directory(const struct dirent *entry) {
+    char fullpath[1024];
+    snprintf(fullpath, sizeof(fullpath), "%s/%s", base_path, entry->d_name);
+    struct stat st;
+    if (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode)) {
+        return 1;
+    }
+    return 0;
+}
+
 // Filter function for scandir
 int filter(const struct dirent *entry) {
     if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
         return 1;
 
     // Determine if entry is a directory using stat for portability
-    char fullpath[1024];
-    snprintf(fullpath, sizeof(fullpath), "%s/%s", base_path, entry->d_name);
-    struct stat st;
-    if (stat(fullpath, &st) == 0 && S_ISDIR(st.st_mode))
+    if (entry_is_directory(entry))
         return 1;
 
     if (show_all)
@@ -99,7 +107,18 @@ int filter(const struct dirent *entry) {
 
 // Custom comparator for scandir entries
 int cmp_entries(const struct dirent **a, const struct dirent **b) {
-    // Always compare names alphabetically
+    int a_is_dir = entry_is_directory(*a);
+    int b_is_dir = entry_is_directory(*b);
+
+    if (a_is_dir != b_is_dir) {
+        return b_is_dir - a_is_dir;
+    }
+
+    int case_insensitive = strcasecmp((*a)->d_name, (*b)->d_name);
+    if (case_insensitive != 0) {
+        return case_insensitive;
+    }
+
     return strcmp((*a)->d_name, (*b)->d_name);
 }
 
@@ -212,6 +231,10 @@ void recursive_collect(const char *dir_path, const char *pattern) {
 int cmp_str(const void *a, const void *b) {
     const char *const *pa = a;
     const char *const *pb = b;
+    int case_insensitive = strcasecmp(*pa, *pb);
+    if (case_insensitive != 0) {
+        return case_insensitive;
+    }
     return strcmp(*pa, *pb);
 }
 

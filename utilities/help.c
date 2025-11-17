@@ -143,14 +143,9 @@ int main(int argc, char *argv[]) {
     printf("-----------------------------------------------------------------------------\n"); 
     printf("                              - BUILT-IN GAMES -\n");
     printf("\n");
-    printf(" All apps under ./games/ folder are built using C-language and SDL framework.\n");
-    printf(" The preferred folder structure should contain matching folder name for all\n");
-    printf(" game assets and libraries.\n");
+    printf(" A collection of games provided together with BUDOSTACK.\n");
     printf("\n");
-    printf(" Example: ./mygame --> ./mygame/<assets here>.\n"); 
-    printf("\n");
-    printf("\n");
-    printf(" /* Built-In Games */\n");
+    printf(" /* List of Games */\n");
     printf("\n");
     printf("  invaders : Space invaders clone tailored to terminal.\n");
     printf("  snake    : Snake clone, reminence from the good old Nokia days.\n");

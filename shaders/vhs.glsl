@@ -202,7 +202,7 @@ void main()
 
     float e = min(.30,pow(max(0.0,cos(uv.y*4.0+.3)-.75)*(s+0.5)*1.0,3.0))*25.0;
     float r = (iTime*(2.0*s));
-    uv.x+=abs(r*pow(min(.003,(-uv.y+(.01*mod(iTime, 17.0))))*3.0,2.0));
+    //uv.x+=abs(r*pow(min(.003,(-uv.y+(.01*mod(iTime, 17.0))))*3.0,2.0));
 
     d=.051+abs(sin(s/4.0));
     float c = max(0.0001,.002*d) * smear;
@@ -211,12 +211,12 @@ void main()
     final.xyz =Blur(uv,c+c*(uv.x));
     float y = rgb2yiq(final.xyz).r;
 
-    uv.x+=.01*d;
+    //uv.x+=.01*d;
     c*=6.0;
     final.xyz =Blur(uv,c);
     float i = rgb2yiq(final.xyz).g;
 
-    uv.x+=.005*d;
+    //uv.x+=.005*d;
 
     c*=2.50;
     final.xyz =Blur(uv,c);

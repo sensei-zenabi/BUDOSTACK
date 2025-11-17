@@ -142,6 +142,13 @@ static size_t terminal_render_cache_count = 0u;
 static int terminal_force_full_redraw = 1;
 static int terminal_background_dirty = 1;
 
+struct terminal_dirty_region {
+    int min_x;
+    int min_y;
+    int max_x;
+    int max_y;
+};
+
 struct terminal_gl_shader {
     GLuint program;
     GLint attrib_vertex;
@@ -273,7 +280,12 @@ static void terminal_shader_set_matrix(GLint location, GLfloat *cache, int *has_
 static void terminal_shader_set_vec2(GLint location, GLfloat *cache, int *has_cache, GLfloat x, GLfloat y);
 static void terminal_bind_texture(GLuint texture);
 static int terminal_resize_render_targets(int width, int height);
-static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
+struct terminal_dirty_region;
+static int terminal_upload_framebuffer(const uint8_t *pixels,
+                                       int width,
+                                       int height,
+                                       int pitch,
+                                       const struct terminal_dirty_region *region);
 static int terminal_prepare_intermediate_targets(int width, int height);
 static int psf_unicode_map_compare(const void *a, const void *b);
 static int psf_font_lookup_unicode(const struct psf_font *font, uint32_t codepoint, uint32_t *out_index);
@@ -282,8 +294,20 @@ static void terminal_mark_full_redraw(void);
 static void terminal_mark_background_dirty(void);
 static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
 static uint32_t terminal_rgba_from_color(uint32_t color);
+static void terminal_dirty_region_reset(struct terminal_dirty_region *region, int width, int height);
+static void terminal_dirty_region_include(struct terminal_dirty_region *region, int min_x, int min_y, int max_x, int max_y);
+static int terminal_dirty_region_is_valid(const struct terminal_dirty_region *region);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
+static void terminal_draw_glyph(const struct psf_font *font,
+                                const uint8_t *glyph_bitmap,
+                                uint8_t *framebuffer,
+                                int frame_pitch,
+                                int dest_x,
+                                int dest_y,
+                                int cell_width,
+                                int cell_height,
+                                uint32_t glyph_pixel_value);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
 static const char *terminal_skip_utf8_bom(const char *src, size_t *size);
 static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end);
@@ -1390,6 +1414,132 @@ static uint32_t terminal_rgba_from_color(uint32_t color) {
     return terminal_rgba_from_components(terminal_color_r(color),
                                          terminal_color_g(color),
                                          terminal_color_b(color));
+}
+
+static void terminal_dirty_region_reset(struct terminal_dirty_region *region, int width, int height) {
+    if (!region) {
+        return;
+    }
+    region->min_x = width;
+    region->min_y = height;
+    region->max_x = 0;
+    region->max_y = 0;
+}
+
+static void terminal_dirty_region_include(struct terminal_dirty_region *region,
+                                          int min_x,
+                                          int min_y,
+                                          int max_x,
+                                          int max_y) {
+    if (!region) {
+        return;
+    }
+    if (max_x <= min_x || max_y <= min_y) {
+        return;
+    }
+    if (min_x < region->min_x) {
+        region->min_x = min_x;
+    }
+    if (min_y < region->min_y) {
+        region->min_y = min_y;
+    }
+    if (max_x > region->max_x) {
+        region->max_x = max_x;
+    }
+    if (max_y > region->max_y) {
+        region->max_y = max_y;
+    }
+}
+
+static int terminal_dirty_region_is_valid(const struct terminal_dirty_region *region) {
+    if (!region) {
+        return 0;
+    }
+    return (region->min_x < region->max_x) && (region->min_y < region->max_y);
+}
+
+static void terminal_draw_glyph(const struct psf_font *font,
+                                const uint8_t *glyph_bitmap,
+                                uint8_t *framebuffer,
+                                int frame_pitch,
+                                int dest_x,
+                                int dest_y,
+                                int cell_width,
+                                int cell_height,
+                                uint32_t glyph_pixel_value) {
+    if (!font || !glyph_bitmap || !framebuffer || cell_width <= 0 || cell_height <= 0) {
+        return;
+    }
+
+    int glyph_scale = TERMINAL_FONT_SCALE;
+    if (glyph_scale <= 0) {
+        glyph_scale = 1;
+    }
+
+    uint32_t font_width = font->width;
+    uint32_t font_height = font->height;
+    if (font_width == 0u || font_height == 0u) {
+        return;
+    }
+
+    if (glyph_scale == 1) {
+        int max_height = cell_height;
+        if (max_height > (int)font_height) {
+            max_height = (int)font_height;
+        }
+        int max_width = cell_width;
+        if (max_width > (int)font_width) {
+            max_width = (int)font_width;
+        }
+        for (int py = 0; py < max_height; py++) {
+            const uint8_t *glyph_row = glyph_bitmap + (size_t)py * font->stride;
+            uint32_t *dst32 = (uint32_t *)(framebuffer +
+                                            (size_t)(dest_y + py) * (size_t)frame_pitch +
+                                            (size_t)dest_x * 4u);
+            for (int src_x = 0; src_x < max_width; src_x++) {
+                uint8_t mask = (uint8_t)(0x80u >> (src_x & 7u));
+                if ((glyph_row[(size_t)src_x / 8u] & mask) == 0u) {
+                    continue;
+                }
+                dst32[src_x] = glyph_pixel_value;
+            }
+        }
+        return;
+    }
+
+    for (uint32_t src_y = 0u; src_y < font_height; src_y++) {
+        int start_py = (int)(src_y * (uint32_t)glyph_scale);
+        if (start_py >= cell_height) {
+            break;
+        }
+        int end_py = start_py + glyph_scale;
+        if (end_py > cell_height) {
+            end_py = cell_height;
+        }
+        const uint8_t *glyph_row = glyph_bitmap + (size_t)src_y * font->stride;
+        for (int py = start_py; py < end_py; py++) {
+            uint32_t *dst32 = (uint32_t *)(framebuffer +
+                                            (size_t)(dest_y + py) * (size_t)frame_pitch +
+                                            (size_t)dest_x * 4u);
+            for (uint32_t src_x = 0u; src_x < font_width; src_x++) {
+                uint8_t mask = (uint8_t)(0x80u >> (src_x & 7u));
+                if ((glyph_row[src_x / 8u] & mask) == 0u) {
+                    continue;
+                }
+                int start_px = (int)(src_x * (uint32_t)glyph_scale);
+                if (start_px >= cell_width) {
+                    break;
+                }
+                int end_px = start_px + glyph_scale;
+                if (end_px > cell_width) {
+                    end_px = cell_width;
+                }
+                for (int px = start_px; px < end_px; px++) {
+                    dst32[px] = glyph_pixel_value;
+                }
+            }
+        }
+    }
 }
 
 static int terminal_ensure_render_cache(size_t columns, size_t rows) {
@@ -2527,21 +2677,47 @@ static int terminal_resize_render_targets(int width, int height) {
     return 0;
 }
 
-static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height) {
-    if (!pixels || width <= 0 || height <= 0 || terminal_gl_texture == 0) {
+static int terminal_upload_framebuffer(const uint8_t *pixels,
+                                       int width,
+                                       int height,
+                                       int pitch,
+                                       const struct terminal_dirty_region *region) {
+    if (!pixels || width <= 0 || height <= 0 || pitch <= 0 || terminal_gl_texture == 0) {
         return -1;
     }
 
+    int upload_x = 0;
+    int upload_y = 0;
+    int upload_w = width;
+    int upload_h = height;
+    if (terminal_dirty_region_is_valid(region)) {
+        upload_x = region->min_x;
+        upload_y = region->min_y;
+        upload_w = region->max_x - region->min_x;
+        upload_h = region->max_y - region->min_y;
+    }
+
+    const uint8_t *source = pixels + (size_t)upload_y * (size_t)pitch + (size_t)upload_x * 4u;
+
     terminal_bind_texture(terminal_gl_texture);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    if (upload_w != width || upload_h != height) {
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(pitch / 4));
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, upload_x);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, upload_y);
+    }
+    glTexSubImage2D(GL_TEXTURE_2D, 0, upload_x, upload_y, upload_w, upload_h, GL_RGBA, GL_UNSIGNED_BYTE, source);
     GLenum error = glGetError();
-    if (error != GL_NO_ERROR) {
-        fprintf(stderr, "glTexSubImage2D failed with error 0x%x\n", error);
-        terminal_bind_texture(0);
-        return -1;
+    if (upload_w != width || upload_h != height) {
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
     }
     terminal_bind_texture(0);
+    if (error != GL_NO_ERROR) {
+        fprintf(stderr, "glTexSubImage2D failed with error 0x%x\n", error);
+        return -1;
+    }
     return 0;
 }
 
@@ -5411,6 +5587,8 @@ int main(int argc, char **argv) {
         int frame_dirty = 0;
         int shader_timing_enabled = 0;
         int shader_requires_frame = 0;
+        struct terminal_dirty_region dirty_region;
+        terminal_dirty_region_reset(&dirty_region, frame_width, frame_height);
 
         int margin_pixels = terminal_margin_pixels;
         if (margin_pixels < 0) {
@@ -5434,6 +5612,7 @@ int main(int argc, char **argv) {
             }
             terminal_background_dirty = 0;
             frame_dirty = 1;
+            terminal_dirty_region_include(&dirty_region, 0, 0, frame_width, frame_height);
         }
 
         for (size_t row = 0u; row < buffer.rows; row++) {
@@ -5521,6 +5700,7 @@ int main(int argc, char **argv) {
                 cache_entry->cursor = (uint8_t)is_cursor_cell;
                 cache_entry->selected = (uint8_t)cell_selected;
                 frame_dirty = 1;
+                terminal_dirty_region_include(&dirty_region, dest_x, dest_y, end_x, end_y);
 
                 int cell_width = end_x - dest_x;
                 int cell_height = end_y - dest_y;
@@ -5541,37 +5721,15 @@ int main(int argc, char **argv) {
                     }
                     const uint8_t *glyph_bitmap = font.glyphs + glyph_index * font.glyph_size;
                     uint32_t glyph_pixel_value = terminal_rgba_from_color(glyph_color);
-                    int glyph_scale = TERMINAL_FONT_SCALE;
-                    if (glyph_scale <= 0) {
-                        glyph_scale = 1;
-                    }
-                    for (int py = 0; py < cell_height; py++) {
-                        uint32_t src_y = (uint32_t)(py / glyph_scale);
-                        if (src_y >= font.height) {
-                            break;
-                        }
-                        const uint8_t *glyph_row = glyph_bitmap + (size_t)src_y * font.stride;
-                        uint32_t *dst32 = (uint32_t *)(framebuffer +
-                                                        (size_t)(dest_y + py) * (size_t)frame_pitch +
-                                                        (size_t)dest_x * 4u);
-                        for (uint32_t src_x = 0; src_x < font.width; src_x++) {
-                            uint8_t mask = (uint8_t)(0x80u >> (src_x & 7u));
-                            if ((glyph_row[src_x / 8u] & mask) == 0u) {
-                                continue;
-                            }
-                            int start_px = (int)(src_x * (uint32_t)glyph_scale);
-                            int end_px = start_px + glyph_scale;
-                            if (start_px >= cell_width) {
-                                break;
-                            }
-                            if (end_px > cell_width) {
-                                end_px = cell_width;
-                            }
-                            for (int px = start_px; px < end_px; px++) {
-                                dst32[px] = glyph_pixel_value;
-                            }
-                        }
-                    }
+                    terminal_draw_glyph(&font,
+                                        glyph_bitmap,
+                                        framebuffer,
+                                        frame_pitch,
+                                        dest_x,
+                                        dest_y,
+                                        cell_width,
+                                        cell_height,
+                                        glyph_pixel_value);
 
                     if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
                         int underline_y = end_y - 1;
@@ -5604,7 +5762,7 @@ int main(int argc, char **argv) {
         }
 
         if (frame_dirty) {
-            if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
+            if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height, frame_pitch, &dirty_region) != 0) {
                 fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
                 running = 0;
                 break;

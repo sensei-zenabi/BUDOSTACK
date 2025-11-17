@@ -867,9 +867,15 @@ static void terminal_apply_margin(struct terminal_buffer *buffer, int margin);
 enum ansi_parser_state {
     ANSI_STATE_GROUND = 0,
     ANSI_STATE_ESCAPE,
+    ANSI_STATE_SCS,
     ANSI_STATE_CSI,
     ANSI_STATE_OSC,
     ANSI_STATE_OSC_ESCAPE
+};
+
+enum ansi_charset {
+    ANSI_CHARSET_ASCII = 0,
+    ANSI_CHARSET_DEC_SPECIAL
 };
 
 #define ANSI_MAX_PARAMS 16
@@ -886,6 +892,9 @@ struct ansi_parser {
     uint32_t utf8_min_value;
     uint8_t utf8_bytes_expected;
     uint8_t utf8_bytes_seen;
+    enum ansi_charset charsets[2];
+    int active_charset;
+    int scs_target;
 };
 
 static size_t terminal_total_rows(const struct terminal_buffer *buffer) {
@@ -3486,16 +3495,92 @@ static void ansi_parser_reset_utf8(struct ansi_parser *parser) {
     parser->utf8_bytes_seen = 0u;
 }
 
+static uint32_t ansi_translate_dec_special(uint32_t codepoint) {
+    switch (codepoint) {
+    case '`': return 0x25C6u;
+    case 'a': return 0x2592u;
+    case 'b': return 0x2409u;
+    case 'c': return 0x240Cu;
+    case 'd': return 0x240Du;
+    case 'e': return 0x240Au;
+    case 'f': return 0x00B0u;
+    case 'g': return 0x00B1u;
+    case 'h': return 0x2424u;
+    case 'i': return 0x240Bu;
+    case 'j': return 0x2518u;
+    case 'k': return 0x2510u;
+    case 'l': return 0x250Cu;
+    case 'm': return 0x2514u;
+    case 'n': return 0x253Cu;
+    case 'o': return 0x23BAu;
+    case 'p': return 0x23BBu;
+    case 'q': return 0x2500u;
+    case 'r': return 0x23BCu;
+    case 's': return 0x23BDu;
+    case 't': return 0x251Cu;
+    case 'u': return 0x2524u;
+    case 'v': return 0x2534u;
+    case 'w': return 0x252Cu;
+    case 'x': return 0x2502u;
+    case 'y': return 0x2264u;
+    case 'z': return 0x2265u;
+    case '{': return 0x03C0u;
+    case '|': return 0x2260u;
+    case '}': return 0x00A3u;
+    case '~': return 0x00B7u;
+    default:
+        return codepoint;
+    }
+}
+
+static uint32_t ansi_apply_active_charset(const struct ansi_parser *parser, uint32_t codepoint) {
+    if (!parser) {
+        return codepoint;
+    }
+    if (codepoint < 0x20u || codepoint > 0x7Eu) {
+        return codepoint;
+    }
+    if (parser->active_charset < 0 || parser->active_charset >= 2) {
+        return codepoint;
+    }
+    enum ansi_charset charset = parser->charsets[parser->active_charset];
+    if (charset == ANSI_CHARSET_DEC_SPECIAL) {
+        return ansi_translate_dec_special(codepoint);
+    }
+    return codepoint;
+}
+
 static void ansi_parser_emit_codepoint(struct ansi_parser *parser, struct terminal_buffer *buffer, uint32_t codepoint) {
-    (void)parser;
     if (!buffer) {
         return;
     }
-    terminal_put_char(buffer, codepoint);
+    uint32_t translated = ansi_apply_active_charset(parser, codepoint);
+    terminal_put_char(buffer, translated);
 }
 
 static void ansi_parser_emit_replacement(struct ansi_parser *parser, struct terminal_buffer *buffer) {
     ansi_parser_emit_codepoint(parser, buffer, 0xFFFDu);
+}
+
+static void ansi_parser_designate_charset(struct ansi_parser *parser, unsigned char designation) {
+    if (!parser) {
+        return;
+    }
+    enum ansi_charset charset = ANSI_CHARSET_ASCII;
+    switch (designation) {
+    case '0':
+        charset = ANSI_CHARSET_DEC_SPECIAL;
+        break;
+    case 'A':
+    case 'B':
+    default:
+        charset = ANSI_CHARSET_ASCII;
+        break;
+    }
+    if (parser->scs_target >= 0 && parser->scs_target < 2) {
+        parser->charsets[parser->scs_target] = charset;
+    }
+    parser->scs_target = -1;
 }
 
 static void ansi_parser_feed_utf8(struct ansi_parser *parser, struct terminal_buffer *buffer, unsigned char byte) {
@@ -3530,6 +3615,16 @@ static void ansi_parser_feed_utf8(struct ansi_parser *parser, struct terminal_bu
         if (byte == 0x1b) {
             ansi_parser_reset_utf8(parser);
             parser->state = ANSI_STATE_ESCAPE;
+            return;
+        }
+
+        if (byte == 0x0Eu) {
+            parser->active_charset = 1;
+            return;
+        }
+
+        if (byte == 0x0Fu) {
+            parser->active_charset = 0;
             return;
         }
 
@@ -3591,6 +3686,10 @@ static void ansi_parser_init(struct ansi_parser *parser) {
         parser->osc_buffer[0] = '\0';
     }
     ansi_parser_reset_utf8(parser);
+    parser->charsets[0] = ANSI_CHARSET_ASCII;
+    parser->charsets[1] = ANSI_CHARSET_ASCII;
+    parser->active_charset = 0;
+    parser->scs_target = -1;
 }
 
 static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args) {
@@ -4040,6 +4139,12 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             if (sizeof(parser->osc_buffer) > 0u) {
                 parser->osc_buffer[0] = '\0';
             }
+        } else if (ch == '(') {
+            parser->scs_target = 0;
+            parser->state = ANSI_STATE_SCS;
+        } else if (ch == ')') {
+            parser->scs_target = 1;
+            parser->state = ANSI_STATE_SCS;
         } else if (ch == 'c') {
             terminal_buffer_clear_display(buffer);
             parser->state = ANSI_STATE_GROUND;
@@ -4056,6 +4161,15 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             parser->state = ANSI_STATE_GROUND;
             ansi_parser_reset_utf8(parser);
         }
+        break;
+    case ANSI_STATE_SCS:
+        if (ch == 0x1b) {
+            parser->state = ANSI_STATE_ESCAPE;
+            break;
+        }
+        ansi_parser_designate_charset(parser, ch);
+        parser->state = ANSI_STATE_GROUND;
+        ansi_parser_reset_utf8(parser);
         break;
     case ANSI_STATE_CSI:
         if (ch >= '0' && ch <= '9') {

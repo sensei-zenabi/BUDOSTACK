@@ -142,6 +142,19 @@ static size_t terminal_render_cache_count = 0u;
 static int terminal_force_full_redraw = 1;
 static int terminal_background_dirty = 1;
 
+struct terminal_custom_pixel {
+    int x;
+    int y;
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+};
+
+static struct terminal_custom_pixel *terminal_custom_pixels = NULL;
+static size_t terminal_custom_pixel_count = 0u;
+static size_t terminal_custom_pixel_capacity = 0u;
+static int terminal_custom_pixels_dirty = 0;
+
 struct terminal_gl_shader {
     GLuint program;
     GLint attrib_vertex;
@@ -282,6 +295,10 @@ static void terminal_mark_full_redraw(void);
 static void terminal_mark_background_dirty(void);
 static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
 static uint32_t terminal_rgba_from_color(uint32_t color);
+static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b);
+static void terminal_custom_pixels_clear(void);
+static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
+static void terminal_custom_pixels_shutdown(void);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
@@ -1390,6 +1407,85 @@ static uint32_t terminal_rgba_from_color(uint32_t color) {
     return terminal_rgba_from_components(terminal_color_r(color),
                                          terminal_color_g(color),
                                          terminal_color_b(color));
+}
+
+static void terminal_custom_pixels_shutdown(void) {
+    free(terminal_custom_pixels);
+    terminal_custom_pixels = NULL;
+    terminal_custom_pixel_count = 0u;
+    terminal_custom_pixel_capacity = 0u;
+    terminal_custom_pixels_dirty = 0;
+}
+
+static void terminal_custom_pixels_clear(void) {
+    terminal_custom_pixel_count = 0u;
+    terminal_custom_pixels_dirty = 1;
+    terminal_mark_full_redraw();
+}
+
+static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+    if (x < 0 || y < 0) {
+        return -1;
+    }
+
+    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
+        struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
+        if (entry->x == x && entry->y == y) {
+            if (entry->r == r && entry->g == g && entry->b == b) {
+                return 0;
+            }
+            entry->r = r;
+            entry->g = g;
+            entry->b = b;
+            terminal_custom_pixels_dirty = 1;
+            return 0;
+        }
+    }
+
+    if (terminal_custom_pixel_count == terminal_custom_pixel_capacity) {
+        size_t new_capacity = (terminal_custom_pixel_capacity == 0u)
+            ? 64u
+            : terminal_custom_pixel_capacity * 2u;
+        if (new_capacity < terminal_custom_pixel_capacity) {
+            return -1;
+        }
+        struct terminal_custom_pixel *new_pixels =
+            realloc(terminal_custom_pixels, new_capacity * sizeof(*terminal_custom_pixels));
+        if (!new_pixels) {
+            return -1;
+        }
+        terminal_custom_pixels = new_pixels;
+        terminal_custom_pixel_capacity = new_capacity;
+    }
+
+    struct terminal_custom_pixel *entry = &terminal_custom_pixels[terminal_custom_pixel_count++];
+    entry->x = x;
+    entry->y = y;
+    entry->r = r;
+    entry->g = g;
+    entry->b = b;
+    terminal_custom_pixels_dirty = 1;
+    return 0;
+}
+
+static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height) {
+    if (!framebuffer || width <= 0 || height <= 0) {
+        return;
+    }
+
+    size_t frame_pitch = (size_t)width * 4u;
+    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
+        const struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
+        if (entry->x < 0 || entry->y < 0) {
+            continue;
+        }
+        if (entry->x >= width || entry->y >= height) {
+            continue;
+        }
+        uint8_t *dst = framebuffer + (size_t)entry->y * frame_pitch + (size_t)entry->x * 4u;
+        uint32_t *dst32 = (uint32_t *)dst;
+        *dst32 = terminal_rgba_from_components(entry->r, entry->g, entry->b);
+    }
 }
 
 static int terminal_ensure_render_cache(size_t columns, size_t rows) {
@@ -2630,6 +2726,7 @@ static void terminal_release_gl_resources(void) {
     terminal_bind_texture(0);
     terminal_destroy_quad_geometry();
     terminal_reset_render_cache();
+    terminal_custom_pixels_shutdown();
     terminal_mark_full_redraw();
     terminal_mark_background_dirty();
     terminal_gl_ready = 0;
@@ -3613,6 +3710,17 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             float sound_volume = 1.0f;
             int sound_volume_set = 0;
 #endif
+            enum terminal_pixel_action {
+                TERMINAL_PIXEL_ACTION_NONE = 0,
+                TERMINAL_PIXEL_ACTION_DRAW = 1,
+                TERMINAL_PIXEL_ACTION_CLEAR = 2
+            };
+            enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
+            long pixel_x = -1;
+            long pixel_y = -1;
+            long pixel_r = -1;
+            long pixel_g = -1;
+            long pixel_b = -1;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -3656,6 +3764,47 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     } else if (strcmp(key, "path") == 0 && value) {
                         sound_path = value;
 #endif
+                    } else if (strcmp(key, "pixel") == 0 && value && *value != '\0') {
+                        if (strcmp(value, "draw") == 0 || strcmp(value, "set") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
+                        } else if (strcmp(value, "clear") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
+                        }
+                    } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            pixel_x = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_y") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            pixel_y = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_r") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            pixel_r = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_g") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            pixel_g = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_b") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            pixel_b = parsed;
+                        }
                     }
                 }
                 token = strtok_r(NULL, ";", &saveptr);
@@ -3681,6 +3830,23 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 }
             }
 #endif
+
+            if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW) {
+                if (pixel_x >= 0 && pixel_y >= 0 && pixel_x <= INT_MAX && pixel_y <= INT_MAX &&
+                    pixel_r >= 0 && pixel_r <= 255 && pixel_g >= 0 && pixel_g <= 255 && pixel_b >= 0 && pixel_b <= 255) {
+                    if (terminal_custom_pixels_set((int)pixel_x,
+                                                   (int)pixel_y,
+                                                   (uint8_t)pixel_r,
+                                                   (uint8_t)pixel_g,
+                                                   (uint8_t)pixel_b) != 0) {
+                        fprintf(stderr, "terminal: Failed to draw custom pixel.\n");
+                    }
+                } else {
+                    fprintf(stderr, "terminal: Invalid pixel draw parameters.\n");
+                }
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
+                terminal_custom_pixels_clear();
+            }
 
             free(copy);
         }
@@ -5586,6 +5752,15 @@ int main(int argc, char **argv) {
                     }
                 }
             }
+        }
+
+        if (terminal_custom_pixel_count > 0u && (frame_dirty || terminal_custom_pixels_dirty)) {
+            terminal_custom_pixels_apply(framebuffer, frame_width, frame_height);
+            frame_dirty = 1;
+            terminal_custom_pixels_dirty = 0;
+        } else if (terminal_custom_pixels_dirty) {
+            frame_dirty = 1;
+            terminal_custom_pixels_dirty = 0;
         }
 
         shader_timing_enabled = (terminal_gl_shader_count > 0u &&

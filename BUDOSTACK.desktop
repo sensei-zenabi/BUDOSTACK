@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=BUDOSTACK
+Comment=Launch BUDOSTACK's built-in terminal
+Exec=/bin/bash /home/suoravi/git/BUDOSTACK/start.sh
+Icon=/home/suoravi/git/BUDOSTACK/icon.png
+Path=/home/suoravi/git/BUDOSTACK
+Terminal=false
+StartupNotify=true

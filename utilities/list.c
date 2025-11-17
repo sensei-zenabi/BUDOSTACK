@@ -137,7 +137,7 @@ void print_file_info(const char *filepath, const char *display_name) {
 
     char formatted_name_buffer[1024];
     if (S_ISDIR(st.st_mode) && strcmp(display_name, ".") != 0 && strcmp(display_name, "..") != 0) {
-        snprintf(formatted_name_buffer, sizeof(formatted_name_buffer), "%s/", display_name);
+        snprintf(formatted_name_buffer, sizeof(formatted_name_buffer), "-%s/", display_name);
     } else {
         snprintf(formatted_name_buffer, sizeof(formatted_name_buffer), "%s", display_name);
     }

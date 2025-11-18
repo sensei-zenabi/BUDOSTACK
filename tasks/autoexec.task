@@ -8,7 +8,7 @@ SET $LOAD = 0
 RUN _TERM_RESOLUTION 640 360
 
 # Adjust the margin
-RUN _TERM_MARGIN 10
+RUN _TERM_MARGIN 8
 
 # Change terminal color scheme
 PRINT "\nSelect BUDOSTACK colorscheme:"

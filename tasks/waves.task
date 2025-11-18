@@ -5,11 +5,11 @@ SET $INIT = 1
 SET $VALUE = 0
 SET $TIME = 0
 SET $INCREMENT = 0.01
-SET $AMPLITUDE = 20
-SET $END_TIME = 1
+SET $AMPLITUDE = 18
+SET $END_TIME = 0.78
 SET $X = 1
 SET $Y = 0
-SET $HEIGHT = 0
+SET $HEIGHT = 44
 SET $STATE = 1
 SET $COLOR = 1
 
@@ -19,28 +19,25 @@ RUN cls
 
 @DRAW 
 
-RUN _GETHEIGHT to $HEIGHT 
-
 # Header
 
 IF $INIT == 1
   RUN _TEXT -x 1 -y 1 -text "- - - SIN() and COS() PLOTTING DEMO - - -"
-  RUN _TEXT -x 1 -y 3 -text "Created by: Ville Suoranta"
   SET $INIT = 0
 
 # Calculus
 
 IF $STATE == 1
-  RUN _CALC sin(2*pi*$TIME) to $VALUE
+  RUN _CALC sin(2.6*pi*$TIME) to $VALUE
   SET $COLOR = 5
 IF $STATE == 2
-  RUN _CALC cos(2*pi*$TIME) to $VALUE
+  RUN _CALC cos(2.6*pi*$TIME) to $VALUE
   SET $COLOR = 8
 IF $STATE == 3
-  RUN _CALC sin(2*pi*$TIME*2) to $VALUE
+  RUN _CALC sin(2.6*pi*$TIME*2) to $VALUE
   SET $COLOR = 5
 IF $STATE == 4
-  RUN _CALC cos(2*pi*$TIME*2) to $VALUE
+  RUN _CALC cos(2.6*pi*$TIME*2) to $VALUE
   SET $COLOR = 8
 
 RUN _CALC floor($HEIGHT/2 + $VALUE * $AMPLITUDE) to $Y

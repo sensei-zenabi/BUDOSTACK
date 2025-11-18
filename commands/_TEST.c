@@ -3,8 +3,8 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 
-#define TARGET_COLS 118
-#define TARGET_ROWS 66
+#define TARGET_COLS 80
+#define TARGET_ROWS 45
 #define TEXT_BAR_ROWS 2
 
 int main() {

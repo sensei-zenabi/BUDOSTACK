@@ -1183,12 +1183,13 @@ void editorSearch(void) {
     enableRawMode();
 
     /* Get terminal size */
-    int rows = EDITOR_TARGET_ROWS;
-    int cols = EDITOR_TARGET_COLS;
+    int rows = (E.screenrows > 0) ? E.screenrows : EDITOR_TARGET_ROWS;
+    int cols = (E.screencols > 0) ? E.screencols : EDITOR_TARGET_COLS;
     if (getWindowSize(&rows, &cols) == -1) {
-        rows = EDITOR_TARGET_ROWS;
-        cols = EDITOR_TARGET_COLS;
+        rows = (E.screenrows > 0) ? E.screenrows : EDITOR_TARGET_ROWS;
+        cols = (E.screencols > 0) ? E.screencols : EDITOR_TARGET_COLS;
     }
+    budostack_clamp_terminal_size(&rows, &cols);
 
     /* Build list of matching line indices using case-insensitive search */
     int *matches = malloc(E.numrows * sizeof(int));
@@ -1217,8 +1218,21 @@ void editorSearch(void) {
     int menu_height = rows - 4;
     if (menu_height < 1)
         menu_height = 1;
+    if (menu_height > match_count)
+        menu_height = match_count;
 
     while (1) {
+        if (menu_height > 0) {
+            if (active < menu_start)
+                menu_start = active;
+            if (active >= menu_start + menu_height)
+                menu_start = active - menu_height + 1;
+            int max_start = match_count - menu_height;
+            if (max_start < 0)
+                max_start = 0;
+            if (menu_start > max_start)
+                menu_start = max_start;
+        }
         printf("\033[2J\033[H");
         printf("Search results for: \"%s\"\n", query);
         printf("\r--------------------------------------------------\n");
@@ -1229,7 +1243,24 @@ void editorSearch(void) {
         for (int i = menu_start; i < end; i++) {
             if (i == active)
                 printf("\033[7m");
-            printf("\rLine %d: %s", matches[i] + 1, E.row[matches[i]].chars);
+            int preview_cols = cols - 12;
+            if (preview_cols < 16)
+                preview_cols = 16;
+            const char *text = E.row[matches[i]].chars;
+            size_t text_len = strlen(text);
+            int to_copy = preview_cols;
+            char preview[preview_cols + 1];
+            if ((int)text_len > preview_cols) {
+                to_copy = preview_cols - 3;
+                if (to_copy < 0)
+                    to_copy = 0;
+                memcpy(preview, text, (size_t)to_copy);
+                memcpy(preview + to_copy, "...", 3);
+                preview[to_copy + 3] = '\0';
+            } else {
+                memcpy(preview, text, text_len + 1);
+            }
+            printf("\rLine %d: %s", matches[i] + 1, preview);
             printf("\033[0m\n");
         }
         printf("\r--------------------------------------------------\n");
@@ -1242,15 +1273,19 @@ void editorSearch(void) {
         else if (c == ARROW_UP) {
             if (active > 0) {
                 active--;
-                if (active < menu_start)
-                    menu_start = active;
             }
         } else if (c == ARROW_DOWN) {
             if (active < match_count - 1) {
                 active++;
-                if (active >= menu_start + menu_height)
-                    menu_start = active - menu_height + 1;
             }
+        } else if (c == PGUP_KEY) {
+            active -= menu_height;
+            if (active < 0)
+                active = 0;
+        } else if (c == PGDN_KEY) {
+            active += menu_height;
+            if (active > match_count - 1)
+                active = match_count - 1;
         }
     }
     int result = -1;

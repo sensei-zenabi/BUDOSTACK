@@ -8,8 +8,7 @@
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: _TERM_PIXEL -x <pixels> -y <pixels> -r <0-255> -g <0-255> -b <0-255>\n");
-    fprintf(stderr, "       _TERM_PIXEL --clear\n");
-    fprintf(stderr, "  Draws or clears raw SDL pixels on the terminal window.\n");
+    fprintf(stderr, "  Draws raw SDL pixels on the terminal window.\n");
 }
 
 static int parse_long(const char *arg, const char *name, long min_value, long max_value, long *out_value) {
@@ -40,7 +39,6 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    int clear = 0;
     long x = -1;
     long y = -1;
     long r = -1;
@@ -49,9 +47,7 @@ int main(int argc, char **argv) {
 
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
-        if (strcmp(arg, "--clear") == 0) {
-            clear = 1;
-        } else if (strcmp(arg, "-x") == 0) {
+        if (strcmp(arg, "-x") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_TERM_PIXEL: missing value for -x.\n");
                 return EXIT_FAILURE;
@@ -98,30 +94,19 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (clear) {
-        if (x >= 0 || y >= 0 || r >= 0 || g >= 0 || b >= 0) {
-            fprintf(stderr, "_TERM_PIXEL: --clear cannot be combined with draw arguments.\n");
-            return EXIT_FAILURE;
-        }
-        if (printf("\x1b]777;pixel=clear\a") < 0) {
-            perror("_TERM_PIXEL: printf");
-            return EXIT_FAILURE;
-        }
-    } else {
-        if (x < 0 || y < 0 || r < 0 || g < 0 || b < 0) {
-            fprintf(stderr, "_TERM_PIXEL: missing required draw arguments.\n");
-            print_usage();
-            return EXIT_FAILURE;
-        }
-        if (printf("\x1b]777;pixel=draw;pixel_x=%ld;pixel_y=%ld;pixel_r=%ld;pixel_g=%ld;pixel_b=%ld\a",
-                   x,
-                   y,
-                   r,
-                   g,
-                   b) < 0) {
-            perror("_TERM_PIXEL: printf");
-            return EXIT_FAILURE;
-        }
+    if (x < 0 || y < 0 || r < 0 || g < 0 || b < 0) {
+        fprintf(stderr, "_TERM_PIXEL: missing required draw arguments.\n");
+        print_usage();
+        return EXIT_FAILURE;
+    }
+    if (printf("\x1b]777;pixel=draw;pixel_x=%ld;pixel_y=%ld;pixel_r=%ld;pixel_g=%ld;pixel_b=%ld\a",
+               x,
+               y,
+               r,
+               g,
+               b) < 0) {
+        perror("_TERM_PIXEL: printf");
+        return EXIT_FAILURE;
     }
 
     if (fflush(stdout) != 0) {

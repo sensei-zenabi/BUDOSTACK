@@ -11,7 +11,15 @@
 #include <errno.h>
 #include <fnmatch.h>
 
-#define NAME_DISPLAY_WIDTH 30
+#define NAME_DISPLAY_WIDTH 39
+
+static void print_separator(void) {
+    const int total_width = NAME_DISPLAY_WIDTH + 44;
+    for (int i = 0; i < total_width; i++) {
+        putchar('-');
+    }
+    putchar('\n');
+}
 
 // Global base path used in filter and comparator
 static const char *base_path;
@@ -165,7 +173,7 @@ void list_directory(const char *dir_path) {
 
     printf("\n");
     printf("%-*s %-11s %-10s %-20s\n", NAME_DISPLAY_WIDTH, "Filename", "Permissions", "Size", "Last Modified");
-    printf("--------------------------------------------------------------------------------\n");
+    print_separator();
 
     for (int i = 0; i < n; i++) {
         char fullpath[1024];
@@ -259,7 +267,7 @@ void list_recursive_search(const char *pattern) {
 
     printf("Recursive search for files matching pattern '%s':\n", pattern);
     printf("%-*s %-11s %-10s %-20s\n", NAME_DISPLAY_WIDTH, "Filename", "Permissions", "Size", "Last Modified");
-    printf("--------------------------------------------------------------------------------\n");
+    print_separator();
 
     for (size_t i = 0; i < matches_count; i++) {
         print_file_info(matches[i], matches[i]);
@@ -339,7 +347,7 @@ int main(int argc, char *argv[]) {
     if (file_count > 0) {
         printf("Files:\n");
         printf("%-*s %-11s %-10s %-20s\n", NAME_DISPLAY_WIDTH, "Filename", "Permissions", "Size", "Last Modified");
-        printf("--------------------------------------------------------------------------------\n");
+        print_separator();
         for (int i = 0; i < file_count; i++) {
             print_file_info(file_paths[i], file_paths[i]);
             free(file_paths[i]);

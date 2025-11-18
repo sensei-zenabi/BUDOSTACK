@@ -26,6 +26,7 @@ IF $SELECTION == 3
 RUN _RETROPROFILE apply $SCHEME
 RUN cls
 
+# Loadin screen
 RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
 @LOADING
 RUN _BAR -x 47 -y 32 -title LOADING: -progress $LOAD
@@ -36,7 +37,7 @@ IF $LOAD < 100
   RUN _WAIT 250
   GOTO LOADING
 
-
+# Intro logo
 @INTRO
 RUN clear
 RUN _RECT -x 0 -y 0 -width 118 -height 66 -color 0 -fill on
@@ -49,4 +50,6 @@ RUN _WAIT 1000
 RUN _TEXT -x 2 -y 64 -text "Created by: Ville Suoranta"
 RUN _TEXT -x 2 -y 65 -text "email: ville.m.suoranta(at)gmail.com"
 RUN _WAIT 1600                                                                                                                      
-                                                                                                                      
+            
+# Set resolution
+RUN _TERM_RESOLUTION 640 360                                                                                                                                                                                                                                

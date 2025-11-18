@@ -226,7 +226,7 @@ int editorRowCxToByteIndex(EditorLine *row, int cx);
 int editorRowByteIndexToCx(EditorLine *row, int byte_index);
 void editorRenderRow(EditorLine *row, int avail, struct abuf *ab);
 void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab);
-void abAppendHighlighted(struct abuf *ab, const char *s, int avail);
+void abAppendHighlighted(struct abuf *ab, const char *s, int coloff, int avail);
 void editorDrawRows(struct abuf *ab, int rn_width);
 void editorDrawTopBar(struct abuf *ab); 
 void editorDrawStatusBar(struct abuf *ab);
@@ -368,11 +368,19 @@ int editorRowByteIndexToCx(EditorLine *row, int byte_index) {
     return cx;
 }
 
-/* Append a highlighted line to the buffer, respecting the available width.
-   Escape sequences (starting with '\x1b') do not consume display width. */
-void abAppendHighlighted(struct abuf *ab, const char *s, int avail) {
+/* Append a highlighted line to the buffer, respecting the available width and
+   the current horizontal offset. Escape sequences (starting with '\x1b') do
+   not consume display width. */
+void abAppendHighlighted(struct abuf *ab, const char *s, int coloff, int avail) {
     int width = 0;
+    int display_col = 0;
     const char *p = s;
+    int started = (coloff == 0);
+    int limit_reached = 0;
+    char active_color[64];
+    int color_len = 0;
+    int color_active = 0;
+
     while (*p) {
         if (*p == '\x1b') {
             const char *start = p++;
@@ -384,21 +392,53 @@ void abAppendHighlighted(struct abuf *ab, const char *s, int avail) {
                 if (*p)
                     p++;
             }
-            abAppend(ab, start, p - start);
+            size_t esc_len = (size_t)(p - start);
+            if (!started) {
+                if (esc_len >= 3 && start[1] == '[' && start[esc_len - 1] == 'm') {
+                    if (esc_len == 4 && start[2] == '0') {
+                        color_active = 0;
+                        color_len = 0;
+                    } else {
+                        color_active = 1;
+                        size_t copy_len = esc_len;
+                        if (copy_len > sizeof(active_color))
+                            copy_len = sizeof(active_color);
+                        memcpy(active_color, start, copy_len);
+                        color_len = (int)copy_len;
+                    }
+                }
+            } else {
+                abAppend(ab, start, p - start);
+            }
         } else {
             wchar_t wc;
             size_t bytes = mbrtowc(&wc, p, MB_CUR_MAX, NULL);
-            if (bytes == (size_t)-1 || bytes == (size_t)-2)
+            if (bytes == (size_t)-1 || bytes == (size_t)-2) {
                 bytes = 1;
+                wc = (unsigned char)*p;
+            }
             int w = wcwidth(wc);
             if (w < 0)
                 w = 0;
-            if (width + w > avail) {
-                p += bytes;
-                continue;
+
+            if (!started) {
+                if (display_col + w <= coloff) {
+                    display_col += w;
+                    p += bytes;
+                    continue;
+                }
+                started = 1;
+                if (color_active && color_len > 0)
+                    abAppend(ab, active_color, color_len);
             }
-            abAppend(ab, p, bytes);
-            width += w;
+
+            display_col += w;
+            if (!limit_reached && width + w <= avail) {
+                abAppend(ab, p, bytes);
+                width += w;
+            } else {
+                limit_reached = 1;
+            }
             p += bytes;
         }
     }
@@ -508,20 +548,20 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
             
             if (E.selecting) {
                 editorRenderRowWithSelection(&E.row[file_row], file_row, text_width, ab);
-            } else if (skip_highlight || E.coloff != 0) {
+            } else if (skip_highlight) {
                 editorRenderRow(&E.row[file_row], text_width, ab);
             } else if (is_c_source()) {
                 /* Pass the current multi-line comment state for this line */
                 char *highlighted = highlight_c_line(E.row[file_row].chars, E.row[file_row].hl_in_comment);
                 if (highlighted) {
-                    abAppendHighlighted(ab, highlighted, text_width);
+                    abAppendHighlighted(ab, highlighted, E.coloff, text_width);
                     free(highlighted);
                 }
             } else {
                 // Use this for all other files
                 char *highlighted = highlight_other_line(E.row[file_row].chars);
                 if (highlighted) {
-                    abAppendHighlighted(ab, highlighted, text_width);
+                    abAppendHighlighted(ab, highlighted, E.coloff, text_width);
                     free(highlighted);
                 }
             }

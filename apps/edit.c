@@ -1,5 +1,7 @@
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
+#include "../lib/terminal_layout.h"
+
 #include <wchar.h>
 #include <wctype.h>
 #include <locale.h>
@@ -16,6 +18,14 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <time.h>
+
+#ifndef EDITOR_TARGET_COLS
+#define EDITOR_TARGET_COLS BUDOSTACK_TARGET_COLS
+#endif
+
+#ifndef EDITOR_TARGET_ROWS
+#define EDITOR_TARGET_ROWS BUDOSTACK_TARGET_ROWS
+#endif
 
 /*
  * Design principles and notes:
@@ -695,10 +705,21 @@ int editorReadKey(void) {
 }
 
 int getWindowSize(int *rows, int *cols) {
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0)
+    if (rows == NULL || cols == NULL) {
+        errno = EINVAL;
         return -1;
-    *cols = ws.ws_col; *rows = ws.ws_row;
+    }
+
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0 || ws.ws_row == 0) {
+        *rows = EDITOR_TARGET_ROWS;
+        *cols = EDITOR_TARGET_COLS;
+    } else {
+        *cols = ws.ws_col;
+        *rows = ws.ws_row;
+    }
+
+    budostack_clamp_terminal_size(rows, cols);
     return 0;
 }
 
@@ -1162,9 +1183,11 @@ void editorSearch(void) {
     enableRawMode();
 
     /* Get terminal size */
-    int rows, cols;
+    int rows = EDITOR_TARGET_ROWS;
+    int cols = EDITOR_TARGET_COLS;
     if (getWindowSize(&rows, &cols) == -1) {
-        rows = 24; cols = 80;
+        rows = EDITOR_TARGET_ROWS;
+        cols = EDITOR_TARGET_COLS;
     }
 
     /* Build list of matching line indices using case-insensitive search */
@@ -1192,6 +1215,8 @@ void editorSearch(void) {
     int active = 0;
     int menu_start = 0;
     int menu_height = rows - 4;
+    if (menu_height < 1)
+        menu_height = 1;
 
     while (1) {
         printf("\033[2J\033[H");
@@ -1755,8 +1780,10 @@ int main(int argc, char *argv[]) {
     E.selecting = 0; E.sel_anchor_x = 0; E.sel_anchor_y = 0;
     E.preferred_cx = 0;
 
-    if (getWindowSize(&E.screenrows, &E.screencols) == -1)
-        die("getWindowSize");
+    if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
+        E.screenrows = EDITOR_TARGET_ROWS;
+        E.screencols = EDITOR_TARGET_COLS;
+    }
     E.textrows = E.screenrows - 3;
 
     if (argc >= 2)

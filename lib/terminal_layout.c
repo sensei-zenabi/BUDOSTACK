@@ -25,12 +25,26 @@ void budostack_clamp_terminal_size(int *rows, int *cols) {
 }
 
 static void set_layout_env(void) {
+    char columns_str[16];
+    char rows_str[16];
+    int written_cols = snprintf(columns_str, sizeof(columns_str), "%d", BUDOSTACK_TARGET_COLS);
+    int written_rows = snprintf(rows_str, sizeof(rows_str), "%d", BUDOSTACK_TARGET_ROWS);
+    if (written_cols <= 0 || written_cols >= (int)sizeof(columns_str)) {
+        columns_str[0] = '8';
+        columns_str[1] = '0';
+        columns_str[2] = '\0';
+    }
+    if (written_rows <= 0 || written_rows >= (int)sizeof(rows_str)) {
+        rows_str[0] = '4';
+        rows_str[1] = '5';
+        rows_str[2] = '\0';
+    }
 #if defined(_WIN32)
-    _putenv_s("COLUMNS", "80");
-    _putenv_s("LINES", "45");
+    _putenv_s("COLUMNS", columns_str);
+    _putenv_s("LINES", rows_str);
 #else
-    (void)setenv("COLUMNS", "80", 1);
-    (void)setenv("LINES", "45", 1);
+    (void)setenv("COLUMNS", columns_str, 1);
+    (void)setenv("LINES", rows_str, 1);
 #endif
 }
 

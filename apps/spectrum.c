@@ -14,6 +14,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "../lib/terminal_layout.h"
 #ifndef BUDOSTACK_HAVE_ALSA
 #define BUDOSTACK_HAVE_ALSA 0
 #endif
@@ -90,12 +91,21 @@ static void get_terminal_size(int *rows, int *cols)
 {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0 || ws.ws_row == 0) {
-        *rows = 24;
-        *cols = 80;
+        if (rows) {
+            *rows = BUDOSTACK_TARGET_ROWS;
+        }
+        if (cols) {
+            *cols = BUDOSTACK_TARGET_COLS;
+        }
         return;
     }
-    *rows = ws.ws_row;
-    *cols = ws.ws_col;
+    if (rows) {
+        *rows = ws.ws_row;
+    }
+    if (cols) {
+        *cols = ws.ws_col;
+    }
+    budostack_clamp_terminal_size(rows, cols);
 }
 
 static void free_analyzer(struct analyzer_state *state)
@@ -683,8 +693,9 @@ int main(void)
     int rows = 0;
     int cols = 0;
     get_terminal_size(&rows, &cols);
-    if (cols < 80) {
-        fprintf(stderr, "spectrum: terminal width must be at least 80 columns (got %d)\n", cols);
+    if (cols < BUDOSTACK_TARGET_COLS) {
+        fprintf(stderr, "spectrum: terminal width must be at least %d columns (got %d)\n",
+                BUDOSTACK_TARGET_COLS, cols);
         return EXIT_FAILURE;
     }
 
@@ -770,7 +781,7 @@ int main(void)
         }
 
         get_terminal_size(&rows, &cols);
-        if (cols < 80) {
+        if (cols < BUDOSTACK_TARGET_COLS) {
             printf("\x1b[H\x1b[0m");
             write_padded_line("Spectrum Analyzer requires at least 80 columns.", cols, 1);
             char width_line[64];

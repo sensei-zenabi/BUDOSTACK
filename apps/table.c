@@ -24,6 +24,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include "../lib/terminal_layout.h"
 #define CTRL_KEY(k) ((k) & 0x1F)
 #define MAX_INPUT 256
 
@@ -102,6 +103,12 @@ void move_cursor(int row, int col) {
 static int get_terminal_size(int *rows, int *cols) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
+        if (rows) {
+            *rows = BUDOSTACK_TARGET_ROWS;
+        }
+        if (cols) {
+            *cols = BUDOSTACK_TARGET_COLS;
+        }
         return 0;
     }
     if (rows) {
@@ -110,24 +117,25 @@ static int get_terminal_size(int *rows, int *cols) {
     if (cols) {
         *cols = ws.ws_col;
     }
+    budostack_clamp_terminal_size(rows, cols);
     return 1;
 }
 
 static void print_help_bar(void) {
     static const char *detailed_help[] = {
         "Detailed Shortcuts:",
-        "Navigation:      HOME: ←5 cols   END: →5 cols   PGUP: ↑10 rows   PGDN: ↓10 rows",
-        "                 Arrow keys: move (live editing: type to modify cell, backspace to delete)",
-        "Editing:         CTRL+R: add row   CTRL+N: add column   CTRL+S: save   CTRL+Q: quit   CTRL+F: toggle formula view",
-        "Cell Operations: DEL: clear cell   CTRL+D: delete col   CTRL+E: delete row   CTRL+C: copy   CTRL+X: cut   CTRL+V: paste",
-        "                 ...Press CTRL+T to hide help."
+        "Nav: Home/End +/-5 cols  PgUp/PgDn +/-10 rows  Arrows move cursor",
+        "Edit: Ctrl+R add row  Ctrl+N add col  Ctrl+S save  Ctrl+Q quit",
+        "Formulas: Ctrl+F toggles view; type '=' to enter expressions",
+        "Cells: Del clear  Ctrl+D del col  Ctrl+E del row  Ctrl+C copy  Ctrl+X cut",
+        "Paste: Ctrl+V paste (Ctrl+T hides help)"
     };
     static const char compact_help[] = "Press CTRL+T for help.";
     const int total_lines = (int)(sizeof(detailed_help) / sizeof(detailed_help[0]));
     int term_rows = 0;
 
     if (!get_terminal_size(&term_rows, NULL) || term_rows <= 0) {
-        term_rows = 24; // Fallback to a standard terminal height.
+        term_rows = BUDOSTACK_TARGET_ROWS;
     }
 
     int start_row = term_rows - total_lines + 1;

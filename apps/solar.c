@@ -8,6 +8,12 @@
 #include <time.h>
 #include <sys/ioctl.h>
 
+#include "../lib/terminal_layout.h"
+
+enum {
+    STATS_FOOTPRINT = 12
+};
+
 // If M_PI is not defined by math.h, define it.
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -78,20 +84,24 @@ int main(int argc, char *argv[]) {
     // Set max_au based on the outermost displayed planet plus a little margin.
     double max_au = planets[display_planet_count - 1].a * 1.2;
     
-    // Dynamically obtain the terminal size.
+    // Dynamically obtain the terminal size and clamp to 80x45 output.
     struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
-        ws.ws_col = 80; // fallback default width
+    int total_rows = BUDOSTACK_TARGET_ROWS;
+    int width = BUDOSTACK_TARGET_COLS;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+        if (ws.ws_row > 0)
+            total_rows = (int)ws.ws_row;
+        if (ws.ws_col > 0)
+            width = (int)ws.ws_col;
     }
-    int width = ws.ws_col;
-    if (width <= 0)
-        width = 80;
-    // Maintain the previous choice of making the drawing area half as tall as it
-    // is wide, but use a square scaling factor so that an 8x8 font keeps the
-    // orbits circular.
-    int height = width / 2;
-    if (height <= 0)
-        height = 40;
+    budostack_clamp_terminal_size(&total_rows, &width);
+    if (width < 20)
+        width = 20;
+    int height = total_rows - STATS_FOOTPRINT;
+    if (height > BUDOSTACK_TARGET_ROWS - STATS_FOOTPRINT)
+        height = BUDOSTACK_TARGET_ROWS - STATS_FOOTPRINT;
+    if (height < 10)
+        height = 10;
 
     double usable_span = fmin(width, height) - 2.0;
     if (usable_span < 2.0)
@@ -184,8 +194,9 @@ int main(int argc, char *argv[]) {
     // Define the full names of the planets.
     const char *planet_names[NUM_PLANETS] = {"Mercury", "Venus", "Earth", "Mars", "Jupiter", "Saturn", "Uranus", "Neptune"};
     printf("Planetary Statistics:\n");
-    printf("%-10s %-6s %-20s %-12s %-20s %-15s %-18s\n", "Name", "Symbol", "Semi-Major Axis (AU)", "Eccentricity", "Orbital Period (days)", "Distance (AU)", "True Anomaly (deg)");
-    printf("---------------------------------------------------------------------------------------------------------------\n");
+    printf("%-8s %-6s %10s %8s %10s %9s %9s\n",
+           "Name", "Symbol", "Axis(AU)", "Ecc", "Period(d)", "Dist(AU)", "True(deg)");
+    printf("----------------------------------------------------------------------------\n");
     
     for (int p = 0; p < display_planet_count; p++) {
         // Recompute the mean anomaly for this planet.
@@ -203,7 +214,7 @@ int main(int argc, char *argv[]) {
         // Convert true anomaly to degrees.
         double f_deg = f_angle * 180 / M_PI;
         // Print the formatted statistics.
-        printf("%-10s %-6c %-20.3f %-12.4f %-20.3f %-15.3f %-18.1f\n",
+        printf("%-8s %-6c %10.3f %8.4f %10.1f %9.3f %9.1f\n",
                planet_names[p], planets[p].symbol, planets[p].a,
                planets[p].e, planets[p].T, r, f_deg);
     }

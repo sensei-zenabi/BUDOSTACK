@@ -28,6 +28,7 @@
 #include <string.h>
 #include <ctype.h>
 
+#include "../lib/terminal_layout.h"
 #ifdef _WIN32
     #define WIN32_LEAN_AND_MEAN
     #include <winsock2.h>
@@ -340,25 +341,38 @@ int cmp_currency_by_rate(const void *a, const void *b) {
    On Windows, we fall back to using environment variables.
 */
 void get_terminal_size(int *cols, int *rows) {
+    int local_cols = BUDOSTACK_TARGET_COLS;
+    int local_rows = BUDOSTACK_TARGET_ROWS;
 #ifdef _WIN32
     const char *env_cols = getenv("COLUMNS");
     const char *env_rows = getenv("LINES");
-    *cols = (env_cols) ? atoi(env_cols) : 80;
-    *rows = (env_rows) ? atoi(env_rows) : 24;
+    if (env_cols && *env_cols)
+        local_cols = atoi(env_cols);
+    if (env_rows && *env_rows)
+        local_rows = atoi(env_rows);
 #else
     struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
-        *cols = ws.ws_col;
-        *rows = ws.ws_row;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 && ws.ws_row > 0) {
+        local_cols = ws.ws_col;
+        local_rows = ws.ws_row;
     } else {
         const char *env_cols = getenv("COLUMNS");
         const char *env_rows = getenv("LINES");
-        *cols = (env_cols) ? atoi(env_cols) : 80;
-        *rows = (env_rows) ? atoi(env_rows) : 24;
+        if (env_cols && *env_cols)
+            local_cols = atoi(env_cols);
+        if (env_rows && *env_rows)
+            local_rows = atoi(env_rows);
     }
 #endif
-    if (*cols < 40) *cols = 40;
-    if (*rows < 10) *rows = 10;
+    budostack_clamp_terminal_size(&local_rows, &local_cols);
+    if (local_cols < 40)
+        local_cols = 40;
+    if (local_rows < 10)
+        local_rows = 10;
+    if (cols)
+        *cols = local_cols;
+    if (rows)
+        *rows = local_rows;
 }
 
 // Clear screen using ANSI escape sequences

@@ -39,6 +39,7 @@
 #include <math.h>
 #include <limits.h>
 
+#include "../lib/terminal_layout.h"
 #define STBI_ONLY_PNG
 #include "../lib/stb_image.h"
 
@@ -94,18 +95,27 @@ static void clear_screen(void) {
 
 static void get_terminal_size(int *rows, int *cols) {
     struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        *rows = 24;
-        *cols = 80;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0 || ws.ws_row == 0) {
+        if (rows) {
+            *rows = BUDOSTACK_TARGET_ROWS;
+        }
+        if (cols) {
+            *cols = BUDOSTACK_TARGET_COLS;
+        }
         return;
     }
-    *rows = ws.ws_row;
-    *cols = ws.ws_col;
+    if (rows) {
+        *rows = ws.ws_row;
+    }
+    if (cols) {
+        *cols = ws.ws_col;
+    }
+    budostack_clamp_terminal_size(rows, cols);
 }
 
 /* -------- Image data -------- */
 
-static int img_w = 118, img_h = 63;
+static int img_w = BUDOSTACK_TARGET_COLS, img_h = BUDOSTACK_TARGET_ROWS;
 static uint8_t pixels[MAX_W * MAX_H]; // Each = 0..TOTAL_COLORS-1 color index, or EMPTY
 
 static int cursor_x = 0, cursor_y = 0;

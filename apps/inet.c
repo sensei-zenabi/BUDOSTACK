@@ -8,16 +8,24 @@
 #include <sys/select.h>   // For select()
 #include <signal.h>       // For signal handling
 
+#include "../lib/terminal_layout.h"
+
 #define MAX_INPUT 100
 #define MAX_INTERFACES 32
-#define MAX_BAR_LEN 40  // Maximum characters for histogram bars
+#define MAX_BAR_LEN 28  // Maximum characters for histogram bars within 80 columns
 
-// Table widths for proper alignment
-#define TABLE1_WIDTH 100  // Main statistics table width
-#define TABLE2_WIDTH 84   // Additional metrics table width
+// Table widths for proper alignment on an 80 column display
+#define TABLE1_WIDTH 74  // Main statistics table width
+#define TABLE2_WIDTH 60   // Additional metrics table width
 
 // Helper function to print a separator line with a given width.
 void print_separator(int width) {
+    if (width > BUDOSTACK_TARGET_COLS) {
+        width = BUDOSTACK_TARGET_COLS;
+    }
+    if (width < 0) {
+        return;
+    }
     for (int i = 0; i < width; i++) {
          putchar('-');
     }
@@ -149,14 +157,16 @@ void run_diagnostics(void) {
     if (check_adapters() == 0) {
          printf("Diagnostic: Network adapters detected.\n");
     } else {
-         printf("Diagnostic: No network adapters detected. Check drivers or physical connections.\n");
+         printf("Diagnostic: No network adapters detected.\n");
+         printf("Check drivers or physical connections.\n");
     }
     
     // Check for internet connectivity
     if (check_connectivity() == 0) {
-         printf("Diagnostic: Internet connectivity is working (ping to 8.8.8.8 successful).\n");
+         printf("Diagnostic: Internet connectivity works (ping 8.8.8.8).\n");
     } else {
-         printf("Diagnostic: Internet connectivity test failed. Check your network connection and router/modem.\n");
+         printf("Diagnostic: Internet connectivity test failed.\n");
+         printf("Check your network connection and router or modem.\n");
     }
     
     printf("--- End of Diagnostics ---\n");
@@ -299,36 +309,31 @@ void monitor_mode(int interval) {
          print_separator(TABLE1_WIDTH);
          
          // Main table header.
-         printf("%-6s %8s %8s %10s %10s %8s %8s %8s %8s %8s %8s\n",
-                "IFACE", "RX/s", "TX/s", "RXTot", "TXTOT", "RXpkts", "TXpkts",
-                "RXerr", "TXerr", "RXdp", "TXdp");
-         print_separator(TABLE1_WIDTH);
-         
-         // Print interface statistics.
-         for (int i = 0; i < curr_count; i++) {
-             int found_prev = 0;
+        printf("%-6s %8s %8s %10s %10s %9s %9s\n",
+               "IFACE", "RX/s", "TX/s", "RXtot", "TXtot", "RXpkt", "TXpkt");
+        print_separator(TABLE1_WIDTH);
+
+        // Print interface statistics.
+        for (int i = 0; i < curr_count; i++) {
+            int found_prev = 0;
              for (int j = 0; j < prev_count; j++) {
                  if (strcmp(curr[i].name, prev[j].name) == 0) {
                      found_prev = 1;
                      break;
                  }
              }
-             if (!found_prev) {
-                printf("%-6s %8s %8s %10lu %10lu %8lu %8lu %8lu %8lu %8lu %8lu\n",
-                       curr[i].name, "N/A", "N/A",
-                       curr[i].rx_bytes, curr[i].tx_bytes,
-                       curr[i].rx_packets, curr[i].tx_packets,
-                       curr[i].rx_errs, curr[i].tx_errs,
-                       curr[i].rx_drop, curr[i].tx_drop);
-             } else {
-                printf("%-6s %8lu %8lu %10lu %10lu %8lu %8lu %8lu %8lu %8lu %8lu\n",
-                       curr[i].name, rx_rates[i], tx_rates[i],
-                       curr[i].rx_bytes, curr[i].tx_bytes,
-                       curr[i].rx_packets, curr[i].tx_packets,
-                       curr[i].rx_errs, curr[i].tx_errs,
-                       curr[i].rx_drop, curr[i].tx_drop);
-             }
-         }
+            if (!found_prev) {
+               printf("%-6s %8s %8s %10lu %10lu %9lu %9lu\n",
+                      curr[i].name, "N/A", "N/A",
+                      curr[i].rx_bytes, curr[i].tx_bytes,
+                      curr[i].rx_packets, curr[i].tx_packets);
+            } else {
+               printf("%-6s %8lu %8lu %10lu %10lu %9lu %9lu\n",
+                      curr[i].name, rx_rates[i], tx_rates[i],
+                      curr[i].rx_bytes, curr[i].tx_bytes,
+                      curr[i].rx_packets, curr[i].tx_packets);
+            }
+        }
          
          // Print bar view for RX throughput per interface.
          printf("\nMeasured RX Throughput (bytes/sec):\n");
@@ -383,10 +388,10 @@ void monitor_mode(int interval) {
          }
          
          // --- Additional Metrics Section ---
-         printf("\nAdditional Metrics (per-second differences):\n");
-         printf("%-6s %12s %12s %12s %12s %12s %12s\n",
-                "IFACE", "RX_pkts/s", "TX_pkts/s", "RX_err%%", "TX_err%%", "RX_dp%%", "TX_dp%%");
-         print_separator(TABLE2_WIDTH);
+        printf("\nAdditional Metrics (per-second differences):\n");
+        printf("%-6s %10s %10s %7s %7s %7s %7s\n",
+               "IFACE", "RXp/s", "TXp/s", "RXer", "TXer", "RXdp", "TXdp");
+        print_separator(TABLE2_WIDTH);
          
          unsigned long total_delta_rx_pkts = 0, total_delta_tx_pkts = 0;
          unsigned long total_delta_rx_err = 0, total_delta_tx_err = 0;
@@ -414,10 +419,10 @@ void monitor_mode(int interval) {
                  double rx_dp_percent  = (delta_rx_pkts > 0) ? (delta_rx_dp * 100.0 / delta_rx_pkts) : 0.0;
                  double tx_dp_percent  = (delta_tx_pkts > 0) ? (delta_tx_dp * 100.0 / delta_tx_pkts) : 0.0;
                  
-                 printf("%-6s %12lu %12lu %11.2f%% %11.2f%% %11.2f%% %11.2f%%\n",
-                        curr[i].name, delta_rx_pkts, delta_tx_pkts,
-                        rx_err_percent, tx_err_percent,
-                        rx_dp_percent, tx_dp_percent);
+                printf("%-6s %10lu %10lu %6.2f%% %6.2f%% %6.2f%% %6.2f%%\n",
+                       curr[i].name, delta_rx_pkts, delta_tx_pkts,
+                       rx_err_percent, tx_err_percent,
+                       rx_dp_percent, tx_dp_percent);
                  
                  total_delta_rx_pkts += delta_rx_pkts;
                  total_delta_tx_pkts += delta_tx_pkts;
@@ -427,8 +432,8 @@ void monitor_mode(int interval) {
                  total_delta_tx_dp   += delta_tx_dp;
                  metrics_count++;
              } else {
-                 printf("%-6s %12s %12s %12s %12s %12s %12s\n",
-                        curr[i].name, "N/A", "N/A", "N/A", "N/A", "N/A", "N/A");
+                printf("%-6s %10s %10s %7s %7s %7s %7s\n",
+                       curr[i].name, "N/A", "N/A", "N/A", "N/A", "N/A", "N/A");
              }
          }
          
@@ -508,7 +513,8 @@ int main(void) {
                 }
                 printf("Attempting to connect...\n");
                 if (system(command) != 0) {
-                    printf("Connection attempt failed. Consider running diagnostics (option 4) for more details.\n");
+                    printf("Connection attempt failed.\n");
+                    printf("Run diagnostics (option 4) for more details.\n");
                 }
                 break;
             }

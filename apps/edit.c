@@ -586,7 +586,7 @@ void editorDrawShortcutBar(struct abuf *ab) {
     abAppend(ab, "\x1b[2m", 4);
     char menu[256];
     int menu_len = snprintf(menu, sizeof(menu),
-             "| ^Q Quit | ^S Save | ^Z Undo | ^X Cut | ^C Copy | ^V Paste | ^T Select | ^A Select All | ^F Search | ^R Replace  |");
+        "|^Q QUIT|^S SAVE|^Z UNDO|^X CUT|^C COPY|^V PASTE|^T SELECT|^A ALL|^F FND|^R REP|");
     if (menu_len > E.screencols) menu_len = E.screencols;
     abAppend(ab, menu, menu_len);
     for (int i = menu_len; i < E.screencols; i++)

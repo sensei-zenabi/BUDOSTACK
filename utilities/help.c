@@ -34,7 +34,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf(" Hardware Requirements\n");
     printf("\n");
-    printf("  - GPU with OpenGL support (required by apps/terminal CRT shaders\n");
+    printf("  - GPU with OpenGL support (required by apps/terminal CRT shaders)\n");
     printf("\n");
     printf(" Tested distributions:\n");
     printf("\n");

@@ -33,7 +33,7 @@
  * - No separate header files; full code is in one file.
  * - Append Buffer Implementation: Instead of multiple write() calls,
  *   output is accumulated in a dynamic buffer (struct abuf) and then flushed with one write() call.
- * - TAB Support: The TAB key now inserts four spaces into the text.
+ * - TAB Support: The TAB key now inserts two spaces into the text.
  * - Added a case-insensitive search helper to support CTRL+F searches that ignore case.
  */
 
@@ -60,6 +60,7 @@ void abFree(struct abuf *ab) {
 
 /*** Editor Definitions ***/
 #define EDITOR_VERSION "0.1-micro-like"
+#define EDITOR_TAB_WIDTH 2
 
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define BACKSPACE 127
@@ -178,7 +179,7 @@ char *strcasestr_custom(const char *haystack, const char *needle) {
    number of space characters.
 */
 char *expand_tabs(const char *s) {
-    int tab_size = 4;  // You can make this configurable if needed.
+    int tab_size = EDITOR_TAB_WIDTH;
     int col = 0;
     int new_len = 0;
     for (const char *p = s; *p; p++) {
@@ -927,9 +928,10 @@ void editorProcessKeypress(void) {
             last_key_was_vertical = 0;
             break;
         case '\t':
-            /* TAB support: insert 4 spaces */
+            /* TAB support: insert spaces based on EDITOR_TAB_WIDTH */
             push_undo_state();
-            editorInsertString("    ");
+            for (int i = 0; i < EDITOR_TAB_WIDTH; i++)
+                editorInsertChar(' ');
             last_key_was_vertical = 0;
             break;
         case CTRL_KEY('h'):

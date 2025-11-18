@@ -299,6 +299,7 @@ static void terminal_mark_background_dirty(void);
 static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
 static uint32_t terminal_rgba_from_color(uint32_t color);
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b);
+static int terminal_custom_pixels_unset(int x, int y);
 static void terminal_custom_pixels_clear(void);
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
 static void terminal_custom_pixels_shutdown(void);
@@ -1426,6 +1427,26 @@ static void terminal_custom_pixels_clear(void) {
     terminal_custom_pixel_count = 0u;
     terminal_custom_pixels_dirty = 1;
     terminal_mark_full_redraw();
+}
+
+static int terminal_custom_pixels_unset(int x, int y) {
+    if (x < 0 || y < 0) {
+        return -1;
+    }
+
+    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
+        if (terminal_custom_pixels[i].x == x && terminal_custom_pixels[i].y == y) {
+            if (terminal_custom_pixel_count > 0u) {
+                terminal_custom_pixels[i] =
+                    terminal_custom_pixels[terminal_custom_pixel_count - 1u];
+            }
+            terminal_custom_pixel_count--;
+            terminal_custom_pixels_dirty = 1;
+            return 0;
+        }
+    }
+
+    return -1;
 }
 
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
@@ -3723,7 +3744,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             enum terminal_pixel_action {
                 TERMINAL_PIXEL_ACTION_NONE = 0,
                 TERMINAL_PIXEL_ACTION_DRAW = 1,
-                TERMINAL_PIXEL_ACTION_CLEAR = 2
+                TERMINAL_PIXEL_ACTION_CLEAR = 2,
+                TERMINAL_PIXEL_ACTION_CLEAN = 3
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
             long pixel_x = -1;
@@ -3823,6 +3845,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
                         } else if (strcmp(value, "clear") == 0) {
                             pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
+                        } else if (strcmp(value, "clean") == 0 || strcmp(value, "unset") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_CLEAN;
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -3900,6 +3924,14 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 }
             } else if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
                 terminal_custom_pixels_clear();
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAN) {
+                if (pixel_x >= 0 && pixel_y >= 0 && pixel_x <= INT_MAX && pixel_y <= INT_MAX) {
+                    if (terminal_custom_pixels_unset((int)pixel_x, (int)pixel_y) != 0) {
+                        fprintf(stderr, "terminal: Failed to clean custom pixel.\n");
+                    }
+                } else {
+                    fprintf(stderr, "terminal: Invalid pixel clean parameters.\n");
+                }
             }
 
             free(copy);

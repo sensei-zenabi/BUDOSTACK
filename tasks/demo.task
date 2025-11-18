@@ -1,0 +1,50 @@
+# demo.task
+SET $FPS = 60
+SET $WAIT = 0
+SET $X = 10
+SET $DX = 4
+
+RUN _CALC ceil(1000/$FPS) TO $WAIT
+
+RUN _TERM_RESOLUTION 320 200
+RUN _CLEAR
+
+PRINT "Give dX: "
+INPUT $DX
+
+SET $i = 0
+@DRAW_LOOP
+
+  SET $i = $i + 1
+  IF $i > 255
+    SET $i = 255
+
+  RUN _TERM_PIXEL -x $X -y 97 -r 0 -g $i -b 0
+  RUN _TERM_PIXEL -x $X -y 98 -r 0 -g $i -b 0
+  RUN _TERM_PIXEL -x $X -y 99 -r 0 -g $i -b 0
+  RUN _TERM_PIXEL -x $X -y 100 -r 0 -g $i -b 0
+  RUN _TERM_PIXEL -x $X -y 101 -r 0 -g $i -b 0
+  RUN _TERM_PIXEL -x $X -y 102 -r 0 -g $i -b 0
+  RUN _TERM_PIXEL -x $X -y 103 -r 0 -g $i -b 0
+  
+  RUN _TERM_PIXEL -x $X-1 -y 97 -r 0 -g $i -b 0  
+  RUN _TERM_PIXEL -x $X-1 -y 98 -r 0 -g $i -b 0  
+  RUN _TERM_PIXEL -x $X-1 -y 99 -r 0 -g $i -b 0  
+  RUN _TERM_PIXEL -x $X-1 -y 100 -r 0 -g $i -b 0  
+  RUN _TERM_PIXEL -x $X-1 -y 101 -r 0 -g $i -b 0  
+  RUN _TERM_PIXEL -x $X-1 -y 102 -r 0 -g $i -b 0  
+  RUN _TERM_PIXEL -x $X-1 -y 103 -r 0 -g $i -b 0 
+  
+  RUN _WAIT $WAIT
+  IF $X < 320
+    SET $X = $X + $DX
+    #RUN _TERM_PIXEL --clear
+    GOTO DRAW_LOOP
+  
+RUN _WAIT 4000
+
+RUN _TERM_PIXEL --clear
+
+RUN _TERM_RESOLUTION 640 360
+
+

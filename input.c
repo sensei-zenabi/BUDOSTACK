@@ -416,12 +416,16 @@ static void list_filename_matches(const char *dir, const char *prefix) {
 }
 
 static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space) {
-    printf("\033[s");
-    printf("%s", buffer + cursor);
+    const char *tail = buffer + cursor;
+    int tail_width = utf8_string_display_width(tail);
+    printf("%s", tail);
     if (clear_extra_space) {
         printf(" ");
     }
-    printf("\033[u");
+    int move_back = tail_width + (clear_extra_space ? 1 : 0);
+    for (int i = 0; i < move_back; i++) {
+        printf("\b");
+    }
     fflush(stdout);
 }
 

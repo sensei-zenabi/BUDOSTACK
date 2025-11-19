@@ -4647,14 +4647,7 @@ static void terminal_configure_pty_defaults(int fd) {
         return;
     }
 
-    tcflag_t lflag_add = (ICANON | ECHO | ECHOE | ECHOK | IEXTEN | ISIG);
-#ifdef ECHOCTL
-    lflag_add |= ECHOCTL;
-#endif
-#ifdef ECHOKE
-    lflag_add |= ECHOKE;
-#endif
-    tio.c_lflag |= lflag_add;
+    tio.c_lflag |= (ICANON | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE | IEXTEN | ISIG);
     tio.c_lflag &= (tcflag_t)~(TOSTOP | NOFLSH);
 
     tio.c_iflag |= (ICRNL | IXON);

@@ -382,20 +382,25 @@ static void redraw_from_cursor(const char *prompt, const char *buffer, size_t cu
     int rows = (total_width / cols) + 1;
     int cursor_col = (prompt_width + cursor_width) % cols;
     int cursor_row = (prompt_width + cursor_width) / cols;
-    int end_col = total_width % cols;
     int end_row = total_width / cols;
     int clear_rows = refresh_last_rows > rows ? refresh_last_rows : rows;
 
+    if (refresh_last_rows > 1) {
+        printf("\033[%dA", refresh_last_rows - 1);
+    }
     printf("\r");
+
     for (int row = 0; row < clear_rows; row++) {
         printf("\033[K");
         if (row < clear_rows - 1) {
             printf("\n");
         }
     }
+
     if (clear_rows > 1) {
         printf("\033[%dA", clear_rows - 1);
     }
+    printf("\r");
 
     printf("%s", prompt);
     printf("%s", buffer);
@@ -403,11 +408,9 @@ static void redraw_from_cursor(const char *prompt, const char *buffer, size_t cu
     if (end_row > cursor_row) {
         printf("\033[%dA", end_row - cursor_row);
     }
-    int col_diff = end_col - cursor_col;
-    if (col_diff > 0) {
-        printf("\033[%dD", col_diff);
-    } else if (col_diff < 0) {
-        printf("\033[%dC", -col_diff);
+    printf("\r");
+    if (cursor_col > 0) {
+        printf("\033[%dC", cursor_col);
     }
 
     refresh_last_rows = rows;

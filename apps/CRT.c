@@ -44,7 +44,22 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
+
+#ifndef BUDOSTACK_HAVE_XTEST
+#if defined(__has_include)
+#if __has_include(<X11/extensions/XTest.h>)
+#define BUDOSTACK_HAVE_XTEST 1
+#else
+#define BUDOSTACK_HAVE_XTEST 0
+#endif
+#else
+#define BUDOSTACK_HAVE_XTEST 1
+#endif
+#endif
+
+#if BUDOSTACK_HAVE_XTEST
 #include <X11/extensions/XTest.h>
+#endif
 
 #include "../lib/crt_shader_stack.h"
 #include "../lib/crt_shader_gl.h"
@@ -751,6 +766,7 @@ static int crt_window_to_screen_coords(int win_x, int win_y, int *out_x, int *ou
 }
 
 static int crt_forward_mouse_motion(int x, int y) {
+#if BUDOSTACK_HAVE_XTEST
     if (!crt_xtest_available || !crt_display) {
         return -1;
     }
@@ -762,6 +778,11 @@ static int crt_forward_mouse_motion(int x, int y) {
     XTestFakeMotionEvent(crt_display, crt_display_screen, screen_x, screen_y, CurrentTime);
     XFlush(crt_display);
     return 0;
+#else
+    (void)x;
+    (void)y;
+    return -1;
+#endif
 }
 
 static unsigned int crt_map_mouse_button(Uint8 button) {
@@ -782,6 +803,7 @@ static unsigned int crt_map_mouse_button(Uint8 button) {
 }
 
 static void crt_forward_mouse_button(Uint8 button, int pressed) {
+#if BUDOSTACK_HAVE_XTEST
     if (!crt_xtest_available || !crt_display) {
         return;
     }
@@ -791,9 +813,14 @@ static void crt_forward_mouse_button(Uint8 button, int pressed) {
     }
     XTestFakeButtonEvent(crt_display, mapped, pressed, CurrentTime);
     XFlush(crt_display);
+#else
+    (void)button;
+    (void)pressed;
+#endif
 }
 
 static void crt_forward_mouse_wheel(int amount, int horizontal) {
+#if BUDOSTACK_HAVE_XTEST
     if (!crt_xtest_available || !crt_display) {
         return;
     }
@@ -806,6 +833,10 @@ static void crt_forward_mouse_wheel(int amount, int horizontal) {
         XTestFakeButtonEvent(crt_display, button, False, CurrentTime);
     }
     XFlush(crt_display);
+#else
+    (void)amount;
+    (void)horizontal;
+#endif
 }
 static KeySym crt_map_keycode(SDL_Keycode keycode) {
     if (keycode >= SDLK_a && keycode <= SDLK_z) {
@@ -880,6 +911,7 @@ static KeySym crt_map_keycode(SDL_Keycode keycode) {
 }
 
 static void crt_forward_key(SDL_Keycode keycode, int pressed) {
+#if BUDOSTACK_HAVE_XTEST
     if (!crt_xtest_available || !crt_display) {
         return;
     }
@@ -893,6 +925,10 @@ static void crt_forward_key(SDL_Keycode keycode, int pressed) {
     }
     XTestFakeKeyEvent(crt_display, keycode_x11, pressed, CurrentTime);
     XFlush(crt_display);
+#else
+    (void)keycode;
+    (void)pressed;
+#endif
 }
 static void crt_render_frame(int drawable_width, int drawable_height, int input_width, int input_height) {
     if (drawable_width <= 0 || drawable_height <= 0 || crt_screen_texture == 0) {
@@ -1139,6 +1175,8 @@ int main(int argc, char **argv) {
         free(shader_paths);
         return EXIT_FAILURE;
     }
+    crt_xtest_available = 0;
+#if BUDOSTACK_HAVE_XTEST
     int xtest_event = 0;
     int xtest_error = 0;
     int xtest_major = 0;
@@ -1147,8 +1185,10 @@ int main(int argc, char **argv) {
         crt_xtest_available = 1;
     } else {
         fprintf(stderr, "Warning: XTest extension unavailable; input pass-through disabled.\n");
-        crt_xtest_available = 0;
     }
+#else
+    fprintf(stderr, "Warning: XTest headers unavailable; input pass-through disabled.\n");
+#endif
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());

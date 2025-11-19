@@ -51,6 +51,24 @@ SDL2_GL_LIBS = -lGL
 endif
 endif
 
+XTEST_CFLAGS = $(shell pkg-config --cflags xtst 2>/dev/null)
+XTEST_LIBS = $(shell pkg-config --libs xtst 2>/dev/null)
+ifeq ($(strip $(XTEST_LIBS)),)
+XTEST_LIB_FILES := $(wildcard /usr/lib*/libXtst.so*)
+ifneq ($(strip $(XTEST_LIB_FILES)),)
+XTEST_LIBS = -lXtst
+endif
+endif
+
+CRT_XTEST_AVAILABLE = 1
+ifeq ($(strip $(XTEST_LIBS)),)
+CRT_XTEST_AVAILABLE = 0
+endif
+CRT_XTEST_HEADER := $(wildcard /usr/include/X11/extensions/XTest.h)
+ifeq ($(strip $(CRT_XTEST_HEADER)$(XTEST_CFLAGS)),)
+CRT_XTEST_AVAILABLE = 0
+endif
+
 ifeq ($(strip $(SDL2_LIBS)),)
 SDL2_ENABLED = 0
 endif
@@ -63,7 +81,13 @@ ifeq ($(SDL2_ENABLED),1)
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
 apps/CRT.o: CFLAGS += $(SDL2_CFLAGS)
-apps/CRT: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS) -lX11 -lXtst -lXext
+ifeq ($(CRT_XTEST_AVAILABLE),1)
+apps/CRT.o: CFLAGS += -DBUDOSTACK_HAVE_XTEST=1 $(XTEST_CFLAGS)
+apps/CRT: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS) -lX11 -lXext $(XTEST_LIBS)
+else
+apps/CRT.o: CFLAGS += -DBUDOSTACK_HAVE_XTEST=0
+apps/CRT: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS) -lX11 -lXext
+endif
 endif
 
 # --------------------------------------------------------------------

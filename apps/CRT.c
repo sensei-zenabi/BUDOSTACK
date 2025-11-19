@@ -727,10 +727,12 @@ static int crt_capture_screen(uint8_t **out_pixels, int *out_width, int *out_hei
             crt_capture_pixels[offset++] = 0xFFu;
         }
     }
+    int image_width = image->width;
+    int image_height = image->height;
     XDestroyImage(image);
     *out_pixels = crt_capture_pixels;
-    *out_width = image->width;
-    *out_height = image->height;
+    *out_width = image_width;
+    *out_height = image_height;
     return 0;
 }
 static int crt_window_to_screen_coords(int win_x, int win_y, int *out_x, int *out_y) {

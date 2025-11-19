@@ -87,6 +87,7 @@ static size_t terminal_selection_caret_row = 0u;
 static size_t terminal_selection_caret_col = 0u;
 static int terminal_selection_active = 0;
 static int terminal_selection_dragging = 0;
+static int terminal_bracketed_paste_enabled = 0;
 static Uint32 terminal_shader_last_frame_tick = 0u;
 static Uint32 terminal_shader_frame_interval_ms = 0u;
 
@@ -1330,8 +1331,18 @@ static int terminal_paste_from_clipboard(int fd) {
     }
     size_t len = strlen(text);
     int result = 0;
-    if (len > 0u) {
+    if (terminal_bracketed_paste_enabled) {
+        if (terminal_send_string(fd, "\x1b[200~") < 0) {
+            result = -1;
+        }
+    }
+    if (result == 0 && len > 0u) {
         if (terminal_send_bytes(fd, text, len) < 0) {
+            result = -1;
+        }
+    }
+    if (terminal_bracketed_paste_enabled && result == 0) {
+        if (terminal_send_string(fd, "\x1b[201~") < 0) {
             result = -1;
         }
     }
@@ -4173,7 +4184,11 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                     }
                     break;
                 case 2004: /* bracketed paste */
-                    /* This does not affect our simple renderer. */
+                    if (command == 'h') {
+                        terminal_bracketed_paste_enabled = 1;
+                    } else {
+                        terminal_bracketed_paste_enabled = 0;
+                    }
                     break;
                 case 47:
                 case 1047:

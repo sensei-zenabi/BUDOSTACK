@@ -62,6 +62,8 @@ endif
 ifeq ($(SDL2_ENABLED),1)
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
+apps/CRT.o: CFLAGS += $(SDL2_CFLAGS)
+apps/CRT: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS) -lX11 -lXtst -lXext
 endif
 
 # --------------------------------------------------------------------
@@ -90,8 +92,8 @@ APPS_SRCS = $(shell find ./apps -type f -name '*.c')
 APPS_EXES = $(APPS_SRCS:.c=)
 
 ifeq ($(SDL2_ENABLED),0)
-APPS_SRCS := $(filter-out ./apps/terminal.c, $(APPS_SRCS))
-APPS_EXES := $(filter-out ./apps/terminal, $(APPS_EXES))
+APPS_SRCS := $(filter-out ./apps/terminal.c ./apps/CRT.c, $(APPS_SRCS))
+APPS_EXES := $(filter-out ./apps/terminal ./apps/CRT, $(APPS_EXES))
 endif
 
 # Find all .c files in the games folder

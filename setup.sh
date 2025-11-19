@@ -38,6 +38,9 @@ PACKAGES=(
     "libsdl2-dev"       # Mandatory: for sdl*.c based commands
     "mesa-common-dev"   # Required: OpenGL headers
     "libgl1-mesa-dev"   # Required: libGL for shader-based terminal
+    "libx11-dev"        # Required: CRT app uses the X11 APIs
+    "libxext-dev"       # Required: CRT app links against libXext
+    "libxtst-dev"       # Required: enables input pass-through in CRT app
     "espeak"            # Optional: Speech assist
 )
 

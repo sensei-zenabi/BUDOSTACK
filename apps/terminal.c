@@ -2148,6 +2148,34 @@ cleanup:
     return result;
 }
 
+static int terminal_initialize_quad_geometry(void) {
+    if (terminal_quad_vbo != 0) {
+        return 0;
+    }
+    glGenBuffers(1, &terminal_quad_vbo);
+    if (terminal_quad_vbo == 0) {
+        return -1;
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, terminal_quad_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(terminal_quad_vertices), terminal_quad_vertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    return 0;
+}
+
+static void terminal_destroy_quad_geometry(void) {
+    if (terminal_quad_vbo != 0) {
+        glDeleteBuffers(1, &terminal_quad_vbo);
+        terminal_quad_vbo = 0;
+    }
+}
+
+static void terminal_bind_texture(GLuint texture) {
+    if (terminal_bound_texture != texture) {
+        glBindTexture(GL_TEXTURE_2D, texture);
+        terminal_bound_texture = texture;
+    }
+}
+
 static int terminal_resize_render_targets(int width, int height) {
     if (width <= 0 || height <= 0) {
         return -1;

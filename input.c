@@ -417,20 +417,22 @@ static void list_filename_matches(const char *dir, const char *prefix) {
 
 static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space) {
     const char *tail = buffer + cursor;
-
     /*
-     * Save the cursor position, clear everything from the cursor to the end of the
-     * screen, print the remaining text, and restore the cursor. This avoids the
-     * previous backspace-based redraw logic that failed when the input wrapped
-     * across multiple terminal lines.
+     * Clear everything from the cursor to the end of the screen, reprint the tail,
+     * and step the cursor back using backspaces. The explicit clear keeps edits in
+     * the middle of long, wrapped commands from leaving stale characters behind,
+     * while the backspace walk preserves the wrapping behaviour introduced in PR
+     * 237 by letting the terminal handle line transitions naturally.
      */
-    printf("\033[s");           /* Save cursor */
-    printf("\033[J");           /* Clear from cursor to end of screen */
+    printf("\033[J");
     printf("%s", tail);
     if (clear_extra_space) {
         printf(" ");
     }
-    printf("\033[u");           /* Restore cursor */
+    int move_back = utf8_string_display_width(tail) + (clear_extra_space ? 1 : 0);
+    for (int i = 0; i < move_back; i++) {
+        printf("\b");
+    }
     fflush(stdout);
 }
 

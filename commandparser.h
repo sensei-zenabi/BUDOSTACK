@@ -13,7 +13,7 @@
 #ifndef COMMANDPARSER_H
 #define COMMANDPARSER_H
 
-#define INPUT_SIZE 256
+#define INPUT_SIZE 1024
 #define MAX_PARAMETERS 10
 #define MAX_OPTIONS 10
 

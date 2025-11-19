@@ -153,6 +153,18 @@ char* read_input(void) {
                         cursor = prev;
                     }
                     continue;
+                } else if (next2 == '3') { /* Delete key sequence: ESC [ 3 ~ */
+                    int next3 = getchar();
+                    if (next3 == '~') {
+                        if (cursor < pos) {
+                            size_t next = utf8_next_char_start(buffer, cursor, pos);
+                            size_t removed_bytes = next - cursor;
+                            memmove(buffer + cursor, buffer + next, pos - next + 1);
+                            pos -= removed_bytes;
+                            redraw_from_cursor(buffer, cursor, 1);
+                        }
+                        continue;
+                    }
                 }
                 /* Ignore other escape sequences */
             }

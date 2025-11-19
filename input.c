@@ -38,7 +38,6 @@ static size_t utf8_sequence_length(unsigned char first_byte);
 static size_t utf8_read_sequence(int first_byte, char *dst, size_t dst_size);
 static int terminal_columns(void);
 static void refresh_line(const char *prompt, const char *buffer, size_t cursor);
-static size_t refresh_previous_rows = 1u;
 
 /*
  * read_input()
@@ -83,8 +82,6 @@ char* read_input(const char *prompt) {
 
     memset(buffer, 0, sizeof(buffer));
     fflush(stdout);
-
-    refresh_previous_rows = 1u;
 
     while (1) {
         int c = getchar();
@@ -443,42 +440,29 @@ static void refresh_line(const char *prompt, const char *buffer, size_t cursor) 
     int buffer_width = utf8_display_width_range(buffer, 0, length);
 
     size_t cursor_row = (size_t)((prompt_width + cursor_width) / cols);
-    size_t target_col = (size_t)((prompt_width + cursor_width) % cols);
+    size_t cursor_col = (size_t)((prompt_width + cursor_width) % cols);
     size_t end_row = (size_t)((prompt_width + buffer_width) / cols);
-    size_t rows_used = end_row + 1u;
-    if (rows_used == 0u) {
-        rows_used = 1u;
-    }
 
     printf("\r");
-    if (refresh_previous_rows > 1u) {
-        printf("\033[%zuA", refresh_previous_rows - 1u);
+    if (cursor_row > 0u) {
+        printf("\033[%zuA", cursor_row);
     }
 
-    for (size_t i = 0u; i < refresh_previous_rows; i++) {
-        printf("\033[2K");
-        if (i + 1u < refresh_previous_rows) {
-            printf("\033[B");
-        }
-    }
-
-    if (refresh_previous_rows > 1u) {
-        printf("\033[%zuA", refresh_previous_rows - 1u);
-    }
-    printf("\r");
+    printf("\033[J");
 
     printf("%s", prompt);
     fwrite(buffer, 1, length, stdout);
 
     if (end_row > cursor_row) {
         printf("\033[%zuA", end_row - cursor_row);
+    } else if (cursor_row > end_row) {
+        printf("\033[%zuB", cursor_row - end_row);
     }
     printf("\r");
-    if (target_col > 0u) {
-        printf("\033[%zuC", target_col);
+    if (cursor_col > 0u) {
+        printf("\033[%zuC", cursor_col);
     }
 
-    refresh_previous_rows = rows_used;
     fflush(stdout);
 }
 

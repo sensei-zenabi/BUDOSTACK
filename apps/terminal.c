@@ -4636,6 +4636,59 @@ static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {
     }
 }
 
+static void terminal_configure_pty_defaults(int fd) {
+    if (fd < 0) {
+        return;
+    }
+
+    struct termios tio;
+    if (tcgetattr(fd, &tio) != 0) {
+        perror("tcgetattr");
+        return;
+    }
+
+    tio.c_lflag |= (ICANON | ECHO | ECHOE | ECHOK | ECHOCTL | ECHOKE | IEXTEN | ISIG);
+    tio.c_lflag &= (tcflag_t)~(TOSTOP | NOFLSH);
+
+    tio.c_iflag |= (ICRNL | IXON);
+#ifdef IUTF8
+    tio.c_iflag |= IUTF8;
+#endif
+    tcflag_t iflag_clear = (IGNCR | INLCR | IXOFF);
+#ifdef IUCLC
+    iflag_clear |= IUCLC;
+#endif
+    tio.c_iflag &= (tcflag_t)~iflag_clear;
+
+    tio.c_oflag |= (OPOST | ONLCR);
+    tcflag_t oflag_clear = 0;
+#ifdef OCRNL
+    oflag_clear |= OCRNL;
+#endif
+#ifdef ONOCR
+    oflag_clear |= ONOCR;
+#endif
+#ifdef ONLRET
+    oflag_clear |= ONLRET;
+#endif
+    tio.c_oflag &= (tcflag_t)~oflag_clear;
+
+    tio.c_cflag |= (CS8 | CREAD);
+
+    tio.c_cc[VERASE] = 0x7f;
+    tio.c_cc[VKILL] = 0x15;
+    tio.c_cc[VEOF] = 0x04;
+    tio.c_cc[VINTR] = 0x03;
+    tio.c_cc[VQUIT] = 0x1c;
+    tio.c_cc[VSTART] = 0x11;
+    tio.c_cc[VSTOP] = 0x13;
+    tio.c_cc[VSUSP] = 0x1a;
+
+    if (tcsetattr(fd, TCSANOW, &tio) != 0) {
+        perror("tcsetattr");
+    }
+}
+
 static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
     if (!exe_path || !out_master_fd) {
         return -1;
@@ -4692,6 +4745,8 @@ static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
         if (slave_fd > STDERR_FILENO) {
             close(slave_fd);
         }
+
+        terminal_configure_pty_defaults(STDIN_FILENO);
 
         close(master_fd);
 

@@ -374,10 +374,10 @@ static int crt_initialize_gl_program(const char *shader_path) {
     size_t shader_body_len = (size_t)(content_end - shader_body);
     const char *version_prefix = version_start ? version_start : "#version 120\n";
     size_t version_prefix_len = version_start ? (size_t)(version_end - version_start) : strlen("#version 120\n");
-    const char *parameter_block = "#define PARAMETER_UNIFORMS\n";
+    const char *parameter_block = "#define PARAMETER_UNIFORM 1\n";
     size_t parameter_block_len = strlen(parameter_block);
-    const char *vertex_define = "#define VERTEX_SHADER 1\n";
-    const char *fragment_define = "#define FRAGMENT_SHADER 1\n";
+    const char *vertex_define = "#define VERTEX 1\n";
+    const char *fragment_define = "#define FRAGMENT 1\n";
     size_t vertex_define_len = strlen(vertex_define);
     size_t fragment_define_len = strlen(fragment_define);
     size_t vertex_length = version_prefix_len + parameter_block_len + vertex_define_len + shader_body_len + 1u;

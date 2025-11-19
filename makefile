@@ -62,6 +62,8 @@ endif
 ifeq ($(SDL2_ENABLED),1)
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
+CRT.o: CFLAGS += $(SDL2_CFLAGS) $(X11_CFLAGS)
+CRT: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS) $(X11_LIBS)
 endif
 
 # --------------------------------------------------------------------
@@ -76,8 +78,39 @@ LIB_OBJS = $(LIB_SRCS:.c=.o)
 # Find all .c files recursively (all sources, except user folders and .git)
 ALL_SOURCES = $(shell find . -type f -name '*.c' -not -path "./users/*" -not -path "*/.git/*")
 
-# Exclude command, app, and lib sources from the main executable sources.
-NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./games/% ./lib/% ./utilities/%, $(ALL_SOURCES))
+# Optional X11 detection for overlays and desktop capture
+X11_CFLAGS = $(shell pkg-config --cflags x11 2>/dev/null)
+X11_LIBS = $(shell pkg-config --libs x11 2>/dev/null)
+X11_ENABLED = 1
+
+ifeq ($(strip $(X11_LIBS)),)
+X11_LIB_FILES := $(wildcard /usr/lib*/libX11.so*)
+ifneq ($(strip $(X11_LIB_FILES)),)
+X11_LIBS = -lX11
+else
+X11_ENABLED = 0
+endif
+endif
+
+# Standalone root-level tools that should build into their own binaries instead
+# of being linked into the primary budostack executable.
+STANDALONE_SRCS = ./CRT.c
+CRT_ENABLED = 1
+ifeq ($(SDL2_ENABLED),0)
+CRT_ENABLED = 0
+endif
+ifeq ($(X11_ENABLED),0)
+CRT_ENABLED = 0
+endif
+
+ifeq ($(CRT_ENABLED),1)
+STANDALONE_EXES = $(STANDALONE_SRCS:.c=)
+else
+STANDALONE_EXES =
+endif
+
+# Exclude command, app, and lib sources, plus standalone binaries, from the main executable sources.
+NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./games/% ./lib/% ./utilities/% $(STANDALONE_SRCS), $(ALL_SOURCES))
 NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)
 TARGET = budostack
 
@@ -103,7 +136,7 @@ UTILITIES_SRCS = $(shell find ./utilities -type f -name '*.c')
 UTILITIES_EXES = $(UTILITIES_SRCS:.c=)
 
 # Define all targets (main, commands, and apps)
-ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
+ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES) $(STANDALONE_EXES)
 
 .PHONY: all clean
 

@@ -38,6 +38,7 @@ static size_t utf8_sequence_length(unsigned char first_byte);
 static size_t utf8_read_sequence(int first_byte, char *dst, size_t dst_size);
 static int terminal_columns(void);
 static void refresh_line(const char *prompt, const char *buffer, size_t cursor);
+static size_t refresh_previous_rows = 1u;
 
 /*
  * read_input()
@@ -82,6 +83,8 @@ char* read_input(const char *prompt) {
 
     memset(buffer, 0, sizeof(buffer));
     fflush(stdout);
+
+    refresh_previous_rows = 1u;
 
     while (1) {
         int c = getchar();
@@ -357,7 +360,7 @@ static int terminal_columns(void) {
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1 || w.ws_col == 0) {
         return 80;
     }
-    return w.ws_col;
+    return w.ws_col > 0 ? (int)w.ws_col : 80;
 }
 
 static size_t utf8_sequence_length(unsigned char first_byte) {
@@ -435,27 +438,47 @@ static void refresh_line(const char *prompt, const char *buffer, size_t cursor) 
     int cursor_width = utf8_display_width_range(buffer, 0, cursor);
     int buffer_width = utf8_display_width_range(buffer, 0, length);
 
-    int current_row = (prompt_width + cursor_width) / cols;
-    printf("\r");
-    if (current_row > 0) {
-        printf("\033[%dA", current_row);
+    if (cols <= 0) {
+        cols = 80;
     }
 
-    printf("\033[J");
+    size_t cursor_row = (size_t)((prompt_width + cursor_width) / cols);
+    size_t target_col = (size_t)((prompt_width + cursor_width) % cols);
+
+    printf("\r");
+    if (cursor_row > 0u) {
+        printf("\033[%zuA", cursor_row);
+    }
+
+    for (size_t i = 0; i < refresh_previous_rows; i++) {
+        printf("\033[K");
+        if (i + 1u < refresh_previous_rows) {
+            printf("\n");
+        }
+    }
+
+    if (refresh_previous_rows > 1u) {
+        printf("\033[%zuA", refresh_previous_rows - 1u);
+    }
+    printf("\r");
+
     printf("%s", prompt);
     fwrite(buffer, 1, length, stdout);
 
-    int end_row = (prompt_width + buffer_width) / cols;
-    int target_row = (prompt_width + cursor_width) / cols;
-    int target_col = (prompt_width + cursor_width) % cols;
-
-    if (end_row > target_row) {
-        printf("\033[%dA", end_row - target_row);
+    size_t end_row = (size_t)((prompt_width + buffer_width) / cols);
+    size_t rows_used = end_row + 1u;
+    if (rows_used == 0u) {
+        rows_used = 1u;
+    }
+    if (end_row > cursor_row) {
+        printf("\033[%zuA", end_row - cursor_row);
     }
     printf("\r");
-    if (target_col > 0) {
-        printf("\033[%dC", target_col);
+    if (target_col > 0u) {
+        printf("\033[%zuC", target_col);
     }
+
+    refresh_previous_rows = rows_used;
     fflush(stdout);
 }
 

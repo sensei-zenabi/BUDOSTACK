@@ -434,31 +434,42 @@ static void refresh_line(const char *prompt, const char *buffer, size_t cursor) 
 
     size_t length = strlen(buffer);
     int cols = terminal_columns();
-    int prompt_width = utf8_string_display_width(prompt);
-    int cursor_width = utf8_display_width_range(buffer, 0, cursor);
-    int buffer_width = utf8_display_width_range(buffer, 0, length);
-
     if (cols <= 0) {
         cols = 80;
     }
 
+    int prompt_width = utf8_string_display_width(prompt);
+    int cursor_width = utf8_display_width_range(buffer, 0, cursor);
+    int buffer_width = utf8_display_width_range(buffer, 0, length);
+
     size_t cursor_row = (size_t)((prompt_width + cursor_width) / cols);
     size_t target_col = (size_t)((prompt_width + cursor_width) % cols);
-
-    printf("\r");
-    if (refresh_previous_rows > 1u) {
-        printf("\033[%zuA", refresh_previous_rows - 1u);
-    }
-    printf("\033[J");
-
-    printf("%s", prompt);
-    fwrite(buffer, 1, length, stdout);
-
     size_t end_row = (size_t)((prompt_width + buffer_width) / cols);
     size_t rows_used = end_row + 1u;
     if (rows_used == 0u) {
         rows_used = 1u;
     }
+
+    printf("\r");
+    if (refresh_previous_rows > 1u) {
+        printf("\033[%zuA", refresh_previous_rows - 1u);
+    }
+
+    for (size_t i = 0u; i < refresh_previous_rows; i++) {
+        printf("\033[2K");
+        if (i + 1u < refresh_previous_rows) {
+            printf("\033[B");
+        }
+    }
+
+    if (refresh_previous_rows > 1u) {
+        printf("\033[%zuA", refresh_previous_rows - 1u);
+    }
+    printf("\r");
+
+    printf("%s", prompt);
+    fwrite(buffer, 1, length, stdout);
+
     if (end_row > cursor_row) {
         printf("\033[%zuA", end_row - cursor_row);
     }

@@ -38,6 +38,8 @@ PACKAGES=(
     "libsdl2-dev"       # Mandatory: for sdl*.c based commands
     "mesa-common-dev"   # Required: OpenGL headers
     "libgl1-mesa-dev"   # Required: libGL for shader-based terminal
+    "libx11-dev"        # Required: X11 headers for CRT overlay
+    "libxext-dev"       # Required: X11 shape extension for CRT overlay
     "espeak"            # Optional: Speech assist
 )
 

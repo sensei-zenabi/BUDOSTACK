@@ -3558,6 +3558,13 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         struct terminal_cell *cell = &buffer->cells[buffer->cursor_row * buffer->columns + buffer->cursor_column];
         terminal_cell_apply_current(buffer, cell, ch);
         buffer->cursor_column++;
+        if (buffer->cursor_column >= buffer->columns) {
+            buffer->cursor_column = 0u;
+            buffer->cursor_row++;
+            if (buffer->cursor_row >= buffer->rows) {
+                terminal_buffer_scroll(buffer);
+            }
+        }
         return;
     }
 

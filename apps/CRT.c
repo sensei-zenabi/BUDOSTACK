@@ -370,18 +370,26 @@ static int crt_initialize_gl_program(const char *shader_path) {
     if (version_end && version_end < content_end) {
         version_end++;
     }
+    const char *version_prefix = version_start ? version_start : "#version 110\n";
+    size_t version_prefix_len = version_start ? (size_t)(version_end - version_start) : strlen("#version 110\n");
     const char *shader_body = version_end ? version_end : content_start;
     size_t shader_body_len = (size_t)(content_end - shader_body);
-    const char *version_prefix = version_start ? version_start : "#version 120\n";
-    size_t version_prefix_len = version_start ? (size_t)(version_end - version_start) : strlen("#version 120\n");
     const char *parameter_block = "#define PARAMETER_UNIFORM 1\n";
     size_t parameter_block_len = strlen(parameter_block);
     const char *vertex_define = "#define VERTEX 1\n";
     const char *fragment_define = "#define FRAGMENT 1\n";
     size_t vertex_define_len = strlen(vertex_define);
     size_t fragment_define_len = strlen(fragment_define);
-    size_t vertex_length = version_prefix_len + parameter_block_len + vertex_define_len + shader_body_len + 1u;
-    size_t fragment_length = version_prefix_len + parameter_block_len + fragment_define_len + shader_body_len + 1u;
+    size_t newline_len = 0u;
+    if (version_prefix_len > 0u) {
+        char last_char = version_prefix[version_prefix_len - 1u];
+        if (last_char != '\n' && last_char != '\r') {
+            newline_len = 1u;
+        }
+    }
+
+    size_t vertex_length = version_prefix_len + newline_len + parameter_block_len + vertex_define_len + shader_body_len + 1u;
+    size_t fragment_length = version_prefix_len + newline_len + parameter_block_len + fragment_define_len + shader_body_len + 1u;
 
     char *vertex_source = malloc(vertex_length);
     char *fragment_source = malloc(fragment_length);
@@ -397,6 +405,9 @@ static int crt_initialize_gl_program(const char *shader_path) {
     size_t offset = 0u;
     memcpy(vertex_source + offset, version_prefix, version_prefix_len);
     offset += version_prefix_len;
+    if (newline_len > 0u) {
+        vertex_source[offset++] = '\n';
+    }
     memcpy(vertex_source + offset, parameter_block, parameter_block_len);
     offset += parameter_block_len;
     memcpy(vertex_source + offset, vertex_define, vertex_define_len);
@@ -408,6 +419,9 @@ static int crt_initialize_gl_program(const char *shader_path) {
     offset = 0u;
     memcpy(fragment_source + offset, version_prefix, version_prefix_len);
     offset += version_prefix_len;
+    if (newline_len > 0u) {
+        fragment_source[offset++] = '\n';
+    }
     memcpy(fragment_source + offset, parameter_block, parameter_block_len);
     offset += parameter_block_len;
     memcpy(fragment_source + offset, fragment_define, fragment_define_len);

@@ -446,8 +446,8 @@ static void refresh_line(const char *prompt, const char *buffer, size_t cursor) 
     size_t target_col = (size_t)((prompt_width + cursor_width) % cols);
 
     printf("\r");
-    if (cursor_row > 0u) {
-        printf("\033[%zuA", cursor_row);
+    if (refresh_previous_rows > 1u) {
+        printf("\033[%zuA", refresh_previous_rows - 1u);
     }
 
     for (size_t i = 0; i < refresh_previous_rows; i++) {

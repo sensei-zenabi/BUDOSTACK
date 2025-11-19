@@ -449,18 +449,7 @@ static void refresh_line(const char *prompt, const char *buffer, size_t cursor) 
     if (refresh_previous_rows > 1u) {
         printf("\033[%zuA", refresh_previous_rows - 1u);
     }
-
-    for (size_t i = 0; i < refresh_previous_rows; i++) {
-        printf("\033[K");
-        if (i + 1u < refresh_previous_rows) {
-            printf("\n");
-        }
-    }
-
-    if (refresh_previous_rows > 1u) {
-        printf("\033[%zuA", refresh_previous_rows - 1u);
-    }
-    printf("\r");
+    printf("\033[J");
 
     printf("%s", prompt);
     fwrite(buffer, 1, length, stdout);

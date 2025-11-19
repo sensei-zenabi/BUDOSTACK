@@ -152,6 +152,19 @@ $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS
 	@echo "Linking $@..."
 	$(CC) $< $(LIB_OBJS) $(LDFLAGS) -o $@
 
+# Standalone tools (like the CRT overlay) link without the shared lib objects
+# but still need target-specific linker flags to appear after their objects so
+# GL symbols resolve correctly.
+$(STANDALONE_EXES): %: %.o
+	@echo "Linking $@..."
+	$(CC) $< $(LDFLAGS) -o $@
+
+ifeq ($(CRT_ENABLED),1)
+CRT: CRT.o
+	@echo "Linking $@..."
+	$(CC) $< $(LDFLAGS) -o $@
+endif
+
 # Pattern rule: compile any .c file into its corresponding .o file.
 %.o: %.c
 	@echo "Compiling $<..."

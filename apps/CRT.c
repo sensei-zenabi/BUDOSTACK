@@ -505,6 +505,15 @@ static int crt_initialize_gl_program(const char *shader_path) {
     if (shader_info.uniform_frame_direction >= 0) {
         glUniform1i(shader_info.uniform_frame_direction, 1);
     }
+    for (size_t i = 0; i < parameter_count; i++) {
+        if (!parameters[i].name) {
+            continue;
+        }
+        GLint location = glGetUniformLocation(program, parameters[i].name);
+        if (location >= 0) {
+            glUniform1f(location, parameters[i].default_value);
+        }
+    }
     if (shader_info.uniform_mvp >= 0) {
         crt_shader_set_matrix(shader_info.uniform_mvp,
                               shader_info.cached_mvp,

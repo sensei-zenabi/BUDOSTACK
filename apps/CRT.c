@@ -63,6 +63,7 @@
 
 #include "../lib/crt_shader_stack.h"
 #include "../lib/crt_shader_gl.h"
+#include "../lib/budostack_paths.h"
 #endif
 
 #ifndef PATH_MAX
@@ -1128,7 +1129,7 @@ int main(int argc, char **argv) {
         shader_arg_count = 1u;
     }
     char root_dir[PATH_MAX];
-    if (compute_root_directory(argv[0], root_dir, sizeof(root_dir)) != 0) {
+    if (budostack_compute_root_directory(argv[0], root_dir, sizeof(root_dir)) != 0) {
         fprintf(stderr, "Failed to resolve BUDOSTACK root directory.\n");
         free(shader_args);
         return EXIT_FAILURE;
@@ -1147,7 +1148,10 @@ int main(int argc, char **argv) {
             return EXIT_FAILURE;
         }
         shader_paths = new_paths;
-        if (crt_resolve_shader_path(root_dir, shader_args[i], shader_paths[shader_path_count].path, sizeof(shader_paths[shader_path_count].path)) != 0) {
+        if (budostack_resolve_resource_path(root_dir,
+                                            shader_args[i],
+                                            shader_paths[shader_path_count].path,
+                                            sizeof(shader_paths[shader_path_count].path)) != 0) {
             fprintf(stderr, "Shader path is too long.\n");
             free(shader_paths);
             free(shader_args);

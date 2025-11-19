@@ -42,6 +42,7 @@
 #include "../lib/stb_vorbis.h"
 #include "../lib/crt_shader_stack.h"
 #include "../lib/crt_shader_gl.h"
+#include "../lib/budostack_paths.h"
 #endif
 
 #ifndef PATH_MAX
@@ -256,7 +257,6 @@ static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
 static GLuint terminal_compile_shader(GLenum type, const char *source, const char *label);
 static void terminal_print_usage(const char *progname);
-static int terminal_resolve_shader_path(const char *root_dir, const char *shader_arg, char *out_path, size_t out_size);
 static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args);
 
 static int terminal_send_response(const char *response) {
@@ -3937,94 +3937,6 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
     }
 }
 
-static int compute_root_directory(const char *argv0, char *out_path, size_t out_size) {
-    if (!argv0 || !out_path || out_size == 0u) {
-        return -1;
-    }
-
-    char resolved[PATH_MAX];
-    if (!realpath(argv0, resolved)) {
-        char cwd[PATH_MAX];
-        if (!getcwd(cwd, sizeof(cwd))) {
-            return -1;
-        }
-        size_t len = strlen(cwd);
-        if (len >= out_size) {
-            return -1;
-        }
-        memcpy(out_path, cwd, len + 1u);
-        return 0;
-    }
-
-    char *last_sep = strrchr(resolved, '/');
-    if (!last_sep) {
-        size_t len = strlen(resolved);
-        if (len >= out_size) {
-            return -1;
-        }
-        memcpy(out_path, resolved, len + 1u);
-        return 0;
-    }
-    *last_sep = '\0';
-
-    char *apps_sep = strrchr(resolved, '/');
-    if (!apps_sep) {
-        size_t len = strlen(resolved);
-        if (len >= out_size) {
-            return -1;
-        }
-        memcpy(out_path, resolved, len + 1u);
-        return 0;
-    }
-    *apps_sep = '\0';
-
-    size_t len = strlen(resolved);
-    if (len >= out_size) {
-        return -1;
-    }
-    memcpy(out_path, resolved, len + 1u);
-    return 0;
-}
-
-static int build_path(char *dest, size_t dest_size, const char *base, const char *suffix) {
-    if (!dest || dest_size == 0u || !base || !suffix) {
-        return -1;
-    }
-    int written = snprintf(dest, dest_size, "%s/%s", base, suffix);
-    if (written < 0 || (size_t)written >= dest_size) {
-        return -1;
-    }
-    return 0;
-}
-
-static int terminal_resolve_shader_path(const char *root_dir, const char *shader_arg, char *out_path, size_t out_size) {
-    if (!shader_arg || !out_path || out_size == 0u) {
-        return -1;
-    }
-
-    if (shader_arg[0] == '/') {
-        size_t len = strlen(shader_arg);
-        if (len >= out_size) {
-            return -1;
-        }
-        memcpy(out_path, shader_arg, len + 1u);
-        return 0;
-    }
-
-    if (root_dir) {
-        if (build_path(out_path, out_size, root_dir, shader_arg) == 0 && access(out_path, R_OK) == 0) {
-            return 0;
-        }
-    }
-
-    size_t len = strlen(shader_arg);
-    if (len >= out_size) {
-        return -1;
-    }
-    memcpy(out_path, shader_arg, len + 1u);
-    return 0;
-}
-
 static void update_pty_size(int fd, size_t columns, size_t rows) {
     if (fd < 0) {
         return;
@@ -4465,14 +4377,14 @@ int main(int argc, char **argv) {
     }
 
     char root_dir[PATH_MAX];
-    if (compute_root_directory(argv[0], root_dir, sizeof(root_dir)) != 0) {
+    if (budostack_compute_root_directory(argv[0], root_dir, sizeof(root_dir)) != 0) {
         fprintf(stderr, "Failed to resolve BUDOSTACK root directory.\n");
         free(shader_args);
         return EXIT_FAILURE;
     }
 
     char budostack_path[PATH_MAX];
-    if (build_path(budostack_path, sizeof(budostack_path), root_dir, "budostack") != 0) {
+    if (budostack_build_path(budostack_path, sizeof(budostack_path), root_dir, "budostack") != 0) {
         fprintf(stderr, "Failed to resolve budostack executable path.\n");
         free(shader_args);
         return EXIT_FAILURE;
@@ -4485,7 +4397,7 @@ int main(int argc, char **argv) {
     }
 
     char font_path[PATH_MAX];
-    if (build_path(font_path, sizeof(font_path), root_dir, "fonts/system.psf") != 0) {
+    if (budostack_build_path(font_path, sizeof(font_path), root_dir, "fonts/system.psf") != 0) {
         fprintf(stderr, "Failed to resolve font path.\n");
         free(shader_args);
         return EXIT_FAILURE;
@@ -4509,7 +4421,10 @@ int main(int argc, char **argv) {
             return EXIT_FAILURE;
         }
         shader_paths = new_paths;
-        if (terminal_resolve_shader_path(root_dir, shader_args[i], shader_paths[shader_path_count].path, sizeof(shader_paths[shader_path_count].path)) != 0) {
+        if (budostack_resolve_resource_path(root_dir,
+                                            shader_args[i],
+                                            shader_paths[shader_path_count].path,
+                                            sizeof(shader_paths[shader_path_count].path)) != 0) {
             fprintf(stderr, "Shader path is too long.\n");
             free(shader_paths);
             free(shader_args);

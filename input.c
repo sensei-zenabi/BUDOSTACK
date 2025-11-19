@@ -301,6 +301,9 @@ char* read_input(void) {
             if (pos + seq_len >= INPUT_SIZE) {
                 continue;
             }
+            if (cursor > pos) {
+                cursor = pos;
+            }
             memmove(buffer + cursor + seq_len, buffer + cursor, pos - cursor + 1);
             memcpy(buffer + cursor, utf8_seq, seq_len);
             pos += seq_len;
@@ -418,6 +421,8 @@ static void list_filename_matches(const char *dir, const char *prefix) {
 static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space) {
     const char *tail = buffer + cursor;
     int tail_width = utf8_string_display_width(tail);
+    /* Clear any stale characters to the right of the cursor before redrawing. */
+    printf("\033[K");
     printf("%s", tail);
     if (clear_extra_space) {
         printf(" ");

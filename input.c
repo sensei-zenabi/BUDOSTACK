@@ -10,6 +10,7 @@
 #include <wchar.h>
 #include <locale.h>
 #include <limits.h>
+#include <sys/ioctl.h>
 #include "input.h"
 
 #define INPUT_SIZE 1024
@@ -35,8 +36,9 @@ static size_t utf8_prev_char_start(const char *buffer, size_t cursor);
 static size_t utf8_next_char_start(const char *buffer, size_t cursor, size_t length);
 static size_t utf8_sequence_length(unsigned char first_byte);
 static size_t utf8_read_sequence(int first_byte, char *dst, size_t dst_size);
-static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space);
-static void move_cursor_columns(int columns, int direction);
+static void redraw_from_cursor(const char *prompt, const char *buffer, size_t cursor);
+static int terminal_columns(void);
+static void reset_line_tracking(void);
 
 /*
  * read_input()
@@ -47,13 +49,15 @@ static void move_cursor_columns(int columns, int direction);
  * - Up/Down arrow keys to navigate through previously entered commands
  * - Left/Right arrow keys for in-line cursor movement
  * - TAB key for autocomplete (command or filename based on position)
+ * - Full-line redraws to honour terminal wrapping when the input spans
+ *   multiple rows.
  *
  * Design principles:
  * - Separation of Concerns: History management, input reading, and display updates are handled here.
  * - Memory Management: Uses a fixed-size history buffer and shifts entries when full.
  * - Usability: Provides immediate feedback by replacing the current input with history commands.
  */
-char* read_input(void) {
+char* read_input(const char *prompt) {
     static char buffer[INPUT_SIZE];
     size_t pos = 0;        // End of current input
     size_t cursor = 0;     // Current cursor position within buffer
@@ -63,6 +67,10 @@ char* read_input(void) {
     static char *history[MAX_HISTORY] = {0};
     static int history_count = 0;
     static int history_index = 0;
+
+    if (!prompt) {
+        prompt = "";
+    }
 
     /* Get current terminal settings and disable canonical mode and echo */
     if (tcgetattr(STDIN_FILENO, &oldt) == -1) {
@@ -77,11 +85,15 @@ char* read_input(void) {
     }
 
     memset(buffer, 0, sizeof(buffer));
+    reset_line_tracking();
+    printf("%s", prompt);
     fflush(stdout);
 
     while (1) {
         int c = getchar();
         if (c == '\n') {
+            cursor = pos;
+            redraw_from_cursor(prompt, buffer, cursor);
             putchar('\n');
             break;
         }
@@ -93,64 +105,39 @@ char* read_input(void) {
                 if (next2 == 'A') { /* Up arrow */
                     if (history_count > 0 && history_index > 0) {
                         history_index--;
-                        int move_width = utf8_display_width_range(buffer, cursor, pos);
-                        move_cursor_columns(move_width, 1);
-                        cursor = pos;
-                        int clear_width = utf8_display_width_range(buffer, 0, pos);
-                        for (int i = 0; i < clear_width; i++) {
-                            printf("\b \b");
-                        }
                         strcpy(buffer, history[history_index]);
                         pos = strlen(buffer);
                         cursor = pos;
-                        printf("%s", buffer);
-                        fflush(stdout);
+                        redraw_from_cursor(prompt, buffer, cursor);
                     }
                     continue;
                 } else if (next2 == 'B') { /* Down arrow */
                     if (history_count > 0 && history_index < history_count - 1) {
                         history_index++;
-                        int move_width = utf8_display_width_range(buffer, cursor, pos);
-                        move_cursor_columns(move_width, 1);
-                        cursor = pos;
-                        int clear_width = utf8_display_width_range(buffer, 0, pos);
-                        for (int i = 0; i < clear_width; i++) {
-                            printf("\b \b");
-                        }
                         strcpy(buffer, history[history_index]);
                         pos = strlen(buffer);
                         cursor = pos;
-                        printf("%s", buffer);
-                        fflush(stdout);
+                        redraw_from_cursor(prompt, buffer, cursor);
                     } else if (history_count > 0 && history_index == history_count - 1) {
                         history_index = history_count;
-                        int move_width = utf8_display_width_range(buffer, cursor, pos);
-                        move_cursor_columns(move_width, 1);
-                        cursor = pos;
-                        int clear_width = utf8_display_width_range(buffer, 0, pos);
-                        for (int i = 0; i < clear_width; i++) {
-                            printf("\b \b");
-                        }
                         buffer[0] = '\0';
                         pos = 0;
                         cursor = 0;
-                        fflush(stdout);
+                        redraw_from_cursor(prompt, buffer, cursor);
                     }
                     continue;
                 } else if (next2 == 'C') { /* Right arrow */
                     if (cursor < pos) {
                         size_t next = utf8_next_char_start(buffer, cursor, pos);
-                        int move_width = utf8_display_width_range(buffer, cursor, next);
-                        move_cursor_columns(move_width, 1);
                         cursor = next;
+                        redraw_from_cursor(prompt, buffer, cursor);
                     }
                     continue;
                 } else if (next2 == 'D') { /* Left arrow */
                     if (cursor > 0) {
                         size_t prev = utf8_prev_char_start(buffer, cursor);
-                        int move_width = utf8_display_width_range(buffer, prev, cursor);
-                        move_cursor_columns(move_width, -1);
                         cursor = prev;
+                        redraw_from_cursor(prompt, buffer, cursor);
                     }
                     continue;
                 }
@@ -183,25 +170,10 @@ char* read_input(void) {
                 }
                 if (count == 1) {
                     size_t comp_len = strlen(completion);
-                    int erase_width = utf8_display_width_range(buffer, token_start, pos);
-                    for (int i = 0; i < erase_width; i++) {
-                        printf("\b");
-                    }
-                    printf("%s", completion);
-                    int completion_width = utf8_string_display_width(completion);
-                    if (completion_width < erase_width) {
-                        int diff = erase_width - completion_width;
-                        for (int i = 0; i < diff; i++) {
-                            printf(" ");
-                        }
-                        for (int i = 0; i < diff; i++) {
-                            printf("\b");
-                        }
-                    }
-                    fflush(stdout);
                     memmove(buffer + token_start, completion, comp_len + 1);
                     pos = token_start + comp_len;
                     cursor = pos;
+                    redraw_from_cursor(prompt, buffer, cursor);
                 } else if (count > 1) {
                     printf("\n");
                     if (used_filenames) {
@@ -221,34 +193,18 @@ char* read_input(void) {
                     } else {
                         list_command_matches(token);
                     }
-                    printf("%s", buffer);
-                    fflush(stdout);
-                    cursor = pos;
+                    reset_line_tracking();
+                    redraw_from_cursor(prompt, buffer, cursor);
                 }
             } else {
                 char completion[INPUT_SIZE] = {0};
                 int count = autocomplete_filename(token, completion, sizeof(completion));
                 if (count == 1) {
                     size_t comp_len = strlen(completion);
-                    int erase_width = utf8_display_width_range(buffer, token_start, pos);
-                    for (int i = 0; i < erase_width; i++) {
-                        printf("\b");
-                    }
-                    printf("%s", completion);
-                    int completion_width = utf8_string_display_width(completion);
-                    if (completion_width < erase_width) {
-                        int diff = erase_width - completion_width;
-                        for (int i = 0; i < diff; i++) {
-                            printf(" ");
-                        }
-                        for (int i = 0; i < diff; i++) {
-                            printf("\b");
-                        }
-                    }
-                    fflush(stdout);
                     memmove(buffer + token_start, completion, comp_len + 1);
                     pos = token_start + comp_len;
                     cursor = pos;
+                    redraw_from_cursor(prompt, buffer, cursor);
                 } else if (count > 1) {
                     printf("\n");
                     char dir[INPUT_SIZE];
@@ -264,9 +220,8 @@ char* read_input(void) {
                         strcpy(prefix, token);
                     }
                     list_filename_matches(dir, prefix);
-                    printf("%s", buffer);
-                    fflush(stdout);
-                    cursor = pos;
+                    reset_line_tracking();
+                    redraw_from_cursor(prompt, buffer, cursor);
                 }
             }
         }
@@ -275,20 +230,10 @@ char* read_input(void) {
             if (cursor > 0) {
                 size_t char_start = utf8_prev_char_start(buffer, cursor);
                 size_t removed_bytes = cursor - char_start;
-                size_t copy_len = removed_bytes;
-                if (copy_len > MB_LEN_MAX)
-                    copy_len = MB_LEN_MAX;
-                char removed[MB_LEN_MAX + 1];
-                memcpy(removed, buffer + char_start, copy_len);
-                removed[copy_len] = '\0';
-                int removed_width = utf8_string_display_width(removed);
                 memmove(buffer + char_start, buffer + cursor, pos - cursor + 1);
                 cursor = char_start;
                 pos -= removed_bytes;
-                for (int i = 0; i < removed_width; i++) {
-                    printf("\b");
-                }
-                redraw_from_cursor(buffer, cursor, 1);
+                redraw_from_cursor(prompt, buffer, cursor);
             }
         }
         /* Regular character input */
@@ -305,8 +250,7 @@ char* read_input(void) {
             memcpy(buffer + cursor, utf8_seq, seq_len);
             pos += seq_len;
             cursor += seq_len;
-            fwrite(utf8_seq, 1, seq_len, stdout);
-            redraw_from_cursor(buffer, cursor, 0);
+            redraw_from_cursor(prompt, buffer, cursor);
         }
     }
     buffer[pos] = '\0';
@@ -415,17 +359,58 @@ static void list_filename_matches(const char *dir, const char *prefix) {
     printf("\n");
 }
 
-static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space) {
-    const char *tail = buffer + cursor;
-    int tail_width = utf8_string_display_width(tail);
-    printf("%s", tail);
-    if (clear_extra_space) {
-        printf(" ");
+static int refresh_last_rows = 1;
+
+static void reset_line_tracking(void) {
+    refresh_last_rows = 1;
+}
+
+static int terminal_columns(void) {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        return 80;
     }
-    int move_back = tail_width + (clear_extra_space ? 1 : 0);
-    for (int i = 0; i < move_back; i++) {
-        printf("\b");
+    return ws.ws_col;
+}
+
+static void redraw_from_cursor(const char *prompt, const char *buffer, size_t cursor) {
+    int cols = terminal_columns();
+    int prompt_width = utf8_string_display_width(prompt);
+    int buffer_width = utf8_string_display_width(buffer);
+    int cursor_width = utf8_display_width_range(buffer, 0, cursor);
+    int total_width = prompt_width + buffer_width;
+    int rows = (total_width / cols) + 1;
+    int cursor_col = (prompt_width + cursor_width) % cols;
+    int cursor_row = (prompt_width + cursor_width) / cols;
+    int end_col = total_width % cols;
+    int end_row = total_width / cols;
+    int clear_rows = refresh_last_rows > rows ? refresh_last_rows : rows;
+
+    printf("\r");
+    for (int row = 0; row < clear_rows; row++) {
+        printf("\033[K");
+        if (row < clear_rows - 1) {
+            printf("\n");
+        }
     }
+    if (clear_rows > 1) {
+        printf("\033[%dA", clear_rows - 1);
+    }
+
+    printf("%s", prompt);
+    printf("%s", buffer);
+
+    if (end_row > cursor_row) {
+        printf("\033[%dA", end_row - cursor_row);
+    }
+    int col_diff = end_col - cursor_col;
+    if (col_diff > 0) {
+        printf("\033[%dD", col_diff);
+    } else if (col_diff < 0) {
+        printf("\033[%dC", -col_diff);
+    }
+
+    refresh_last_rows = rows;
     fflush(stdout);
 }
 
@@ -491,18 +476,6 @@ static int utf8_display_width_range(const char *buffer, size_t start, size_t end
     memcpy(temp, buffer + start, span);
     temp[span] = '\0';
     return utf8_string_display_width(temp);
-}
-
-static void move_cursor_columns(int columns, int direction) {
-    if (columns <= 0) {
-        return;
-    }
-    if (direction < 0) {
-        printf("\033[%dD", columns);
-    } else {
-        printf("\033[%dC", columns);
-    }
-    fflush(stdout);
 }
 
 static int utf8_string_display_width(const char *s) {

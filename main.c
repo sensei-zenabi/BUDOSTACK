@@ -164,13 +164,17 @@ void disable_paging(void) {
 /* Forward declaration for search mode. */
 int search_mode(const char **lines, size_t line_count, const char *query);
 
-/* Displays the current working directory as the prompt. */
-void display_prompt(void) {
+/* Formats the current working directory prompt into the provided buffer. */
+static void build_prompt(char *prompt, size_t size) {
+    if (!prompt || size == 0) {
+        return;
+    }
     char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof(cwd)) != NULL)
-        printf("%s$ ", cwd);
-    else
-        printf("shell$ ");
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        snprintf(prompt, size, "%s$ ", cwd);
+    } else {
+        snprintf(prompt, size, "shell$ ");
+    }
 }
 
 /* search_mode remains unchanged from the original implementation. */
@@ -636,8 +640,9 @@ int main(int argc, char *argv[]) {
 
     /* Main loop */
     while (1) {
-        display_prompt();
-        input = read_input();
+        char prompt[PATH_MAX + 4];
+        build_prompt(prompt, sizeof(prompt));
+        input = read_input(prompt);
         if (input == NULL) {
             printf("\n");
             break;

@@ -424,7 +424,8 @@ static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extr
     if (clear_extra_space) {
         printf(" ");
     }
-    printf("\033[K"); /* Clear any leftover characters on the line */
+    /* Clear everything from here to the end of the screen to handle wrapped lines. */
+    printf("\033[J");
     printf("\033[u"); /* Restore cursor position */
     fflush(stdout);
 }

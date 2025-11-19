@@ -35,6 +35,9 @@ static size_t utf8_prev_char_start(const char *buffer, size_t cursor);
 static size_t utf8_next_char_start(const char *buffer, size_t cursor, size_t length);
 static size_t utf8_sequence_length(unsigned char first_byte);
 static size_t utf8_read_sequence(int first_byte, char *dst, size_t dst_size);
+static void apply_completion_at_cursor(const char *completion, size_t token_start,
+                                       size_t token_end, char *buffer, size_t *pos,
+                                       size_t *cursor);
 static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space);
 static void move_cursor_columns(int columns, int direction);
 
@@ -159,13 +162,24 @@ char* read_input(void) {
         }
         /* TAB pressed: trigger autocomplete */
         else if (c == '\t') {
-            /* Find beginning of current token */
-            size_t token_start = pos;
+            if (cursor > pos) {
+                cursor = pos;
+            }
+            size_t token_start = cursor;
             while (token_start > 0 && buffer[token_start - 1] != ' ')
                 token_start--;
+            size_t token_end = cursor;
+            while (token_end < pos && buffer[token_end] != ' ')
+                token_end++;
+            if (token_end < token_start) {
+                continue;
+            }
+            size_t token_len = token_end - token_start;
             char token[INPUT_SIZE];
-            size_t token_len = pos - token_start;
-            strncpy(token, buffer + token_start, token_len);
+            if (token_len >= sizeof(token)) {
+                continue;
+            }
+            memcpy(token, buffer + token_start, token_len);
             token[token_len] = '\0';
             if (token_len == 0)
                 continue; /* Nothing to complete */
@@ -182,26 +196,7 @@ char* read_input(void) {
                     }
                 }
                 if (count == 1) {
-                    size_t comp_len = strlen(completion);
-                    int erase_width = utf8_display_width_range(buffer, token_start, pos);
-                    for (int i = 0; i < erase_width; i++) {
-                        printf("\b");
-                    }
-                    printf("%s", completion);
-                    int completion_width = utf8_string_display_width(completion);
-                    if (completion_width < erase_width) {
-                        int diff = erase_width - completion_width;
-                        for (int i = 0; i < diff; i++) {
-                            printf(" ");
-                        }
-                        for (int i = 0; i < diff; i++) {
-                            printf("\b");
-                        }
-                    }
-                    fflush(stdout);
-                    memmove(buffer + token_start, completion, comp_len + 1);
-                    pos = token_start + comp_len;
-                    cursor = pos;
+                    apply_completion_at_cursor(completion, token_start, token_end, buffer, &pos, &cursor);
                 } else if (count > 1) {
                     printf("\n");
                     if (used_filenames) {
@@ -229,26 +224,7 @@ char* read_input(void) {
                 char completion[INPUT_SIZE] = {0};
                 int count = autocomplete_filename(token, completion, sizeof(completion));
                 if (count == 1) {
-                    size_t comp_len = strlen(completion);
-                    int erase_width = utf8_display_width_range(buffer, token_start, pos);
-                    for (int i = 0; i < erase_width; i++) {
-                        printf("\b");
-                    }
-                    printf("%s", completion);
-                    int completion_width = utf8_string_display_width(completion);
-                    if (completion_width < erase_width) {
-                        int diff = erase_width - completion_width;
-                        for (int i = 0; i < diff; i++) {
-                            printf(" ");
-                        }
-                        for (int i = 0; i < diff; i++) {
-                            printf("\b");
-                        }
-                    }
-                    fflush(stdout);
-                    memmove(buffer + token_start, completion, comp_len + 1);
-                    pos = token_start + comp_len;
-                    cursor = pos;
+                    apply_completion_at_cursor(completion, token_start, token_end, buffer, &pos, &cursor);
                 } else if (count > 1) {
                     printf("\n");
                     char dir[INPUT_SIZE];
@@ -413,6 +389,37 @@ static void list_filename_matches(const char *dir, const char *prefix) {
     }
     closedir(d);
     printf("\n");
+}
+
+static void apply_completion_at_cursor(const char *completion, size_t token_start,
+                                       size_t token_end, char *buffer, size_t *pos,
+                                       size_t *cursor) {
+    if (!completion || !buffer || !pos || !cursor) {
+        return;
+    }
+
+    size_t completion_len = strlen(completion);
+    size_t tail_len = *pos > token_end ? *pos - token_end : 0u;
+    if (token_start + completion_len + tail_len >= INPUT_SIZE) {
+        return;
+    }
+
+    char old_buffer[INPUT_SIZE];
+    memcpy(old_buffer, buffer, *pos + 1u);
+    size_t old_cursor = *cursor;
+
+    memmove(buffer + token_start + completion_len, buffer + token_end, tail_len + 1u);
+    memcpy(buffer + token_start, completion, completion_len);
+    *pos = token_start + completion_len + tail_len;
+    *cursor = token_start + completion_len;
+
+    int move_left = utf8_display_width_range(old_buffer, token_start, old_cursor);
+    move_cursor_columns(move_left, -1);
+    printf("\033[J");
+    printf("%s", buffer + token_start);
+    int back = utf8_display_width_range(buffer, *cursor, *pos);
+    move_cursor_columns(back, -1);
+    fflush(stdout);
 }
 
 static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space) {

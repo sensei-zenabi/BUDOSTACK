@@ -36,7 +36,7 @@ static size_t utf8_next_char_start(const char *buffer, size_t cursor, size_t len
 static size_t utf8_sequence_length(unsigned char first_byte);
 static size_t utf8_read_sequence(int first_byte, char *dst, size_t dst_size);
 static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space);
-static void move_cursor_columns(int columns, int direction);
+static void move_cursor(const char *buffer, size_t from, size_t to);
 
 /*
  * read_input()
@@ -93,8 +93,7 @@ char* read_input(void) {
                 if (next2 == 'A') { /* Up arrow */
                     if (history_count > 0 && history_index > 0) {
                         history_index--;
-                        int move_width = utf8_display_width_range(buffer, cursor, pos);
-                        move_cursor_columns(move_width, 1);
+                        move_cursor(buffer, cursor, pos);
                         cursor = pos;
                         int clear_width = utf8_display_width_range(buffer, 0, pos);
                         for (int i = 0; i < clear_width; i++) {
@@ -110,8 +109,7 @@ char* read_input(void) {
                 } else if (next2 == 'B') { /* Down arrow */
                     if (history_count > 0 && history_index < history_count - 1) {
                         history_index++;
-                        int move_width = utf8_display_width_range(buffer, cursor, pos);
-                        move_cursor_columns(move_width, 1);
+                        move_cursor(buffer, cursor, pos);
                         cursor = pos;
                         int clear_width = utf8_display_width_range(buffer, 0, pos);
                         for (int i = 0; i < clear_width; i++) {
@@ -124,8 +122,7 @@ char* read_input(void) {
                         fflush(stdout);
                     } else if (history_count > 0 && history_index == history_count - 1) {
                         history_index = history_count;
-                        int move_width = utf8_display_width_range(buffer, cursor, pos);
-                        move_cursor_columns(move_width, 1);
+                        move_cursor(buffer, cursor, pos);
                         cursor = pos;
                         int clear_width = utf8_display_width_range(buffer, 0, pos);
                         for (int i = 0; i < clear_width; i++) {
@@ -140,16 +137,14 @@ char* read_input(void) {
                 } else if (next2 == 'C') { /* Right arrow */
                     if (cursor < pos) {
                         size_t next = utf8_next_char_start(buffer, cursor, pos);
-                        int move_width = utf8_display_width_range(buffer, cursor, next);
-                        move_cursor_columns(move_width, 1);
+                        move_cursor(buffer, cursor, next);
                         cursor = next;
                     }
                     continue;
                 } else if (next2 == 'D') { /* Left arrow */
                     if (cursor > 0) {
                         size_t prev = utf8_prev_char_start(buffer, cursor);
-                        int move_width = utf8_display_width_range(buffer, prev, cursor);
-                        move_cursor_columns(move_width, -1);
+                        move_cursor(buffer, cursor, prev);
                         cursor = prev;
                     }
                     continue;
@@ -500,14 +495,18 @@ static int utf8_display_width_range(const char *buffer, size_t start, size_t end
     return utf8_string_display_width(temp);
 }
 
-static void move_cursor_columns(int columns, int direction) {
-    if (columns <= 0) {
+static void move_cursor(const char *buffer, size_t from, size_t to) {
+    if (!buffer || from == to) {
         return;
     }
-    if (direction < 0) {
-        printf("\033[%dD", columns);
+    if (to < from) {
+        int width = utf8_display_width_range(buffer, to, from);
+        for (int i = 0; i < width; i++) {
+            printf("\b");
+        }
     } else {
-        printf("\033[%dC", columns);
+        size_t span = to - from;
+        fwrite(buffer + from, 1, span, stdout);
     }
     fflush(stdout);
 }

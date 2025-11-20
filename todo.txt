@@ -3,8 +3,45 @@
 
 KNOWN ISSUES:
 
-+ Multi-line paste does not work in apps/terminal, not even inside a single
+---------------------------------------------------------------------------
+
+Issue:
+  
+  Multi-line paste does not work in apps/terminal, not even inside a single
   file when running apps/edit.
 
-+ In command line, editing a command from the middle erases the tail
+Resolved: N/A
 
+---------------------------------------------------------------------------
+
+Issue:
+
+  In command line, editing a command from the middle erases the tail.
+
+Resolved: N/A
+
+---------------------------------------------------------------------------
+
+Issue:
+
+  When ./budostack is being ran without apps/terminal in normal linux
+  GUI terminal, the cursor has strange offset compared to the command
+  line.
+  
+Resolved: N/A
+
+---------------------------------------------------------------------------  
+  
+Issue:
+  
+  SDL2 graphics commands such as _TERM_PIXEL have difficulties maintaining
+  a steady performance when drawing pixels to the screen.
+  
+Resolved: N/A
+
+---------------------------------------------------------------------------
+  
+  
+  
+  
+  

@@ -1,0 +1,20 @@
+
+=============================== CHANGELOG  ================================
+
+LOG ENTRIES:
+
+---------------------------------------------------------------------------
+
+Issue:
+  
+  Multi-line paste does not work in apps/terminal, not even inside a single
+  file when running apps/edit.
+
+Log:
+
+  apps/terminal.c changes seem legit, it seems good idea to remove the
+  CTRL+V handling from it and let the underlying apps process it.
+
+---------------------------------------------------------------------------
+
+  

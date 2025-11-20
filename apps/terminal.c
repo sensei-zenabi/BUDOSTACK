@@ -276,7 +276,8 @@ static int terminal_selection_contains_cell(size_t global_row,
                                             size_t selection_end,
                                             size_t columns);
 static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer);
-static int terminal_paste_from_clipboard(struct terminal_buffer *buffer, int fd);
+// FIX: for edit.c paste to work
+//static int terminal_paste_from_clipboard(struct terminal_buffer *buffer, int fd);
 static size_t terminal_encode_utf8(uint32_t codepoint, char *dst);
 static int terminal_initialize_gl_program(const char *shader_path);
 static void terminal_release_gl_resources(void);
@@ -5371,10 +5372,11 @@ int main(int argc, char **argv) {
                             clipboard_handled = 1;
                         }
                     } else if (sym == SDLK_v) {
-                        if (terminal_paste_from_clipboard(&buffer, master_fd) == 0) {
-                            terminal_selection_clear();
-                            clipboard_handled = 1;
-                        }
+                        // FIX: edit.c paste, removing paste from terminal
+                        //if (terminal_paste_from_clipboard(5D&buffer, master_fd) == 0) {
+                        //    terminal_selection_clear();
+                        //    clipboard_handled = 1;
+                        //}
                     }
                 }
                 if (clipboard_handled) {

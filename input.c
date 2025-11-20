@@ -36,7 +36,8 @@ static size_t utf8_next_char_start(const char *buffer, size_t cursor, size_t len
 static size_t utf8_sequence_length(unsigned char first_byte);
 static size_t utf8_read_sequence(int first_byte, char *dst, size_t dst_size);
 static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space);
-static void move_cursor_columns(int columns, int direction);
+static void move_to_end_of_line(const char *buffer, size_t *cursor, size_t pos);
+static void clear_line_contents(const char *buffer, size_t *pos, size_t *cursor);
 
 /*
  * read_input()
@@ -92,14 +93,9 @@ char* read_input(void) {
                 int next2 = getchar();
                 if (next2 == 'A') { /* Up arrow */
                     if (history_count > 0 && history_index > 0) {
-                        history_index--;
-                        int move_width = utf8_display_width_range(buffer, cursor, pos);
-                        move_cursor_columns(move_width, 1);
-                        cursor = pos;
-                        int clear_width = utf8_display_width_range(buffer, 0, pos);
-                        for (int i = 0; i < clear_width; i++) {
-                            printf("\b \b");
-                        }
+						move_to_end_of_line(buffer, &cursor, pos);
+						clear_line_contents(buffer, &pos, &cursor);
+						history_index--;
                         strcpy(buffer, history[history_index]);
                         pos = strlen(buffer);
                         cursor = pos;
@@ -109,28 +105,22 @@ char* read_input(void) {
                     continue;
                 } else if (next2 == 'B') { /* Down arrow */
                     if (history_count > 0 && history_index < history_count - 1) {
+                        move_to_end_of_line(buffer, &cursor, pos);
+                        clear_line_contents(buffer, &pos, &cursor);
+
+                        // Load next history entry
                         history_index++;
-                        int move_width = utf8_display_width_range(buffer, cursor, pos);
-                        move_cursor_columns(move_width, 1);
-                        cursor = pos;
-                        int clear_width = utf8_display_width_range(buffer, 0, pos);
-                        for (int i = 0; i < clear_width; i++) {
-                            printf("\b \b");
-                        }
                         strcpy(buffer, history[history_index]);
                         pos = strlen(buffer);
                         cursor = pos;
                         printf("%s", buffer);
                         fflush(stdout);
                     } else if (history_count > 0 && history_index == history_count - 1) {
+                        move_to_end_of_line(buffer, &cursor, pos);
+                        clear_line_contents(buffer, &pos, &cursor);
+
+                        // Go to "empty buffer" after history
                         history_index = history_count;
-                        int move_width = utf8_display_width_range(buffer, cursor, pos);
-                        move_cursor_columns(move_width, 1);
-                        cursor = pos;
-                        int clear_width = utf8_display_width_range(buffer, 0, pos);
-                        for (int i = 0; i < clear_width; i++) {
-                            printf("\b \b");
-                        }
                         buffer[0] = '\0';
                         pos = 0;
                         cursor = 0;
@@ -140,8 +130,7 @@ char* read_input(void) {
                 } else if (next2 == 'C') { /* Right arrow */
                     if (cursor < pos) {
                         size_t next = utf8_next_char_start(buffer, cursor, pos);
-                        int move_width = utf8_display_width_range(buffer, cursor, next);
-                        move_cursor_columns(move_width, 1);
+                        fwrite(buffer + cursor, 1, next - cursor, stdout);
                         cursor = next;
                     }
                     continue;
@@ -149,7 +138,18 @@ char* read_input(void) {
                     if (cursor > 0) {
                         size_t prev = utf8_prev_char_start(buffer, cursor);
                         int move_width = utf8_display_width_range(buffer, prev, cursor);
-                        move_cursor_columns(move_width, -1);
+
+                        // FIX: Left arrow should ONLY move the cursor left,
+                        // not delete characters. So we print just '\b' and
+                        // DO NOT print " \b".
+                        //
+                        // This way:
+                        //  - All text stays visible on the line
+                        //  - Cursor moves left across characters (and across wrapped lines)
+                        for (int i = 0; i < move_width; i++) {
+                            printf("\b");
+                        }
+
                         cursor = prev;
                     }
                     continue;
@@ -505,15 +505,36 @@ static int utf8_display_width_range(const char *buffer, size_t start, size_t end
     return utf8_string_display_width(temp);
 }
 
-static void move_cursor_columns(int columns, int direction) {
-    if (columns <= 0) {
-        return;
+// FIX: Replaces move_cursor_columns().
+// This function moves VISUALLY to the end of the line by reprinting characters.
+// Reprinting lets the terminal do the wrapping — ESC[nC does NOT wrap.
+static void move_to_end_of_line(const char *buffer, size_t *cursor, size_t pos) {
+    while (*cursor < pos) {
+        size_t next = utf8_next_char_start(buffer, *cursor, pos);
+
+        // FIX: printing characters ensures correct wrap behaviour
+        fwrite(buffer + *cursor, 1, next - *cursor, stdout);
+
+        *cursor = next;
     }
-    if (direction < 0) {
-        printf("\033[%dD", columns);
-    } else {
-        printf("\033[%dC", columns);
+}
+
+// FIX: Clears entire input line using backspace + space.
+// Backspace is the ONLY cursor movement that safely moves across wrapped rows.
+static void clear_line_contents(const char *buffer, size_t *pos, size_t *cursor) {
+    while (*pos > 0) {
+        size_t prev = utf8_prev_char_start(buffer, *pos);
+        int width = utf8_display_width_range(buffer, prev, *pos);
+
+        // FIX: "\b \b" clears one printed cell at a time
+        // and works perfectly even on wrapped lines.
+        for (int i = 0; i < width; i++) {
+            printf("\b \b");
+        }
+
+        *pos = prev;
     }
+    *cursor = 0;
     fflush(stdout);
 }
 

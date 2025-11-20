@@ -963,6 +963,7 @@ void editorProcessKeypress(void) {
                     last_key_was_vertical = 0;
                     break;
         case '\r':
+        case '\n': // FIX: multiline paste
             push_undo_state();
             editorInsertNewline();
             last_key_was_vertical = 0;

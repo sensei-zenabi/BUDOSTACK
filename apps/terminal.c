@@ -276,7 +276,7 @@ static int terminal_selection_contains_cell(size_t global_row,
                                             size_t selection_end,
                                             size_t columns);
 static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer);
-static int terminal_paste_from_clipboard(int fd);
+static int terminal_paste_from_clipboard(struct terminal_buffer *buffer, int fd);
 static size_t terminal_encode_utf8(uint32_t codepoint, char *dst);
 static int terminal_initialize_gl_program(const char *shader_path);
 static void terminal_release_gl_resources(void);
@@ -874,6 +874,7 @@ struct terminal_buffer {
     uint32_t cursor_color;
     int cursor_visible;
     int saved_cursor_visible;
+    int bracketed_paste_enabled; // to pass multi-row paste for edit
     size_t history_limit;
     size_t history_rows;
     size_t history_start;
@@ -1323,6 +1324,7 @@ static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *bu
     return 1;
 }
 
+/* Old implementation
 static int terminal_paste_from_clipboard(int fd) {
     char *text = SDL_GetClipboardText();
     if (!text) {
@@ -1335,6 +1337,40 @@ static int terminal_paste_from_clipboard(int fd) {
             result = -1;
         }
     }
+    SDL_free(text);
+    return result;
+}
+*/
+int terminal_paste_from_clipboard(struct terminal_buffer *buffer, int fd) {
+    char *text = SDL_GetClipboardText();
+    if (!text) {
+        return -1;
+    }
+    size_t len = strlen(text);
+    int result = 0;
+    
+    if (len > 0u) {
+        if (buffer && buffer->bracketed_paste_enabled) {
+            const char *start = "\x1b[200~";
+            const char *end   = "\x1b[201~";
+            
+            if (terminal_send_bytes(fd, start, strlen(start)) < 0) {
+                result = -1;
+            }
+            if (result == 0 && terminal_send_bytes(fd, text, len) < 0) {
+                result = -1;
+            }
+            if (result == 0 && terminal_send_bytes(fd, end, strlen(end)) < 0) {
+                result = -1;
+            }
+        } else {
+            if (terminal_send_bytes(fd, text, len) < 0) {
+                result = -1;
+            }
+        }
+        
+    }
+    
     SDL_free(text);
     return result;
 }
@@ -3107,6 +3143,7 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->cursor_saved = 0;
     buffer->attr_saved = 0;
     buffer->cursor_visible = 1;
+    buffer->bracketed_paste_enabled = 0; // Default: OFF
     buffer->saved_cursor_visible = 1;
     buffer->history_limit = TERMINAL_HISTORY_LIMIT;
     buffer->history_rows = 0u;
@@ -4193,7 +4230,12 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                     }
                     break;
                 case 2004: /* bracketed paste */
-                    /* This does not affect our simple renderer. */
+                    /* This is to enable multi-row paste in edit.c */
+                    if (command == 'h') {
+                        buffer->bracketed_paste_enabled = 1;
+                    } else { /* 'l' */
+                        buffer->bracketed_paste_enabled = 0;
+                    }
                     break;
                 case 47:
                 case 1047:
@@ -5329,7 +5371,7 @@ int main(int argc, char **argv) {
                             clipboard_handled = 1;
                         }
                     } else if (sym == SDLK_v) {
-                        if (terminal_paste_from_clipboard(master_fd) == 0) {
+                        if (terminal_paste_from_clipboard(&buffer, master_fd) == 0) {
                             terminal_selection_clear();
                             clipboard_handled = 1;
                         }

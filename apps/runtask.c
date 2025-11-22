@@ -78,6 +78,8 @@ typedef struct {
     bool true_branch_done;
     bool else_encountered;
     bool else_branch_done;
+    bool expects_end;
+    int indent;
     int line_number;
 } IfContext;
 
@@ -1253,6 +1255,9 @@ static void note_branch_progress(IfContext *stack, int *sp) {
         return;
     }
     IfContext *ctx = &stack[*sp - 1];
+    if (ctx->expects_end) {
+        return;
+    }
     if (!ctx->true_branch_done) {
         ctx->true_branch_done = true;
         return;
@@ -1275,7 +1280,9 @@ static void finalize_skipped_branch(IfContext *stack, int *sp, int context_index
         ctx->true_branch_done = true;
     } else {
         ctx->else_branch_done = true;
-        (*sp)--;
+        if (!ctx->expects_end) {
+            (*sp)--;
+        }
     }
 }
 
@@ -1480,8 +1487,9 @@ static void print_help(void) {
     printf("  INPUT $VAR [-wait on|off]\n");
     printf("    Read input into $VAR. Default waits for Enter. OFF captures the first key\n");
     printf("    press.\n");
-    printf("  IF <lhs> op <rhs>\n");
-    printf("    Compare values. Chain with AND/OR. Use ELSE for an alternate branch.\n");
+    printf("  IF <lhs> op <rhs>:\n");
+    printf("    Begin a block terminated by END. Chain with AND/OR. Use ELSE for an\n");
+    printf("    alternate branch.\n");
     printf("  FOR (init; cond; step)\n");
     printf("    Loop with inline init/condition/step terminated by END. Supports $VAR++ and\n");
     printf("    $VAR-- steps.\n");
@@ -2195,7 +2203,7 @@ int main(int argc, char *argv[]) {
 
         if (if_sp > 0) {
             IfContext *ctx = &if_stack[if_sp - 1];
-            if (ctx->true_branch_done && !ctx->else_encountered) {
+            if (!ctx->expects_end && ctx->true_branch_done && !ctx->else_encountered) {
                 if (!(strncmp(command, "ELSE", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4])))) {
                     if_sp--;
                 }
@@ -2208,6 +2216,17 @@ int main(int argc, char *argv[]) {
             if (!parse_condition(&cursor, &cond_result, script[pc].source_line, debug)) {
                 cond_result = false;
             }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != ':') {
+                if (debug) fprintf(stderr, "IF: expected ':' before END-delimited block at %d\n", script[pc].source_line);
+                continue;
+            }
+            cursor++;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
             if (*cursor != '\0' && debug) {
                 fprintf(stderr, "IF: unexpected characters at %d\n", script[pc].source_line);
             }
@@ -2215,7 +2234,7 @@ int main(int argc, char *argv[]) {
                 if (debug) fprintf(stderr, "IF: nesting limit reached at line %d\n", script[pc].source_line);
                 continue;
             }
-            IfContext ctx = { .result = cond_result, .true_branch_done = false, .else_encountered = false, .else_branch_done = false, .line_number = script[pc].source_line };
+            IfContext ctx = { .result = cond_result, .true_branch_done = false, .else_encountered = false, .else_branch_done = false, .expects_end = true, .indent = script[pc].indent, .line_number = script[pc].source_line };
             if_stack[if_sp++] = ctx;
             if (!cond_result) {
                 skipping_block = true;
@@ -2225,6 +2244,7 @@ int main(int argc, char *argv[]) {
                 skip_progress_pending = true;
                 skip_consumed_first = false;
             }
+            continue;
         }
         else if (strncmp(command, "FOR", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {
             if (for_sp >= (int)(sizeof(for_stack) / sizeof(for_stack[0]))) {
@@ -2342,6 +2362,12 @@ int main(int argc, char *argv[]) {
             while (isspace((unsigned char)*cursor)) {
                 cursor++;
             }
+            if (*cursor == ':') {
+                cursor++;
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+            }
             if (*cursor != '\0' && debug) {
                 fprintf(stderr, "ELSE: unexpected characters at %d\n", script[pc].source_line);
             }
@@ -2351,6 +2377,7 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             ctx->else_encountered = true;
+            ctx->true_branch_done = true;
             if (ctx->result) {
                 skipping_block = true;
                 skip_indent = script[pc].indent;
@@ -2398,8 +2425,21 @@ int main(int argc, char *argv[]) {
                 }
             }
 
+            if (!matched && if_sp > 0) {
+                IfContext *ctx = &if_stack[if_sp - 1];
+                if (script[pc].indent == ctx->indent) {
+                    matched = true;
+                    if (ctx->else_encountered) {
+                        ctx->else_branch_done = true;
+                    } else {
+                        ctx->true_branch_done = true;
+                    }
+                    if_sp--;
+                }
+            }
+
             if (!matched && debug) {
-                fprintf(stderr, "END without matching FOR at line %d\n", script[pc].source_line);
+                fprintf(stderr, "END without matching FOR/IF at line %d\n", script[pc].source_line);
             }
         }
         else if (strncmp(command, "INPUT", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {

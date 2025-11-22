@@ -5371,11 +5371,6 @@ int main(int argc, char **argv) {
                         if (terminal_copy_selection_to_clipboard(&buffer)) {
                             clipboard_handled = 1;
                         }
-                    } else if (sym == SDLK_v) {
-                        if (terminal_paste_from_clipboard(&buffer, master_fd) == 0) {
-                            terminal_selection_clear();
-                            clipboard_handled = 1;
-                        }
                     }
                 }
                 if (clipboard_handled) {

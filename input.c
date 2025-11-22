@@ -38,6 +38,8 @@ static size_t utf8_read_sequence(int first_byte, char *dst, size_t dst_size);
 static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space);
 static void move_to_end_of_line(const char *buffer, size_t *cursor, size_t pos);
 static void clear_line_contents(const char *buffer, size_t *pos, size_t *cursor);
+static char *system_clipboard_read(void);
+static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, size_t *cursor);
 
 /*
  * read_input()
@@ -330,6 +332,14 @@ char* read_input(void) {
                 redraw_from_cursor(buffer, cursor, 1);
             }
         }
+        /* Paste clipboard with Ctrl+V */
+        else if (c == 0x16) {
+            char *clipboard = system_clipboard_read();
+            if (clipboard) {
+                insert_text_at_cursor(clipboard, buffer, &pos, &cursor);
+                free(clipboard);
+            }
+        }
         /* Regular character input */
         else {
             char utf8_seq[MB_LEN_MAX];
@@ -519,6 +529,66 @@ static size_t utf8_next_char_start(const char *buffer, size_t cursor, size_t len
         index++;
     }
     return index;
+}
+
+static char *system_clipboard_read(void) {
+    FILE *fp = popen("xclip -selection clipboard -o 2>/dev/null", "r");
+    if (!fp) {
+        return NULL;
+    }
+
+    size_t cap = 256u;
+    char *buf = malloc(cap);
+    if (!buf) {
+        pclose(fp);
+        return NULL;
+    }
+
+    size_t len = 0u;
+    int ch;
+    while ((ch = fgetc(fp)) != EOF) {
+        if (len + 1 >= cap) {
+            cap *= 2u;
+            char *tmp = realloc(buf, cap);
+            if (!tmp) {
+                free(buf);
+                pclose(fp);
+                return NULL;
+            }
+            buf = tmp;
+        }
+        buf[len++] = (char)ch;
+    }
+    buf[len] = '\0';
+    pclose(fp);
+    return buf;
+}
+
+static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, size_t *cursor) {
+    if (!text || !buffer || !pos || !cursor) {
+        return;
+    }
+
+    size_t text_len = strlen(text);
+    if (text_len == 0) {
+        return;
+    }
+
+    size_t available = INPUT_SIZE - 1u - *pos;
+    if (text_len > available) {
+        text_len = available;
+    }
+    if (text_len == 0) {
+        return;
+    }
+
+    memmove(buffer + *cursor + text_len, buffer + *cursor, *pos - *cursor + 1);
+    memcpy(buffer + *cursor, text, text_len);
+    *pos += text_len;
+    *cursor += text_len;
+
+    fwrite(text, 1, text_len, stdout);
+    redraw_from_cursor(buffer, *cursor, 0);
 }
 
 static int utf8_display_width_range(const char *buffer, size_t start, size_t end) {

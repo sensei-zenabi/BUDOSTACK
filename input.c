@@ -59,6 +59,7 @@ char* read_input(void) {
     size_t pos = 0;        // End of current input
     size_t cursor = 0;     // Current cursor position within buffer
     struct termios oldt, newt;
+    int in_paste_mode = 0;
 
     /* Static history storage */
     static char *history[MAX_HISTORY] = {0};
@@ -77,12 +78,17 @@ char* read_input(void) {
         exit(EXIT_FAILURE);
     }
 
+    /* Enable bracketed paste so pasted text is wrapped in ESC[200~ ... ESC[201~ */
+    if (write(STDOUT_FILENO, "\x1b[?2004h", 9) == -1) {
+        perror("write");
+    }
+
     memset(buffer, 0, sizeof(buffer));
     fflush(stdout);
 
     while (1) {
         int c = getchar();
-        if (c == '\n') {
+        if (c == '\n' && !in_paste_mode) {
             putchar('\n');
             break;
         }
@@ -91,9 +97,25 @@ char* read_input(void) {
             int next1 = getchar();
             if (next1 == '[') {
                 int next2 = getchar();
+                if (next2 == '2') {
+                    int next3 = getchar();
+                    if (next3 == '0') {
+                        int next4 = getchar();
+                        if (next4 == '0' || next4 == '1') {
+                            int next5 = getchar();
+                            if (next5 == '~') {
+                                in_paste_mode = (next4 == '0');
+                                continue;
+                            }
+                            ungetc(next5, stdin);
+                        }
+                        ungetc(next4, stdin);
+                    }
+                    ungetc(next3, stdin);
+                }
                 if (next2 == 'A') { /* Up arrow */
                     if (history_count > 0 && history_index > 0) {
-						move_to_end_of_line(buffer, &cursor, pos);
+                                                move_to_end_of_line(buffer, &cursor, pos);
 						clear_line_contents(buffer, &pos, &cursor);
 						history_index--;
                         strcpy(buffer, history[history_index]);
@@ -323,7 +345,10 @@ char* read_input(void) {
     }
     buffer[pos] = '\0';
 
-    /* Restore terminal settings */
+    /* Disable bracketed paste and restore terminal settings */
+    if (write(STDOUT_FILENO, "\x1b[?2004l", 9) == -1) {
+        perror("write");
+    }
     if (tcsetattr(STDIN_FILENO, TCSANOW, &oldt) == -1) {
         perror("tcsetattr");
         exit(EXIT_FAILURE);

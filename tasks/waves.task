@@ -21,24 +21,29 @@ RUN cls
 
 # Header
 
-IF $INIT == 1
+IF ($INIT == 1):
   RUN _TEXT -x 1 -y 1 -text "- - - SIN() and COS() PLOTTING DEMO - - -"
   SET $INIT = 0
+END
 
 # Calculus
 
-IF $STATE == 1
+IF ($STATE == 1):
   RUN _CALC sin(2.6*pi*$TIME) to $VALUE
   SET $COLOR = 5
-IF $STATE == 2
+END
+IF ($STATE == 2):
   RUN _CALC cos(2.6*pi*$TIME) to $VALUE
   SET $COLOR = 8
-IF $STATE == 3
+END
+IF ($STATE == 3):
   RUN _CALC sin(2.6*pi*$TIME*2) to $VALUE
   SET $COLOR = 5
-IF $STATE == 4
+END
+IF ($STATE == 4):
   RUN _CALC cos(2.6*pi*$TIME*2) to $VALUE
   SET $COLOR = 8
+END
 
 RUN _CALC floor($HEIGHT/2 + $VALUE * $AMPLITUDE) to $Y
 
@@ -49,14 +54,16 @@ RUN _RECT -x $X -y $Y -height 1 -width 1 -color $COLOR
 SET $TIME = $TIME + $INCREMENT
 SET $X = $X + 1
 WAIT 20
-IF $STATE > 4
+IF ($STATE > 4):
   GOTO @END
-IF $TIME < $END_TIME
+END
+IF ($TIME < $END_TIME):
   GOTO @DRAW
-ELSE
+ELSE:
   SET $STATE = $STATE + 1
   SET $TIME = 0
   SET $X = 1
+END
 GOTO @DRAW
 
 @END

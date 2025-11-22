@@ -18,14 +18,18 @@ PRINT "\n[2] VT220-Amber"
 PRINT "\n[3] VT220-Green"
 PRINT "\nEnter Selection: "
 INPUT $SELECTION
-IF $SELECTION == 0
+IF ($SELECTION == 0):
   $SCHEME = "c64"
-IF $SELECTION == 1
+END
+IF ($SELECTION == 1):
   $SCHEME = "ibm5150"
-IF $SELECTION == 2
+END
+IF ($SELECTION == 2):
   $SCHEME = "vt220-amber"
-IF $SELECTION == 3
+END
+IF ($SELECTION == 3):
   $SCHEME = "vt220-green"
+END
 RUN _RETROPROFILE apply $SCHEME
 RUN cls
 
@@ -33,12 +37,14 @@ RUN cls
 RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
 @LOADING
 RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
-IF $LOAD == 50
+IF ($LOAD == 50):
   RUN _TERM_SOUND_PLAY 2 sounds/628246__asiekierka__floppy_access6.ogg 100
-IF $LOAD < 100
+END
+IF ($LOAD < 100):
   SET $LOAD = $LOAD + 10
   RUN _WAIT 250
   GOTO LOADING
+END
 
 # Intro logo
 @INTRO

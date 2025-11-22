@@ -46,8 +46,9 @@ RUN _TOCSV -file MYCSV.CSV -column 3 -row $ROW -value $RESULT
 SET $INDEX = $INDEX + 1
 SET $VALUE = $VALUE + 10
 SET $ROW = $ROW + 1
-IF $VALUE < 100
+IF ($VALUE < 100):
   GOTO @WRITE
+END
 RUN _WAIT 1000
   
 # Finish

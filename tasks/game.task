@@ -32,13 +32,15 @@ RUN _GETHEIGHT to $HEIGHT
 RUN _GETWIDTH to $WIDTH
 
 # Screen size check
-IF $HEIGHT < 60
+IF ($HEIGHT < 60):
   PRINT "\nSCREEN HEIGHT LESS THAN 60!"
   GOTO @EXIT
-  
-IF $WIDTH < 110
+END
+
+IF ($WIDTH < 110):
   PRINT "\nSCREEN WIDTH LESS THAN 110!"
   GOTO @EXIT
+END
 
 # ---------------------- GAMEPLAY ----------------------
 
@@ -67,10 +69,11 @@ RUN _CALC $ENEMY_X - $PLAYER_X to $DISTANCE
 
 # Process input
 SET $CALLBACK = THREE
-IF $TURN == PLAYER
+IF ($TURN == PLAYER):
   GOTO SUB_INPUT
-ELSE
+ELSE:
   GOTO SUB_ENEMY
+END
 @THREE
 
 # Post-movement calculations
@@ -97,12 +100,14 @@ RUN _TEXT -x 1 -y 7 -text Defence....$PLAYER_DEF
 RUN _TEXT -x 104 -y 5 -text Health.....$ENEMY_HP
 RUN _TEXT -x 104 -y 6 -text Attack.....$ENEMY_ATT
 RUN _TEXT -x 104 -y 7 -text Defence....$ENEMY_DEF
-IF $PLAYER_STATE == melee_attack
+IF ($PLAYER_STATE == melee_attack):
   RUN _TEXT -x 52 -y 8 -text  Player Roll..$PLAYER_ROLL_1
   RUN _TEXT -x 52 -y 9 -text Enemy Roll...$ENEMY_ROLL_1
-  IF $PLAYER_SUB_STATE == success
+  IF ($PLAYER_SUB_STATE == success):
     PRINT "debug"
-    RUN _TEXT -x 52 -y 11 -text Player Attack..$PLAYER_ROLL_2 
+    RUN _TEXT -x 52 -y 11 -text Player Attack..$PLAYER_ROLL_2
+  END
+END
 GOTO $CALLBACK
 
 @SUB_GROUND
@@ -110,8 +115,9 @@ RUN _RECT -x 0 -y 30+$GRID -width 118 -height 18 -color 250 -fill on
 RUN _TEXT -x 1 -y 32+$GRID -text Actions:
 RUN _TEXT -x 1 -y 34+$GRID -text [D] = Move Forward
 RUN _TEXT -x 1 -y 35+$GRID -text [A] = Move Backward
-IF $DISTANCE <= $GRID
+IF ($DISTANCE <= $GRID):
   RUN _TEXT -x 1 -y 36+$GRID -text [S] = Melee Attack
+END
 RUN _TEXT -x 1 -y 40+$GRID -text [Q] = Quit
 GOTO $CALLBACK
 
@@ -120,31 +126,37 @@ SET $PLAYER_STATE = none
 SET $PLAYER_SUB_STATE = none
 INPUT $ACTION -wait off
 # Quit game
-IF $ACTION == q
-  GOTO EXIT
+IF ($ACTION == q):
+  GOTO @EXIT
+END
 # Move forward
-IF $ACTION == d AND $DISTANCE > $GRID
+IF ($ACTION == d AND $DISTANCE > $GRID):
   SET $PLAYER_X = $PLAYER_X+$MOVE
   SET $PLAYER_STATE = forward
+END
 # Move backward
-IF $ACTION == a
+IF ($ACTION == a):
   SET $PLAYER_X = $PLAYER_X-$MOVE
   SET $PLAYER_STATE = backward
+END
 # Melee attack
-IF $ACTION == s AND $DISTANCE <= $GRID
+IF ($ACTION == s AND $DISTANCE <= $GRID):
   SET $PLAYER_STATE = melee_attack
   RUN _DICE 1d20 to $PLAYER_ROLL_1
   RUN _DICE 1d20 to $ENEMY_ROLL_1
-  IF $PLAYER_ROLL1 > $ENEMY_ROLL1
+  IF ($PLAYER_ROLL_1 > $ENEMY_ROLL_1):
     SET $PLAYER_SUB_STATE = success
     RUN _DICE 1d6 to $PLAYER_ROLL_2
+  END
+END
 SET $TURN = ENEMY
 GOTO $CALLBACK
 
 @SUB_ENEMY
 WAIT 500
-IF $DISTANCE > $GRID
+IF ($DISTANCE > $GRID):
   SET $ENEMY_X = $ENEMY_X-$MOVE
+END
 SET $TURN = PLAYER
 GOTO $CALLBACK
 

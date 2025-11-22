@@ -34,7 +34,9 @@ SET $i = 0
   RUN _TERM_PIXEL -x $X-1 -y 101 -r 0 -g $i -b 0  
   RUN _TERM_PIXEL -x $X-1 -y 102 -r 0 -g $i -b 0  
   RUN _TERM_PIXEL -x $X-1 -y 103 -r 0 -g $i -b 0 
-  
+
+  RUN _TERM_PIXEL --render
+      
   RUN _WAIT $WAIT
   IF $X < 320
     SET $X = $X + $DX

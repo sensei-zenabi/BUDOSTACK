@@ -95,7 +95,7 @@ char* read_input(void) {
 
     while (1) {
         int c = getchar();
-        if (c == '\n' && !in_paste_mode) {
+        if ((c == '\n' || c == '\r') && !in_paste_mode) {
             putchar('\n');
             break;
         }

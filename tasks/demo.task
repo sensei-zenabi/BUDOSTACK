@@ -1,46 +1,46 @@
 # demo.task
-SET $FPS = 60
-SET $WAIT = 0
-SET $X = 10
-SET $DX = 4
-
-RUN _CALC ceil(1000/$FPS) TO $WAIT
+SET $SPD = 75.0
+SET $XRAW = 10.0
+SET $X = $XRAW
+SET $DX = 0.0
+SET $DT = 0.0
 
 RUN _TERM_RESOLUTION 320 200
 RUN _CLEAR
 
-PRINT "Give dX: "
-INPUT $DX
+RUN _TIMER --start
 
 SET $i = 0
 @DRAW_LOOP
+
+  RUN _CALC ($DT/1000)*$SPD TO $DX
+  SET $XRAW = $XRAW + $DX
+  RUN _CALC floor($XRAW) TO $X
+  
+  # -------------- GRAPHICS ----------------
+  RUN _TIMER --reset 
 
   SET $i = $i + 1
   IF $i > 255
     SET $i = 255
 
-  RUN _TERM_PIXEL -x $X -y 97 -r 0 -g $i -b 0
-  RUN _TERM_PIXEL -x $X -y 98 -r 0 -g $i -b 0
-  RUN _TERM_PIXEL -x $X -y 99 -r 0 -g $i -b 0
-  RUN _TERM_PIXEL -x $X -y 100 -r 0 -g $i -b 0
-  RUN _TERM_PIXEL -x $X -y 101 -r 0 -g $i -b 0
-  RUN _TERM_PIXEL -x $X -y 102 -r 0 -g $i -b 0
-  RUN _TERM_PIXEL -x $X -y 103 -r 0 -g $i -b 0
-  
-  RUN _TERM_PIXEL -x $X-1 -y 97 -r 0 -g $i -b 0  
-  RUN _TERM_PIXEL -x $X-1 -y 98 -r 0 -g $i -b 0  
-  RUN _TERM_PIXEL -x $X-1 -y 99 -r 0 -g $i -b 0  
-  RUN _TERM_PIXEL -x $X-1 -y 100 -r 0 -g $i -b 0  
-  RUN _TERM_PIXEL -x $X-1 -y 101 -r 0 -g $i -b 0  
-  RUN _TERM_PIXEL -x $X-1 -y 102 -r 0 -g $i -b 0  
-  RUN _TERM_PIXEL -x $X-1 -y 103 -r 0 -g $i -b 0 
+  FOR ($N=0; $N<5; $N++):
+    RUN _TERM_PIXEL -x $X-$N -y 97 -r 0 -g $i -b 0
+    RUN _TERM_PIXEL -x $X-$N -y 98 -r 0 -g $i -b 0
+    RUN _TERM_PIXEL -x $X-$N -y 99 -r 0 -g $i -b 0
+    RUN _TERM_PIXEL -x $X-$N -y 100 -r 0 -g $i -b 0
+    RUN _TERM_PIXEL -x $X-$N -y 101 -r 0 -g $i -b 0
+    RUN _TERM_PIXEL -x $X-$N -y 102 -r 0 -g $i -b 0
+    RUN _TERM_PIXEL -x $X-$N -y 103 -r 0 -g $i -b 0
+  END
 
   RUN _TERM_PIXEL --render
-      
-  RUN _WAIT $WAIT
+
+  # ----------------------------------------
+
+  RUN _TIMER --get TO $DT
+  
   IF $X < 320
-    SET $X = $X + $DX
-    #RUN _TERM_PIXEL --clear
     GOTO DRAW_LOOP
   
 RUN _WAIT 4000

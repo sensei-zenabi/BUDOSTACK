@@ -40,8 +40,9 @@ SET $i = 0
 
   RUN _TIMER --get TO $DT
   
-  IF $X < 320
+  IF ($X < 320):
     GOTO DRAW_LOOP
+  END
   
 RUN _WAIT 4000
 

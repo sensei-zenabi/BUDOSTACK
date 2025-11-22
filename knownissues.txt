@@ -1,19 +1,21 @@
 
-=============================== CHANGELOG  ================================
+============================== KNOWN ISSUES ===============================
 
-LOG ENTRIES:
+
 
 ---------------------------------------------------------------------------
+Status: FIXED
+Verified: 22nd of November, 2025
 
 Issue:
   
   Multi-line paste does not work in apps/terminal, not even inside a single
   file when running apps/edit.
 
-Log:
+Report:
 
-  apps/terminal.c changes seem legit, it seems good idea to remove the
-  CTRL+V handling from it and let the underlying apps process it.
+  Was caused by "race condition" of CTRL+V handling between apps/terminal
+  and apps/edit.
 
 ---------------------------------------------------------------------------
 

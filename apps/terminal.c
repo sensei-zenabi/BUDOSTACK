@@ -157,6 +157,8 @@ static struct terminal_custom_pixel *terminal_custom_pixels = NULL;
 static size_t terminal_custom_pixel_count = 0u;
 static size_t terminal_custom_pixel_capacity = 0u;
 static int terminal_custom_pixels_dirty = 0;
+static int terminal_custom_pixels_need_render = 0;
+static int terminal_custom_pixels_active = 0;
 
 struct terminal_gl_shader {
     GLuint program;
@@ -1457,11 +1459,14 @@ static void terminal_custom_pixels_shutdown(void) {
     terminal_custom_pixel_count = 0u;
     terminal_custom_pixel_capacity = 0u;
     terminal_custom_pixels_dirty = 0;
+    terminal_custom_pixels_need_render = 0;
+    terminal_custom_pixels_active = 0;
 }
 
 static void terminal_custom_pixels_clear(void) {
     terminal_custom_pixel_count = 0u;
-    terminal_custom_pixels_dirty = 1;
+    terminal_custom_pixels_need_render = 1;
+    terminal_custom_pixels_active = 0;
     terminal_mark_full_redraw();
 }
 
@@ -1479,7 +1484,7 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
             entry->r = r;
             entry->g = g;
             entry->b = b;
-            terminal_custom_pixels_dirty = 1;
+            terminal_custom_pixels_need_render = 1;
             return 0;
         }
     }
@@ -1506,7 +1511,7 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
     entry->r = r;
     entry->g = g;
     entry->b = b;
-    terminal_custom_pixels_dirty = 1;
+    terminal_custom_pixels_need_render = 1;
     return 0;
 }
 
@@ -3781,7 +3786,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             enum terminal_pixel_action {
                 TERMINAL_PIXEL_ACTION_NONE = 0,
                 TERMINAL_PIXEL_ACTION_DRAW = 1,
-                TERMINAL_PIXEL_ACTION_CLEAR = 2
+                TERMINAL_PIXEL_ACTION_CLEAR = 2,
+                TERMINAL_PIXEL_ACTION_RENDER = 3
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
             long pixel_x = -1;
@@ -3881,6 +3887,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
                         } else if (strcmp(value, "clear") == 0) {
                             pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
+                        } else if (strcmp(value, "render") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_RENDER;
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -3958,6 +3966,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 }
             } else if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
                 terminal_custom_pixels_clear();
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_RENDER) {
+                if (terminal_custom_pixels_need_render) {
+                    terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+                    terminal_custom_pixels_dirty = 1;
+                    terminal_custom_pixels_need_render = 0;
+                }
             }
 
             free(copy);
@@ -5939,13 +5953,18 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (terminal_custom_pixel_count > 0u && (frame_dirty || terminal_custom_pixels_dirty)) {
+        if (terminal_custom_pixel_count > 0u &&
+            (terminal_custom_pixels_dirty ||
+             (terminal_custom_pixels_active && frame_dirty && !terminal_custom_pixels_need_render))) {
             terminal_custom_pixels_apply(framebuffer, frame_width, frame_height);
             frame_dirty = 1;
             terminal_custom_pixels_dirty = 0;
+            terminal_custom_pixels_active = 1;
         } else if (terminal_custom_pixels_dirty) {
             frame_dirty = 1;
             terminal_custom_pixels_dirty = 0;
+            terminal_custom_pixels_need_render = 0;
+            terminal_custom_pixels_active = 0;
         }
 
         shader_timing_enabled = (terminal_gl_shader_count > 0u &&

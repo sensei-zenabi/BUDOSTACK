@@ -9,6 +9,7 @@
 static void print_usage(void) {
     fprintf(stderr, "Usage: _TERM_PIXEL -x <pixels> -y <pixels> -r <0-255> -g <0-255> -b <0-255>\n");
     fprintf(stderr, "       _TERM_PIXEL --clear\n");
+    fprintf(stderr, "       _TERM_PIXEL --render\n");
     fprintf(stderr, "  Draws or clears raw SDL pixels on the terminal window.\n");
 }
 
@@ -41,6 +42,7 @@ int main(int argc, char **argv) {
     }
 
     int clear = 0;
+    int render = 0;
     long x = -1;
     long y = -1;
     long r = -1;
@@ -51,6 +53,8 @@ int main(int argc, char **argv) {
         const char *arg = argv[i];
         if (strcmp(arg, "--clear") == 0) {
             clear = 1;
+        } else if (strcmp(arg, "--render") == 0) {
+            render = 1;
         } else if (strcmp(arg, "-x") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_TERM_PIXEL: missing value for -x.\n");
@@ -104,6 +108,15 @@ int main(int argc, char **argv) {
             return EXIT_FAILURE;
         }
         if (printf("\x1b]777;pixel=clear\a") < 0) {
+            perror("_TERM_PIXEL: printf");
+            return EXIT_FAILURE;
+        }
+    } else if (render) {
+        if (x >= 0 || y >= 0 || r >= 0 || g >= 0 || b >= 0) {
+            fprintf(stderr, "_TERM_PIXEL: --render cannot be combined with draw arguments.\n");
+            return EXIT_FAILURE;
+        }
+        if (printf("\x1b]777;pixel=render\a") < 0) {
             perror("_TERM_PIXEL: printf");
             return EXIT_FAILURE;
         }

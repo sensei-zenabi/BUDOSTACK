@@ -2211,25 +2211,82 @@ int main(int argc, char *argv[]) {
         }
 
         if (strncmp(command, "IF", 2) == 0 && (command[2] == '\0' || isspace((unsigned char)command[2]))) {
-            const char *cursor = command + 2;
-            bool cond_result = false;
-            if (!parse_condition(&cursor, &cond_result, script[pc].source_line, debug)) {
-                cond_result = false;
+        const char *after_if = command + 2;
+        while (isspace((unsigned char)*after_if)) {
+            after_if++;
+        }
+
+        const char *colon = strrchr(after_if, ':');
+        if (!colon) {
+            if (debug) fprintf(stderr, "IF: expected ':' before END-delimited block at %d\n", script[pc].source_line);
+            continue;
+        }
+
+        const char *cond_end = colon;
+        while (cond_end > after_if && isspace((unsigned char)*(cond_end - 1))) {
+            cond_end--;
+        }
+
+        if (cond_end <= after_if) {
+            if (debug) fprintf(stderr, "IF: missing condition before ':' at %d\n", script[pc].source_line);
+            continue;
+        }
+
+        char cond_buf[256];
+        size_t cond_len = (size_t)(cond_end - after_if);
+        if (cond_len >= sizeof(cond_buf)) {
+            if (debug) fprintf(stderr, "IF: condition too long at %d\n", script[pc].source_line);
+            continue;
+        }
+        memcpy(cond_buf, after_if, cond_len);
+        cond_buf[cond_len] = '\0';
+
+        size_t start_off = 0;
+        size_t end_off = cond_len;
+        while (start_off < end_off && isspace((unsigned char)cond_buf[start_off])) {
+            start_off++;
+        }
+        while (end_off > start_off && isspace((unsigned char)cond_buf[end_off - 1])) {
+            end_off--;
+        }
+        while (end_off > start_off && cond_buf[start_off] == '(' && cond_buf[end_off - 1] == ')') {
+            start_off++;
+            end_off--;
+            while (start_off < end_off && isspace((unsigned char)cond_buf[start_off])) {
+                start_off++;
             }
-            while (isspace((unsigned char)*cursor)) {
-                cursor++;
+            while (end_off > start_off && isspace((unsigned char)cond_buf[end_off - 1])) {
+                end_off--;
             }
-            if (*cursor != ':') {
-                if (debug) fprintf(stderr, "IF: expected ':' before END-delimited block at %d\n", script[pc].source_line);
-                continue;
-            }
+        }
+
+        if (start_off >= end_off) {
+            if (debug) fprintf(stderr, "IF: empty condition after trimming at %d\n", script[pc].source_line);
+            continue;
+        }
+
+        memmove(cond_buf, cond_buf + start_off, end_off - start_off);
+        cond_buf[end_off - start_off] = '\0';
+
+        const char *cursor = cond_buf;
+        bool cond_result = false;
+        if (!parse_condition(&cursor, &cond_result, script[pc].source_line, debug)) {
+            cond_result = false;
+        }
+        while (isspace((unsigned char)*cursor)) {
             cursor++;
-            while (isspace((unsigned char)*cursor)) {
-                cursor++;
-            }
-            if (*cursor != '\0' && debug) {
-                fprintf(stderr, "IF: unexpected characters at %d\n", script[pc].source_line);
-            }
+        }
+        if (*cursor != '\0' && debug) {
+            fprintf(stderr, "IF: unexpected characters in condition at %d\n", script[pc].source_line);
+        }
+
+        const char *after_colon = colon + 1;
+        while (isspace((unsigned char)*after_colon)) {
+            after_colon++;
+        }
+        if (*after_colon != '\0' && debug) {
+            fprintf(stderr, "IF: unexpected characters after ':' at %d\n", script[pc].source_line);
+        }
             if (if_sp >= (int)(sizeof(if_stack) / sizeof(if_stack[0]))) {
                 if (debug) fprintf(stderr, "IF: nesting limit reached at line %d\n", script[pc].source_line);
                 continue;

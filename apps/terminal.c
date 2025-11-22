@@ -3781,7 +3781,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             enum terminal_pixel_action {
                 TERMINAL_PIXEL_ACTION_NONE = 0,
                 TERMINAL_PIXEL_ACTION_DRAW = 1,
-                TERMINAL_PIXEL_ACTION_CLEAR = 2
+                TERMINAL_PIXEL_ACTION_CLEAR = 2,
+                TERMINAL_PIXEL_ACTION_BATCH = 3
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
             long pixel_x = -1;
@@ -3789,6 +3790,17 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long pixel_r = -1;
             long pixel_g = -1;
             long pixel_b = -1;
+            struct terminal_pixel_batch_entry {
+                long x;
+                long y;
+                long r;
+                long g;
+                long b;
+            };
+            struct terminal_pixel_batch_entry *pixel_batch = NULL;
+            size_t pixel_batch_count = 0u;
+            size_t pixel_batch_capacity = 0u;
+            int pixel_batch_invalid = 0;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -3881,6 +3893,62 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
                         } else if (strcmp(value, "clear") == 0) {
                             pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
+                        } else if (strcmp(value, "batch") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_BATCH;
+                        }
+                    } else if (strcmp(key, "pixels") == 0 && value && *value != '\0') {
+                        if (pixel_action == TERMINAL_PIXEL_ACTION_BATCH && pixel_batch_invalid == 0) {
+                            char *entry_saveptr = NULL;
+                            char *entry = strtok_r(value, "|", &entry_saveptr);
+                            while (entry && pixel_batch_invalid == 0) {
+                                long components[5] = {-1, -1, -1, -1, -1};
+                                size_t component_index = 0u;
+                                char *component_saveptr = NULL;
+                                char *component = strtok_r(entry, ",", &component_saveptr);
+                                while (component && component_index < 5u) {
+                                    char *endptr = NULL;
+                                    errno = 0;
+                                    long parsed = strtol(component, &endptr, 10);
+                                    if (errno != 0 || !endptr || *endptr != '\0') {
+                                        pixel_batch_invalid = 1;
+                                        break;
+                                    }
+                                    components[component_index++] = parsed;
+                                    component = strtok_r(NULL, ",", &component_saveptr);
+                                }
+
+                                if (pixel_batch_invalid || component_index != 5u || component) {
+                                    pixel_batch_invalid = 1;
+                                    break;
+                                }
+
+                                if (pixel_batch_count == pixel_batch_capacity) {
+                                    size_t new_capacity = (pixel_batch_capacity == 0u)
+                                        ? 64u
+                                        : pixel_batch_capacity * 2u;
+                                    if (new_capacity < pixel_batch_capacity) {
+                                        pixel_batch_invalid = 1;
+                                        break;
+                                    }
+                                    struct terminal_pixel_batch_entry *new_entries = realloc(pixel_batch,
+                                                                                             new_capacity * sizeof(*new_entries));
+                                    if (!new_entries) {
+                                        pixel_batch_invalid = 1;
+                                        break;
+                                    }
+                                    pixel_batch = new_entries;
+                                    pixel_batch_capacity = new_capacity;
+                                }
+
+                                struct terminal_pixel_batch_entry *entry_slot = &pixel_batch[pixel_batch_count++];
+                                entry_slot->x = components[0];
+                                entry_slot->y = components[1];
+                                entry_slot->r = components[2];
+                                entry_slot->g = components[3];
+                                entry_slot->b = components[4];
+
+                                entry = strtok_r(NULL, "|", &entry_saveptr);
+                            }
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -3943,7 +4011,27 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             }
 #endif
 
-            if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW) {
+            if (pixel_action == TERMINAL_PIXEL_ACTION_BATCH) {
+                if (pixel_batch_invalid || pixel_batch_count == 0u) {
+                    fprintf(stderr, "terminal: Invalid batched pixel data.\n");
+                } else {
+                    for (size_t i = 0u; i < pixel_batch_count; i++) {
+                        const struct terminal_pixel_batch_entry *entry = &pixel_batch[i];
+                        if (entry->x >= 0 && entry->y >= 0 && entry->x <= INT_MAX && entry->y <= INT_MAX &&
+                            entry->r >= 0 && entry->r <= 255 && entry->g >= 0 && entry->g <= 255 &&
+                            entry->b >= 0 && entry->b <= 255) {
+                            if (terminal_custom_pixels_set((int)entry->x,
+                                                           (int)entry->y,
+                                                           (uint8_t)entry->r,
+                                                           (uint8_t)entry->g,
+                                                           (uint8_t)entry->b) != 0) {
+                                fprintf(stderr, "terminal: Failed to draw batched pixel.\n");
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW) {
                 if (pixel_x >= 0 && pixel_y >= 0 && pixel_x <= INT_MAX && pixel_y <= INT_MAX &&
                     pixel_r >= 0 && pixel_r <= 255 && pixel_g >= 0 && pixel_g <= 255 && pixel_b >= 0 && pixel_b <= 255) {
                     if (terminal_custom_pixels_set((int)pixel_x,
@@ -3960,6 +4048,7 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 terminal_custom_pixels_clear();
             }
 
+            free(pixel_batch);
             free(copy);
         }
 

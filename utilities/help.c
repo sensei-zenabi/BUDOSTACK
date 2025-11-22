@@ -174,6 +174,7 @@ int main(int argc, char *argv[]) {
     printf("  autoexec.task        : Determines what happens before BUDOSTACK login screen\n");
     printf("  csvdemo.task         : Dynamic .csv file manipulation demo\n");
     printf("  demo.task            : TASK language demo\n");
+    printf("  fcntest.task         : Demonstrates function use\n");
     printf("  game.task            : Work-in-progress\n");
     printf("  release.task         : Used to generate release notes\n");    
     printf("  screen.task          : Screen calibration TASK\n");

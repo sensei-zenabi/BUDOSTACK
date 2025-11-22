@@ -1,0 +1,32 @@
+# fcntest.task
+
+$VALUE1 = 10
+$VALUE2 = 5
+$VALUE3 = 0.0
+
+FUNCTION CALC_SQRT($ARG1,$ARG2):
+  # Local variables
+  SET $RETVAL = 0.0
+  
+  # Calculate
+  RUN _CALC sqrt($ARG1) + $ARG2 TO $RETVAL
+  
+  RETURN $RETVAL
+END
+
+# --- Main ---
+RUN cls
+PRINT "\n"
+PRINT "\n--- Function Test ---"
+PRINT "\n"
+PRINT "\n  VALUE1 : " + $VALUE1
+PRINT "\n  VALUE2 : " + $VALUE2
+PRINT "\n"
+PRINT "\n  Calculating with CALC_SQRT()..."
+EVAL CALC_SQRT($VALUE1, $VALUE2) TO $VALUE3
+PRINT "\n"
+PRINT "\n  VALUE3 : " + $VALUE3
+PRINT "\n"
+PRINT "\n  Finish!"
+PRINT "\n"
+PRINT "\n"

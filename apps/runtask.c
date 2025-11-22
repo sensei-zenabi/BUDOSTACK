@@ -81,14 +81,6 @@ typedef struct {
     int line_number;
 } IfContext;
 
-typedef struct {
-    int for_line_pc;
-    int body_start_pc;
-    int indent;
-    char condition[256];
-    char step[128];
-} ForContext;
-
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -1279,198 +1271,6 @@ static void finalize_skipped_branch(IfContext *stack, int *sp, int context_index
     }
 }
 
-static void copy_trimmed_segment(const char *start, const char *end, char *dest, size_t size) {
-    if (!start || !end || !dest || size == 0 || end < start) {
-        return;
-    }
-
-    while (start < end && isspace((unsigned char)*start)) {
-        start++;
-    }
-    while (end > start && isspace((unsigned char)*(end - 1))) {
-        end--;
-    }
-
-    size_t len = (size_t)(end - start);
-    if (len >= size) {
-        len = size - 1;
-    }
-    memcpy(dest, start, len);
-    dest[len] = '\0';
-}
-
-static bool process_assignment_statement(const char *statement, int line, int debug) {
-    if (!statement) {
-        return false;
-    }
-
-    const char *cursor = statement;
-    char *var_token = NULL;
-    bool quoted = false;
-    if (!parse_token(&cursor, &var_token, &quoted, "=") || quoted) {
-        if (debug) fprintf(stderr, "Assignment: expected variable at line %d\n", line);
-        free(var_token);
-        return false;
-    }
-
-    char name[64];
-    if (!parse_variable_name_token(var_token, name, sizeof(name))) {
-        if (debug) fprintf(stderr, "Assignment: invalid variable name at line %d\n", line);
-        free(var_token);
-        return false;
-    }
-    free(var_token);
-
-    while (isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
-    if (*cursor != '=') {
-        if (debug) fprintf(stderr, "Assignment: expected '=' at line %d\n", line);
-        return false;
-    }
-    cursor++;
-    while (isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
-
-    Value value;
-    if (!parse_expression(&cursor, &value, NULL, line, debug)) {
-        return false;
-    }
-    while (isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
-    if (*cursor != '\0' && debug) {
-        fprintf(stderr, "Assignment: unexpected characters at %d\n", line);
-    }
-
-    Variable *var = find_variable(name, true);
-    if (var) {
-        assign_variable(var, &value);
-    }
-    free_value(&value);
-    return true;
-}
-
-static bool apply_increment_step(const char *expr, int line, int debug) {
-    if (!expr) {
-        return false;
-    }
-
-    const char *cursor = expr;
-    while (isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
-
-    if (*cursor == '(') {
-        cursor++;
-        while (isspace((unsigned char)*cursor)) {
-            cursor++;
-        }
-    }
-
-    if (*cursor == '$') {
-        cursor++;
-    }
-
-    char name[64];
-    size_t len = 0;
-    bool too_long = false;
-    while (isalnum((unsigned char)*cursor) || *cursor == '_') {
-        if (len + 1 >= sizeof(name)) {
-            too_long = true;
-        } else {
-            name[len++] = *cursor;
-        }
-        cursor++;
-    }
-    name[len] = '\0';
-
-    if (len == 0 || too_long) {
-        if (debug) fprintf(stderr, "FOR: invalid step variable at line %d\n", line);
-        return false;
-    }
-
-    while (isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
-
-    bool increment = false;
-    if (strncmp(cursor, "++", 2) == 0) {
-        increment = true;
-        cursor += 2;
-    } else if (strncmp(cursor, "--", 2) == 0) {
-        increment = false;
-        cursor += 2;
-    } else {
-        if (debug) fprintf(stderr, "FOR: unsupported step at line %d (only $VAR++ or $VAR--)\n", line);
-        return false;
-    }
-
-    while (isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
-    if (*cursor == ')' ) {
-        cursor++;
-        while (isspace((unsigned char)*cursor)) {
-            cursor++;
-        }
-    }
-    if (*cursor != '\0') {
-        if (debug) fprintf(stderr, "FOR: unexpected characters after step at line %d\n", line);
-        return false;
-    }
-
-    Variable *var = find_variable(name, true);
-    if (!var) {
-        return false;
-    }
-
-    if (var->type == VALUE_STRING && var->str_val) {
-        free(var->str_val);
-        var->str_val = NULL;
-    }
-
-    long long current = 0;
-    if (var->type == VALUE_INT) {
-        current = var->int_val;
-    } else if (var->type == VALUE_FLOAT) {
-        current = (long long)var->float_val;
-    }
-
-    if (increment) {
-        current++;
-    } else {
-        current--;
-    }
-
-    var->type = VALUE_INT;
-    var->int_val = current;
-    var->float_val = (double)current;
-    return true;
-}
-
-static bool evaluate_condition_string(const char *expr, int line, int debug, bool *out) {
-    if (!expr || !out) {
-        return false;
-    }
-
-    const char *cursor = expr;
-    bool result = false;
-    if (!parse_condition(&cursor, &result, line, debug)) {
-        return false;
-    }
-    while (isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
-    if (*cursor != '\0') {
-        if (debug) fprintf(stderr, "Condition: unexpected trailing characters at line %d\n", line);
-        return false;
-    }
-    *out = result;
-    return true;
-}
-
 static void print_help(void) {
     printf("\nRuntask Help\n");
     printf("============\n\n");
@@ -1479,8 +1279,6 @@ static void print_help(void) {
     printf("  INPUT $VAR [-wait on|off]\n");
     printf("                      : Read input into $VAR (default waits for Enter; OFF captures first key press)\n");
     printf("  IF <lhs> op <rhs>  : Compare values. Chain conditions with AND/OR. Use ELSE for alternate branch.\n");
-    printf("  FOR (init; cond; step): Loop with inline init/condition/step terminated by END.\n");
-    printf("                      Supports $VAR++ and $VAR-- steps.\n");
     printf("  PRINT expr         : Print literals and variables (use '+' to concatenate).\n");
     printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
     printf("  GOTO label         : Jumps to the line marked with @label\n");
@@ -2118,8 +1916,6 @@ int main(int argc, char *argv[]) {
 
     IfContext if_stack[64];
     int if_sp = 0;
-    ForContext for_stack[64];
-    int for_sp = 0;
     bool skipping_block = false;
     int skip_indent = 0;
     int skip_context_index = -1;
@@ -2138,7 +1934,6 @@ int main(int argc, char *argv[]) {
         }
 
         char *command = script[pc].text;
-        bool pc_changed = false;
 
         if (skipping_block) {
             int current_indent = script[pc].indent;
@@ -2218,113 +2013,6 @@ int main(int argc, char *argv[]) {
                 skip_consumed_first = false;
             }
         }
-        else if (strncmp(command, "FOR", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {
-            if (for_sp >= (int)(sizeof(for_stack) / sizeof(for_stack[0]))) {
-                if (debug) fprintf(stderr, "FOR: nesting limit reached at line %d\n", script[pc].source_line);
-                continue;
-            }
-
-            const char *cursor = command + 3;
-            while (isspace((unsigned char)*cursor)) {
-                cursor++;
-            }
-
-            const char *line_end = cursor + strlen(cursor);
-            while (line_end > cursor && isspace((unsigned char)*(line_end - 1))) {
-                line_end--;
-            }
-
-            if (line_end == cursor || *(line_end - 1) != ':') {
-                if (debug) fprintf(stderr, "FOR: expected ':' at line %d\n", script[pc].source_line);
-                continue;
-            }
-
-            bool has_paren = false;
-            if (*cursor == '(') {
-                has_paren = true;
-                cursor++;
-            }
-
-            const char *first_semi = strchr(cursor, ';');
-            if (!first_semi) {
-                if (debug) fprintf(stderr, "FOR: missing first ';' at line %d\n", script[pc].source_line);
-                continue;
-            }
-            const char *second_semi = strchr(first_semi + 1, ';');
-            if (!second_semi) {
-                if (debug) fprintf(stderr, "FOR: missing second ';' at line %d\n", script[pc].source_line);
-                continue;
-            }
-
-            const char *step_end = line_end - 1;
-            if (has_paren) {
-                const char *closing = strchr(second_semi + 1, ')');
-                if (!closing) {
-                    if (debug) fprintf(stderr, "FOR: missing closing ')' at line %d\n", script[pc].source_line);
-                    continue;
-                }
-                if (closing >= line_end) {
-                    if (debug) fprintf(stderr, "FOR: ':' must appear after ')' at line %d\n", script[pc].source_line);
-                    continue;
-                }
-                step_end = closing;
-            } else {
-                while (step_end > second_semi + 1 && isspace((unsigned char)*(step_end - 1))) {
-                    step_end--;
-                }
-            }
-
-
-            char init_buf[256];
-            char cond_buf[256];
-            char step_buf[128];
-            memset(init_buf, 0, sizeof(init_buf));
-            memset(cond_buf, 0, sizeof(cond_buf));
-            memset(step_buf, 0, sizeof(step_buf));
-
-            copy_trimmed_segment(cursor, first_semi, init_buf, sizeof(init_buf));
-            copy_trimmed_segment(first_semi + 1, second_semi, cond_buf, sizeof(cond_buf));
-            copy_trimmed_segment(second_semi + 1, step_end, step_buf, sizeof(step_buf));
-
-            if (init_buf[0] != '\0') {
-                if (!process_assignment_statement(init_buf, script[pc].source_line, debug)) {
-                    continue;
-                }
-            }
-
-            bool cond_ok = true;
-            if (cond_buf[0] != '\0') {
-                cond_ok = false;
-                if (!evaluate_condition_string(cond_buf, script[pc].source_line, debug, &cond_ok)) {
-                    continue;
-                }
-            }
-
-            if (!cond_ok) {
-                skipping_block = true;
-                skip_indent = script[pc].indent;
-                skip_context_index = -1;
-                skip_for_true_branch = false;
-                skip_progress_pending = false;
-                skip_consumed_first = false;
-                note_branch_progress(if_stack, &if_sp);
-                continue;
-            }
-
-            if (step_buf[0] == '\0') {
-                if (debug) fprintf(stderr, "FOR: missing step at line %d\n", script[pc].source_line);
-                continue;
-            }
-
-            ForContext fctx;
-            fctx.for_line_pc = pc;
-            fctx.body_start_pc = pc + 1;
-            fctx.indent = script[pc].indent;
-            snprintf(fctx.condition, sizeof(fctx.condition), "%s", cond_buf);
-            snprintf(fctx.step, sizeof(fctx.step), "%s", step_buf);
-            for_stack[for_sp++] = fctx;
-            note_branch_progress(if_stack, &if_sp);
-        }
         else if (strncmp(command, "ELSE", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {
             if (if_sp <= 0) {
                 if (debug) fprintf(stderr, "ELSE without matching IF at line %d\n", script[pc].source_line);
@@ -2350,48 +2038,6 @@ int main(int argc, char *argv[]) {
                 skip_for_true_branch = false;
                 skip_progress_pending = true;
                 skip_consumed_first = false;
-            }
-        }
-        else if (strncmp(command, "END", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {
-            const char *cursor = command + 3;
-            while (isspace((unsigned char)*cursor)) {
-                cursor++;
-            }
-            if (*cursor != '\0' && debug) {
-                fprintf(stderr, "END: unexpected characters at %d\n", script[pc].source_line);
-            }
-
-            bool matched = false;
-            if (for_sp > 0) {
-                ForContext *ctx = &for_stack[for_sp - 1];
-                if (script[pc].indent == ctx->indent) {
-                    matched = true;
-                    if (!apply_increment_step(ctx->step, script[ctx->for_line_pc].source_line, debug)) {
-                        for_sp--;
-                        continue;
-                    }
-
-                    bool cond_result = true;
-                    if (ctx->condition[0] != '\0') {
-                        cond_result = false;
-                        if (!evaluate_condition_string(ctx->condition, script[ctx->for_line_pc].source_line, debug, &cond_result)) {
-                            for_sp--;
-                            continue;
-                        }
-                    }
-
-                    if (cond_result) {
-                        pc = ctx->body_start_pc - 1;
-                        pc_changed = true;
-                    } else {
-                        for_sp--;
-                    }
-                    note_branch_progress(if_stack, &if_sp);
-                }
-            }
-
-            if (!matched && debug) {
-                fprintf(stderr, "END without matching FOR at line %d\n", script[pc].source_line);
             }
         }
         else if (strncmp(command, "INPUT", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {
@@ -2539,7 +2185,47 @@ int main(int argc, char *argv[]) {
             note_branch_progress(if_stack, &if_sp);
         }
         else if (command[0] == '$') {
-            process_assignment_statement(command, script[pc].source_line, debug);
+            const char *cursor = command;
+            char *var_token = NULL;
+            bool quoted = false;
+            if (!parse_token(&cursor, &var_token, &quoted, "=") || quoted) {
+                if (debug) fprintf(stderr, "Assignment: expected variable at line %d\n", script[pc].source_line);
+                free(var_token);
+                continue;
+            }
+            char name[64];
+            if (!parse_variable_name_token(var_token, name, sizeof(name))) {
+                if (debug) fprintf(stderr, "Assignment: invalid variable name at line %d\n", script[pc].source_line);
+                free(var_token);
+                continue;
+            }
+            free(var_token);
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '=') {
+                if (debug) fprintf(stderr, "Assignment: expected '=' at line %d\n", script[pc].source_line);
+                continue;
+            }
+            cursor++;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            Value value;
+            if (!parse_expression(&cursor, &value, NULL, script[pc].source_line, debug)) {
+                continue;
+            }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "Assignment: unexpected characters at %d\n", script[pc].source_line);
+            }
+            Variable *var = find_variable(name, true);
+            if (var) {
+                assign_variable(var, &value);
+            }
+            free_value(&value);
             note_branch_progress(if_stack, &if_sp);
         }
         else if (strncmp(command, "PRINT", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {
@@ -2754,7 +2440,6 @@ int main(int argc, char *argv[]) {
             } else {
                 int target_index = labels[label_index].index;
                 pc = target_index - 1; // -1 because loop will ++pc
-                pc_changed = true;
             }
             note_branch_progress(if_stack, &if_sp);
         }
@@ -3077,32 +2762,6 @@ int main(int argc, char *argv[]) {
         }
         else {
             if (debug) fprintf(stderr, "Unrecognized command at %d: %s\n", script[pc].source_line, command);
-        }
-
-        if (!pc_changed && for_sp > 0) {
-            ForContext *ctx = &for_stack[for_sp - 1];
-            int next_pc = pc + 1;
-            if (next_pc >= count || script[next_pc].indent <= ctx->indent) {
-                if (!apply_increment_step(ctx->step, script[ctx->for_line_pc].source_line, debug)) {
-                    for_sp--;
-                    continue;
-                }
-
-                bool cond_result = true;
-                if (ctx->condition[0] != '\0') {
-                    cond_result = false;
-                    if (!evaluate_condition_string(ctx->condition, script[ctx->for_line_pc].source_line, debug, &cond_result)) {
-                        for_sp--;
-                        continue;
-                    }
-                }
-
-                if (cond_result) {
-                    pc = ctx->body_start_pc - 1;
-                } else {
-                    for_sp--;
-                }
-            }
         }
     }
 

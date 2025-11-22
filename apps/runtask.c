@@ -43,6 +43,9 @@
 
 #define MAX_VARIABLES 128
 #define MAX_LABELS 256
+#define MAX_FUNCTIONS 64
+#define MAX_FUNCTION_PARAMS 8
+#define MAX_SCOPES 16
 
 static char *xstrdup(const char *s);
 static void set_initial_argv0(const char *argv0);
@@ -70,8 +73,13 @@ typedef struct {
     char *str_val;
 } Variable;
 
-static Variable variables[MAX_VARIABLES];
-static size_t variable_count = 0;
+typedef struct {
+    Variable vars[MAX_VARIABLES];
+    size_t count;
+} VariableScope;
+
+static VariableScope scopes[MAX_SCOPES];
+static size_t scope_depth = 0; // includes global scope
 
 typedef struct {
     bool result;
@@ -414,23 +422,75 @@ restore:
     return success;
 }
 
+static VariableScope *current_scope(void) {
+    if (scope_depth == 0) {
+        return NULL;
+    }
+    return &scopes[scope_depth - 1];
+}
+
+static void init_scopes(void) {
+    for (size_t i = 0; i < MAX_SCOPES; ++i) {
+        scopes[i].count = 0;
+    }
+    scope_depth = 1; // global scope
+}
+
+static bool push_scope(void) {
+    if (scope_depth >= MAX_SCOPES) {
+        fprintf(stderr, "Variable scope limit reached (%d)\n", MAX_SCOPES);
+        return false;
+    }
+    scopes[scope_depth].count = 0;
+    scope_depth++;
+    return true;
+}
+
+static void pop_scope(void) {
+    if (scope_depth == 0) {
+        return;
+    }
+    VariableScope *scope = &scopes[scope_depth - 1];
+    for (size_t i = 0; i < scope->count; ++i) {
+        if (scope->vars[i].type == VALUE_STRING && scope->vars[i].str_val) {
+            free(scope->vars[i].str_val);
+            scope->vars[i].str_val = NULL;
+        }
+        scope->vars[i].type = VALUE_UNSET;
+    }
+    scope->count = 0;
+    scope_depth--;
+}
+
 static Variable *find_variable(const char *name, bool create) {
     if (!name || !*name) {
         return NULL;
     }
-    for (size_t i = 0; i < variable_count; ++i) {
-        if (strcmp(variables[i].name, name) == 0) {
-            return &variables[i];
+
+    for (size_t depth = scope_depth; depth > 0; --depth) {
+        VariableScope *scope = &scopes[depth - 1];
+        for (size_t i = 0; i < scope->count; ++i) {
+            if (strcmp(scope->vars[i].name, name) == 0) {
+                return &scope->vars[i];
+            }
         }
     }
+
     if (!create) {
         return NULL;
     }
-    if (variable_count >= MAX_VARIABLES) {
-        fprintf(stderr, "Variable limit reached (%d)\n", MAX_VARIABLES);
+
+    VariableScope *scope = current_scope();
+    if (!scope) {
         return NULL;
     }
-    Variable *var = &variables[variable_count++];
+
+    if (scope->count >= MAX_VARIABLES) {
+        fprintf(stderr, "Variable limit reached in scope (%d)\n", MAX_VARIABLES);
+        return NULL;
+    }
+
+    Variable *var = &scope->vars[scope->count++];
     memset(var, 0, sizeof(*var));
     strncpy(var->name, name, sizeof(var->name) - 1);
     var->name[sizeof(var->name) - 1] = '\0';
@@ -523,14 +583,10 @@ static Value variable_to_value(const Variable *var) {
 }
 
 static void cleanup_variables(void) {
-    for (size_t i = 0; i < variable_count; ++i) {
-        if (variables[i].type == VALUE_STRING && variables[i].str_val) {
-            free(variables[i].str_val);
-            variables[i].str_val = NULL;
-        }
-        variables[i].type = VALUE_UNSET;
+    while (scope_depth > 0) {
+        pop_scope();
     }
-    variable_count = 0;
+    init_scopes();
 }
 
 static bool is_token_delim(char c, const char *delims) {
@@ -1495,6 +1551,13 @@ static void print_help(void) {
     printf("    $VAR-- steps.\n");
     printf("  PRINT expr\n");
     printf("    Print literals and variables (use '+' to concatenate).\n");
+    printf("  FUNCTION name($A, $B):\n");
+    printf("    Define a callable block. Body ends when indentation returns to the\n");
+    printf("    function's column or the file ends.\n");
+    printf("  EVAL name(args...) [TO $VAR]\n");
+    printf("    Invoke a FUNCTION. Optionally store RETURN value into $VAR.\n");
+    printf("  RETURN [value]\n");
+    printf("    Exit the current FUNCTION with an optional return value.\n");
     printf("  WAIT milliseconds\n");
     printf("    Wait for <milliseconds>.\n");
     printf("  GOTO label\n");
@@ -1538,7 +1601,8 @@ static void delay_ms(int ms) {
 
 typedef enum {
     LINE_COMMAND = 0,
-    LINE_LABEL
+    LINE_LABEL,
+    LINE_FUNCTION
 } LineType;
 
 typedef struct {
@@ -1552,6 +1616,33 @@ typedef struct {
     char name[64];
     int index;        // index into script array
 } Label;
+
+typedef struct {
+    char name[64];
+    int definition_pc;   // index where FUNCTION line is located
+    int start_pc;        // first executable line inside function
+    int end_pc;          // first line after the function block
+    int indent;          // indent level of the definition line
+    int param_count;
+    char params[MAX_FUNCTION_PARAMS][sizeof(((Variable *)0)->name)];
+} FunctionDef;
+
+typedef struct {
+    int return_pc;
+    int function_end_pc;
+    bool has_return_target;
+    char return_target[sizeof(((Variable *)0)->name)];
+    bool has_return_value;
+    Value return_value;
+    int saved_if_sp;
+    int saved_for_sp;
+    bool saved_skipping_block;
+    int saved_skip_indent;
+    int saved_skip_context_index;
+    bool saved_skip_for_true_branch;
+    bool saved_skip_progress_pending;
+    bool saved_skip_consumed_first;
+} CallFrame;
 
 static void normalize_label_name(const char *input, char *output, size_t size) {
     if (!input || !output || size == 0) {
@@ -1574,6 +1665,135 @@ static int find_label_index(const Label *labels, int label_count, const char *na
         }
     }
     return -1;
+}
+
+static int find_function_index(const FunctionDef *functions, int function_count, const char *name) {
+    if (!functions || !name) {
+        return -1;
+    }
+    for (int i = 0; i < function_count; ++i) {
+        if (equals_ignore_case(functions[i].name, name)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static bool parse_function_definition(const char *line, FunctionDef *out) {
+    if (!line || !out) {
+        return false;
+    }
+    const char *cursor = line;
+    if (!match_keyword(cursor, "FUNCTION", &cursor)) {
+        return false;
+    }
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    const char *name_start = cursor;
+    while (*cursor && (isalnum((unsigned char)*cursor) || *cursor == '_')) {
+        cursor++;
+    }
+    size_t name_len = (size_t)(cursor - name_start);
+    if (name_len == 0 || name_len >= sizeof(out->name)) {
+        return false;
+    }
+    memcpy(out->name, name_start, name_len);
+    out->name[name_len] = '\0';
+
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if (*cursor != '(') {
+        return false;
+    }
+    cursor++;
+
+    out->param_count = 0;
+    while (1) {
+        while (isspace((unsigned char)*cursor)) {
+            cursor++;
+        }
+        if (*cursor == ')') {
+            cursor++;
+            break;
+        }
+        if (out->param_count >= MAX_FUNCTION_PARAMS) {
+            return false;
+        }
+        const char *param_start = cursor;
+        while (*cursor && *cursor != ',' && *cursor != ')') {
+            cursor++;
+        }
+        size_t param_len = (size_t)(cursor - param_start);
+        if (param_len == 0 || param_len >= sizeof(out->params[0])) {
+            return false;
+        }
+        char token[sizeof(out->params[0])];
+        memcpy(token, param_start, param_len);
+        token[param_len] = '\0';
+        char name_buf[sizeof(out->params[0])];
+        if (!parse_variable_name_token(token, name_buf, sizeof(name_buf))) {
+            return false;
+        }
+        snprintf(out->params[out->param_count], sizeof(out->params[0]), "%s", name_buf);
+        out->param_count++;
+
+        while (isspace((unsigned char)*cursor)) {
+            cursor++;
+        }
+        if (*cursor == ',') {
+            cursor++;
+            continue;
+        }
+        if (*cursor == ')') {
+            cursor++;
+            break;
+        }
+        return false;
+    }
+
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if (*cursor != ':') {
+        return false;
+    }
+    cursor++;
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    return *cursor == '\0';
+}
+
+static FunctionDef *find_function_by_definition(FunctionDef *functions, int function_count, int pc) {
+    if (!functions) {
+        return NULL;
+    }
+    for (int i = 0; i < function_count; ++i) {
+        if (functions[i].definition_pc == pc) {
+            return &functions[i];
+        }
+    }
+    return NULL;
+}
+
+static void apply_return_value(const CallFrame *frame) {
+    if (!frame || !frame->has_return_target) {
+        return;
+    }
+    Value tmp;
+    memset(&tmp, 0, sizeof(tmp));
+    if (frame->has_return_value) {
+        copy_value(&tmp, &frame->return_value);
+    } else {
+        tmp.type = VALUE_UNSET;
+    }
+    Variable *dest = find_variable(frame->return_target, true);
+    if (dest) {
+        assign_variable(dest, &tmp);
+    }
+    free_value(&tmp);
 }
 
 static bool parse_label_definition(const char *line, char *out_name, size_t name_size) {
@@ -2023,6 +2243,7 @@ int main(int argc, char *argv[]) {
     signal(SIGINT, sigint_handler);
 
     set_initial_argv0((argc > 0) ? argv[0] : NULL);
+    init_scopes();
 
     const char *base_dir = get_base_dir();
     if (base_dir && base_dir[0] != '\0') {
@@ -2073,8 +2294,11 @@ int main(int argc, char *argv[]) {
     // Load script
     ScriptLine script[1024];
     Label labels[MAX_LABELS];
+    FunctionDef functions[MAX_FUNCTIONS];
     memset(labels, 0, sizeof(labels));
+    memset(functions, 0, sizeof(functions));
     int label_count = 0;
+    int function_count = 0;
     int count = 0;
     char linebuf[256];
     int file_line = 0;
@@ -2091,6 +2315,33 @@ int main(int argc, char *argv[]) {
         if (count >= (int)(sizeof(script) / sizeof(script[0]))) {
             fprintf(stderr, "Error: script too long (max %zu lines)\n", sizeof(script) / sizeof(script[0]));
             break;
+        }
+
+        FunctionDef def_tmp;
+        bool is_function = parse_function_definition(line, &def_tmp);
+        if (is_function) {
+            script[count].source_line = file_line;
+            script[count].type = LINE_FUNCTION;
+            script[count].indent = indent;
+            strncpy(script[count].text, line, sizeof(script[count].text) - 1);
+            script[count].text[sizeof(script[count].text) - 1] = '\0';
+
+            def_tmp.definition_pc = count;
+            def_tmp.start_pc = count + 1;
+            def_tmp.end_pc = -1;
+            def_tmp.indent = indent;
+
+            int existing = find_function_index(functions, function_count, def_tmp.name);
+            if (existing >= 0) {
+                functions[existing] = def_tmp;
+            } else if (function_count < MAX_FUNCTIONS) {
+                functions[function_count++] = def_tmp;
+            } else {
+                fprintf(stderr, "Error: too many functions (max %d)\n", MAX_FUNCTIONS);
+            }
+
+            count++;
+            continue;
         }
 
         if (*line == '@') {
@@ -2132,10 +2383,29 @@ int main(int argc, char *argv[]) {
     }
     fclose(fp);
 
+    for (int i = 0; i < function_count; ++i) {
+        int end_pc = count;
+        int indent = functions[i].indent;
+        int start_pc = functions[i].start_pc;
+        if (start_pc < 0) {
+            start_pc = functions[i].definition_pc + 1;
+        }
+        for (int pc = start_pc; pc < count; ++pc) {
+            if (script[pc].indent <= indent && script[pc].type != LINE_LABEL) {
+                end_pc = pc;
+                break;
+            }
+        }
+        functions[i].start_pc = start_pc;
+        functions[i].end_pc = end_pc;
+    }
+
     IfContext if_stack[64];
     int if_sp = 0;
     ForContext for_stack[64];
     int for_sp = 0;
+    CallFrame call_stack[16];
+    int call_sp = 0;
     bool skipping_block = false;
     int skip_indent = 0;
     int skip_context_index = -1;
@@ -2155,6 +2425,29 @@ int main(int argc, char *argv[]) {
 
         char *command = script[pc].text;
         bool pc_changed = false;
+
+        if (call_sp > 0) {
+            CallFrame *frame = &call_stack[call_sp - 1];
+            if (pc >= frame->function_end_pc) {
+                pop_scope();
+                apply_return_value(frame);
+                if (frame->has_return_value) {
+                    free_value(&frame->return_value);
+                }
+                if_sp = frame->saved_if_sp;
+                for_sp = frame->saved_for_sp;
+                skipping_block = frame->saved_skipping_block;
+                skip_indent = frame->saved_skip_indent;
+                skip_context_index = frame->saved_skip_context_index;
+                skip_for_true_branch = frame->saved_skip_for_true_branch;
+                skip_progress_pending = frame->saved_skip_progress_pending;
+                skip_consumed_first = frame->saved_skip_consumed_first;
+                call_sp--;
+                pc = frame->return_pc;
+                pc_changed = true;
+                continue;
+            }
+        }
 
         if (skipping_block) {
             int current_indent = script[pc].indent;
@@ -2195,6 +2488,15 @@ int main(int argc, char *argv[]) {
                 skip_for_true_branch = false;
                 skip_consumed_first = false;
             }
+        }
+
+        if (script[pc].type == LINE_FUNCTION) {
+            FunctionDef *fn = find_function_by_definition(functions, function_count, pc);
+            if (fn && fn->end_pc > pc) {
+                pc = fn->end_pc - 1;
+                pc_changed = true;
+            }
+            continue;
         }
 
         if (script[pc].type == LINE_LABEL) {
@@ -2712,7 +3014,191 @@ int main(int argc, char *argv[]) {
 		        }
 		    }
 		    free(out_buf);
-		    note_branch_progress(if_stack, &if_sp);
+                    note_branch_progress(if_stack, &if_sp);
+        }
+        else if (strncmp(command, "EVAL", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {
+            const char *cursor = command + 4;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            const char *name_start = cursor;
+            while (*cursor && (isalnum((unsigned char)*cursor) || *cursor == '_')) {
+                cursor++;
+            }
+            size_t name_len = (size_t)(cursor - name_start);
+            char func_name[sizeof(((FunctionDef *)0)->name)];
+            if (name_len == 0 || name_len >= sizeof(func_name)) {
+                if (debug) fprintf(stderr, "EVAL: invalid function name at line %d\n", script[pc].source_line);
+                continue;
+            }
+            memcpy(func_name, name_start, name_len);
+            func_name[name_len] = '\0';
+
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '(') {
+                if (debug) fprintf(stderr, "EVAL: expected '(' after function name at line %d\n", script[pc].source_line);
+                continue;
+            }
+            cursor++;
+
+            Value args[MAX_FUNCTION_PARAMS];
+            int arg_count = 0;
+            bool ok = true;
+            memset(args, 0, sizeof(args));
+            while (1) {
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+                if (*cursor == ')') {
+                    cursor++;
+                    break;
+                }
+                if (arg_count >= MAX_FUNCTION_PARAMS) {
+                    if (debug) fprintf(stderr, "EVAL: too many arguments at line %d\n", script[pc].source_line);
+                    ok = false;
+                    break;
+                }
+                if (!parse_expression(&cursor, &args[arg_count], ",)", script[pc].source_line, debug)) {
+                    ok = false;
+                    break;
+                }
+                arg_count++;
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+                if (*cursor == ',') {
+                    cursor++;
+                    continue;
+                }
+                if (*cursor == ')') {
+                    cursor++;
+                    break;
+                }
+                ok = false;
+                break;
+            }
+
+            char target_var[sizeof(((Variable *)0)->name)];
+            bool has_target = false;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0') {
+                const char *after_to = NULL;
+                if (!match_keyword(cursor, "TO", &after_to)) {
+                    if (debug) fprintf(stderr, "EVAL: expected TO after arguments at line %d\n", script[pc].source_line);
+                    ok = false;
+                } else {
+                    cursor = after_to;
+                    while (isspace((unsigned char)*cursor)) {
+                        cursor++;
+                    }
+                    char *var_token = NULL;
+                    bool quoted = false;
+                    if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
+                        if (debug) fprintf(stderr, "EVAL: expected variable after TO at line %d\n", script[pc].source_line);
+                        free(var_token);
+                        ok = false;
+                    } else {
+                        if (!parse_variable_name_token(var_token, target_var, sizeof(target_var))) {
+                            if (debug) fprintf(stderr, "EVAL: invalid variable name after TO at line %d\n", script[pc].source_line);
+                            ok = false;
+                        } else {
+                            has_target = true;
+                        }
+                        free(var_token);
+                        while (isspace((unsigned char)*cursor)) {
+                            cursor++;
+                        }
+                        if (*cursor != '\0') {
+                            if (debug) fprintf(stderr, "EVAL: unexpected characters at line %d\n", script[pc].source_line);
+                            ok = false;
+                        }
+                    }
+                }
+            }
+
+            if (!ok) {
+                for (int i = 0; i < arg_count; ++i) {
+                    free_value(&args[i]);
+                }
+                continue;
+            }
+
+            int fn_index = find_function_index(functions, function_count, func_name);
+            if (fn_index < 0) {
+                if (debug) fprintf(stderr, "EVAL: unknown function '%s' at line %d\n", func_name, script[pc].source_line);
+                for (int i = 0; i < arg_count; ++i) {
+                    free_value(&args[i]);
+                }
+                continue;
+            }
+
+            FunctionDef *fn = &functions[fn_index];
+            if (arg_count != fn->param_count) {
+                if (debug) fprintf(stderr, "EVAL: argument count mismatch for %s at line %d\n", func_name, script[pc].source_line);
+                for (int i = 0; i < arg_count; ++i) {
+                    free_value(&args[i]);
+                }
+                continue;
+            }
+
+            if (call_sp >= (int)(sizeof(call_stack) / sizeof(call_stack[0]))) {
+                if (debug) fprintf(stderr, "EVAL: call stack limit reached at line %d\n", script[pc].source_line);
+                for (int i = 0; i < arg_count; ++i) {
+                    free_value(&args[i]);
+                }
+                continue;
+            }
+
+            if (!push_scope()) {
+                for (int i = 0; i < arg_count; ++i) {
+                    free_value(&args[i]);
+                }
+                continue;
+            }
+
+            for (int i = 0; i < arg_count; ++i) {
+                Variable *param = find_variable(fn->params[i], true);
+                if (param) {
+                    assign_variable(param, &args[i]);
+                }
+                free_value(&args[i]);
+            }
+
+            CallFrame *frame = &call_stack[call_sp++];
+            memset(frame, 0, sizeof(*frame));
+            frame->return_pc = pc;
+            frame->function_end_pc = fn->end_pc;
+            frame->has_return_target = has_target;
+            if (has_target) {
+                snprintf(frame->return_target, sizeof(frame->return_target), "%s", target_var);
+            }
+            frame->has_return_value = false;
+            frame->saved_if_sp = if_sp;
+            frame->saved_for_sp = for_sp;
+            frame->saved_skipping_block = skipping_block;
+            frame->saved_skip_indent = skip_indent;
+            frame->saved_skip_context_index = skip_context_index;
+            frame->saved_skip_for_true_branch = skip_for_true_branch;
+            frame->saved_skip_progress_pending = skip_progress_pending;
+            frame->saved_skip_consumed_first = skip_consumed_first;
+
+            if_sp = 0;
+            for_sp = 0;
+            skipping_block = false;
+            skip_indent = 0;
+            skip_context_index = -1;
+            skip_for_true_branch = false;
+            skip_progress_pending = false;
+            skip_consumed_first = false;
+
+            pc = fn->start_pc - 1;
+            pc_changed = true;
+            note_branch_progress(if_stack, &if_sp);
+            continue;
         }
         else if (strncmp(command, "WAIT", 4) == 0) {
             int ms;
@@ -3174,6 +3660,60 @@ int main(int argc, char *argv[]) {
                 free_argv(argv_heap);
             }
             note_branch_progress(if_stack, &if_sp);
+        }
+        else if (strncmp(command, "RETURN", 6) == 0 && (command[6] == '\0' || isspace((unsigned char)command[6]))) {
+            if (call_sp <= 0) {
+                if (debug) fprintf(stderr, "RETURN outside of function at line %d\n", script[pc].source_line);
+                continue;
+            }
+            const char *cursor = command + 6;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            Value ret;
+            memset(&ret, 0, sizeof(ret));
+            bool has_value = false;
+            if (*cursor != '\0') {
+                if (!parse_expression(&cursor, &ret, NULL, script[pc].source_line, debug)) {
+                    continue;
+                }
+                has_value = true;
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+                if (*cursor != '\0') {
+                    if (debug) fprintf(stderr, "RETURN: unexpected characters at line %d\n", script[pc].source_line);
+                    free_value(&ret);
+                    continue;
+                }
+            }
+
+            CallFrame *frame = &call_stack[call_sp - 1];
+            frame->has_return_value = has_value;
+            if (has_value) {
+                free_value(&frame->return_value);
+                copy_value(&frame->return_value, &ret);
+            }
+            free_value(&ret);
+
+            pop_scope();
+            apply_return_value(frame);
+            if (frame->has_return_value) {
+                free_value(&frame->return_value);
+                frame->has_return_value = false;
+            }
+            if_sp = frame->saved_if_sp;
+            for_sp = frame->saved_for_sp;
+            skipping_block = frame->saved_skipping_block;
+            skip_indent = frame->saved_skip_indent;
+            skip_context_index = frame->saved_skip_context_index;
+            skip_for_true_branch = frame->saved_skip_for_true_branch;
+            skip_progress_pending = frame->saved_skip_progress_pending;
+            skip_consumed_first = frame->saved_skip_consumed_first;
+            call_sp--;
+            pc = frame->return_pc;
+            pc_changed = true;
+            continue;
         }
         else if (strncmp(command, "CLEAR", 5) == 0) {
             printf("\033[H\033[J");

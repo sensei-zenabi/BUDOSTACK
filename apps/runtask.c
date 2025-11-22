@@ -1479,7 +1479,8 @@ static void print_help(void) {
     printf("  INPUT $VAR [-wait on|off]\n");
     printf("                      : Read input into $VAR (default waits for Enter; OFF captures first key press)\n");
     printf("  IF <lhs> op <rhs>  : Compare values. Chain conditions with AND/OR. Use ELSE for alternate branch.\n");
-    printf("  FOR (init; cond; step) : Loop with inline init/condition/step. Supports $VAR++ and $VAR-- steps.\n");
+    printf("  FOR (init; cond; step): Loop with inline init/condition/step terminated by END.\n");
+    printf("                      Supports $VAR++ and $VAR-- steps.\n");
     printf("  PRINT expr         : Print literals and variables (use '+' to concatenate).\n");
     printf("  WAIT milliseconds  : Waits for <milliseconds>\n");
     printf("  GOTO label         : Jumps to the line marked with @label\n");
@@ -2228,6 +2229,16 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
 
+            const char *line_end = cursor + strlen(cursor);
+            while (line_end > cursor && isspace((unsigned char)*(line_end - 1))) {
+                line_end--;
+            }
+
+            if (line_end == cursor || *(line_end - 1) != ':') {
+                if (debug) fprintf(stderr, "FOR: expected ':' at line %d\n", script[pc].source_line);
+                continue;
+            }
+
             bool has_paren = false;
             if (*cursor == '(') {
                 has_paren = true;
@@ -2245,29 +2256,24 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
-            const char *step_end = second_semi + 1 + strlen(second_semi + 1);
+            const char *step_end = line_end - 1;
             if (has_paren) {
                 const char *closing = strchr(second_semi + 1, ')');
                 if (!closing) {
                     if (debug) fprintf(stderr, "FOR: missing closing ')' at line %d\n", script[pc].source_line);
                     continue;
                 }
-                step_end = closing;
-                const char *after = closing + 1;
-                while (isspace((unsigned char)*after)) {
-                    after++;
-                }
-                if (*after != '\0') {
-                    if (debug) fprintf(stderr, "FOR: unexpected characters after ')' at line %d\n", script[pc].source_line);
+                if (closing >= line_end) {
+                    if (debug) fprintf(stderr, "FOR: ':' must appear after ')' at line %d\n", script[pc].source_line);
                     continue;
                 }
+                step_end = closing;
             } else {
-                const char *after = second_semi + 1 + strlen(second_semi + 1);
-                while (after > second_semi + 1 && isspace((unsigned char)*(after - 1))) {
-                    after--;
+                while (step_end > second_semi + 1 && isspace((unsigned char)*(step_end - 1))) {
+                    step_end--;
                 }
-                step_end = after;
             }
+
 
             char init_buf[256];
             char cond_buf[256];
@@ -2344,6 +2350,48 @@ int main(int argc, char *argv[]) {
                 skip_for_true_branch = false;
                 skip_progress_pending = true;
                 skip_consumed_first = false;
+            }
+        }
+        else if (strncmp(command, "END", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {
+            const char *cursor = command + 3;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "END: unexpected characters at %d\n", script[pc].source_line);
+            }
+
+            bool matched = false;
+            if (for_sp > 0) {
+                ForContext *ctx = &for_stack[for_sp - 1];
+                if (script[pc].indent == ctx->indent) {
+                    matched = true;
+                    if (!apply_increment_step(ctx->step, script[ctx->for_line_pc].source_line, debug)) {
+                        for_sp--;
+                        continue;
+                    }
+
+                    bool cond_result = true;
+                    if (ctx->condition[0] != '\0') {
+                        cond_result = false;
+                        if (!evaluate_condition_string(ctx->condition, script[ctx->for_line_pc].source_line, debug, &cond_result)) {
+                            for_sp--;
+                            continue;
+                        }
+                    }
+
+                    if (cond_result) {
+                        pc = ctx->body_start_pc - 1;
+                        pc_changed = true;
+                    } else {
+                        for_sp--;
+                    }
+                    note_branch_progress(if_stack, &if_sp);
+                }
+            }
+
+            if (!matched && debug) {
+                fprintf(stderr, "END without matching FOR at line %d\n", script[pc].source_line);
             }
         }
         else if (strncmp(command, "INPUT", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {

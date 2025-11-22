@@ -99,6 +99,13 @@ typedef struct {
     char step[128];
 } ForContext;
 
+typedef struct {
+    int while_line_pc;
+    int body_start_pc;
+    int indent;
+    char condition[256];
+} WhileContext;
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -1546,6 +1553,8 @@ static void print_help(void) {
     printf("  IF <lhs> op <rhs>:\n");
     printf("    Begin a block terminated by END. Chain with AND/OR. Use ELSE for an\n");
     printf("    alternate branch.\n");
+    printf("  WHILE (<condition>):\n");
+    printf("    Repeat a block terminated by END while the condition is true.\n");
     printf("  FOR (init; cond; step)\n");
     printf("    Loop with inline init/condition/step terminated by END. Supports $VAR++ and\n");
     printf("    $VAR-- steps.\n");
@@ -1636,6 +1645,7 @@ typedef struct {
     Value return_value;
     int saved_if_sp;
     int saved_for_sp;
+    int saved_while_sp;
     bool saved_skipping_block;
     int saved_skip_indent;
     int saved_skip_context_index;
@@ -2404,6 +2414,8 @@ int main(int argc, char *argv[]) {
     int if_sp = 0;
     ForContext for_stack[64];
     int for_sp = 0;
+    WhileContext while_stack[64];
+    int while_sp = 0;
     CallFrame call_stack[16];
     int call_sp = 0;
     bool skipping_block = false;
@@ -2436,6 +2448,7 @@ int main(int argc, char *argv[]) {
                 }
                 if_sp = frame->saved_if_sp;
                 for_sp = frame->saved_for_sp;
+                while_sp = frame->saved_while_sp;
                 skipping_block = frame->saved_skipping_block;
                 skip_indent = frame->saved_skip_indent;
                 skip_context_index = frame->saved_skip_context_index;
@@ -2605,6 +2618,108 @@ int main(int argc, char *argv[]) {
             }
             continue;
         }
+        else if (strncmp(command, "WHILE", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {
+            if (while_sp >= (int)(sizeof(while_stack) / sizeof(while_stack[0]))) {
+                if (debug) fprintf(stderr, "WHILE: nesting limit reached at line %d\n", script[pc].source_line);
+                continue;
+            }
+
+            const char *after_while = command + 5;
+            while (isspace((unsigned char)*after_while)) {
+                after_while++;
+            }
+
+            const char *colon = strrchr(after_while, ':');
+            if (!colon) {
+                if (debug) fprintf(stderr, "WHILE: expected ':' before END-delimited block at %d\n", script[pc].source_line);
+                continue;
+            }
+
+            const char *cond_end = colon;
+            while (cond_end > after_while && isspace((unsigned char)*(cond_end - 1))) {
+                cond_end--;
+            }
+
+            if (cond_end <= after_while) {
+                if (debug) fprintf(stderr, "WHILE: missing condition before ':' at %d\n", script[pc].source_line);
+                continue;
+            }
+
+            char cond_buf[256];
+            size_t cond_len = (size_t)(cond_end - after_while);
+            if (cond_len >= sizeof(cond_buf)) {
+                if (debug) fprintf(stderr, "WHILE: condition too long at %d\n", script[pc].source_line);
+                continue;
+            }
+            memcpy(cond_buf, after_while, cond_len);
+            cond_buf[cond_len] = '\0';
+
+            size_t start_off = 0;
+            size_t end_off = cond_len;
+            while (start_off < end_off && isspace((unsigned char)cond_buf[start_off])) {
+                start_off++;
+            }
+            while (end_off > start_off && isspace((unsigned char)cond_buf[end_off - 1])) {
+                end_off--;
+            }
+            while (end_off > start_off && cond_buf[start_off] == '(' && cond_buf[end_off - 1] == ')') {
+                start_off++;
+                end_off--;
+                while (start_off < end_off && isspace((unsigned char)cond_buf[start_off])) {
+                    start_off++;
+                }
+                while (end_off > start_off && isspace((unsigned char)cond_buf[end_off - 1])) {
+                    end_off--;
+                }
+            }
+
+            if (start_off >= end_off) {
+                if (debug) fprintf(stderr, "WHILE: empty condition after trimming at %d\n", script[pc].source_line);
+                continue;
+            }
+
+            memmove(cond_buf, cond_buf + start_off, end_off - start_off);
+            cond_buf[end_off - start_off] = '\0';
+
+            const char *cursor = cond_buf;
+            bool cond_result = false;
+            if (!parse_condition(&cursor, &cond_result, script[pc].source_line, debug)) {
+                cond_result = false;
+            }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "WHILE: unexpected characters in condition at %d\n", script[pc].source_line);
+            }
+
+            const char *after_colon = colon + 1;
+            while (isspace((unsigned char)*after_colon)) {
+                after_colon++;
+            }
+            if (*after_colon != '\0' && debug) {
+                fprintf(stderr, "WHILE: unexpected characters after ':' at %d\n", script[pc].source_line);
+            }
+
+            if (!cond_result) {
+                skipping_block = true;
+                skip_indent = script[pc].indent;
+                skip_context_index = -1;
+                skip_for_true_branch = false;
+                skip_progress_pending = false;
+                skip_consumed_first = false;
+                note_branch_progress(if_stack, &if_sp);
+                continue;
+            }
+
+            WhileContext wctx;
+            wctx.while_line_pc = pc;
+            wctx.body_start_pc = pc + 1;
+            wctx.indent = script[pc].indent;
+            snprintf(wctx.condition, sizeof(wctx.condition), "%s", cond_buf);
+            while_stack[while_sp++] = wctx;
+            note_branch_progress(if_stack, &if_sp);
+        }
         else if (strncmp(command, "FOR", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {
             if (for_sp >= (int)(sizeof(for_stack) / sizeof(for_stack[0]))) {
                 if (debug) fprintf(stderr, "FOR: nesting limit reached at line %d\n", script[pc].source_line);
@@ -2756,7 +2871,26 @@ int main(int argc, char *argv[]) {
             }
 
             bool matched = false;
-            if (for_sp > 0) {
+            if (while_sp > 0) {
+                WhileContext *ctx = &while_stack[while_sp - 1];
+                if (script[pc].indent == ctx->indent) {
+                    matched = true;
+                    bool cond_result = false;
+                    if (!evaluate_condition_string(ctx->condition, script[ctx->while_line_pc].source_line, debug, &cond_result)) {
+                        cond_result = false;
+                    }
+
+                    if (cond_result) {
+                        pc = ctx->body_start_pc - 1;
+                        pc_changed = true;
+                    } else {
+                        while_sp--;
+                    }
+                    note_branch_progress(if_stack, &if_sp);
+                }
+            }
+
+            if (!matched && for_sp > 0) {
                 ForContext *ctx = &for_stack[for_sp - 1];
                 if (script[pc].indent == ctx->indent) {
                     matched = true;
@@ -2798,7 +2932,7 @@ int main(int argc, char *argv[]) {
             }
 
             if (!matched && debug) {
-                fprintf(stderr, "END without matching FOR/IF at line %d\n", script[pc].source_line);
+                fprintf(stderr, "END without matching FOR/WHILE/IF at line %d\n", script[pc].source_line);
             }
         }
         else if (strncmp(command, "INPUT", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {
@@ -3179,6 +3313,7 @@ int main(int argc, char *argv[]) {
             frame->has_return_value = false;
             frame->saved_if_sp = if_sp;
             frame->saved_for_sp = for_sp;
+            frame->saved_while_sp = while_sp;
             frame->saved_skipping_block = skipping_block;
             frame->saved_skip_indent = skip_indent;
             frame->saved_skip_context_index = skip_context_index;
@@ -3188,6 +3323,7 @@ int main(int argc, char *argv[]) {
 
             if_sp = 0;
             for_sp = 0;
+            while_sp = 0;
             skipping_block = false;
             skip_indent = 0;
             skip_context_index = -1;

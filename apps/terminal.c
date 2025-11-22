@@ -151,12 +151,22 @@ struct terminal_custom_pixel {
     uint8_t r;
     uint8_t g;
     uint8_t b;
+    int in_use;
 };
 
 static struct terminal_custom_pixel *terminal_custom_pixels = NULL;
 static size_t terminal_custom_pixel_count = 0u;
 static size_t terminal_custom_pixel_capacity = 0u;
 static int terminal_custom_pixels_dirty = 0;
+static int terminal_custom_pixels_dirty_min_x = 0;
+static int terminal_custom_pixels_dirty_max_x = 0;
+static int terminal_custom_pixels_dirty_min_y = 0;
+static int terminal_custom_pixels_dirty_max_y = 0;
+static int terminal_custom_pixels_have_extents = 0;
+static int terminal_custom_pixels_min_x = 0;
+static int terminal_custom_pixels_max_x = 0;
+static int terminal_custom_pixels_min_y = 0;
+static int terminal_custom_pixels_max_y = 0;
 
 struct terminal_gl_shader {
     GLuint program;
@@ -1457,12 +1467,165 @@ static void terminal_custom_pixels_shutdown(void) {
     terminal_custom_pixel_count = 0u;
     terminal_custom_pixel_capacity = 0u;
     terminal_custom_pixels_dirty = 0;
+    terminal_custom_pixels_have_extents = 0;
 }
 
 static void terminal_custom_pixels_clear(void) {
     terminal_custom_pixel_count = 0u;
-    terminal_custom_pixels_dirty = 1;
+    terminal_custom_pixels_dirty = 0;
+    terminal_custom_pixels_have_extents = 0;
+    if (terminal_custom_pixels && terminal_custom_pixel_capacity > 0u) {
+        memset(terminal_custom_pixels, 0, terminal_custom_pixel_capacity * sizeof(*terminal_custom_pixels));
+    }
     terminal_mark_full_redraw();
+}
+
+static uint32_t terminal_custom_pixel_hash(int x, int y) {
+    uint64_t key = (uint64_t)(uint32_t)x << 32u;
+    key ^= (uint32_t)y;
+    key ^= key >> 33;
+    key *= 0xff51afd7ed558ccdULL;
+    key ^= key >> 33;
+    key *= 0xc4ceb9fe1a85ec53ULL;
+    key ^= key >> 33;
+    return (uint32_t)key;
+}
+
+static int terminal_custom_pixels_rehash(size_t new_capacity) {
+    if (new_capacity == 0u || (new_capacity & (new_capacity - 1u)) != 0u) {
+        return -1;
+    }
+
+    struct terminal_custom_pixel *new_entries =
+        calloc(new_capacity, sizeof(*new_entries));
+    if (!new_entries) {
+        return -1;
+    }
+
+    size_t old_capacity = terminal_custom_pixel_capacity;
+    struct terminal_custom_pixel *old_entries = terminal_custom_pixels;
+
+    terminal_custom_pixels = new_entries;
+    terminal_custom_pixel_capacity = new_capacity;
+    terminal_custom_pixel_count = 0u;
+
+    if (!old_entries) {
+        return 0;
+    }
+
+    for (size_t i = 0u; i < old_capacity; i++) {
+        if (!old_entries[i].in_use) {
+            continue;
+        }
+        int x = old_entries[i].x;
+        int y = old_entries[i].y;
+        uint8_t r = old_entries[i].r;
+        uint8_t g = old_entries[i].g;
+        uint8_t b = old_entries[i].b;
+
+        uint32_t hash = terminal_custom_pixel_hash(x, y);
+        size_t mask = terminal_custom_pixel_capacity - 1u;
+        for (size_t probe = 0u; probe < terminal_custom_pixel_capacity; probe++) {
+            size_t idx = (hash + (uint32_t)probe) & mask;
+            struct terminal_custom_pixel *entry = &terminal_custom_pixels[idx];
+            if (!entry->in_use) {
+                entry->x = x;
+                entry->y = y;
+                entry->r = r;
+                entry->g = g;
+                entry->b = b;
+                entry->in_use = 1;
+                terminal_custom_pixel_count++;
+                break;
+            }
+        }
+    }
+
+    free(old_entries);
+    return 0;
+}
+
+static int terminal_custom_pixels_ensure_capacity(size_t desired_count) {
+    size_t min_capacity = 64u;
+    size_t capacity = terminal_custom_pixel_capacity;
+    if (capacity == 0u) {
+        capacity = min_capacity;
+    }
+    while ((desired_count * 4u) >= (capacity * 3u)) {
+        if (capacity > (SIZE_MAX / 2u)) {
+            return -1;
+        }
+        capacity *= 2u;
+    }
+
+    if (capacity == terminal_custom_pixel_capacity) {
+        return 0;
+    }
+
+    return terminal_custom_pixels_rehash(capacity);
+}
+
+static struct terminal_custom_pixel *terminal_custom_pixels_lookup(int x, int y) {
+    if (terminal_custom_pixel_capacity == 0u) {
+        return NULL;
+    }
+
+    uint32_t hash = terminal_custom_pixel_hash(x, y);
+    size_t mask = terminal_custom_pixel_capacity - 1u;
+    struct terminal_custom_pixel *first_free = NULL;
+
+    for (size_t probe = 0u; probe < terminal_custom_pixel_capacity; probe++) {
+        size_t idx = (hash + (uint32_t)probe) & mask;
+        struct terminal_custom_pixel *entry = &terminal_custom_pixels[idx];
+        if (!entry->in_use) {
+            if (!first_free) {
+                first_free = entry;
+            }
+            if (!entry->in_use) {
+                break;
+            }
+        }
+        if (entry->in_use && entry->x == x && entry->y == y) {
+            return entry;
+        }
+    }
+
+    return first_free;
+}
+
+static void terminal_custom_pixels_mark_dirty(int x, int y) {
+    if (!terminal_custom_pixels_dirty) {
+        terminal_custom_pixels_dirty_min_x = x;
+        terminal_custom_pixels_dirty_max_x = x;
+        terminal_custom_pixels_dirty_min_y = y;
+        terminal_custom_pixels_dirty_max_y = y;
+        terminal_custom_pixels_dirty = 1;
+        return;
+    }
+
+    if (x < terminal_custom_pixels_dirty_min_x) {
+        terminal_custom_pixels_dirty_min_x = x;
+    }
+    if (x > terminal_custom_pixels_dirty_max_x) {
+        terminal_custom_pixels_dirty_max_x = x;
+    }
+    if (y < terminal_custom_pixels_dirty_min_y) {
+        terminal_custom_pixels_dirty_min_y = y;
+    }
+    if (y > terminal_custom_pixels_dirty_max_y) {
+        terminal_custom_pixels_dirty_max_y = y;
+    }
+}
+
+static void terminal_custom_pixels_mark_all_dirty(void) {
+    if (!terminal_custom_pixels_have_extents) {
+        return;
+    }
+    terminal_custom_pixels_dirty_min_x = terminal_custom_pixels_min_x;
+    terminal_custom_pixels_dirty_max_x = terminal_custom_pixels_max_x;
+    terminal_custom_pixels_dirty_min_y = terminal_custom_pixels_min_y;
+    terminal_custom_pixels_dirty_max_y = terminal_custom_pixels_max_y;
+    terminal_custom_pixels_dirty = 1;
 }
 
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
@@ -1470,64 +1633,119 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
         return -1;
     }
 
-    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
-        struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
-        if (entry->x == x && entry->y == y) {
-            if (entry->r == r && entry->g == g && entry->b == b) {
-                return 0;
-            }
-            entry->r = r;
-            entry->g = g;
-            entry->b = b;
-            terminal_custom_pixels_dirty = 1;
+    if (terminal_custom_pixels_ensure_capacity(terminal_custom_pixel_count + 1u) != 0) {
+        return -1;
+    }
+
+    struct terminal_custom_pixel *entry = terminal_custom_pixels_lookup(x, y);
+    if (!entry) {
+        return -1;
+    }
+
+    if (entry->in_use) {
+        if (entry->r == r && entry->g == g && entry->b == b) {
             return 0;
         }
+        entry->r = r;
+        entry->g = g;
+        entry->b = b;
+        terminal_custom_pixels_mark_dirty(x, y);
+        return 0;
     }
 
-    if (terminal_custom_pixel_count == terminal_custom_pixel_capacity) {
-        size_t new_capacity = (terminal_custom_pixel_capacity == 0u)
-            ? 64u
-            : terminal_custom_pixel_capacity * 2u;
-        if (new_capacity < terminal_custom_pixel_capacity) {
-            return -1;
-        }
-        struct terminal_custom_pixel *new_pixels =
-            realloc(terminal_custom_pixels, new_capacity * sizeof(*terminal_custom_pixels));
-        if (!new_pixels) {
-            return -1;
-        }
-        terminal_custom_pixels = new_pixels;
-        terminal_custom_pixel_capacity = new_capacity;
-    }
-
-    struct terminal_custom_pixel *entry = &terminal_custom_pixels[terminal_custom_pixel_count++];
     entry->x = x;
     entry->y = y;
     entry->r = r;
     entry->g = g;
     entry->b = b;
-    terminal_custom_pixels_dirty = 1;
+    entry->in_use = 1;
+    terminal_custom_pixel_count++;
+
+    if (!terminal_custom_pixels_have_extents) {
+        terminal_custom_pixels_min_x = x;
+        terminal_custom_pixels_max_x = x;
+        terminal_custom_pixels_min_y = y;
+        terminal_custom_pixels_max_y = y;
+        terminal_custom_pixels_have_extents = 1;
+    } else {
+        if (x < terminal_custom_pixels_min_x) {
+            terminal_custom_pixels_min_x = x;
+        }
+        if (x > terminal_custom_pixels_max_x) {
+            terminal_custom_pixels_max_x = x;
+        }
+        if (y < terminal_custom_pixels_min_y) {
+            terminal_custom_pixels_min_y = y;
+        }
+        if (y > terminal_custom_pixels_max_y) {
+            terminal_custom_pixels_max_y = y;
+        }
+    }
+
+    terminal_custom_pixels_mark_dirty(x, y);
     return 0;
 }
 
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height) {
-    if (!framebuffer || width <= 0 || height <= 0) {
+    if (!framebuffer || width <= 0 || height <= 0 || !terminal_custom_pixels_dirty) {
+        return;
+    }
+
+    int min_x = terminal_custom_pixels_dirty_min_x;
+    int max_x = terminal_custom_pixels_dirty_max_x;
+    int min_y = terminal_custom_pixels_dirty_min_y;
+    int max_y = terminal_custom_pixels_dirty_max_y;
+
+    if (max_x < 0 || max_y < 0 || min_x >= width || min_y >= height) {
+        terminal_custom_pixels_dirty = 0;
+        return;
+    }
+
+    if (min_x < 0) {
+        min_x = 0;
+    }
+    if (min_y < 0) {
+        min_y = 0;
+    }
+    if (max_x >= width) {
+        max_x = width - 1;
+    }
+    if (max_y >= height) {
+        max_y = height - 1;
+    }
+
+    if (terminal_custom_pixel_count == 0u || terminal_custom_pixel_capacity == 0u) {
+        terminal_custom_pixels_dirty = 0;
         return;
     }
 
     size_t frame_pitch = (size_t)width * 4u;
-    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
-        const struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
-        if (entry->x < 0 || entry->y < 0) {
-            continue;
+    size_t mask = terminal_custom_pixel_capacity > 0u ? (terminal_custom_pixel_capacity - 1u) : 0u;
+
+    for (int y = min_y; y <= max_y; y++) {
+        uint8_t *row = framebuffer + (size_t)y * frame_pitch + (size_t)min_x * 4u;
+        for (int x = min_x; x <= max_x; x++) {
+            if (terminal_custom_pixel_capacity == 0u) {
+                break;
+            }
+            uint32_t hash = terminal_custom_pixel_hash(x, y);
+            for (size_t probe = 0u; probe < terminal_custom_pixel_capacity; probe++) {
+                size_t idx = (hash + (uint32_t)probe) & mask;
+                const struct terminal_custom_pixel *entry = &terminal_custom_pixels[idx];
+                if (!entry->in_use) {
+                    break;
+                }
+                if (entry->x == x && entry->y == y) {
+                    uint32_t *dst32 = (uint32_t *)row;
+                    *dst32 = terminal_rgba_from_components(entry->r, entry->g, entry->b);
+                    break;
+                }
+            }
+            row += 4u;
         }
-        if (entry->x >= width || entry->y >= height) {
-            continue;
-        }
-        uint8_t *dst = framebuffer + (size_t)entry->y * frame_pitch + (size_t)entry->x * 4u;
-        uint32_t *dst32 = (uint32_t *)dst;
-        *dst32 = terminal_rgba_from_components(entry->r, entry->g, entry->b);
     }
+
+    terminal_custom_pixels_dirty = 0;
 }
 
 static int terminal_ensure_render_cache(size_t columns, size_t rows) {
@@ -3753,6 +3971,70 @@ static void ansi_parser_init(struct ansi_parser *parser) {
     ansi_parser_reset_utf8(parser);
 }
 
+struct terminal_pixel_spec {
+    long x;
+    long y;
+    long r;
+    long g;
+    long b;
+    int have_x;
+    int have_y;
+    int have_r;
+    int have_g;
+    int have_b;
+};
+
+static void terminal_pixel_spec_reset(struct terminal_pixel_spec *spec) {
+    if (!spec) {
+        return;
+    }
+    spec->x = 0;
+    spec->y = 0;
+    spec->r = 0;
+    spec->g = 0;
+    spec->b = 0;
+    spec->have_x = 0;
+    spec->have_y = 0;
+    spec->have_r = 0;
+    spec->have_g = 0;
+    spec->have_b = 0;
+}
+
+static int terminal_pixel_spec_complete(const struct terminal_pixel_spec *spec) {
+    return spec && spec->have_x && spec->have_y && spec->have_r && spec->have_g && spec->have_b;
+}
+
+static int terminal_pixel_spec_has_any(const struct terminal_pixel_spec *spec) {
+    return spec && (spec->have_x || spec->have_y || spec->have_r || spec->have_g || spec->have_b);
+}
+
+static int terminal_pixel_specs_push(struct terminal_pixel_spec **list,
+                                     size_t *count,
+                                     size_t *capacity,
+                                     const struct terminal_pixel_spec *spec) {
+    if (!list || !count || !capacity || !spec) {
+        return -1;
+    }
+
+    if (*count == *capacity) {
+        size_t new_capacity = (*capacity == 0u) ? 8u : (*capacity * 2u);
+        if (new_capacity < *capacity) {
+            return -1;
+        }
+        struct terminal_pixel_spec *new_list =
+            realloc(*list, new_capacity * sizeof(*new_list));
+        if (!new_list) {
+            return -1;
+        }
+        *list = new_list;
+        *capacity = new_capacity;
+    }
+
+    (*list)[*count] = *spec;
+    (*count)++;
+    return 0;
+}
+
 static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args) {
     if (!buffer) {
         return;
@@ -3784,11 +4066,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_PIXEL_ACTION_CLEAR = 2
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
-            long pixel_x = -1;
-            long pixel_y = -1;
-            long pixel_r = -1;
-            long pixel_g = -1;
-            long pixel_b = -1;
+            struct terminal_pixel_spec *pixel_specs = NULL;
+            size_t pixel_spec_count = 0u;
+            size_t pixel_spec_capacity = 0u;
+            struct terminal_pixel_spec current_pixel_spec;
+            terminal_pixel_spec_reset(&current_pixel_spec);
+            int pixel_error = 0;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -3878,44 +4161,108 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
 #endif
                     } else if (strcmp(key, "pixel") == 0 && value && *value != '\0') {
                         if (strcmp(value, "draw") == 0 || strcmp(value, "set") == 0) {
+                            if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
+                                fprintf(stderr, "terminal: Cannot mix pixel draw and clear actions.\n");
+                                pixel_error = 1;
+                            }
+                            if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW &&
+                                terminal_pixel_spec_has_any(&current_pixel_spec)) {
+                                if (terminal_pixel_spec_complete(&current_pixel_spec)) {
+                                    if (terminal_pixel_specs_push(&pixel_specs,
+                                                                 &pixel_spec_count,
+                                                                 &pixel_spec_capacity,
+                                                                 &current_pixel_spec) != 0) {
+                                        pixel_error = 1;
+                                    }
+                                } else {
+                                    fprintf(stderr, "terminal: Incomplete pixel specification before new draw token.\n");
+                                    pixel_error = 1;
+                                }
+                                terminal_pixel_spec_reset(&current_pixel_spec);
+                            }
                             pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
                         } else if (strcmp(value, "clear") == 0) {
+                            if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW &&
+                                (pixel_spec_count > 0u || terminal_pixel_spec_has_any(&current_pixel_spec))) {
+                                fprintf(stderr, "terminal: Cannot mix pixel clear with draw specifications.\n");
+                                pixel_error = 1;
+                            }
                             pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
-                        char *endptr = NULL;
-                        errno = 0;
-                        long parsed = strtol(value, &endptr, 10);
-                        if (errno == 0 && endptr && *endptr == '\0') {
-                            pixel_x = parsed;
+                        if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
+                            pixel_error = 1;
+                        } else {
+                            char *endptr = NULL;
+                            errno = 0;
+                            long parsed = strtol(value, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0') {
+                                current_pixel_spec.x = parsed;
+                                current_pixel_spec.have_x = 1;
+                                if (pixel_action == TERMINAL_PIXEL_ACTION_NONE) {
+                                    pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
+                                }
+                            }
                         }
                     } else if (strcmp(key, "pixel_y") == 0 && value && *value != '\0') {
-                        char *endptr = NULL;
-                        errno = 0;
-                        long parsed = strtol(value, &endptr, 10);
-                        if (errno == 0 && endptr && *endptr == '\0') {
-                            pixel_y = parsed;
+                        if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
+                            pixel_error = 1;
+                        } else {
+                            char *endptr = NULL;
+                            errno = 0;
+                            long parsed = strtol(value, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0') {
+                                current_pixel_spec.y = parsed;
+                                current_pixel_spec.have_y = 1;
+                                if (pixel_action == TERMINAL_PIXEL_ACTION_NONE) {
+                                    pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
+                                }
+                            }
                         }
                     } else if (strcmp(key, "pixel_r") == 0 && value && *value != '\0') {
-                        char *endptr = NULL;
-                        errno = 0;
-                        long parsed = strtol(value, &endptr, 10);
-                        if (errno == 0 && endptr && *endptr == '\0') {
-                            pixel_r = parsed;
+                        if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
+                            pixel_error = 1;
+                        } else {
+                            char *endptr = NULL;
+                            errno = 0;
+                            long parsed = strtol(value, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0') {
+                                current_pixel_spec.r = parsed;
+                                current_pixel_spec.have_r = 1;
+                                if (pixel_action == TERMINAL_PIXEL_ACTION_NONE) {
+                                    pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
+                                }
+                            }
                         }
                     } else if (strcmp(key, "pixel_g") == 0 && value && *value != '\0') {
-                        char *endptr = NULL;
-                        errno = 0;
-                        long parsed = strtol(value, &endptr, 10);
-                        if (errno == 0 && endptr && *endptr == '\0') {
-                            pixel_g = parsed;
+                        if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
+                            pixel_error = 1;
+                        } else {
+                            char *endptr = NULL;
+                            errno = 0;
+                            long parsed = strtol(value, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0') {
+                                current_pixel_spec.g = parsed;
+                                current_pixel_spec.have_g = 1;
+                                if (pixel_action == TERMINAL_PIXEL_ACTION_NONE) {
+                                    pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
+                                }
+                            }
                         }
                     } else if (strcmp(key, "pixel_b") == 0 && value && *value != '\0') {
-                        char *endptr = NULL;
-                        errno = 0;
-                        long parsed = strtol(value, &endptr, 10);
-                        if (errno == 0 && endptr && *endptr == '\0') {
-                            pixel_b = parsed;
+                        if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
+                            pixel_error = 1;
+                        } else {
+                            char *endptr = NULL;
+                            errno = 0;
+                            long parsed = strtol(value, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0') {
+                                current_pixel_spec.b = parsed;
+                                current_pixel_spec.have_b = 1;
+                                if (pixel_action == TERMINAL_PIXEL_ACTION_NONE) {
+                                    pixel_action = TERMINAL_PIXEL_ACTION_DRAW;
+                                }
+                            }
                         }
                     }
                 }
@@ -3943,24 +4290,47 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             }
 #endif
 
-            if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW) {
-                if (pixel_x >= 0 && pixel_y >= 0 && pixel_x <= INT_MAX && pixel_y <= INT_MAX &&
-                    pixel_r >= 0 && pixel_r <= 255 && pixel_g >= 0 && pixel_g <= 255 && pixel_b >= 0 && pixel_b <= 255) {
-                    if (terminal_custom_pixels_set((int)pixel_x,
-                                                   (int)pixel_y,
-                                                   (uint8_t)pixel_r,
-                                                   (uint8_t)pixel_g,
-                                                   (uint8_t)pixel_b) != 0) {
-                        fprintf(stderr, "terminal: Failed to draw custom pixel.\n");
+            if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW && !pixel_error &&
+                terminal_pixel_spec_has_any(&current_pixel_spec)) {
+                if (terminal_pixel_spec_complete(&current_pixel_spec)) {
+                    if (terminal_pixel_specs_push(&pixel_specs,
+                                                  &pixel_spec_count,
+                                                  &pixel_spec_capacity,
+                                                  &current_pixel_spec) != 0) {
+                        pixel_error = 1;
                     }
                 } else {
-                    fprintf(stderr, "terminal: Invalid pixel draw parameters.\n");
+                    fprintf(stderr, "terminal: Incomplete pixel specification.\n");
+                    pixel_error = 1;
                 }
-            } else if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
+                terminal_pixel_spec_reset(&current_pixel_spec);
+            }
+
+            if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW && !pixel_error) {
+                for (size_t i = 0u; i < pixel_spec_count; i++) {
+                    const struct terminal_pixel_spec *spec = &pixel_specs[i];
+                    if (spec->x >= 0 && spec->x <= INT_MAX &&
+                        spec->y >= 0 && spec->y <= INT_MAX &&
+                        spec->r >= 0 && spec->r <= 255 &&
+                        spec->g >= 0 && spec->g <= 255 &&
+                        spec->b >= 0 && spec->b <= 255) {
+                        if (terminal_custom_pixels_set((int)spec->x,
+                                                       (int)spec->y,
+                                                       (uint8_t)spec->r,
+                                                       (uint8_t)spec->g,
+                                                       (uint8_t)spec->b) != 0) {
+                            fprintf(stderr, "terminal: Failed to draw custom pixel.\n");
+                        }
+                    } else {
+                        fprintf(stderr, "terminal: Invalid pixel draw parameters.\n");
+                    }
+                }
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR && !pixel_error) {
                 terminal_custom_pixels_clear();
             }
 
             free(copy);
+            free(pixel_specs);
         }
 
         if (scale == 0) {
@@ -5939,10 +6309,14 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (terminal_custom_pixel_count > 0u && (frame_dirty || terminal_custom_pixels_dirty)) {
-            terminal_custom_pixels_apply(framebuffer, frame_width, frame_height);
-            frame_dirty = 1;
-            terminal_custom_pixels_dirty = 0;
+        if (terminal_custom_pixel_count > 0u) {
+            if (frame_dirty && !terminal_custom_pixels_dirty) {
+                terminal_custom_pixels_mark_all_dirty();
+            }
+            if (terminal_custom_pixels_dirty) {
+                terminal_custom_pixels_apply(framebuffer, frame_width, frame_height);
+                frame_dirty = 1;
+            }
         } else if (terminal_custom_pixels_dirty) {
             frame_dirty = 1;
             terminal_custom_pixels_dirty = 0;

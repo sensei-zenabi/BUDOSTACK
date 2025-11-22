@@ -8,6 +8,8 @@
 #pragma parameter wiggle "Wiggle" 0.0 0.0 0.0 0.0
 
 #pragma parameter smear "Chroma Smear" 0.25 0.0 0.5 0.025
+#pragma parameter fade_persistence "Pixel Persistence" 0.25 0.0 1.0 0.05
+#pragma parameter fade_length "Persistence Length" 2.0 0.5 12.0 0.5
 
 #if defined(VERTEX)
 
@@ -94,9 +96,13 @@ COMPAT_VARYING vec4 TEX0;
 #ifdef PARAMETER_UNIFORM
 uniform COMPAT_PRECISION float wiggle;
 uniform COMPAT_PRECISION float smear;
+uniform COMPAT_PRECISION float fade_persistence;
+uniform COMPAT_PRECISION float fade_length;
 #else
 #define wiggle 3.0
 #define smear 1.0
+#define fade_persistence 0.25
+#define fade_length 2.0
 #endif
 
 #define iTime mod(float(FrameCount), 7.0)
@@ -222,6 +228,18 @@ void main()
     final.xyz =Blur(uv,c);
     float q = rgb2yiq(final.xyz).b;
     final = vec4(yiq2rgb(vec3(y,i,q))-pow(s+e*2.0,3.0), 1.0);
+
+    // Simulate CRT phosphor persistence by blending in nearby samples with a
+    // decaying weight. This creates a subtle ghost trail that fades out over
+    // time, approximating pixels that linger instead of switching off
+    // instantly.
+    float persistence_strength = clamp(fade_persistence, 0.0, 1.0);
+    vec2 persistence_step = vec2(0.0, fade_length * OutSize.w);
+    vec3 trail0 = COMPAT_TEXTURE(iChannel0, uv - persistence_step).rgb;
+    vec3 trail1 = COMPAT_TEXTURE(iChannel0, uv - persistence_step * 2.0).rgb;
+    vec3 trail2 = COMPAT_TEXTURE(iChannel0, uv - persistence_step * 3.0).rgb;
+    vec3 persistence_mix = max(trail0, max(trail1, trail2));
+    final.rgb = mix(final.rgb, max(final.rgb, persistence_mix), persistence_strength);
 
     vec4 play_osd = COMPAT_TEXTURE(play, uv2 * TextureSize.xy / InputSize.xy);
     float show_overlay = (mod(timer, 100.0) < 50.0) && (timer != 0.0) && (timer < 500.0) ? play_osd.a : 0.0;

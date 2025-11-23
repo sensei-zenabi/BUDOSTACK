@@ -202,18 +202,23 @@ vec2 jumpy(vec2 uv, float framecount)
 
 vec3 bloom(vec2 uv, float radius)
 {
+    const vec3 lumaWeights = vec3(0.299, 0.587, 0.114);
     vec2 texel = radius * SourceSize.zw;
     vec3 sum = vec3(0.0);
     float weightSum = 0.0;
 
-    for (int x = -1; x <= 1; x++)
+    for (int x = -2; x <= 2; x++)
     {
-        for (int y = -1; y <= 1; y++)
+        for (int y = -2; y <= 2; y++)
         {
             vec2 offset = vec2(float(x), float(y)) * texel;
-            float weight = 1.0 / (1.0 + abs(float(x)) + abs(float(y)));
-            vec3 sample = max(COMPAT_TEXTURE(Source, uv + offset).rgb - vec3(bloomThreshold), vec3(0.0));
-            sum += sample * weight;
+            vec3 sample = COMPAT_TEXTURE(Source, uv + offset).rgb;
+            float luma = dot(sample, lumaWeights);
+            float bright = max(luma - bloomThreshold, 0.0);
+            float distance = length(vec2(float(x), float(y)));
+            float weight = exp(-(distance * distance) * 0.35);
+
+            sum += sample * bright * weight;
             weightSum += weight;
         }
     }

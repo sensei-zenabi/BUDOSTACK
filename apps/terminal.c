@@ -303,6 +303,7 @@ static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
 static uint32_t terminal_rgba_from_color(uint32_t color);
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b);
 static void terminal_custom_pixels_clear(void);
+static void terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int width, int height);
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
 static int terminal_custom_pixels_reserve(size_t additional);
 static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const uint8_t *rgba, int width, int height);
@@ -1470,6 +1471,41 @@ static void terminal_custom_pixels_clear(void) {
     terminal_custom_pixels_need_render = 1;
     terminal_custom_pixels_active = 0;
     terminal_mark_full_redraw();
+}
+
+static void terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+
+    if (origin_x < 0 || origin_y < 0) {
+        return;
+    }
+
+    if (origin_x > INT_MAX - width || origin_y > INT_MAX - height) {
+        return;
+    }
+
+    int max_x = origin_x + width;
+    int max_y = origin_y + height;
+    size_t write_idx = 0u;
+    for (size_t read_idx = 0u; read_idx < terminal_custom_pixel_count; read_idx++) {
+        struct terminal_custom_pixel *entry = &terminal_custom_pixels[read_idx];
+        if (entry->x >= origin_x && entry->x < max_x && entry->y >= origin_y && entry->y < max_y) {
+            continue;
+        }
+        if (write_idx != read_idx) {
+            terminal_custom_pixels[write_idx] = *entry;
+        }
+        write_idx++;
+    }
+
+    if (write_idx != terminal_custom_pixel_count) {
+        terminal_custom_pixel_count = write_idx;
+        terminal_custom_pixels_dirty = 1;
+        terminal_custom_pixels_need_render = 0;
+        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+    }
 }
 
 static int terminal_custom_pixels_reserve(size_t additional) {
@@ -3963,12 +3999,17 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_PIXEL_ACTION_RENDER = 3
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
+            enum terminal_sprite_action {
+                TERMINAL_SPRITE_ACTION_NONE = 0,
+                TERMINAL_SPRITE_ACTION_DRAW = 1,
+                TERMINAL_SPRITE_ACTION_CLEAR = 2
+            };
+            enum terminal_sprite_action sprite_action = TERMINAL_SPRITE_ACTION_NONE;
             long pixel_x = -1;
             long pixel_y = -1;
             long pixel_r = -1;
             long pixel_g = -1;
             long pixel_b = -1;
-            int sprite_requested = 0;
             long sprite_x = -1;
             long sprite_y = -1;
             long sprite_w = -1;
@@ -4108,7 +4149,9 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         }
                     } else if (strcmp(key, "sprite") == 0 && value && *value != '\0') {
                         if (strcmp(value, "draw") == 0) {
-                            sprite_requested = 1;
+                            sprite_action = TERMINAL_SPRITE_ACTION_DRAW;
+                        } else if (strcmp(value, "clear") == 0) {
+                            sprite_action = TERMINAL_SPRITE_ACTION_CLEAR;
                         }
                     } else if (strcmp(key, "sprite_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -4166,7 +4209,7 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             }
 #endif
 
-            if (sprite_requested) {
+            if (sprite_action == TERMINAL_SPRITE_ACTION_DRAW) {
                 if (sprite_x < 0 || sprite_y < 0 || sprite_w <= 0 || sprite_h <= 0 ||
                     sprite_x > INT_MAX || sprite_y > INT_MAX || sprite_w > INT_MAX || sprite_h > INT_MAX) {
                     fprintf(stderr, "terminal: Invalid sprite parameters.\n");
@@ -4196,6 +4239,13 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             }
                         }
                     }
+                }
+            } else if (sprite_action == TERMINAL_SPRITE_ACTION_CLEAR) {
+                if (sprite_x < 0 || sprite_y < 0 || sprite_w <= 0 || sprite_h <= 0 ||
+                    sprite_x > INT_MAX || sprite_y > INT_MAX || sprite_w > INT_MAX || sprite_h > INT_MAX) {
+                    fprintf(stderr, "terminal: Invalid sprite clear parameters.\n");
+                } else {
+                    terminal_custom_pixels_clear_rect((int)sprite_x, (int)sprite_y, (int)sprite_w, (int)sprite_h);
                 }
             }
 

@@ -304,6 +304,8 @@ static uint32_t terminal_rgba_from_color(uint32_t color);
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b);
 static void terminal_custom_pixels_clear(void);
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
+static int terminal_custom_pixels_reserve(size_t additional);
+static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const uint8_t *rgba, int width, int height);
 static void terminal_custom_pixels_shutdown(void);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
@@ -906,7 +908,7 @@ struct ansi_parser {
     size_t param_count;
     int collecting_param;
     int private_marker;
-    char osc_buffer[512];
+    char osc_buffer[131072];
     size_t osc_length;
     uint32_t utf8_codepoint;
     uint32_t utf8_min_value;
@@ -1470,6 +1472,37 @@ static void terminal_custom_pixels_clear(void) {
     terminal_mark_full_redraw();
 }
 
+static int terminal_custom_pixels_reserve(size_t additional) {
+    if (additional == 0u) {
+        return 0;
+    }
+    if (terminal_custom_pixel_count > SIZE_MAX - additional) {
+        return -1;
+    }
+    size_t required = terminal_custom_pixel_count + additional;
+    if (required <= terminal_custom_pixel_capacity) {
+        return 0;
+    }
+
+    size_t new_capacity = (terminal_custom_pixel_capacity == 0u) ? 64u : terminal_custom_pixel_capacity;
+    while (new_capacity < required) {
+        if (new_capacity > SIZE_MAX / 2u) {
+            new_capacity = required;
+            break;
+        }
+        new_capacity *= 2u;
+    }
+
+    struct terminal_custom_pixel *new_pixels =
+        realloc(terminal_custom_pixels, new_capacity * sizeof(*terminal_custom_pixels));
+    if (!new_pixels) {
+        return -1;
+    }
+    terminal_custom_pixels = new_pixels;
+    terminal_custom_pixel_capacity = new_capacity;
+    return 0;
+}
+
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
     if (x < 0 || y < 0) {
         return -1;
@@ -1489,20 +1522,8 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
         }
     }
 
-    if (terminal_custom_pixel_count == terminal_custom_pixel_capacity) {
-        size_t new_capacity = (terminal_custom_pixel_capacity == 0u)
-            ? 64u
-            : terminal_custom_pixel_capacity * 2u;
-        if (new_capacity < terminal_custom_pixel_capacity) {
-            return -1;
-        }
-        struct terminal_custom_pixel *new_pixels =
-            realloc(terminal_custom_pixels, new_capacity * sizeof(*terminal_custom_pixels));
-        if (!new_pixels) {
-            return -1;
-        }
-        terminal_custom_pixels = new_pixels;
-        terminal_custom_pixel_capacity = new_capacity;
+    if (terminal_custom_pixels_reserve(1u) != 0) {
+        return -1;
     }
 
     struct terminal_custom_pixel *entry = &terminal_custom_pixels[terminal_custom_pixel_count++];
@@ -1512,6 +1533,70 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
     entry->g = g;
     entry->b = b;
     terminal_custom_pixels_need_render = 1;
+    return 0;
+}
+
+static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const uint8_t *rgba, int width, int height) {
+    if (!rgba || width <= 0 || height <= 0) {
+        return -1;
+    }
+    if (origin_x < 0 || origin_y < 0) {
+        return -1;
+    }
+    if (width > INT_MAX - origin_x || height > INT_MAX - origin_y) {
+        return -1;
+    }
+
+    size_t width_sz = (size_t)width;
+    size_t height_sz = (size_t)height;
+    if (width_sz != 0u && height_sz > SIZE_MAX / width_sz) {
+        return -1;
+    }
+
+    size_t pixel_count = width_sz * height_sz;
+    size_t opaque_pixels = 0u;
+    for (size_t i = 0u; i < pixel_count; i++) {
+        size_t idx = i * 4u + 3u;
+        if (rgba[idx] != 0u) {
+            opaque_pixels++;
+        }
+    }
+
+    if (opaque_pixels == 0u) {
+        return 0;
+    }
+
+    if (terminal_custom_pixels_reserve(opaque_pixels) != 0) {
+        return -1;
+    }
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            size_t idx = ((size_t)y * width_sz + (size_t)x) * 4u;
+            uint8_t a = rgba[idx + 3u];
+            if (a == 0u) {
+                continue;
+            }
+            uint8_t r = rgba[idx];
+            uint8_t g = rgba[idx + 1u];
+            uint8_t b = rgba[idx + 2u];
+            if (a < 255u) {
+                r = (uint8_t)((((uint32_t)r) * (uint32_t)a + 127u) / 255u);
+                g = (uint8_t)((((uint32_t)g) * (uint32_t)a + 127u) / 255u);
+                b = (uint8_t)((((uint32_t)b) * (uint32_t)a + 127u) / 255u);
+            }
+
+            struct terminal_custom_pixel *entry = &terminal_custom_pixels[terminal_custom_pixel_count++];
+            entry->x = origin_x + x;
+            entry->y = origin_y + y;
+            entry->r = r;
+            entry->g = g;
+            entry->b = b;
+        }
+    }
+
+    terminal_custom_pixels_need_render = 1;
+    terminal_custom_pixels_active = 1;
     return 0;
 }
 
@@ -3758,6 +3843,94 @@ static void ansi_parser_init(struct ansi_parser *parser) {
     ansi_parser_reset_utf8(parser);
 }
 
+static int terminal_base64_value(char ch) {
+    if (ch >= 'A' && ch <= 'Z') {
+        return ch - 'A';
+    }
+    if (ch >= 'a' && ch <= 'z') {
+        return ch - 'a' + 26;
+    }
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0' + 52;
+    }
+    if (ch == '+') {
+        return 62;
+    }
+    if (ch == '/') {
+        return 63;
+    }
+    if (ch == '=') {
+        return 64;
+    }
+    return -1;
+}
+
+static int terminal_base64_decode(const char *input, uint8_t **out_data, size_t *out_size) {
+    if (!input || !out_data || !out_size) {
+        return -1;
+    }
+
+    size_t len = strlen(input);
+    if (len == 0u || (len % 4u) != 0u) {
+        return -1;
+    }
+
+    size_t max_output = (len / 4u) * 3u;
+    const size_t decode_limit = 16u * 1024u * 1024u;
+    if (max_output > decode_limit) {
+        return -1;
+    }
+
+    uint8_t *decoded = malloc(max_output);
+    if (!decoded) {
+        return -1;
+    }
+
+    size_t out_idx = 0u;
+    for (size_t i = 0u; i < len; i += 4u) {
+        int v0 = terminal_base64_value(input[i]);
+        int v1 = terminal_base64_value(input[i + 1u]);
+        int v2 = terminal_base64_value(input[i + 2u]);
+        int v3 = terminal_base64_value(input[i + 3u]);
+        if (v0 < 0 || v1 < 0 || v0 == 64 || v1 == 64) {
+            free(decoded);
+            return -1;
+        }
+
+        if (v2 == 64) {
+            if (v3 != 64 || i + 4u != len) {
+                free(decoded);
+                return -1;
+            }
+            decoded[out_idx++] = (uint8_t)(((uint32_t)v0 << 2) | ((uint32_t)v1 >> 4));
+            break;
+        }
+
+        if (v3 == 64) {
+            if (i + 4u != len) {
+                free(decoded);
+                return -1;
+            }
+            decoded[out_idx++] = (uint8_t)(((uint32_t)v0 << 2) | ((uint32_t)v1 >> 4));
+            decoded[out_idx++] = (uint8_t)((((uint32_t)v1 & 0x0Fu) << 4) | ((uint32_t)v2 >> 2));
+            break;
+        }
+
+        if (v2 < 0 || v3 < 0) {
+            free(decoded);
+            return -1;
+        }
+
+        decoded[out_idx++] = (uint8_t)(((uint32_t)v0 << 2) | ((uint32_t)v1 >> 4));
+        decoded[out_idx++] = (uint8_t)((((uint32_t)v1 & 0x0Fu) << 4) | ((uint32_t)v2 >> 2));
+        decoded[out_idx++] = (uint8_t)((((uint32_t)v2 & 0x03u) << 6) | (uint32_t)v3);
+    }
+
+    *out_data = decoded;
+    *out_size = out_idx;
+    return 0;
+}
+
 static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args) {
     if (!buffer) {
         return;
@@ -3795,6 +3968,14 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long pixel_r = -1;
             long pixel_g = -1;
             long pixel_b = -1;
+            int sprite_requested = 0;
+            long sprite_x = -1;
+            long sprite_y = -1;
+            long sprite_w = -1;
+            long sprite_h = -1;
+            char *sprite_data_value = NULL;
+            uint8_t *sprite_pixels = NULL;
+            size_t sprite_bytes = 0u;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -3925,6 +4106,40 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         if (errno == 0 && endptr && *endptr == '\0') {
                             pixel_b = parsed;
                         }
+                    } else if (strcmp(key, "sprite") == 0 && value && *value != '\0') {
+                        if (strcmp(value, "draw") == 0) {
+                            sprite_requested = 1;
+                        }
+                    } else if (strcmp(key, "sprite_x") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            sprite_x = parsed;
+                        }
+                    } else if (strcmp(key, "sprite_y") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            sprite_y = parsed;
+                        }
+                    } else if (strcmp(key, "sprite_w") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            sprite_w = parsed;
+                        }
+                    } else if (strcmp(key, "sprite_h") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            sprite_h = parsed;
+                        }
+                    } else if (strcmp(key, "sprite_data") == 0 && value) {
+                        sprite_data_value = value;
                     }
                 }
                 token = strtok_r(NULL, ";", &saveptr);
@@ -3950,6 +4165,41 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 }
             }
 #endif
+
+            if (sprite_requested) {
+                if (sprite_x < 0 || sprite_y < 0 || sprite_w <= 0 || sprite_h <= 0 ||
+                    sprite_x > INT_MAX || sprite_y > INT_MAX || sprite_w > INT_MAX || sprite_h > INT_MAX) {
+                    fprintf(stderr, "terminal: Invalid sprite parameters.\n");
+                } else if (!sprite_data_value) {
+                    fprintf(stderr, "terminal: Missing sprite data.\n");
+                } else if (terminal_base64_decode(sprite_data_value, &sprite_pixels, &sprite_bytes) != 0) {
+                    fprintf(stderr, "terminal: Failed to decode sprite data.\n");
+                } else {
+                    size_t width_sz = (size_t)sprite_w;
+                    size_t height_sz = (size_t)sprite_h;
+                    if (width_sz != 0u && height_sz > SIZE_MAX / width_sz) {
+                        fprintf(stderr, "terminal: Sprite dimensions overflow.\n");
+                    } else {
+                        size_t expected_pixels = width_sz * height_sz;
+                        if (expected_pixels > SIZE_MAX / 4u) {
+                            fprintf(stderr, "terminal: Sprite dimensions too large.\n");
+                        } else {
+                            size_t expected_bytes = expected_pixels * 4u;
+                            if (expected_bytes != sprite_bytes) {
+                                fprintf(stderr, "terminal: Sprite data size mismatch.\n");
+                            } else if (terminal_custom_pixels_draw_sprite((int)sprite_x,
+                                                                           (int)sprite_y,
+                                                                           sprite_pixels,
+                                                                           (int)sprite_w,
+                                                                           (int)sprite_h) != 0) {
+                                fprintf(stderr, "terminal: Failed to draw sprite.\n");
+                            }
+                        }
+                    }
+                }
+            }
+
+            free(sprite_pixels);
 
             if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW) {
                 if (pixel_x >= 0 && pixel_y >= 0 && pixel_x <= INT_MAX && pixel_y <= INT_MAX &&

@@ -145,20 +145,33 @@ static size_t terminal_render_cache_count = 0u;
 static int terminal_force_full_redraw = 1;
 static int terminal_background_dirty = 1;
 
-struct terminal_custom_pixel {
-    int x;
-    int y;
+struct terminal_custom_pixel_cell {
     uint8_t r;
     uint8_t g;
     uint8_t b;
+    uint8_t active;
 };
 
-static struct terminal_custom_pixel *terminal_custom_pixels = NULL;
+static struct terminal_custom_pixel_cell *terminal_custom_pixel_map = NULL;
 static size_t terminal_custom_pixel_count = 0u;
-static size_t terminal_custom_pixel_capacity = 0u;
+static size_t terminal_custom_pixel_map_size = 0u;
+static int terminal_custom_pixel_map_width = 0;
+static int terminal_custom_pixel_map_height = 0;
 static int terminal_custom_pixels_dirty = 0;
 static int terminal_custom_pixels_need_render = 0;
 static int terminal_custom_pixels_active = 0;
+
+struct terminal_pixel_bulk_entry {
+    int32_t x;
+    int32_t y;
+    uint8_t r;
+    uint8_t g;
+    uint8_t b;
+    uint8_t reserved;
+};
+
+_Static_assert(sizeof(struct terminal_pixel_bulk_entry) == 12u,
+               "terminal_pixel_bulk_entry must be 12 bytes");
 
 struct terminal_gl_shader {
     GLuint program;
@@ -301,10 +314,15 @@ static void terminal_mark_full_redraw(void);
 static void terminal_mark_background_dirty(void);
 static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
 static uint32_t terminal_rgba_from_color(uint32_t color);
+static void terminal_custom_pixels_reset_map(void);
+static int terminal_custom_pixels_resize_map(int width, int height);
+static int terminal_custom_pixels_ensure_capacity_for(int x, int y);
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b);
 static void terminal_custom_pixels_clear(void);
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
 static void terminal_custom_pixels_shutdown(void);
+static int terminal_custom_pixels_set_bulk(const uint8_t *data, size_t length);
+static int terminal_base64_decode(const char *input, uint8_t **out_data, size_t *out_size);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
@@ -1453,17 +1471,114 @@ static uint32_t terminal_rgba_from_color(uint32_t color) {
                                          terminal_color_b(color));
 }
 
+static void terminal_custom_pixels_reset_map(void) {
+    free(terminal_custom_pixel_map);
+    terminal_custom_pixel_map = NULL;
+    terminal_custom_pixel_map_size = 0u;
+    terminal_custom_pixel_map_width = 0;
+    terminal_custom_pixel_map_height = 0;
+}
+
+static int terminal_custom_pixels_resize_map(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        terminal_custom_pixels_reset_map();
+        terminal_custom_pixel_count = 0u;
+        return 0;
+    }
+
+    size_t w = (size_t)width;
+    size_t h = (size_t)height;
+    if (w > SIZE_MAX / h) {
+        return -1;
+    }
+
+    size_t new_size = w * h;
+    struct terminal_custom_pixel_cell *new_map =
+        calloc(new_size, sizeof(*new_map));
+    if (!new_map) {
+        return -1;
+    }
+
+    size_t new_count = 0u;
+    if (terminal_custom_pixel_map &&
+        terminal_custom_pixel_map_width > 0 &&
+        terminal_custom_pixel_map_height > 0) {
+        int copy_width = (width < terminal_custom_pixel_map_width)
+            ? width
+            : terminal_custom_pixel_map_width;
+        int copy_height = (height < terminal_custom_pixel_map_height)
+            ? height
+            : terminal_custom_pixel_map_height;
+
+        for (int y = 0; y < copy_height; y++) {
+            size_t old_row_offset =
+                (size_t)y * (size_t)terminal_custom_pixel_map_width;
+            size_t new_row_offset = (size_t)y * w;
+            for (int x = 0; x < copy_width; x++) {
+                const struct terminal_custom_pixel_cell *old_cell =
+                    &terminal_custom_pixel_map[old_row_offset + (size_t)x];
+                struct terminal_custom_pixel_cell *new_cell =
+                    &new_map[new_row_offset + (size_t)x];
+                if (old_cell->active) {
+                    *new_cell = *old_cell;
+                    new_count++;
+                }
+            }
+        }
+    }
+
+    free(terminal_custom_pixel_map);
+    terminal_custom_pixel_map = new_map;
+    terminal_custom_pixel_map_size = new_size;
+    terminal_custom_pixel_map_width = width;
+    terminal_custom_pixel_map_height = height;
+    terminal_custom_pixel_count = new_count;
+    return 0;
+}
+
+static int terminal_custom_pixels_ensure_capacity_for(int x, int y) {
+    int width = terminal_custom_pixel_map_width;
+    int height = terminal_custom_pixel_map_height;
+
+    if (terminal_logical_width > width) {
+        width = terminal_logical_width;
+    }
+    if (terminal_logical_height > height) {
+        height = terminal_logical_height;
+    }
+
+    if (x >= width) {
+        if (x == INT_MAX) {
+            return -1;
+        }
+        width = x + 1;
+    }
+    if (y >= height) {
+        if (y == INT_MAX) {
+            return -1;
+        }
+        height = y + 1;
+    }
+
+    if (width == terminal_custom_pixel_map_width && height == terminal_custom_pixel_map_height) {
+        return 0;
+    }
+
+    return terminal_custom_pixels_resize_map(width, height);
+}
+
 static void terminal_custom_pixels_shutdown(void) {
-    free(terminal_custom_pixels);
-    terminal_custom_pixels = NULL;
+    terminal_custom_pixels_reset_map();
     terminal_custom_pixel_count = 0u;
-    terminal_custom_pixel_capacity = 0u;
     terminal_custom_pixels_dirty = 0;
     terminal_custom_pixels_need_render = 0;
     terminal_custom_pixels_active = 0;
 }
 
 static void terminal_custom_pixels_clear(void) {
+    if (terminal_custom_pixel_map && terminal_custom_pixel_map_size > 0u) {
+        memset(terminal_custom_pixel_map, 0, terminal_custom_pixel_map_size * sizeof(*terminal_custom_pixel_map));
+    }
     terminal_custom_pixel_count = 0u;
     terminal_custom_pixels_need_render = 1;
     terminal_custom_pixels_active = 0;
@@ -1475,42 +1590,28 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
         return -1;
     }
 
-    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
-        struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
-        if (entry->x == x && entry->y == y) {
-            if (entry->r == r && entry->g == g && entry->b == b) {
-                return 0;
-            }
-            entry->r = r;
-            entry->g = g;
-            entry->b = b;
-            terminal_custom_pixels_need_render = 1;
-            return 0;
-        }
+    if (terminal_custom_pixels_ensure_capacity_for(x, y) != 0) {
+        return -1;
     }
 
-    if (terminal_custom_pixel_count == terminal_custom_pixel_capacity) {
-        size_t new_capacity = (terminal_custom_pixel_capacity == 0u)
-            ? 64u
-            : terminal_custom_pixel_capacity * 2u;
-        if (new_capacity < terminal_custom_pixel_capacity) {
-            return -1;
-        }
-        struct terminal_custom_pixel *new_pixels =
-            realloc(terminal_custom_pixels, new_capacity * sizeof(*terminal_custom_pixels));
-        if (!new_pixels) {
-            return -1;
-        }
-        terminal_custom_pixels = new_pixels;
-        terminal_custom_pixel_capacity = new_capacity;
+    size_t index = (size_t)y * (size_t)terminal_custom_pixel_map_width + (size_t)x;
+    if (index >= terminal_custom_pixel_map_size) {
+        return -1;
     }
 
-    struct terminal_custom_pixel *entry = &terminal_custom_pixels[terminal_custom_pixel_count++];
-    entry->x = x;
-    entry->y = y;
-    entry->r = r;
-    entry->g = g;
-    entry->b = b;
+    struct terminal_custom_pixel_cell *cell = &terminal_custom_pixel_map[index];
+    if (cell->active && cell->r == r && cell->g == g && cell->b == b) {
+        return 0;
+    }
+
+    if (!cell->active) {
+        terminal_custom_pixel_count++;
+    }
+
+    cell->r = r;
+    cell->g = g;
+    cell->b = b;
+    cell->active = 1u;
     terminal_custom_pixels_need_render = 1;
     return 0;
 }
@@ -1520,19 +1621,199 @@ static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int he
         return;
     }
 
-    size_t frame_pitch = (size_t)width * 4u;
-    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
-        const struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
-        if (entry->x < 0 || entry->y < 0) {
-            continue;
-        }
-        if (entry->x >= width || entry->y >= height) {
-            continue;
-        }
-        uint8_t *dst = framebuffer + (size_t)entry->y * frame_pitch + (size_t)entry->x * 4u;
-        uint32_t *dst32 = (uint32_t *)dst;
-        *dst32 = terminal_rgba_from_components(entry->r, entry->g, entry->b);
+    if (!terminal_custom_pixel_map ||
+        terminal_custom_pixel_map_width <= 0 ||
+        terminal_custom_pixel_map_height <= 0) {
+        return;
     }
+
+    size_t max_x = (size_t)terminal_custom_pixel_map_width;
+    size_t max_y = (size_t)terminal_custom_pixel_map_height;
+
+    if (width < terminal_custom_pixel_map_width) {
+        max_x = (size_t)width;
+    }
+    if (height < terminal_custom_pixel_map_height) {
+        max_y = (size_t)height;
+    }
+
+    size_t frame_pitch = (size_t)width * 4u;
+    for (size_t y = 0u; y < max_y; y++) {
+        size_t row_offset = y * (size_t)terminal_custom_pixel_map_width;
+        uint8_t *row_base = framebuffer + y * frame_pitch;
+        for (size_t x = 0u; x < max_x; x++) {
+            const struct terminal_custom_pixel_cell *cell =
+                &terminal_custom_pixel_map[row_offset + x];
+            if (!cell->active) {
+                continue;
+            }
+            uint8_t *dst = row_base + x * 4u;
+            uint32_t *dst32 = (uint32_t *)dst;
+            *dst32 = terminal_rgba_from_components(cell->r, cell->g, cell->b);
+        }
+    }
+}
+
+static int terminal_base64_value(char c) {
+    if (c >= 'A' && c <= 'Z') {
+        return (int)(c - 'A');
+    }
+    if (c >= 'a' && c <= 'z') {
+        return (int)(26 + (c - 'a'));
+    }
+    if (c >= '0' && c <= '9') {
+        return (int)(52 + (c - '0'));
+    }
+    if (c == '+') {
+        return 62;
+    }
+    if (c == '/') {
+        return 63;
+    }
+    return -1;
+}
+
+static int terminal_base64_decode(const char *input, uint8_t **out_data, size_t *out_size) {
+    if (!input || !out_data || !out_size) {
+        return -1;
+    }
+
+    *out_data = NULL;
+    *out_size = 0u;
+
+    size_t input_len = strlen(input);
+    if (input_len == 0u || (input_len % 4u) != 0u) {
+        return -1;
+    }
+
+    size_t padding = 0u;
+    if (input_len >= 1u && input[input_len - 1u] == '=') {
+        padding++;
+    }
+    if (input_len >= 2u && input[input_len - 2u] == '=') {
+        padding++;
+    }
+    if (padding > 2u) {
+        return -1;
+    }
+
+    size_t output_len = (input_len / 4u) * 3u;
+    if (padding > output_len) {
+        return -1;
+    }
+    output_len -= padding;
+
+    uint8_t *output = malloc(output_len);
+    if (!output) {
+        return -1;
+    }
+
+    size_t out_index = 0u;
+    for (size_t i = 0u; i < input_len; i += 4u) {
+        int vals[4];
+        for (size_t j = 0u; j < 4u; j++) {
+            char c = input[i + j];
+            if (c == '=') {
+                vals[j] = 0;
+                continue;
+            }
+            int value = terminal_base64_value(c);
+            if (value < 0) {
+                free(output);
+                return -1;
+            }
+            vals[j] = value;
+        }
+
+        uint32_t triple = ((uint32_t)vals[0] << 18u) |
+            ((uint32_t)vals[1] << 12u) |
+            ((uint32_t)vals[2] << 6u) |
+            (uint32_t)vals[3];
+
+        if (out_index < output_len) {
+            output[out_index++] = (uint8_t)((triple >> 16u) & 0xFFu);
+        }
+        if (out_index < output_len) {
+            output[out_index++] = (uint8_t)((triple >> 8u) & 0xFFu);
+        }
+        if (out_index < output_len) {
+            output[out_index++] = (uint8_t)(triple & 0xFFu);
+        }
+    }
+
+    *out_data = output;
+    *out_size = output_len;
+    return 0;
+}
+
+static int terminal_custom_pixels_set_bulk(const uint8_t *data, size_t length) {
+    if (!data || length == 0u) {
+        return -1;
+    }
+
+    size_t entry_size = sizeof(struct terminal_pixel_bulk_entry);
+    if (length % entry_size != 0u) {
+        return -1;
+    }
+
+    size_t entry_count = length / entry_size;
+    int max_x = -1;
+    int max_y = -1;
+
+    const uint8_t *cursor = data;
+    for (size_t i = 0u; i < entry_count; i++) {
+        int32_t x = (int32_t)((uint32_t)cursor[0] |
+                              ((uint32_t)cursor[1] << 8u) |
+                              ((uint32_t)cursor[2] << 16u) |
+                              ((uint32_t)cursor[3] << 24u));
+        int32_t y = (int32_t)((uint32_t)cursor[4] |
+                              ((uint32_t)cursor[5] << 8u) |
+                              ((uint32_t)cursor[6] << 16u) |
+                              ((uint32_t)cursor[7] << 24u));
+
+        if (x >= 0 && y >= 0) {
+            if (x > max_x) {
+                max_x = x;
+            }
+            if (y > max_y) {
+                max_y = y;
+            }
+        }
+
+        cursor += entry_size;
+    }
+
+    if (max_x >= 0 && max_y >= 0) {
+        if (terminal_custom_pixels_ensure_capacity_for(max_x, max_y) != 0) {
+            return -1;
+        }
+    }
+
+    int status = 0;
+    cursor = data;
+    for (size_t i = 0u; i < entry_count; i++) {
+        int32_t x = (int32_t)((uint32_t)cursor[0] |
+                              ((uint32_t)cursor[1] << 8u) |
+                              ((uint32_t)cursor[2] << 16u) |
+                              ((uint32_t)cursor[3] << 24u));
+        int32_t y = (int32_t)((uint32_t)cursor[4] |
+                              ((uint32_t)cursor[5] << 8u) |
+                              ((uint32_t)cursor[6] << 16u) |
+                              ((uint32_t)cursor[7] << 24u));
+        uint8_t r = cursor[8];
+        uint8_t g = cursor[9];
+        uint8_t b = cursor[10];
+
+        if (x >= 0 && y >= 0) {
+            if (terminal_custom_pixels_set(x, y, r, g, b) != 0) {
+                status = -1;
+            }
+        }
+
+        cursor += entry_size;
+    }
+
+    return status;
 }
 
 static int terminal_ensure_render_cache(size_t columns, size_t rows) {
@@ -3787,7 +4068,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_PIXEL_ACTION_NONE = 0,
                 TERMINAL_PIXEL_ACTION_DRAW = 1,
                 TERMINAL_PIXEL_ACTION_CLEAR = 2,
-                TERMINAL_PIXEL_ACTION_RENDER = 3
+                TERMINAL_PIXEL_ACTION_RENDER = 3,
+                TERMINAL_PIXEL_ACTION_BULK = 4
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
             long pixel_x = -1;
@@ -3795,6 +4077,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long pixel_r = -1;
             long pixel_g = -1;
             long pixel_b = -1;
+            const char *pixel_bulk_data = NULL;
+            long pixel_bulk_count = -1;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -3889,6 +4173,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
                         } else if (strcmp(value, "render") == 0) {
                             pixel_action = TERMINAL_PIXEL_ACTION_RENDER;
+                        } else if (strcmp(value, "bulk") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_BULK;
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -3924,6 +4210,15 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         long parsed = strtol(value, &endptr, 10);
                         if (errno == 0 && endptr && *endptr == '\0') {
                             pixel_b = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_data") == 0 && value && *value != '\0') {
+                        pixel_bulk_data = value;
+                    } else if (strcmp(key, "pixel_count") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed > 0) {
+                            pixel_bulk_count = parsed;
                         }
                     }
                 }
@@ -3971,6 +4266,31 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
                     terminal_custom_pixels_dirty = 1;
                     terminal_custom_pixels_need_render = 0;
+                }
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_BULK) {
+                size_t expected_size = 0u;
+                if (pixel_bulk_count > 0) {
+                    size_t entry_size = sizeof(struct terminal_pixel_bulk_entry);
+                    if ((size_t)pixel_bulk_count <= SIZE_MAX / entry_size) {
+                        expected_size = (size_t)pixel_bulk_count * entry_size;
+                    }
+                }
+
+                if (!pixel_bulk_data || expected_size == 0u) {
+                    fprintf(stderr, "terminal: Invalid bulk pixel parameters.\n");
+                } else {
+                    uint8_t *decoded = NULL;
+                    size_t decoded_size = 0u;
+                    if (terminal_base64_decode(pixel_bulk_data, &decoded, &decoded_size) != 0) {
+                        fprintf(stderr, "terminal: Failed to decode bulk pixel data.\n");
+                    } else {
+                        if (decoded_size != expected_size) {
+                            fprintf(stderr, "terminal: Bulk pixel data size mismatch.\n");
+                        } else if (terminal_custom_pixels_set_bulk(decoded, decoded_size) != 0) {
+                            fprintf(stderr, "terminal: Failed to apply bulk pixel data.\n");
+                        }
+                        free(decoded);
+                    }
                 }
             }
 
@@ -4558,6 +4878,10 @@ static void terminal_update_render_size(size_t columns, size_t rows) {
     int height = (int)total_height;
     terminal_logical_width = width;
     terminal_logical_height = height;
+
+    if (terminal_custom_pixels_resize_map(width, height) != 0) {
+        fprintf(stderr, "Failed to resize custom pixel map.\n");
+    }
 
     if (terminal_gl_ready) {
         if (terminal_resize_render_targets(width, height) != 0) {

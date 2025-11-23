@@ -153,6 +153,8 @@ struct terminal_custom_pixel {
     uint8_t b;
 };
 
+static const size_t terminal_custom_pixel_record_size = 11u;
+
 static struct terminal_custom_pixel *terminal_custom_pixels = NULL;
 static size_t terminal_custom_pixel_count = 0u;
 static size_t terminal_custom_pixel_capacity = 0u;
@@ -301,10 +303,13 @@ static void terminal_mark_full_redraw(void);
 static void terminal_mark_background_dirty(void);
 static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
 static uint32_t terminal_rgba_from_color(uint32_t color);
+static unsigned char *terminal_decode_base64(const char *input, size_t *out_size);
+static int terminal_read_int32_le(const unsigned char *data, size_t offset, size_t size, int32_t *out_value);
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b);
 static void terminal_custom_pixels_clear(void);
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
 static void terminal_custom_pixels_shutdown(void);
+static int terminal_custom_pixels_apply_batch(const unsigned char *data, size_t length, size_t expected_count);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
@@ -1453,6 +1458,104 @@ static uint32_t terminal_rgba_from_color(uint32_t color) {
                                          terminal_color_b(color));
 }
 
+static int base64_value(char c) {
+    if (c >= 'A' && c <= 'Z') {
+        return c - 'A';
+    }
+    if (c >= 'a' && c <= 'z') {
+        return c - 'a' + 26;
+    }
+    if (c >= '0' && c <= '9') {
+        return c - '0' + 52;
+    }
+    if (c == '+') {
+        return 62;
+    }
+    if (c == '/') {
+        return 63;
+    }
+    return -1;
+}
+
+static unsigned char *terminal_decode_base64(const char *input, size_t *out_size) {
+    if (!input || !out_size) {
+        return NULL;
+    }
+    size_t input_length = strlen(input);
+    if (input_length == 0u || (input_length % 4u) != 0u) {
+        return NULL;
+    }
+
+    size_t padding = 0u;
+    if (input_length >= 1u && input[input_length - 1u] == '=') {
+        padding++;
+    }
+    if (input_length >= 2u && input[input_length - 2u] == '=') {
+        padding++;
+    }
+
+    size_t output_length = (input_length / 4u) * 3u;
+    if (output_length < padding) {
+        return NULL;
+    }
+    output_length -= padding;
+
+    unsigned char *output = malloc(output_length);
+    if (!output) {
+        return NULL;
+    }
+
+    size_t out_index = 0u;
+    for (size_t i = 0u; i < input_length; i += 4u) {
+        int values[4] = {0};
+        for (size_t j = 0u; j < 4u; j++) {
+            char c = input[i + j];
+            if (c == '=') {
+                values[j] = 0;
+            } else {
+                int v = base64_value(c);
+                if (v < 0) {
+                    free(output);
+                    return NULL;
+                }
+                values[j] = v;
+            }
+        }
+        uint32_t chunk = ((uint32_t)values[0] << 18u) |
+                         ((uint32_t)values[1] << 12u) |
+                         ((uint32_t)values[2] << 6u) |
+                         (uint32_t)values[3];
+
+        if (out_index < output_length) {
+            output[out_index++] = (unsigned char)((chunk >> 16u) & 0xffu);
+        }
+        if (out_index < output_length) {
+            output[out_index++] = (unsigned char)((chunk >> 8u) & 0xffu);
+        }
+        if (out_index < output_length) {
+            output[out_index++] = (unsigned char)(chunk & 0xffu);
+        }
+    }
+
+    *out_size = output_length;
+    return output;
+}
+
+static int terminal_read_int32_le(const unsigned char *data, size_t offset, size_t size, int32_t *out_value) {
+    if (!data || !out_value) {
+        return -1;
+    }
+    if (offset > SIZE_MAX - 4u || offset + 4u > size) {
+        return -1;
+    }
+    uint32_t value = (uint32_t)data[offset] |
+                     ((uint32_t)data[offset + 1u] << 8u) |
+                     ((uint32_t)data[offset + 2u] << 16u) |
+                     ((uint32_t)data[offset + 3u] << 24u);
+    *out_value = (int32_t)value;
+    return 0;
+}
+
 static void terminal_custom_pixels_shutdown(void) {
     free(terminal_custom_pixels);
     terminal_custom_pixels = NULL;
@@ -1533,6 +1636,49 @@ static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int he
         uint32_t *dst32 = (uint32_t *)dst;
         *dst32 = terminal_rgba_from_components(entry->r, entry->g, entry->b);
     }
+}
+
+static int terminal_custom_pixels_apply_batch(const unsigned char *data, size_t length, size_t expected_count) {
+    if (!data) {
+        return -1;
+    }
+    if (terminal_custom_pixel_record_size == 0u) {
+        return -1;
+    }
+    if (length % terminal_custom_pixel_record_size != 0u) {
+        return -1;
+    }
+
+    size_t count = length / terminal_custom_pixel_record_size;
+    if (expected_count > 0u && count != expected_count) {
+        return -1;
+    }
+
+    size_t offset = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        int32_t x = 0;
+        int32_t y = 0;
+        if (terminal_read_int32_le(data, offset, length, &x) != 0 ||
+            terminal_read_int32_le(data, offset + 4u, length, &y) != 0) {
+            return -1;
+        }
+        uint8_t r = data[offset + 8u];
+        uint8_t g = data[offset + 9u];
+        uint8_t b = data[offset + 10u];
+        offset += terminal_custom_pixel_record_size;
+
+        if (terminal_custom_pixels_set((int)x, (int)y, r, g, b) != 0) {
+            fprintf(stderr, "terminal: Failed to apply batch pixel.\n");
+        }
+    }
+
+    if (terminal_custom_pixels_need_render) {
+        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+        terminal_custom_pixels_dirty = 1;
+        terminal_custom_pixels_need_render = 0;
+    }
+
+    return 0;
 }
 
 static int terminal_ensure_render_cache(size_t columns, size_t rows) {
@@ -3787,7 +3933,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_PIXEL_ACTION_NONE = 0,
                 TERMINAL_PIXEL_ACTION_DRAW = 1,
                 TERMINAL_PIXEL_ACTION_CLEAR = 2,
-                TERMINAL_PIXEL_ACTION_RENDER = 3
+                TERMINAL_PIXEL_ACTION_RENDER = 3,
+                TERMINAL_PIXEL_ACTION_BATCH = 4
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
             long pixel_x = -1;
@@ -3795,6 +3942,9 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long pixel_r = -1;
             long pixel_g = -1;
             long pixel_b = -1;
+            size_t pixel_batch_count = 0u;
+            int pixel_batch_count_set = 0;
+            char *pixel_batch_data = NULL;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -3889,6 +4039,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
                         } else if (strcmp(value, "render") == 0) {
                             pixel_action = TERMINAL_PIXEL_ACTION_RENDER;
+                        } else if (strcmp(value, "batch") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_BATCH;
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -3925,6 +4077,17 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         if (errno == 0 && endptr && *endptr == '\0') {
                             pixel_b = parsed;
                         }
+                    } else if (strcmp(key, "pixel_count") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0) {
+                            pixel_batch_count = (size_t)parsed;
+                            pixel_batch_count_set = 1;
+                        }
+                    } else if (strcmp(key, "pixel_data") == 0 && value && *value != '\0') {
+                        free(pixel_batch_data);
+                        pixel_batch_data = strdup(value);
                     }
                 }
                 token = strtok_r(NULL, ";", &saveptr);
@@ -3972,9 +4135,23 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     terminal_custom_pixels_dirty = 1;
                     terminal_custom_pixels_need_render = 0;
                 }
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_BATCH) {
+                if (!pixel_batch_data || !pixel_batch_count_set || pixel_batch_count == 0u) {
+                    fprintf(stderr, "terminal: Incomplete batch pixel data.\n");
+                } else {
+                    size_t decoded_size = 0u;
+                    unsigned char *decoded = terminal_decode_base64(pixel_batch_data, &decoded_size);
+                    if (!decoded) {
+                        fprintf(stderr, "terminal: Failed to decode pixel batch data.\n");
+                    } else if (terminal_custom_pixels_apply_batch(decoded, decoded_size, pixel_batch_count) != 0) {
+                        fprintf(stderr, "terminal: Failed to apply pixel batch data.\n");
+                    }
+                    free(decoded);
+                }
             }
 
             free(copy);
+            free(pixel_batch_data);
         }
 
         if (scale == 0) {

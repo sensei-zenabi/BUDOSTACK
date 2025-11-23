@@ -1500,12 +1500,15 @@ static void terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int wi
         write_idx++;
     }
 
-    if (write_idx != terminal_custom_pixel_count) {
-        terminal_custom_pixel_count = write_idx;
-        terminal_custom_pixels_dirty = 1;
-        terminal_custom_pixels_need_render = 0;
-        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+    if (write_idx == terminal_custom_pixel_count) {
+        return;
     }
+
+    terminal_custom_pixel_count = write_idx;
+    terminal_custom_pixels_dirty = 1;
+    terminal_custom_pixels_need_render = 1;
+    terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+    terminal_mark_full_redraw();
 }
 
 static int terminal_custom_pixels_reserve(size_t additional) {

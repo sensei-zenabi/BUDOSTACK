@@ -1,53 +1,57 @@
 # demo.task
-SET $SPD = 75.0
-SET $XRAW = 10.0
-SET $X = $XRAW
-SET $DX = 0.0
-SET $DT = 0.0
+# --------------------------------------------------------
+# This demo is used to measure pixel graphics performance
+# between _TERM* commands and app/terminal. It contains 
+# various scenes that are used to do the benchmarking.
+# --------------------------------------------------------
 
+# ======================= SCENE 1 ========================
+# Filling 320x200 screen with pixels and measuring time.
+# Render duration [ms]: 60203.5
+# ========================================================
+
+# --- Scene Variables ---
+# none
+
+# Initialization
 RUN _TERM_RESOLUTION 320 200
 RUN _CLEAR
-
 RUN _TIMER --start
 
-SET $i = 0
-@DRAW_LOOP
 
-  RUN _CALC ($DT/1000)*$SPD TO $DX
-  SET $XRAW = $XRAW + $DX
-  RUN _CALC floor($XRAW) TO $X
+# ------------- PRE-RENDER ---------------
   
-  # -------------- GRAPHICS ----------------
-  RUN _TIMER --reset 
+# --------------- RENDER  ----------------
+# Reset timer to measure the render time
+RUN _TIMER --reset
+RUN _TIMER --start 
 
-  SET $i = $i + 1
-  IF $i > 255
-    SET $i = 255
-
-  FOR ($N=0; $N<5; $N++):
-    RUN _TERM_PIXEL -x $X-$N -y 97 -r 0 -g $i -b 0
-    RUN _TERM_PIXEL -x $X-$N -y 98 -r 0 -g $i -b 0
-    RUN _TERM_PIXEL -x $X-$N -y 99 -r 0 -g $i -b 0
-    RUN _TERM_PIXEL -x $X-$N -y 100 -r 0 -g $i -b 0
-    RUN _TERM_PIXEL -x $X-$N -y 101 -r 0 -g $i -b 0
-    RUN _TERM_PIXEL -x $X-$N -y 102 -r 0 -g $i -b 0
-    RUN _TERM_PIXEL -x $X-$N -y 103 -r 0 -g $i -b 0
+# Fill the screen with pixels (most of it)
+FOR ($X=15; $X<319; $X++):
+  FOR ($Y=30; $Y<195; $Y++):
+    RUN _TERM_PIXEL -x $X -y $Y -r 0 -g 255 -b 0
   END
+END
 
-  RUN _TERM_PIXEL --render
+# Render the pixesl
+RUN _TERM_PIXEL --render
 
-  # ----------------------------------------
+# Stop the timer
+RUN _TIMER --stop
 
-  RUN _TIMER --get TO $DT
+# ------------- POST-RENDER --------------
+
+SET $TIME = 0.0
+RUN _TIMER --get TO $TIME
+SET $STRING = "Render duration [ms]: " + $TIME
+
+# Print statistics
+RUN _TEXT -x 1 -y 1 -text $STRING
   
-  IF ($X < 320):
-    GOTO DRAW_LOOP
-  END
-  
-RUN _WAIT 4000
-
+# ------------ SCENE CLEANUP -------------
+SET $KEY
+INPUT $KEY
 RUN _TERM_PIXEL --clear
-
 RUN _TERM_RESOLUTION 640 360
 
 

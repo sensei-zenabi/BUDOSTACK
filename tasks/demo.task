@@ -55,6 +55,7 @@ IF ($SELECTION==1):
     RUN _CALC floor($XRAW) TO $X    
     RUN _TIMER --get TO $DT
   END
+  RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360
 END
   
 # ------------- EXIT CLEANUP -------------

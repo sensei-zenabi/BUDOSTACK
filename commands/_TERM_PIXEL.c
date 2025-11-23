@@ -13,8 +13,10 @@ static void print_usage(void) {
     fprintf(stderr, "       _TERM_PIXEL --clear\n");
     fprintf(stderr, "       _TERM_PIXEL --render\n");
     fprintf(stderr, "       _TERM_PIXEL --bulk <file|- >\n");
+    fprintf(stderr, "       _TERM_PIXEL --frame <file|- > --frame-width <pixels> --frame-height <pixels> [--frame-x <pixels>] [--frame-y <pixels>]\n");
     fprintf(stderr, "  Draws or clears raw SDL pixels on the terminal window.\n");
     fprintf(stderr, "  Bulk mode reads lines of 'x y r g b' (space-separated) from the file or stdin.\n");
+    fprintf(stderr, "  Frame mode sends packed RGB bytes for a rectangular block to reduce per-pixel overhead.\n");
 }
 
 struct pixel_bulk_entry {
@@ -207,6 +209,61 @@ static int build_bulk_payload(const struct pixel_bulk_entry *entries, size_t cou
     return 0;
 }
 
+static int read_frame_data(const char *path, size_t expected_size, uint8_t **out_data) {
+    if (!path || !out_data || expected_size == 0u) {
+        return -1;
+    }
+
+    *out_data = NULL;
+
+    FILE *fp = NULL;
+    int close_fp = 0;
+
+    if (strcmp(path, "-") == 0) {
+        fp = stdin;
+    } else {
+        fp = fopen(path, "rb");
+        if (!fp) {
+            perror("_TERM_PIXEL: fopen");
+            return -1;
+        }
+        close_fp = 1;
+    }
+
+    uint8_t *buffer = malloc(expected_size);
+    if (!buffer) {
+        if (close_fp && fp) {
+            fclose(fp);
+        }
+        return -1;
+    }
+
+    size_t total_read = 0u;
+    while (total_read < expected_size) {
+        size_t read_now = fread(buffer + total_read, 1u, expected_size - total_read, fp);
+        if (read_now == 0u) {
+            if (ferror(fp)) {
+                perror("_TERM_PIXEL: fread");
+            } else {
+                fprintf(stderr, "_TERM_PIXEL: unexpected end of frame data.\n");
+            }
+            free(buffer);
+            if (close_fp && fp) {
+                fclose(fp);
+            }
+            return -1;
+        }
+        total_read += read_now;
+    }
+
+    if (close_fp && fp) {
+        fclose(fp);
+    }
+
+    *out_data = buffer;
+    return 0;
+}
+
 static char *base64_encode(const uint8_t *data, size_t length) {
     static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -250,6 +307,11 @@ int main(int argc, char **argv) {
     int clear = 0;
     int render = 0;
     const char *bulk_path = NULL;
+    const char *frame_path = NULL;
+    long frame_width = -1;
+    long frame_height = -1;
+    long frame_x = 0;
+    long frame_y = 0;
     long x = -1;
     long y = -1;
     long r = -1;
@@ -308,6 +370,44 @@ int main(int argc, char **argv) {
                 return EXIT_FAILURE;
             }
             bulk_path = argv[i];
+        } else if (strcmp(arg, "--frame") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_PIXEL: missing value for --frame.\n");
+                return EXIT_FAILURE;
+            }
+            frame_path = argv[i];
+        } else if (strcmp(arg, "--frame-width") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_PIXEL: missing value for --frame-width.\n");
+                return EXIT_FAILURE;
+            }
+            if (parse_long(argv[i], "--frame-width", 1, INT_MAX, &frame_width) != 0) {
+                return EXIT_FAILURE;
+            }
+        } else if (strcmp(arg, "--frame-height") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_PIXEL: missing value for --frame-height.\n");
+                return EXIT_FAILURE;
+            }
+            if (parse_long(argv[i], "--frame-height", 1, INT_MAX, &frame_height) != 0) {
+                return EXIT_FAILURE;
+            }
+        } else if (strcmp(arg, "--frame-x") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_PIXEL: missing value for --frame-x.\n");
+                return EXIT_FAILURE;
+            }
+            if (parse_long(argv[i], "--frame-x", 0, INT_MAX, &frame_x) != 0) {
+                return EXIT_FAILURE;
+            }
+        } else if (strcmp(arg, "--frame-y") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_PIXEL: missing value for --frame-y.\n");
+                return EXIT_FAILURE;
+            }
+            if (parse_long(argv[i], "--frame-y", 0, INT_MAX, &frame_y) != 0) {
+                return EXIT_FAILURE;
+            }
         } else {
             fprintf(stderr, "_TERM_PIXEL: unknown argument '%s'.\n", arg);
             print_usage();
@@ -315,7 +415,59 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (bulk_path) {
+    if (frame_path) {
+        if (bulk_path || clear || render || x >= 0 || y >= 0 || r >= 0 || g >= 0 || b >= 0) {
+            fprintf(stderr, "_TERM_PIXEL: --frame cannot be combined with draw, bulk, --clear, or --render flags.\n");
+            return EXIT_FAILURE;
+        }
+
+        if (frame_width <= 0 || frame_height <= 0) {
+            fprintf(stderr, "_TERM_PIXEL: --frame-width and --frame-height must be provided and positive.\n");
+            return EXIT_FAILURE;
+        }
+
+        size_t total_pixels = (size_t)frame_width * (size_t)frame_height;
+        if (frame_width > 0 && total_pixels / (size_t)frame_width != (size_t)frame_height) {
+            fprintf(stderr, "_TERM_PIXEL: frame dimensions are too large.\n");
+            return EXIT_FAILURE;
+        }
+
+        if (total_pixels > SIZE_MAX / 3u) {
+            fprintf(stderr, "_TERM_PIXEL: frame payload is too large.\n");
+            return EXIT_FAILURE;
+        }
+
+        size_t expected_bytes = total_pixels * 3u;
+        if (expected_bytes == 0u) {
+            fprintf(stderr, "_TERM_PIXEL: frame size is zero.\n");
+            return EXIT_FAILURE;
+        }
+
+        uint8_t *frame_bytes = NULL;
+        if (read_frame_data(frame_path, expected_bytes, &frame_bytes) != 0) {
+            return EXIT_FAILURE;
+        }
+
+        char *encoded = base64_encode(frame_bytes, expected_bytes);
+        free(frame_bytes);
+        if (!encoded) {
+            fprintf(stderr, "_TERM_PIXEL: failed to encode frame payload.\n");
+            return EXIT_FAILURE;
+        }
+
+        if (printf("\x1b]777;pixel=frame;frame_width=%ld;frame_height=%ld;frame_x=%ld;frame_y=%ld;pixel_data=%s\a",
+                   frame_width,
+                   frame_height,
+                   frame_x,
+                   frame_y,
+                   encoded) < 0) {
+            perror("_TERM_PIXEL: printf");
+            free(encoded);
+            return EXIT_FAILURE;
+        }
+
+        free(encoded);
+    } else if (bulk_path) {
         if (clear || render || x >= 0 || y >= 0 || r >= 0 || g >= 0 || b >= 0) {
             fprintf(stderr, "_TERM_PIXEL: --bulk cannot be combined with draw, --clear, or --render flags.\n");
             return EXIT_FAILURE;

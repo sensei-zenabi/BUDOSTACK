@@ -318,6 +318,12 @@ static void terminal_custom_pixels_reset_map(void);
 static int terminal_custom_pixels_resize_map(int width, int height);
 static int terminal_custom_pixels_ensure_capacity_for(int x, int y);
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b);
+static int terminal_custom_pixels_set_frame(int origin_x,
+                                            int origin_y,
+                                            int width,
+                                            int height,
+                                            const uint8_t *rgb,
+                                            size_t length);
 static void terminal_custom_pixels_clear(void);
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
 static void terminal_custom_pixels_shutdown(void);
@@ -1612,6 +1618,63 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
     cell->g = g;
     cell->b = b;
     cell->active = 1u;
+    terminal_custom_pixels_need_render = 1;
+    return 0;
+}
+
+static int terminal_custom_pixels_set_frame(int origin_x,
+                                            int origin_y,
+                                            int width,
+                                            int height,
+                                            const uint8_t *rgb,
+                                            size_t length) {
+    if (origin_x < 0 || origin_y < 0 || width <= 0 || height <= 0 || !rgb) {
+        return -1;
+    }
+
+    size_t row_pixels = (size_t)width;
+    size_t total_pixels = row_pixels * (size_t)height;
+    if (row_pixels == 0u || (row_pixels > 0u && total_pixels / row_pixels != (size_t)height)) {
+        return -1;
+    }
+
+    size_t required_bytes = total_pixels * 3u;
+    if (required_bytes == 0u || required_bytes > length) {
+        return -1;
+    }
+
+    int max_x = origin_x + width - 1;
+    int max_y = origin_y + height - 1;
+    if (max_x < origin_x || max_y < origin_y || max_x >= INT_MAX || max_y >= INT_MAX) {
+        return -1;
+    }
+
+    if (terminal_custom_pixels_ensure_capacity_for(max_x, max_y) != 0) {
+        return -1;
+    }
+
+    size_t map_width = (size_t)terminal_custom_pixel_map_width;
+    const uint8_t *src = rgb;
+    for (int y = 0; y < height; y++) {
+        size_t dst_row = ((size_t)origin_y + (size_t)y) * map_width + (size_t)origin_x;
+        struct terminal_custom_pixel_cell *row_base = &terminal_custom_pixel_map[dst_row];
+        for (int x = 0; x < width; x++) {
+            struct terminal_custom_pixel_cell *cell = &row_base[x];
+            uint8_t r = *src++;
+            uint8_t g = *src++;
+            uint8_t b = *src++;
+
+            if (!cell->active) {
+                terminal_custom_pixel_count++;
+            }
+
+            cell->r = r;
+            cell->g = g;
+            cell->b = b;
+            cell->active = 1u;
+        }
+    }
+
     terminal_custom_pixels_need_render = 1;
     return 0;
 }
@@ -4069,7 +4132,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_PIXEL_ACTION_DRAW = 1,
                 TERMINAL_PIXEL_ACTION_CLEAR = 2,
                 TERMINAL_PIXEL_ACTION_RENDER = 3,
-                TERMINAL_PIXEL_ACTION_BULK = 4
+                TERMINAL_PIXEL_ACTION_BULK = 4,
+                TERMINAL_PIXEL_ACTION_FRAME = 5
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
             long pixel_x = -1;
@@ -4079,6 +4143,11 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long pixel_b = -1;
             const char *pixel_bulk_data = NULL;
             long pixel_bulk_count = -1;
+            long frame_width = -1;
+            long frame_height = -1;
+            long frame_x = 0;
+            long frame_y = 0;
+            const char *frame_data = NULL;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -4175,6 +4244,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             pixel_action = TERMINAL_PIXEL_ACTION_RENDER;
                         } else if (strcmp(value, "bulk") == 0) {
                             pixel_action = TERMINAL_PIXEL_ACTION_BULK;
+                        } else if (strcmp(value, "frame") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_FRAME;
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -4213,12 +4284,41 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         }
                     } else if (strcmp(key, "pixel_data") == 0 && value && *value != '\0') {
                         pixel_bulk_data = value;
+                        frame_data = value;
                     } else if (strcmp(key, "pixel_count") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
                         errno = 0;
                         long parsed = strtol(value, &endptr, 10);
                         if (errno == 0 && endptr && *endptr == '\0' && parsed > 0) {
                             pixel_bulk_count = parsed;
+                        }
+                    } else if (strcmp(key, "frame_width") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            frame_width = parsed;
+                        }
+                    } else if (strcmp(key, "frame_height") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            frame_height = parsed;
+                        }
+                    } else if (strcmp(key, "frame_x") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            frame_x = parsed;
+                        }
+                    } else if (strcmp(key, "frame_y") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            frame_y = parsed;
                         }
                     }
                 }
@@ -4290,6 +4390,37 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             fprintf(stderr, "terminal: Failed to apply bulk pixel data.\n");
                         }
                         free(decoded);
+                    }
+                }
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_FRAME) {
+                if (frame_width <= 0 || frame_height <= 0 || frame_width > INT_MAX || frame_height > INT_MAX ||
+                    frame_x < 0 || frame_y < 0) {
+                    fprintf(stderr, "terminal: Invalid frame parameters.\n");
+                } else if (!frame_data) {
+                    fprintf(stderr, "terminal: Frame data missing.\n");
+                } else {
+                    size_t max_pixels = (size_t)frame_width * (size_t)frame_height;
+                    if (max_pixels > SIZE_MAX / 3u) {
+                        fprintf(stderr, "terminal: Frame size too large.\n");
+                    } else {
+                        size_t expected_bytes = max_pixels * 3u;
+                        uint8_t *decoded = NULL;
+                        size_t decoded_size = 0u;
+                        if (terminal_base64_decode(frame_data, &decoded, &decoded_size) != 0) {
+                            fprintf(stderr, "terminal: Failed to decode frame pixel data.\n");
+                        } else {
+                            if (decoded_size != expected_bytes) {
+                                fprintf(stderr, "terminal: Frame pixel data size mismatch.\n");
+                            } else if (terminal_custom_pixels_set_frame((int)frame_x,
+                                                                        (int)frame_y,
+                                                                        (int)frame_width,
+                                                                        (int)frame_height,
+                                                                        decoded,
+                                                                        decoded_size) != 0) {
+                                fprintf(stderr, "terminal: Failed to apply frame pixel data.\n");
+                            }
+                            free(decoded);
+                        }
                     }
                 }
             }

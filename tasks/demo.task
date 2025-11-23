@@ -5,50 +5,91 @@
 # various scenes that are used to do the benchmarking.
 # --------------------------------------------------------
 
+# --- Global Variables ---
+SET $SELECTION = 0
+
+# Menu
+RUN _CLEAR
+PRINT "\nSelect Demo"
+PRINT "\n"
+PRINT "\n[1] Pixel rendering test"
+PRINT "\n[2] Sprite rendering test"
+PRINT "\n"
+PRINT "\nEnter selection: "
+INPUT $SELECTION
+
+
 # ======================= SCENE 1 ========================
 # Filling 320x200 screen with pixels and measuring time.
-# Render duration [ms]: 60203.5
-# ========================================================
+# ========================================================  
 
-# --- Scene Variables ---
-# none
-
-# Initialization
-RUN _TERM_RESOLUTION 320 200
-RUN _CLEAR
-RUN _TIMER --start
-
-
-# ------------- PRE-RENDER ---------------
+IF ($SELECTION==1):
   
-# --------------- RENDER  ----------------
-# Reset timer to measure the render time
-RUN _TIMER --reset
-RUN _TIMER --start 
+  # Initialization
+  RUN _TERM_RESOLUTION 320 200
+  RUN _CLEAR
+ 
+  # --------------- RENDER  ----------------
+  # Start timer
+  RUN _TIMER --start 
 
-# Fill the screen with pixels (most of it)
-FOR ($X=15; $X<319; $X++):
-  FOR ($Y=30; $Y<195; $Y++):
-    RUN _TERM_PIXEL -x $X -y $Y -r 0 -g 255 -b 0
+  # Fill the screen with pixels (most of it)
+  FOR ($X=15; $X<319; $X++):
+    FOR ($Y=30; $Y<195; $Y++):
+      RUN _TERM_PIXEL -x $X -y $Y -r 0 -g 255 -b 0
+    END
   END
+
+  # Render the pixesl
+  RUN _TERM_PIXEL --render
+
+  # Stop the timer
+  RUN _TIMER --stop
+
+  # ------------- POST-RENDER --------------
+
+  SET $TIME = 0.0
+  RUN _TIMER --get TO $TIME
+  SET $STRING = "Render duration [ms]: " + $TIME
+
+  # Print statistics
+  RUN _TEXT -x 1 -y 1 -text $STRING
+  
+  # Reset timer for future use
+  RUN _TIMER --reset
+
 END
 
-# Render the pixesl
-RUN _TERM_PIXEL --render
+# ======================= SCENE 2 ========================
+# Render sprites and demonstrate movement in 640x360.
+# ========================================================  
 
-# Stop the timer
-RUN _TIMER --stop
 
-# ------------- POST-RENDER --------------
-
-SET $TIME = 0.0
-RUN _TIMER --get TO $TIME
-SET $STRING = "Render duration [ms]: " + $TIME
-
-# Print statistics
-RUN _TEXT -x 1 -y 1 -text $STRING
+IF ($SELECTION==2):
   
-# ------------ SCENE CLEANUP -------------
+  # Initialization:
+  
+  RUN _CLEAR
+  RUN _TERM_RESOLUTION 640 360
+
+  # Variables
+  SET $X = 20
+  SET $Y = 40
+  SET $VX = 5
+      
+  # Rendering loop:
+  
+  PRINT "SCENE 2 - Demonstrating sprite rendering"
+  WHILE ($X<590):
+    RUN _TERM_SPRITE -x $X-$VX -y $Y -file ./tasks/assets/black.png
+    RUN _TERM_SPRITE -x $X -y $Y -file ./icon.png
+    RUN _TERM_PIXEL --render
+    RUN _WAIT 10
+    SET $X = $X + $VX
+  END
+END
+  
+# ------------- EXIT CLEANUP -------------
 SET $KEY
 INPUT $KEY
 RUN _TERM_PIXEL --clear

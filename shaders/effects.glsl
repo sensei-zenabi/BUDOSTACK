@@ -8,6 +8,9 @@
 #pragma parameter wiggle "Wiggle" 0.0 0.0 0.0 0.0
 
 #pragma parameter smear "Chroma Smear" 0.25 0.0 0.5 0.025
+#pragma parameter bloomIntensity "Bloom Intensity" 0.35 0.0 2.0 0.05
+#pragma parameter bloomThreshold "Bloom Threshold" 0.65 0.0 1.5 0.05
+#pragma parameter bloomSize "Bloom Radius" 1.5 0.1 6.0 0.1
 
 #if defined(VERTEX)
 
@@ -94,9 +97,15 @@ COMPAT_VARYING vec4 TEX0;
 #ifdef PARAMETER_UNIFORM
 uniform COMPAT_PRECISION float wiggle;
 uniform COMPAT_PRECISION float smear;
+uniform COMPAT_PRECISION float bloomIntensity;
+uniform COMPAT_PRECISION float bloomThreshold;
+uniform COMPAT_PRECISION float bloomSize;
 #else
 #define wiggle 3.0
 #define smear 1.0
+#define bloomIntensity 0.0
+#define bloomThreshold 0.8
+#define bloomSize 1.5
 #endif
 
 #define iTime mod(float(FrameCount), 7.0)
@@ -191,6 +200,27 @@ vec2 jumpy(vec2 uv, float framecount)
     return uv; // removing the jumpy effect by returning the original uv
 }
 
+vec3 bloom(vec2 uv, float radius)
+{
+    vec2 texel = radius * SourceSize.zw;
+    vec3 sum = vec3(0.0);
+    float weightSum = 0.0;
+
+    for (int x = -1; x <= 1; x++)
+    {
+        for (int y = -1; y <= 1; y++)
+        {
+            vec2 offset = vec2(float(x), float(y)) * texel;
+            float weight = 1.0 / (1.0 + abs(float(x)) + abs(float(y)));
+            vec3 sample = max(COMPAT_TEXTURE(Source, uv + offset).rgb - vec3(bloomThreshold), vec3(0.0));
+            sum += sample * weight;
+            weightSum += weight;
+        }
+    }
+
+    return sum / max(weightSum, 0.0001);
+}
+
 void main()
 {
     float timer = (float(FrameDirection) > 0.5) ? float(FrameCount) : 0.0;
@@ -222,6 +252,12 @@ void main()
     final.xyz =Blur(uv,c);
     float q = rgb2yiq(final.xyz).b;
     final = vec4(yiq2rgb(vec3(y,i,q))-pow(s+e*2.0,3.0), 1.0);
+
+    if (bloomIntensity > 0.0)
+    {
+        vec3 bloomColor = bloom(uv, bloomSize);
+        final.rgb = clamp(final.rgb + bloomColor * bloomIntensity, 0.0, 1.0);
+    }
 
     vec4 play_osd = COMPAT_TEXTURE(play, uv2 * TextureSize.xy / InputSize.xy);
     float show_overlay = (mod(timer, 100.0) < 50.0) && (timer != 0.0) && (timer < 500.0) ? play_osd.a : 0.0;

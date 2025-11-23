@@ -1550,11 +1550,11 @@ static void print_help(void) {
     printf("  INPUT $VAR [-wait on|off]\n");
     printf("    Read input into $VAR. Default waits for Enter. OFF captures the first key\n");
     printf("    press.\n");
-    printf("  IF <lhs> op <rhs>:\n");
+    printf("  IF (<lhs> op <rhs>):\n");
     printf("    Begin a block terminated by END. Chain with AND/OR. Use ELSE for an\n");
     printf("    alternate branch.\n");
-    printf("  WHILE (<condition>):\n");
-    printf("    Repeat a block terminated by END while the condition is true.\n");
+    printf("  WHILE(<condition>):\n");
+    printf("    Repeat a block terminated by END while the condition remains true.\n");
     printf("  FOR (init; cond; step)\n");
     printf("    Loop with inline init/condition/step terminated by END. Supports $VAR++ and\n");
     printf("    $VAR-- steps.\n");
@@ -2525,7 +2525,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if (strncmp(command, "IF", 2) == 0 && (command[2] == '\0' || isspace((unsigned char)command[2]))) {
+        if (strncmp(command, "IF", 2) == 0 && (command[2] == '\0' || isspace((unsigned char)command[2]) || command[2] == '(')) {
         const char *after_if = command + 2;
         while (isspace((unsigned char)*after_if)) {
             after_if++;
@@ -2618,7 +2618,7 @@ int main(int argc, char *argv[]) {
             }
             continue;
         }
-        else if (strncmp(command, "WHILE", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {
+        else if (strncmp(command, "WHILE", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]) || command[5] == '(')) {
             if (while_sp >= (int)(sizeof(while_stack) / sizeof(while_stack[0]))) {
                 if (debug) fprintf(stderr, "WHILE: nesting limit reached at line %d\n", script[pc].source_line);
                 continue;
@@ -2876,6 +2876,8 @@ int main(int argc, char *argv[]) {
                 if (script[pc].indent == ctx->indent) {
                     matched = true;
                     bool cond_result = false;
+                    /* Re-evaluate the stored condition on every END to decide whether
+                     * to loop again. */
                     if (!evaluate_condition_string(ctx->condition, script[ctx->while_line_pc].source_line, debug, &cond_result)) {
                         cond_result = false;
                     }

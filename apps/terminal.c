@@ -302,6 +302,8 @@ static void terminal_mark_background_dirty(void);
 static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
 static uint32_t terminal_rgba_from_color(uint32_t color);
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b);
+static int terminal_custom_pixels_set_bulk(const struct terminal_custom_pixel *pixels, size_t count);
+static int terminal_custom_pixels_set_bulk_hex(const char *hex_data, size_t count, const char *format);
 static void terminal_custom_pixels_clear(void);
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
 static void terminal_custom_pixels_shutdown(void);
@@ -1513,6 +1515,135 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
     entry->b = b;
     terminal_custom_pixels_need_render = 1;
     return 0;
+}
+
+static int terminal_custom_pixels_set_bulk(const struct terminal_custom_pixel *pixels, size_t count) {
+    if (!pixels && count > 0u) {
+        return -1;
+    }
+
+    if (count > SIZE_MAX / sizeof(*pixels)) {
+        return -1;
+    }
+
+    if (count > terminal_custom_pixel_capacity) {
+        size_t new_capacity = count;
+        struct terminal_custom_pixel *new_pixels = realloc(terminal_custom_pixels,
+                                                           new_capacity * sizeof(*terminal_custom_pixels));
+        if (!new_pixels) {
+            return -1;
+        }
+        terminal_custom_pixels = new_pixels;
+        terminal_custom_pixel_capacity = new_capacity;
+    }
+
+    if (count > 0u && terminal_custom_pixels) {
+        memcpy(terminal_custom_pixels, pixels, count * sizeof(*terminal_custom_pixels));
+    }
+
+    terminal_custom_pixel_count = count;
+    terminal_custom_pixels_dirty = 1;
+    terminal_custom_pixels_need_render = 0;
+    terminal_custom_pixels_active = (count > 0u);
+    terminal_mark_full_redraw();
+    return 0;
+}
+
+static int terminal_hex_value(char c, uint8_t *out_value) {
+    if (!out_value) {
+        return -1;
+    }
+    if (c >= '0' && c <= '9') {
+        *out_value = (uint8_t)(c - '0');
+        return 0;
+    }
+    if (c >= 'a' && c <= 'f') {
+        *out_value = (uint8_t)(10 + (c - 'a'));
+        return 0;
+    }
+    if (c >= 'A' && c <= 'F') {
+        *out_value = (uint8_t)(10 + (c - 'A'));
+        return 0;
+    }
+    return -1;
+}
+
+static int terminal_hex_pair_to_byte(char high, char low, uint8_t *out_byte) {
+    if (!out_byte) {
+        return -1;
+    }
+    uint8_t hi = 0u;
+    uint8_t lo = 0u;
+    if (terminal_hex_value(high, &hi) != 0 || terminal_hex_value(low, &lo) != 0) {
+        return -1;
+    }
+    *out_byte = (uint8_t)((hi << 4u) | lo);
+    return 0;
+}
+
+static int terminal_custom_pixels_set_bulk_hex(const char *hex_data, size_t count, const char *format) {
+    if (!hex_data && count > 0u) {
+        return -1;
+    }
+
+    const char *expected_format = "xy_rgb8_le";
+    if (format && format[0] != '\0' && strcmp(format, expected_format) != 0) {
+        return -1;
+    }
+
+    if (count == 0u) {
+        return terminal_custom_pixels_set_bulk(NULL, 0u);
+    }
+
+    size_t expected_bytes = count * 11u;
+    size_t expected_hex_chars = expected_bytes * 2u;
+    size_t provided_hex = strlen(hex_data);
+    if (provided_hex != expected_hex_chars) {
+        return -1;
+    }
+
+    uint8_t *bytes = malloc(expected_bytes);
+    if (!bytes) {
+        return -1;
+    }
+
+    for (size_t i = 0u; i < expected_hex_chars; i += 2u) {
+        uint8_t byte = 0u;
+        if (terminal_hex_pair_to_byte(hex_data[i], hex_data[i + 1u], &byte) != 0) {
+            free(bytes);
+            return -1;
+        }
+        bytes[i / 2u] = byte;
+    }
+
+    struct terminal_custom_pixel *pixels = malloc(count * sizeof(*pixels));
+    if (!pixels) {
+        free(bytes);
+        return -1;
+    }
+
+    for (size_t i = 0u; i < count; i++) {
+        size_t base = i * 11u;
+        uint32_t x = (uint32_t)bytes[base] |
+                     ((uint32_t)bytes[base + 1u] << 8u) |
+                     ((uint32_t)bytes[base + 2u] << 16u) |
+                     ((uint32_t)bytes[base + 3u] << 24u);
+        uint32_t y = (uint32_t)bytes[base + 4u] |
+                     ((uint32_t)bytes[base + 5u] << 8u) |
+                     ((uint32_t)bytes[base + 6u] << 16u) |
+                     ((uint32_t)bytes[base + 7u] << 24u);
+        struct terminal_custom_pixel *dst = &pixels[i];
+        dst->x = (int)x;
+        dst->y = (int)y;
+        dst->r = bytes[base + 8u];
+        dst->g = bytes[base + 9u];
+        dst->b = bytes[base + 10u];
+    }
+
+    free(bytes);
+    int result = terminal_custom_pixels_set_bulk(pixels, count);
+    free(pixels);
+    return result;
 }
 
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height) {
@@ -3787,7 +3918,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_PIXEL_ACTION_NONE = 0,
                 TERMINAL_PIXEL_ACTION_DRAW = 1,
                 TERMINAL_PIXEL_ACTION_CLEAR = 2,
-                TERMINAL_PIXEL_ACTION_RENDER = 3
+                TERMINAL_PIXEL_ACTION_RENDER = 3,
+                TERMINAL_PIXEL_ACTION_BULK = 4
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
             long pixel_x = -1;
@@ -3795,6 +3927,10 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long pixel_r = -1;
             long pixel_g = -1;
             long pixel_b = -1;
+            long pixel_count = -1;
+            int pixel_render_flag = 0;
+            char *pixel_data_hex = NULL;
+            char *pixel_format = NULL;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -3889,6 +4025,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
                         } else if (strcmp(value, "render") == 0) {
                             pixel_action = TERMINAL_PIXEL_ACTION_RENDER;
+                        } else if (strcmp(value, "bulk") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_BULK;
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -3924,6 +4062,24 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         long parsed = strtol(value, &endptr, 10);
                         if (errno == 0 && endptr && *endptr == '\0') {
                             pixel_b = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_count") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0) {
+                            pixel_count = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_data") == 0 && value && *value != '\0') {
+                        pixel_data_hex = value;
+                    } else if (strcmp(key, "pixel_format") == 0 && value && *value != '\0') {
+                        pixel_format = value;
+                    } else if (strcmp(key, "pixel_render") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0) {
+                            pixel_render_flag = (parsed != 0);
                         }
                     }
                 }
@@ -3971,6 +4127,26 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
                     terminal_custom_pixels_dirty = 1;
                     terminal_custom_pixels_need_render = 0;
+                }
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_BULK) {
+                if (pixel_count < 0) {
+                    fprintf(stderr, "terminal: pixel bulk upload requires pixel_count.\n");
+                } else if ((pixel_count > 0 && !pixel_data_hex) || pixel_count > INT_MAX) {
+                    fprintf(stderr, "terminal: invalid pixel bulk payload.\n");
+                } else if (terminal_custom_pixels_set_bulk_hex(pixel_data_hex ? pixel_data_hex : "",
+                                                                (size_t)pixel_count,
+                                                                pixel_format) != 0) {
+                    fprintf(stderr, "terminal: Failed to decode bulk pixel data.\n");
+                } else {
+                    if (pixel_render_flag) {
+                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+                        terminal_custom_pixels_dirty = 1;
+                        terminal_custom_pixels_need_render = 0;
+                    } else {
+                        terminal_custom_pixels_dirty = 0;
+                        terminal_custom_pixels_need_render = 1;
+                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+                    }
                 }
             }
 

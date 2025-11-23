@@ -25,6 +25,9 @@ utilities/*
 !utilities/*.c
 !utilities/*.h
 
+# Do not ignore these
+!*.png
+!*.bmp
 
 # Backup files and temporary files
 *~

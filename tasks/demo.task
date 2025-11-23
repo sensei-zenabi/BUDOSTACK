@@ -37,13 +37,14 @@ IF ($SELECTION==1):
   SET $Y = 40
   SET $VX = 150
   SET $DT = 0.0
+  SET $SPRITE = "./tasks/assets/char_1_1.png"
       
   # Rendering loop:
   RUN _TIMER --start
   PRINT "SCENE 2 - Demonstrating sprite rendering"
   WHILE ($X<590):
     RUN _TIMER --reset
-    RUN _TERM_SPRITE -x $X -y $Y -file ./icon.png
+    RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE
     RUN _TERM_RENDER
     #RUN _WAIT 10    
     IF ($X>48):

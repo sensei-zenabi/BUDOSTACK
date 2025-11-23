@@ -151,6 +151,7 @@ struct terminal_custom_pixel {
     uint8_t r;
     uint8_t g;
     uint8_t b;
+    int used;
 };
 
 static struct terminal_custom_pixel *terminal_custom_pixels = NULL;
@@ -1453,6 +1454,85 @@ static uint32_t terminal_rgba_from_color(uint32_t color) {
                                          terminal_color_b(color));
 }
 
+static size_t terminal_custom_pixel_hash(int x, int y) {
+    uint32_t ux = (uint32_t)x;
+    uint32_t uy = (uint32_t)y;
+    return ((size_t)ux * 73856093u) ^ ((size_t)uy * 19349663u);
+}
+
+static int terminal_custom_pixels_place(struct terminal_custom_pixel *table,
+                                        size_t capacity,
+                                        const struct terminal_custom_pixel *entry) {
+    if (!table || capacity == 0u) {
+        return -1;
+    }
+
+    size_t mask = capacity - 1u;
+    size_t hash = terminal_custom_pixel_hash(entry->x, entry->y);
+    for (size_t i = 0u; i < capacity; i++) {
+        struct terminal_custom_pixel *slot = &table[(hash + i) & mask];
+        if (!slot->used) {
+            *slot = *entry;
+            slot->used = 1;
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+static int terminal_custom_pixels_resize(size_t new_capacity) {
+    if (new_capacity == 0u || (new_capacity & (new_capacity - 1u)) != 0u) {
+        return -1;
+    }
+
+    struct terminal_custom_pixel *new_pixels =
+        calloc(new_capacity, sizeof(*new_pixels));
+    if (!new_pixels) {
+        return -1;
+    }
+
+    size_t new_count = 0u;
+    if (terminal_custom_pixels && terminal_custom_pixel_capacity > 0u) {
+        for (size_t i = 0u; i < terminal_custom_pixel_capacity; i++) {
+            if (!terminal_custom_pixels[i].used) {
+                continue;
+            }
+            if (terminal_custom_pixels_place(new_pixels, new_capacity, &terminal_custom_pixels[i]) != 0) {
+                free(new_pixels);
+                return -1;
+            }
+            new_count++;
+        }
+    }
+
+    free(terminal_custom_pixels);
+    terminal_custom_pixels = new_pixels;
+    terminal_custom_pixel_capacity = new_capacity;
+    terminal_custom_pixel_count = new_count;
+    return 0;
+}
+
+static int terminal_custom_pixels_ensure_capacity(void) {
+    size_t desired_capacity = terminal_custom_pixel_capacity;
+    if (desired_capacity == 0u) {
+        desired_capacity = 64u;
+    }
+
+    while (terminal_custom_pixel_count + 1u > (desired_capacity * 3u) / 4u) {
+        if (desired_capacity > SIZE_MAX / 2u) {
+            return -1;
+        }
+        desired_capacity *= 2u;
+    }
+
+    if (desired_capacity == terminal_custom_pixel_capacity) {
+        return 0;
+    }
+
+    return terminal_custom_pixels_resize(desired_capacity);
+}
+
 static void terminal_custom_pixels_shutdown(void) {
     free(terminal_custom_pixels);
     terminal_custom_pixels = NULL;
@@ -1464,6 +1544,9 @@ static void terminal_custom_pixels_shutdown(void) {
 }
 
 static void terminal_custom_pixels_clear(void) {
+    if (terminal_custom_pixels && terminal_custom_pixel_capacity > 0u) {
+        memset(terminal_custom_pixels, 0, terminal_custom_pixel_capacity * sizeof(*terminal_custom_pixels));
+    }
     terminal_custom_pixel_count = 0u;
     terminal_custom_pixels_need_render = 1;
     terminal_custom_pixels_active = 0;
@@ -1475,8 +1558,26 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
         return -1;
     }
 
-    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
-        struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
+    if (terminal_custom_pixels_ensure_capacity() != 0) {
+        return -1;
+    }
+
+    size_t mask = terminal_custom_pixel_capacity - 1u;
+    size_t hash = terminal_custom_pixel_hash(x, y);
+    for (size_t i = 0u; i < terminal_custom_pixel_capacity; i++) {
+        struct terminal_custom_pixel *entry = &terminal_custom_pixels[(hash + i) & mask];
+        if (!entry->used) {
+            entry->x = x;
+            entry->y = y;
+            entry->r = r;
+            entry->g = g;
+            entry->b = b;
+            entry->used = 1;
+            terminal_custom_pixel_count++;
+            terminal_custom_pixels_need_render = 1;
+            return 0;
+        }
+
         if (entry->x == x && entry->y == y) {
             if (entry->r == r && entry->g == g && entry->b == b) {
                 return 0;
@@ -1489,30 +1590,7 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
         }
     }
 
-    if (terminal_custom_pixel_count == terminal_custom_pixel_capacity) {
-        size_t new_capacity = (terminal_custom_pixel_capacity == 0u)
-            ? 64u
-            : terminal_custom_pixel_capacity * 2u;
-        if (new_capacity < terminal_custom_pixel_capacity) {
-            return -1;
-        }
-        struct terminal_custom_pixel *new_pixels =
-            realloc(terminal_custom_pixels, new_capacity * sizeof(*terminal_custom_pixels));
-        if (!new_pixels) {
-            return -1;
-        }
-        terminal_custom_pixels = new_pixels;
-        terminal_custom_pixel_capacity = new_capacity;
-    }
-
-    struct terminal_custom_pixel *entry = &terminal_custom_pixels[terminal_custom_pixel_count++];
-    entry->x = x;
-    entry->y = y;
-    entry->r = r;
-    entry->g = g;
-    entry->b = b;
-    terminal_custom_pixels_need_render = 1;
-    return 0;
+    return -1;
 }
 
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height) {
@@ -1521,8 +1599,11 @@ static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int he
     }
 
     size_t frame_pitch = (size_t)width * 4u;
-    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
+    for (size_t i = 0u; i < terminal_custom_pixel_capacity; i++) {
         const struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
+        if (!entry->used) {
+            continue;
+        }
         if (entry->x < 0 || entry->y < 0) {
             continue;
         }

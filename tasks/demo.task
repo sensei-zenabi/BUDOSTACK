@@ -32,25 +32,33 @@ IF ($SELECTION==1):
 
   # Variables
   SET $X = 20
+  SET $XRAW = $X
+  SET $DX = 0
   SET $Y = 40
-  SET $VX = 5
+  SET $VX = 150
+  SET $DT = 0.0
       
   # Rendering loop:
-  
+  RUN _TIMER --start
   PRINT "SCENE 2 - Demonstrating sprite rendering"
   WHILE ($X<590):
-    RUN _TERM_SPRITE -x $X-$VX -y $Y -file ./tasks/assets/black.png
+    RUN _TIMER --reset
     RUN _TERM_SPRITE -x $X -y $Y -file ./icon.png
     RUN _TERM_RENDER
-    RUN _WAIT 10
-    SET $X = $X + $VX
+    #RUN _WAIT 10    
+    IF ($X>48):
+      RUN _TERM_CLEAN -x $X-48 -y $Y -width 48 -height 48
+    END
+    RUN _CALC ($DT/1000 * $VX) TO $DX
+    SET $XRAW = $XRAW + $DX
+    RUN _CALC floor($XRAW) TO $X    
+    RUN _TIMER --get TO $DT
   END
 END
   
 # ------------- EXIT CLEANUP -------------
 SET $KEY
 INPUT $KEY
-RUN _TERM_PIXEL --clear
 RUN _TERM_RESOLUTION 640 360
 
 

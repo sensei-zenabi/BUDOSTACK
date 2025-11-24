@@ -429,6 +429,40 @@ int table_save_csv(const Table *t, const char *filename) {
     return 0;
 }
 
+int table_save_csv_evaluated(const Table *t, const char *filename) {
+    if (!t || !filename) return -1;
+    FILE *f = fopen(filename, "w");
+    if (!f) return -1;
+
+    for (int i = 0; i < t->rows; i++) {
+        for (int j = 0; j < t->cols; j++) {
+            const char *cell_val = table_get_cell(t, i, j);
+            if (!cell_val) {
+                cell_val = "";
+            }
+
+            const char *to_write = cell_val;
+            char *evaluated = NULL;
+            if (cell_val[0] == '=') {
+                evaluated = evaluate_formula(t, cell_val);
+                if (evaluated) {
+                    to_write = evaluated;
+                }
+            }
+
+            fprint_csv_field(f, to_write);
+            free(evaluated);
+
+            if (j < t->cols - 1)
+                fputc(TABLE_DELIMITER, f);
+        }
+        fputc('\n', f);
+    }
+
+    fclose(f);
+    return 0;
+}
+
 /*
  * Updated: Split a CSV line into fields.
  * This version handles trailing commas by adding an empty field.

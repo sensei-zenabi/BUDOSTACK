@@ -43,6 +43,7 @@ extern int table_insert_row(Table *table, int row);
 extern int table_add_col(Table *table, const char *header);
 extern int table_insert_col(Table *table, int col, const char *header);
 extern int table_save_csv(const Table *table, const char *filename);
+extern int table_save_csv_evaluated(const Table *table, const char *filename);
 extern Table *table_load_csv(const char *filename);
 extern int table_get_rows(const Table *table);
 extern int table_get_cols(const Table *table);
@@ -296,7 +297,7 @@ static void print_help_bar(void) {
         {"Shortcuts:", "(Ctrl+T hides help)"},
         {"Navigation", "Arrows move   Home/End \u00b15 cols   PgUp/PgDn \u00b110 rows"},
         {"Editing", "Ctrl+R add row   Ctrl+N add col   Ctrl+S save   Ctrl+Q quit"},
-        {"Cells", "Del clear   Ctrl+D del col   Ctrl+E del row"},
+        {"Cells", "Del clear   Ctrl+D del col   Ctrl+L del row   Ctrl+E export"},
         {"Clipboard", "Ctrl+C copy   Ctrl+X cut   Ctrl+V paste"},
         {"Formulas", "Ctrl+F toggle view; prefix '=' for expressions"},
         {"Autofill", "Ctrl+A toggle autofill; arrows extend references"}
@@ -388,6 +389,39 @@ void save_table(void) {
         printf("\rTable saved to '%s'.", filename);
     } else {
         printf("\rError saving table to '%s'.", filename);
+    }
+    printf("\rPress any key to continue...");
+    fflush(stdout);
+    getchar();
+}
+
+static void export_evaluated_table(void) {
+    char export_name[MAX_INPUT];
+    if (current_filename[0] != '\0') {
+        strncpy(export_name, current_filename, sizeof(export_name) - 1);
+        export_name[sizeof(export_name) - 1] = '\0';
+        char *dot = strrchr(export_name, '.');
+        if (dot) {
+            *dot = '\0';
+        }
+        size_t len = strlen(export_name);
+        if (len + 4 >= sizeof(export_name)) {
+            printf("\rExport filename too long. Export canceled.");
+            printf("\rPress any key to continue...");
+            fflush(stdout);
+            getchar();
+            return;
+        }
+        snprintf(export_name + len, sizeof(export_name) - len, ".csv");
+    } else {
+        snprintf(export_name, sizeof(export_name), "table_export.csv");
+    }
+
+    int rc = table_save_csv_evaluated(g_table, export_name);
+    if (rc == 0) {
+        printf("\rEvaluated table exported to '%s'.", export_name);
+    } else {
+        printf("\rError exporting evaluated table to '%s'.", export_name);
     }
     printf("\rPress any key to continue...");
     fflush(stdout);
@@ -627,7 +661,7 @@ int main(int argc, char *argv[]) {
                         cur_col = maxcol;
                 }
             }
-        } else if (c == CTRL_KEY('E')) {  // Delete row
+        } else if (c == CTRL_KEY('L')) {  // Delete row
             if (cur_row > 0) { // Do not delete header row
                 if (table_delete_row(g_table, cur_row) == 0) {
                     int maxrow = table_get_rows(g_table) - 1;
@@ -635,6 +669,8 @@ int main(int argc, char *argv[]) {
                         cur_row = maxrow;
                 }
             }
+        } else if (c == CTRL_KEY('E')) {  // Export evaluated CSV
+            export_evaluated_table();
         } else if (c == CTRL_KEY('c')) {  // Copy cell
             const char *content = table_get_cell(g_table, cur_row, cur_col);
             const char *export_text = content ? content : "";

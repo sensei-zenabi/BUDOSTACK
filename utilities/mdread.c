@@ -7,8 +7,8 @@
      gcc -std=c11 -o mdread mdread.c
 
    Usage:
-     ./mdread [filename]
-     If no filename is provided, it defaults to "readme.md".
+     ./mdread <filename>
+     Running without a filename prints supported markdown features and exits.
 */
 
 #include <stdio.h>
@@ -151,12 +151,38 @@ int main(int argc, char *argv[]) {
     char *filename;
     int last_was_list_item = 0; // Track if the last printed line was a list item.
 
-    // Use provided filename or default to "readme.md"
-    if (argc > 1) {
-        filename = argv[1];
-    } else {
-        filename = "readme.md";
+    if (argc <= 1) {
+        const char *help_text[] = {
+            "mdread - simple markdown viewer",
+            "",
+            "Usage: mdread <file>",
+            "",
+            "Supported markdown elements:",
+            "  - Headers: lines starting with one or more '#' characters. Level 1",
+            "    headers are bold and underlined; deeper levels are printed in bold.",
+            "  - Unordered lists: lines beginning with '-', '*' or '+', followed by",
+            "    a space. Items are shown with a leading '-'.",
+            "  - Ordered lists: digits followed by a '.' and a space. The number is",
+            "    preserved in the output.",
+            "  - Inline formatting: '*text*' or '_text_' for italics; '**text**' or",
+            "    '__text__' for bold; triple markers apply both.",
+            "  - Blockquotes: lines starting with '>' (optionally followed by a space)",
+            "    are italicized and prefixed with '>'.",
+            "  - HTML tags: text enclosed in '<' and '>' is stripped from the output.",
+            "",
+            "Notes:",
+            "  - Output uses standard ASCII characters compatible with lat1u-08.psf.",
+            "  - Inline styles reset at the end of each line to avoid spilling over.",
+            NULL
+        };
+
+        for (int i = 0; help_text[i] != NULL; i++)
+            puts(help_text[i]);
+
+        return EXIT_SUCCESS;
     }
+
+    filename = argv[1];
 
     fp = fopen(filename, "r");
     if (fp == NULL) {
@@ -216,7 +242,7 @@ int main(int argc, char *argv[]) {
             size_t len = strlen(inline_out);
             if (len > 0 && inline_out[len-1] == '\n')
                 inline_out[len-1] = '\0';
-            printf("  • %s\n", inline_out);
+            printf("  - %s\n", inline_out);
             last_was_list_item = 1;
         }
         // Check for ordered list items (starting with digits followed by '.' and a space)

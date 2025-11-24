@@ -115,6 +115,7 @@ int main(int argc, char *argv[]) {
     printf("  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n");
     printf("             For help CTRL+H when the app is running.\n");
     printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.csv'.\n");
+    printf("             Uses commands/_CALC to evaluate equations.\n");
     printf("\n");
     printf(" /* Internet and Communications */\n");
     printf("\n");

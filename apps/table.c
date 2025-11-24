@@ -38,7 +38,9 @@ extern Table *table_create(void);
 extern void table_free(Table *table);
 extern int table_set_cell(Table *table, int row, int col, const char *value);
 extern int table_add_row(Table *table);
+extern int table_insert_row(Table *table, int row);
 extern int table_add_col(Table *table, const char *header);
+extern int table_insert_col(Table *table, int col, const char *header);
 extern int table_save_csv(const Table *table, const char *filename);
 extern Table *table_load_csv(const char *filename);
 extern int table_get_rows(const Table *table);
@@ -533,15 +535,25 @@ int main(int argc, char *argv[]) {
         } else if (c == CTRL_KEY('Q')) {
             running = 0;
         } else if (c == CTRL_KEY('R')) {  // Add row
-            table_add_row(g_table);
-            cur_row = table_get_rows(g_table) - 1;
-            if (cur_col >= table_get_cols(g_table))
-                cur_col = table_get_cols(g_table) - 1;
+            int insert_at = cur_row + 1;
+            if (insert_at < 1)
+                insert_at = 1;
+            if (table_insert_row(g_table, insert_at) == 0) {
+                cur_row = insert_at;
+                if (cur_col >= table_get_cols(g_table))
+                    cur_col = table_get_cols(g_table) - 1;
+            }
         } else if (c == CTRL_KEY('N')) {  // Add column (with default header)
             int new_col_number = table_get_cols(g_table);  // includes index column
             char default_header[MAX_INPUT];
             snprintf(default_header, sizeof(default_header), "Column %d", new_col_number);
-            table_add_col(g_table, default_header);
+            int insert_at = cur_col + 1;
+            if (insert_at < 1)
+                insert_at = 1;
+            if (insert_at > table_get_cols(g_table))
+                insert_at = table_get_cols(g_table);
+            if (table_insert_col(g_table, insert_at, default_header) == 0)
+                cur_col = insert_at;
         } else if (c == CTRL_KEY('D')) {  // Delete column
             if (cur_col > 0) { // Do not delete index column
                 if (table_delete_column(g_table, cur_col) == 0) {

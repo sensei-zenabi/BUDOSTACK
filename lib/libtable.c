@@ -276,13 +276,16 @@ int table_set_cell(Table *t, int row, int col, const char *value) {
 }
 
 int table_add_row(Table *t) {
-    if (!t) return -1;
+    if (!t)
+        return -1;
     int new_row = t->rows;
     char ***new_cells = realloc(t->cells, sizeof(char **) * (t->rows + 1));
-    if (!new_cells) return -1;
+    if (!new_cells)
+        return -1;
     t->cells = new_cells;
     t->cells[new_row] = malloc(sizeof(char *) * t->cols);
-    if (!t->cells[new_row]) return -1;
+    if (!t->cells[new_row])
+        return -1;
     char index_str[32];
     sprintf(index_str, "%d", new_row);
     t->cells[new_row][0] = strdup(index_str);
@@ -293,18 +296,93 @@ int table_add_row(Table *t) {
     return 0;
 }
 
+int table_insert_row(Table *t, int row) {
+    if (!t || row < 1 || row > t->rows)
+        return -1;
+
+    char **row_cells = malloc(sizeof(char *) * t->cols);
+    if (!row_cells)
+        return -1;
+
+    char index_str[32];
+    snprintf(index_str, sizeof(index_str), "%d", row);
+    row_cells[0] = strdup(index_str);
+    if (!row_cells[0]) {
+        free(row_cells);
+        return -1;
+    }
+
+    for (int j = 1; j < t->cols; j++) {
+        row_cells[j] = strdup("");
+        if (!row_cells[j]) {
+            for (int k = 0; k < j; k++)
+                free(row_cells[k]);
+            free(row_cells);
+            return -1;
+        }
+    }
+
+    char ***new_cells = realloc(t->cells, sizeof(char **) * (t->rows + 1));
+    if (!new_cells) {
+        for (int j = 0; j < t->cols; j++)
+            free(row_cells[j]);
+        free(row_cells);
+        return -1;
+    }
+
+    t->cells = new_cells;
+    for (int i = t->rows; i > row; i--)
+        t->cells[i] = t->cells[i - 1];
+    t->cells[row] = row_cells;
+    t->rows++;
+
+    for (int i = row; i < t->rows; i++) {
+        if (i > 0) {
+            snprintf(index_str, sizeof(index_str), "%d", i);
+            free(t->cells[i][0]);
+            t->cells[i][0] = strdup(index_str);
+        }
+    }
+
+    return 0;
+}
+
 int table_add_col(Table *t, const char *header) {
-    if (!t) return -1;
+    if (!t)
+        return -1;
     int new_col = t->cols;
     for (int i = 0; i < t->rows; i++) {
         char **new_row = realloc(t->cells[i], sizeof(char *) * (t->cols + 1));
-        if (!new_row) return -1;
+        if (!new_row)
+            return -1;
         t->cells[i] = new_row;
         if (i == 0)
             t->cells[i][new_col] = strdup(header);
         else
             t->cells[i][new_col] = strdup("");
     }
+    t->cols++;
+    return 0;
+}
+
+int table_insert_col(Table *t, int col, const char *header) {
+    if (!t || col < 1 || col > t->cols)
+        return -1;
+
+    for (int i = 0; i < t->rows; i++) {
+        char **new_row = realloc(t->cells[i], sizeof(char *) * (t->cols + 1));
+        if (!new_row)
+            return -1;
+        t->cells[i] = new_row;
+        for (int j = t->cols; j > col; j--)
+            t->cells[i][j] = t->cells[i][j - 1];
+
+        if (i == 0)
+            t->cells[i][col] = strdup(header ? header : "");
+        else
+            t->cells[i][col] = strdup("");
+    }
+
     t->cols++;
     return 0;
 }

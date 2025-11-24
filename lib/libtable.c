@@ -12,8 +12,9 @@
  *
  * Enhancements:
  *  - If a cell’s value begins with '=', it is interpreted as a formula.
- *  - The built-in parser supports numeric constants, arithmetic operators (+, -, *, /),
- *    parentheses, cell references (e.g., B2 or $A$1), and the functions SUM() and AVERAGE() over ranges.
+ *  - Formulas are rewritten and evaluated through the `_CALC` command so that table math stays
+ *    in sync with the standalone calculator. Cell references (e.g., B2 or $A$1) and SUM/AVERAGE
+ *    ranges are expanded to numeric literals before invoking `_CALC`.
  *  - A new printing function (table_print_highlight_ex) now displays Excel–like row numbers and
  *    column letters outside the table grid.
  *  - A new function adjust_cell_references() adjusts cell references in a formula when cells are copy-pasted.
@@ -26,6 +27,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <strings.h>  // For strcasecmp
+#include <sys/wait.h>
+#include <unistd.h>
 
 #define INITIAL_ROWS 1
 #define INITIAL_COLS 1
@@ -447,45 +450,40 @@ Table *table_load_csv(const char *filename) {
 /*
  * New Functions: Formula Evaluation
  *
- * A cell whose content begins with '=' is treated as a formula.
- * The parser supports numbers, basic arithmetic (+, -, *, /), parentheses,
- * cell references (for example "B2" or "$A$1"), and functions SUM() and AVERAGE() with ranges.
+ * A cell whose content begins with '=' is treated as a formula. Expressions are first
+ * rewritten so that all cell references and supported range functions (SUM/AVERAGE)
+ * are replaced by numeric literals. The resulting expression is then evaluated by the
+ * `_CALC` command, keeping math support consistent with the standalone calculator.
  *
- * The Excel–style mapping is as follows:
- *   - Column letters: A corresponds to table column 1, B to 2, etc.
- *   - Row numbers: user-entered row number n refers to table row (n-1) (since row 0 is header).
- *
- * In case of errors (for example, syntax error, division by zero, etc.),
- * the evaluated result is "#ERR".
+ * Column letters map to table column indices starting at 1 (A == column 1) and row
+ * numbers map to table rows offset by one (row 1 is the first data row because the
+ * header is row 0).
  */
-
-// Global variable used by the parser to indicate an error.
-static int formula_error = 0;
 
 // Helper: Skip whitespace characters.
 static void skip_whitespace(const char **s) {
-    while (**s == ' ' || **s == '\t')
+    while (**s == ' ' || **s == '\t') {
         (*s)++;
+    }
 }
 
-// Modified: Parse a cell reference from the current position.
-// Now skips any leading '$' characters so that "$A$1" is parsed as A1.
-// FIX: After reading the column letters, also skip an optional '$' before row digits.
+// Parse a cell reference from the current position, supporting optional '$'.
 static int parse_cell_reference_pp(const char **s, int *row, int *col) {
     const char *start = *s;
-    // Skip any '$' for column.
-    while (**s == '$')
-         (*s)++;
-    if (!isalpha(**s))
+    while (**s == '$') {
+        (*s)++;
+    }
+    if (!isalpha(**s)) {
         return 0;
+    }
     int col_value = 0;
     while (isalpha(**s)) {
         col_value = col_value * 26 + (toupper(**s) - 'A' + 1);
         (*s)++;
     }
-    // Skip any '$' before row number.
-    if (**s == '$')
-         (*s)++;
+    if (**s == '$') {
+        (*s)++;
+    }
     if (!isdigit(**s)) {
         *s = start;
         return 0;
@@ -500,194 +498,298 @@ static int parse_cell_reference_pp(const char **s, int *row, int *col) {
     return 1;
 }
 
-// Forward declarations of recursive parsing functions.
-static double parse_expression(const Table *t, const char **s);
-static double parse_term(const Table *t, const char **s);
-static double parse_factor(const Table *t, const char **s);
+static int parse_cell_reference_token(const char *s, size_t *consumed, int *row, int *col) {
+    const char *cursor = s;
+    if (!parse_cell_reference_pp(&cursor, row, col)) {
+        return 0;
+    }
+    *consumed = (size_t)(cursor - s);
+    return 1;
+}
 
-// parse_factor handles numbers, parentheses, cell references, and function calls.
-static double parse_factor(const Table *t, const char **s) {
-    skip_whitespace(s);
-    double result = 0;
-    if (**s == '(') {
-        (*s)++;  // Skip '('.
-        result = parse_expression(t, s);
-        skip_whitespace(s);
-        if (**s == ')')
-            (*s)++;
-        else
-            formula_error = 1;
-        return result;
-    } else if (isalpha(**s) || **s == '$') {
-        // Look ahead to distinguish between a function call and a simple cell reference.
-        const char *p = *s;
-        char ident[32];
-        int ident_len = 0;
-        while (isalpha(*p) && ident_len < (int)sizeof(ident)-1) {
-            ident[ident_len++] = *p;
-            p++;
-        }
-        ident[ident_len] = '\0';
-        skip_whitespace(&p);
-        if (*p == '(') {
-            // Function call: support SUM() and AVERAGE().
-            *s = p;  // Advance main pointer to '('.
-            (*s)++;  // Skip '('.
-            skip_whitespace(s);
-            int start_row, start_col, end_row, end_col;
-            if (!parse_cell_reference_pp(s, &start_row, &start_col)) {
-                formula_error = 1;
-                return 0;
-            }
-            skip_whitespace(s);
-            if (**s == ':') {
-                (*s)++; // Skip ':'.
-                skip_whitespace(s);
-                if (!parse_cell_reference_pp(s, &end_row, &end_col)) {
-                    formula_error = 1;
-                    return 0;
-                }
-            } else {
-                // Single cell; range consists of one cell.
-                end_row = start_row;
-                end_col = start_col;
-            }
-            skip_whitespace(s);
-            if (**s == ')')
-                (*s)++; // Skip ')'.
-            else {
-                formula_error = 1;
-                return 0;
-            }
-            // Map Excel row/col to table indices.
-            int tr1 = start_row - 1;  // table row index.
-            int tc1 = start_col;      // table column index.
-            int tr2 = end_row - 1;
-            int tc2 = end_col;
-            if (tr1 > tr2) { int temp = tr1; tr1 = tr2; tr2 = temp; }
-            if (tc1 > tc2) { int temp = tc1; tc1 = tc2; tc2 = temp; }
-            double sum = 0;
-            int count = 0;
-            for (int r = tr1; r <= tr2; r++) {
-                for (int c = tc1; c <= tc2; c++) {
-                    const char *cell_val = table_get_cell(t, r, c);
-                    double num_val = 0;
-                    if (cell_val && cell_val[0] == '=') {
-                        char *eval_str = evaluate_formula(t, cell_val);
-                        if (eval_str) {
-                            num_val = atof(eval_str);
-                            free(eval_str);
-                        }
-                    } else {
-                        num_val = atof(cell_val);
-                    }
-                    sum += num_val;
-                    count++;
-                }
-            }
-            if (strcasecmp(ident, "AVERAGE") == 0) {
-                if (count > 0)
-                    return sum / count;
-                else
-                    return 0;
-            } else {
-                // Default to SUM if function name is not AVERAGE.
-                return sum;
-            }
-        } else {
-            // Not a function call: treat as a cell reference.
-            int row, col;
-            if (!parse_cell_reference_pp(s, &row, &col)) {
-                formula_error = 1;
-                return 0;
-            }
-            int table_row = row - 1;
-            int table_col = col;
-            const char *cell_val = table_get_cell(t, table_row, table_col);
-            double cell_num = 0;
-            if (cell_val && cell_val[0] == '=') {
-                char *eval_str = evaluate_formula(t, cell_val);
-                if (eval_str) {
-                    cell_num = atof(eval_str);
-                    free(eval_str);
-                }
-            } else {
-                cell_num = atof(cell_val);
-            }
-            return cell_num;
-        }
-    } else {
-        // Expect a number.
-        char *endptr;
-        result = strtod(*s, &endptr);
-        if (endptr == *s) {
-            formula_error = 1;
+static double get_cell_numeric_value(const Table *t, int table_row, int table_col, int *error) {
+    if (!t) {
+        *error = 1;
+        return 0;
+    }
+    const char *cell_val = table_get_cell(t, table_row, table_col);
+    if (!cell_val) {
+        cell_val = "";
+    }
+    if (cell_val[0] == '=') {
+        char *eval_str = evaluate_formula(t, cell_val);
+        if (!eval_str) {
+            *error = 1;
             return 0;
         }
-        *s = endptr;
-        return result;
+        if (strcmp(eval_str, "#ERR") == 0) {
+            free(eval_str);
+            *error = 1;
+            return 0;
+        }
+        double value = strtod(eval_str, NULL);
+        free(eval_str);
+        return value;
     }
+    return strtod(cell_val, NULL);
 }
 
-static double parse_term(const Table *t, const char **s) {
-    double result = parse_factor(t, s);
-    skip_whitespace(s);
-    while (**s == '*' || **s == '/') {
-        char op = **s;
-        (*s)++;
-        double factor = parse_factor(t, s);
-        if (op == '*')
-            result *= factor;
-        else {
-            if (factor == 0) {
-                formula_error = 1;
+static double compute_range_value(const Table *t, int start_row, int start_col, int end_row, int end_col,
+                                  int is_average, int *error) {
+    if (start_row > end_row) {
+        int tmp = start_row;
+        start_row = end_row;
+        end_row = tmp;
+    }
+    if (start_col > end_col) {
+        int tmp = start_col;
+        start_col = end_col;
+        end_col = tmp;
+    }
+
+    double sum = 0;
+    int count = 0;
+    for (int r = start_row; r <= end_row; r++) {
+        for (int c = start_col; c <= end_col; c++) {
+            sum += get_cell_numeric_value(t, r, c, error);
+            count++;
+            if (*error) {
                 return 0;
             }
-            result /= factor;
         }
-        skip_whitespace(s);
+    }
+
+    if (is_average && count > 0) {
+        return sum / count;
+    }
+    return sum;
+}
+
+static int append_text(char **buffer, size_t *len, size_t *cap, const char *text, size_t text_len) {
+    if (*len + text_len + 1 > *cap) {
+        size_t new_cap = (*cap + text_len + 32) * 2;
+        char *resized = realloc(*buffer, new_cap);
+        if (!resized) {
+            return 0;
+        }
+        *buffer = resized;
+        *cap = new_cap;
+    }
+    memcpy(*buffer + *len, text, text_len);
+    *len += text_len;
+    (*buffer)[*len] = '\0';
+    return 1;
+}
+
+static int append_number_literal(char **buffer, size_t *len, size_t *cap, double value) {
+    char numbuf[64];
+    int written = snprintf(numbuf, sizeof(numbuf), "%.15g", value);
+    if (written < 0) {
+        return 0;
+    }
+    return append_text(buffer, len, cap, numbuf, (size_t)written);
+}
+
+static char *build_calc_expression(const Table *t, const char *expr, int *error) {
+    size_t cap = strlen(expr) + 32;
+    char *result = malloc(cap);
+    if (!result) {
+        *error = 1;
+        return NULL;
+    }
+    size_t len = 0;
+    result[0] = '\0';
+
+    const char *p = expr;
+    while (*p && !*error) {
+        if (isalpha((unsigned char)*p) || *p == '$') {
+            const char *ident_start = p;
+            while (isalpha((unsigned char)*p)) {
+                p++;
+            }
+            size_t name_len = (size_t)(p - ident_start);
+            const char *after_name = p;
+
+            // SUM/AVERAGE support with ranges.
+            if ((name_len == 3 && strncasecmp(ident_start, "SUM", 3) == 0) ||
+                (name_len == 7 && strncasecmp(ident_start, "AVERAGE", 7) == 0)) {
+                const int is_average = (strncasecmp(ident_start, "AVERAGE", 7) == 0);
+                const char *cursor = after_name;
+                skip_whitespace(&cursor);
+                if (*cursor == '(') {
+                    cursor++;
+                    skip_whitespace(&cursor);
+                    int start_row = 0, start_col = 0, end_row = 0, end_col = 0;
+                    if (!parse_cell_reference_pp(&cursor, &start_row, &start_col)) {
+                        *error = 1;
+                        break;
+                    }
+                    skip_whitespace(&cursor);
+                    if (*cursor == ':') {
+                        cursor++;
+                        skip_whitespace(&cursor);
+                        if (!parse_cell_reference_pp(&cursor, &end_row, &end_col)) {
+                            *error = 1;
+                            break;
+                        }
+                    } else {
+                        end_row = start_row;
+                        end_col = start_col;
+                    }
+                    skip_whitespace(&cursor);
+                    if (*cursor != ')') {
+                        *error = 1;
+                        break;
+                    }
+                    cursor++;
+
+                    double range_value = compute_range_value(t, start_row - 1, start_col, end_row - 1, end_col,
+                                                             is_average, error);
+                    if (*error) {
+                        break;
+                    }
+                    if (!append_number_literal(&result, &len, &cap, range_value)) {
+                        *error = 1;
+                        break;
+                    }
+                    p = cursor;
+                    continue;
+                }
+                // If not followed by a range, fall through to copy characters normally.
+                p = ident_start;
+            } else {
+                p = ident_start;
+            }
+
+            size_t consumed = 0;
+            int row = 0;
+            int col = 0;
+            if (parse_cell_reference_token(p, &consumed, &row, &col)) {
+                const char *after_ref = p + consumed;
+                if (!(after_ref[0] == '(' && name_len > 1)) {
+                    double cell_value = get_cell_numeric_value(t, row - 1, col, error);
+                    if (*error) {
+                        break;
+                    }
+                    if (!append_number_literal(&result, &len, &cap, cell_value)) {
+                        *error = 1;
+                        break;
+                    }
+                    p = after_ref;
+                    continue;
+                }
+            }
+        }
+
+        if (!append_text(&result, &len, &cap, p, 1)) {
+            *error = 1;
+            break;
+        }
+        p++;
+    }
+
+    if (*error) {
+        free(result);
+        return NULL;
     }
     return result;
 }
 
-static double parse_expression(const Table *t, const char **s) {
-    double result = parse_term(t, s);
-    skip_whitespace(s);
-    while (**s == '+' || **s == '-') {
-        char op = **s;
-        (*s)++;
-        double term = parse_term(t, s);
-        if (op == '+')
-            result += term;
-        else
-            result -= term;
-        skip_whitespace(s);
+static char *run_calc_expression(const char *expression, int *error) {
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+        *error = 1;
+        return NULL;
     }
-    return result;
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(pipefd[0]);
+        if (dup2(pipefd[1], STDOUT_FILENO) == -1) {
+            _exit(127);
+        }
+        close(pipefd[1]);
+        execl("./commands/_CALC", "_CALC", expression, (char *)NULL);
+        execlp("_CALC", "_CALC", expression, (char *)NULL);
+        _exit(127);
+    } else if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        *error = 1;
+        return NULL;
+    }
+
+    close(pipefd[1]);
+    size_t cap = 128;
+    size_t len = 0;
+    char *output = malloc(cap);
+    if (!output) {
+        close(pipefd[0]);
+        *error = 1;
+        return NULL;
+    }
+    output[0] = '\0';
+
+    char buffer[128];
+    ssize_t nread = 0;
+    while ((nread = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
+        if (len + (size_t)nread + 1 > cap) {
+            size_t new_cap = (cap + (size_t)nread + 32) * 2;
+            char *resized = realloc(output, new_cap);
+            if (!resized) {
+                free(output);
+                close(pipefd[0]);
+                *error = 1;
+                return NULL;
+            }
+            output = resized;
+            cap = new_cap;
+        }
+        memcpy(output + len, buffer, (size_t)nread);
+        len += (size_t)nread;
+        output[len] = '\0';
+    }
+    close(pipefd[0]);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        free(output);
+        *error = 1;
+        return NULL;
+    }
+
+    while (len > 0 && (output[len - 1] == '\n' || output[len - 1] == '\r')) {
+        output[--len] = '\0';
+    }
+
+    return output;
 }
 
 /*
- * Evaluate a formula string.
+ * Evaluate a formula string using `_CALC`.
  * If the input does not begin with '=', the input is simply duplicated.
- * Otherwise, the expression after '=' is parsed and evaluated.
  * Returns a newly allocated string containing the result (or "#ERR" on error).
  */
 char *evaluate_formula(const Table *t, const char *formula) {
-    formula_error = 0;
     if (!formula || formula[0] != '=') {
         return strdup(formula);
     }
-    const char *expr = formula + 1; // skip '='.
-    double result = parse_expression(t, &expr);
-    skip_whitespace(&expr);
-    if (*expr != '\0')
-        formula_error = 1;
-    char *result_str = malloc(64);
-    if (formula_error)
-        snprintf(result_str, 64, "#ERR");
-    else
-        snprintf(result_str, 64, "%g", result);
-    return result_str;
+
+    int error = 0;
+    char *calc_expr = build_calc_expression(t, formula + 1, &error);
+    if (error || !calc_expr) {
+        free(calc_expr);
+        return strdup("#ERR");
+    }
+
+    char *result = run_calc_expression(calc_expr, &error);
+    free(calc_expr);
+    if (error || !result || result[0] == '\0') {
+        free(result);
+        return strdup("#ERR");
+    }
+
+    return result;
 }
 
 /*

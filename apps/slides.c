@@ -64,7 +64,7 @@ int g_quit = 0;       // flag to indicate quitting
 int g_last_edit_row = 0;
 int g_last_edit_col = 0;
 
-/* 
+/*
    Global clipboard structure for rectangular selection copy/paste.
    When a region is copied (or cut), its contents (rows and cols)
    are stored here and can later be pasted (with CTRL+V) into any slide in edit mode.
@@ -76,6 +76,263 @@ typedef struct {
 } Clipboard;
 
 Clipboard *g_clipboard = NULL;
+
+static void freeClipboard(void) {
+    if (!g_clipboard) return;
+    for (int i = 0; i < g_clipboard->rows; i++)
+        free(g_clipboard->data[i]);
+    free(g_clipboard->data);
+    free(g_clipboard);
+    g_clipboard = NULL;
+}
+
+static int isDrawableChar(int ch) {
+    return (unsigned int)ch >= 32 && (unsigned int)ch <= 255;
+}
+
+static int systemClipboardWrite(const Clipboard *clip) {
+    if (!clip || clip->rows <= 0 || clip->cols <= 0)
+        return -1;
+
+    size_t total = 0;
+    for (int r = 0; r < clip->rows; r++) {
+        total += (size_t)clip->cols;
+        if (r < clip->rows - 1)
+            total++;
+    }
+
+    char *buf = malloc(total + 1);
+    if (!buf)
+        return -1;
+
+    size_t pos = 0;
+    for (int r = 0; r < clip->rows; r++) {
+        memcpy(buf + pos, clip->data[r], (size_t)clip->cols);
+        pos += (size_t)clip->cols;
+        if (r < clip->rows - 1)
+            buf[pos++] = '\n';
+    }
+    buf[total] = '\0';
+
+    FILE *fp = popen("xclip -selection clipboard", "w");
+    if (!fp) {
+        free(buf);
+        return -1;
+    }
+    (void)fwrite(buf, 1, total, fp);
+    pclose(fp);
+    free(buf);
+    return 0;
+}
+
+static char *systemClipboardRead(void) {
+    FILE *fp = popen("xclip -selection clipboard -o 2>/dev/null", "r");
+    if (!fp)
+        return NULL;
+
+    size_t cap = 256;
+    size_t len = 0;
+    char *buf = malloc(cap);
+    if (!buf) {
+        pclose(fp);
+        return NULL;
+    }
+
+    char chunk[256];
+    size_t nread;
+    while ((nread = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
+        if (len + nread + 1 > cap) {
+            size_t new_cap = cap * 2;
+            while (len + nread + 1 > new_cap)
+                new_cap *= 2;
+            char *tmp = realloc(buf, new_cap);
+            if (!tmp) {
+                free(buf);
+                pclose(fp);
+                return NULL;
+            }
+            buf = tmp;
+            cap = new_cap;
+        }
+        memcpy(buf + len, chunk, nread);
+        len += nread;
+    }
+    pclose(fp);
+
+    if (len == 0) {
+        free(buf);
+        return NULL;
+    }
+
+    char *tmp = realloc(buf, len + 1);
+    if (!tmp) {
+        free(buf);
+        return NULL;
+    }
+    buf = tmp;
+    buf[len] = '\0';
+    return buf;
+}
+
+static Clipboard *clipboardFromText(const char *text) {
+    if (!text || text[0] == '\0')
+        return NULL;
+
+    int lines_cap = 8;
+    int lines_count = 0;
+    char **lines = malloc(sizeof(char*) * lines_cap);
+    if (!lines)
+        return NULL;
+
+    size_t max_cols = 0;
+    const char *line_start = text;
+    const char *p = text;
+    while (1) {
+        if (*p == '\n' || *p == '\0') {
+            size_t line_len = (size_t)(p - line_start);
+            if (line_len > 0 && line_start[line_len - 1] == '\r')
+                line_len--;
+            if (lines_count == lines_cap) {
+                lines_cap *= 2;
+                char **tmp = realloc(lines, sizeof(char*) * lines_cap);
+                if (!tmp) {
+                    for (int i = 0; i < lines_count; i++)
+                        free(lines[i]);
+                    free(lines);
+                    return NULL;
+                }
+                lines = tmp;
+            }
+            lines[lines_count] = malloc(line_len + 1);
+            if (!lines[lines_count]) {
+                for (int i = 0; i < lines_count; i++)
+                    free(lines[i]);
+                free(lines);
+                return NULL;
+            }
+            memcpy(lines[lines_count], line_start, line_len);
+            lines[lines_count][line_len] = '\0';
+            if (line_len > max_cols)
+                max_cols = line_len;
+            lines_count++;
+            if (*p == '\0')
+                break;
+            line_start = p + 1;
+        }
+        p++;
+    }
+
+    if (lines_count == 0) {
+        free(lines);
+        return NULL;
+    }
+
+    if (max_cols == 0)
+        max_cols = 1;
+
+    int cols = (int)max_cols;
+    if (cols > g_content_width)
+        cols = g_content_width;
+
+    int rows = lines_count;
+    if (rows > g_content_height)
+        rows = g_content_height;
+
+    Clipboard *clip = malloc(sizeof(Clipboard));
+    if (!clip) {
+        for (int i = 0; i < lines_count; i++)
+            free(lines[i]);
+        free(lines);
+        return NULL;
+    }
+    clip->rows = rows;
+    clip->cols = cols;
+    clip->data = malloc(sizeof(char*) * rows);
+    if (!clip->data) {
+        for (int i = 0; i < lines_count; i++)
+            free(lines[i]);
+        free(lines);
+        free(clip);
+        return NULL;
+    }
+
+    for (int i = 0; i < rows; i++) {
+        clip->data[i] = malloc((size_t)cols + 1);
+        if (!clip->data[i]) {
+            for (int j = 0; j < i; j++)
+                free(clip->data[j]);
+            free(clip->data);
+            for (int j = 0; j < lines_count; j++)
+                free(lines[j]);
+            free(lines);
+            free(clip);
+            return NULL;
+        }
+        size_t copy_len = strlen(lines[i]);
+        if (copy_len > (size_t)cols)
+            copy_len = (size_t)cols;
+        memcpy(clip->data[i], lines[i], copy_len);
+        if ((int)copy_len < cols)
+            memset(clip->data[i] + copy_len, ' ', (size_t)(cols - (int)copy_len));
+        clip->data[i][cols] = '\0';
+    }
+
+    for (int i = 0; i < lines_count; i++)
+        free(lines[i]);
+    free(lines);
+
+    return clip;
+}
+
+static int syncClipboardFromSystem(void) {
+    char *text = systemClipboardRead();
+    if (!text)
+        return 0;
+    Clipboard *clip = clipboardFromText(text);
+    free(text);
+    if (!clip)
+        return 0;
+    freeClipboard();
+    g_clipboard = clip;
+    return 1;
+}
+
+static void copyRegionToClipboard(int sel_row_start, int sel_col_start, int sel_rows, int sel_cols, int cut_region) {
+    freeClipboard();
+    g_clipboard = malloc(sizeof(Clipboard));
+    if (!g_clipboard)
+        return;
+    g_clipboard->rows = sel_rows;
+    g_clipboard->cols = sel_cols;
+    g_clipboard->data = malloc(sizeof(char*) * sel_rows);
+    if (!g_clipboard->data) {
+        free(g_clipboard);
+        g_clipboard = NULL;
+        return;
+    }
+    for (int i = 0; i < sel_rows; i++) {
+        g_clipboard->data[i] = malloc(sel_cols + 1);
+        if (!g_clipboard->data[i]) {
+            for (int j = 0; j < i; j++)
+                free(g_clipboard->data[j]);
+            free(g_clipboard->data);
+            free(g_clipboard);
+            g_clipboard = NULL;
+            return;
+        }
+        strncpy(g_clipboard->data[i],
+                g_slides[g_current_slide]->lines[sel_row_start + i] + sel_col_start,
+                (size_t)sel_cols);
+        g_clipboard->data[i][sel_cols] = '\0';
+    }
+    if (cut_region) {
+        for (int i = 0; i < sel_rows; i++) {
+            for (int j = 0; j < sel_cols; j++)
+                g_slides[g_current_slide]->lines[sel_row_start + i][sel_col_start + j] = ' ';
+        }
+    }
+    systemClipboardWrite(g_clipboard);
+}
 
 /************************************
  * Terminal raw mode helper functions
@@ -245,7 +502,7 @@ void drawToggleOverlay(int start_row, int start_col, int curr_row, int curr_col)
     int col2 = (start_col > curr_col ? start_col : curr_col);
     for (int r = row1; r <= row2; r++) {
         for (int c = col1; c <= col2; c++) {
-            char ch = g_slides[g_current_slide]->lines[r][c];
+            unsigned char ch = (unsigned char)g_slides[g_current_slide]->lines[r][c];
             dprintf(STDOUT_FILENO, "\x1b[%d;%dH\x1b[7m%c\x1b[0m", g_content_offset_y + r, g_content_offset_x + c, ch);
         }
     }
@@ -309,11 +566,11 @@ void displayHelp(void) {
     row++;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+T : Toggle rectangular selection mode (in Edit mode)", row, col);
     row++;
-    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+C : Copy selected region (in Toggle mode)", row, col);
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+C : Copy selected region (slides + system clipboard)", row, col);
     row++;
-    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+X : Cut selected region (in Toggle mode)", row, col);
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+X : Cut selected region (slides + system clipboard)", row, col);
     row++;
-    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+V : Paste copied region (in Edit mode)", row, col);
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+V : Paste from slides/system clipboard (in Edit mode)", row, col);
     row += 2;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHPress CTRL+H again to return.", row, col);
 }
@@ -531,8 +788,8 @@ void enterEditMode(void) {
                 }
                 line[g_content_width - 1] = ' ';
             }
-        } else if (isprint(ch)) {
-            slide->lines[cur_row][cur_col] = ch;
+        } else if (isDrawableChar(ch)) {
+            slide->lines[cur_row][cur_col] = (char)ch;
             if (cur_col < g_content_width - 1)
                 cur_col++;
             else if (cur_row < g_content_height - 1) {
@@ -558,31 +815,12 @@ void enterEditMode(void) {
                     int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
                     int sel_rows = sel_row_end - sel_row_start + 1;
                     int sel_cols = sel_col_end - sel_col_start + 1;
+                    copyRegionToClipboard(sel_row_start, sel_col_start, sel_rows, sel_cols, 1);
                     if (g_clipboard) {
-                        for (i = 0; i < g_clipboard->rows; i++)
-                            free(g_clipboard->data[i]);
-                        free(g_clipboard->data);
-                        free(g_clipboard);
+                        dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion cut!", g_term_rows - 1);
+                        fsync(STDOUT_FILENO);
+                        sleep(1);
                     }
-                    g_clipboard = malloc(sizeof(Clipboard));
-                    g_clipboard->rows = sel_rows;
-                    g_clipboard->cols = sel_cols;
-                    g_clipboard->data = malloc(sizeof(char*) * sel_rows);
-                    for (i = 0; i < sel_rows; i++) {
-                        g_clipboard->data[i] = malloc(sel_cols + 1);
-                        strncpy(g_clipboard->data[i],
-                                g_slides[g_current_slide]->lines[sel_row_start + i] + sel_col_start,
-                                sel_cols);
-                        g_clipboard->data[i][sel_cols] = '\0';
-                    }
-                    for (i = 0; i < sel_rows; i++) {
-                        for (int j = 0; j < sel_cols; j++) {
-                            g_slides[g_current_slide]->lines[sel_row_start + i][sel_col_start + j] = ' ';
-                        }
-                    }
-                    dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion cut!", g_term_rows - 1);
-                    fsync(STDOUT_FILENO);
-                    sleep(1);
                     cur_row = toggle_row;
                     cur_col = toggle_col;
                     break;
@@ -593,26 +831,12 @@ void enterEditMode(void) {
                     int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
                     int sel_rows = sel_row_end - sel_row_start + 1;
                     int sel_cols = sel_col_end - sel_col_start + 1;
+                    copyRegionToClipboard(sel_row_start, sel_col_start, sel_rows, sel_cols, 0);
                     if (g_clipboard) {
-                        for (i = 0; i < g_clipboard->rows; i++)
-                            free(g_clipboard->data[i]);
-                        free(g_clipboard->data);
-                        free(g_clipboard);
+                        dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion copied!", g_term_rows - 1);
+                        fsync(STDOUT_FILENO);
+                        sleep(1);
                     }
-                    g_clipboard = malloc(sizeof(Clipboard));
-                    g_clipboard->rows = sel_rows;
-                    g_clipboard->cols = sel_cols;
-                    g_clipboard->data = malloc(sizeof(char*) * sel_rows);
-                    for (i = 0; i < sel_rows; i++) {
-                        g_clipboard->data[i] = malloc(sel_cols + 1);
-                        strncpy(g_clipboard->data[i],
-                                g_slides[g_current_slide]->lines[sel_row_start + i] + sel_col_start,
-                                sel_cols);
-                        g_clipboard->data[i][sel_cols] = '\0';
-                    }
-                    dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion copied!", g_term_rows - 1);
-                    fsync(STDOUT_FILENO);
-                    sleep(1);
                 } else if (toggle_ch == ARROW_UP) {
                     if (toggle_row > 0) toggle_row--;
                 } else if (toggle_ch == ARROW_DOWN) {
@@ -627,6 +851,7 @@ void enterEditMode(void) {
                 }
             }
         } else if (ch == CTRL_KEY('V')) {
+            syncClipboardFromSystem();
             if (g_clipboard) {
                 int r, c;
                 for (r = 0; r < g_clipboard->rows; r++) {

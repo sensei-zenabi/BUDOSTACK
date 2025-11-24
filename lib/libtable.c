@@ -539,8 +539,8 @@ Table *table_load_csv(const char *filename) {
  * `_CALC` command, keeping math support consistent with the standalone calculator.
  *
  * Column letters map to table column indices starting at 1 (A == column 1) and row
- * numbers map to table rows offset by one (row 1 is the first data row because the
- * header is row 0).
+ * numbers map directly to data rows (row 1 is the first data row; the header row
+ * 0 is not part of the reference space).
  */
 
 // Helper: Skip whitespace characters.
@@ -726,7 +726,7 @@ static char *build_calc_expression(const Table *t, const char *expr, int *error)
                     }
                     cursor++;
 
-                    double range_value = compute_range_value(t, start_row - 1, start_col, end_row - 1, end_col,
+                    double range_value = compute_range_value(t, start_row, start_col, end_row, end_col,
                                                              is_average, error);
                     if (*error) {
                         break;
@@ -750,7 +750,7 @@ static char *build_calc_expression(const Table *t, const char *expr, int *error)
             if (parse_cell_reference_token(p, &consumed, &row, &col)) {
                 const char *after_ref = p + consumed;
                 if (!(after_ref[0] == '(' && name_len > 1)) {
-                    double cell_value = get_cell_numeric_value(t, row - 1, col, error);
+                    double cell_value = get_cell_numeric_value(t, row, col, error);
                     if (*error) {
                         break;
                     }

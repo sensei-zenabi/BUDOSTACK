@@ -27,6 +27,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <strings.h>  // For strcasecmp
+#include <limits.h>
+#include <libgen.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -709,6 +711,26 @@ static char *run_calc_expression(const char *expression, int *error) {
             _exit(127);
         }
         close(pipefd[1]);
+
+        /*
+         * Try an absolute path to ../commands/_CALC relative to the running
+         * executable so table evaluation works even when launched outside the
+         * repository root.
+         */
+        char exe_path[PATH_MAX];
+        ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (exe_len > 0 && exe_len < (ssize_t)sizeof(exe_path)) {
+            exe_path[exe_len] = '\0';
+            char *exe_dir = dirname(exe_path);
+            if (exe_dir && exe_dir[0] != '\0') {
+                char calc_path[PATH_MAX];
+                int written = snprintf(calc_path, sizeof(calc_path), "%s/../commands/_CALC", exe_dir);
+                if (written > 0 && (size_t)written < sizeof(calc_path)) {
+                    execl(calc_path, "_CALC", expression, (char *)NULL);
+                }
+            }
+        }
+
         execl("./commands/_CALC", "_CALC", expression, (char *)NULL);
         execlp("_CALC", "_CALC", expression, (char *)NULL);
         _exit(127);

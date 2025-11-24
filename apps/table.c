@@ -17,6 +17,9 @@
  * To compile: cc -std=c11 -Wall -Wextra -pedantic -o table_app table.c libtable.c
  */
 
+#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +30,7 @@
 #include "../lib/terminal_layout.h"
 #define CTRL_KEY(k) ((k) & 0x1F)
 #define MAX_INPUT 256
+#define BRACKETED_END "\x1b[201~"
 
 // Extern declarations from libtable.c
 typedef struct Table Table;
@@ -58,6 +62,7 @@ int cur_col = 1;   // first editable column (col 0 is index)
 // When copying a cell that may need relative adjustment, the clipboard will store a
 // prefix "CELLREF:row:col:" before the cell content.
 static char clipboard[1024] = {0};
+static int clipboard_from_system = 0;
 
 // Track the currently loaded/saved filename so save prompts can provide a default.
 static char current_filename[MAX_INPUT] = {0};
@@ -71,6 +76,150 @@ static int show_help = 0;
 // Viewport offsets for scrolling the table view.
 static int data_row_offset = 0;
 static int data_col_offset = 0;
+
+static void systemClipboardWrite(const char *s) {
+    if (!s) {
+        return;
+    }
+    FILE *fp = popen("xclip -selection clipboard", "w");
+    if (!fp) {
+        return;
+    }
+    size_t len = strlen(s);
+    if (len > 0u && fwrite(s, 1, len, fp) != len) {
+        perror("fwrite");
+    }
+    pclose(fp);
+}
+
+static char *systemClipboardRead(void) {
+    FILE *fp = popen("xclip -selection clipboard -o 2>/dev/null", "r");
+    if (!fp) {
+        return NULL;
+    }
+    size_t cap = 256u;
+    char *buf = malloc(cap);
+    if (!buf) {
+        pclose(fp);
+        return NULL;
+    }
+    size_t len = 0u;
+    int ch = 0;
+    while ((ch = getc(fp)) != EOF) {
+        if (len + 1u >= cap) {
+            size_t new_cap = cap * 2u;
+            char *tmp = realloc(buf, new_cap);
+            if (!tmp) {
+                free(buf);
+                pclose(fp);
+                return NULL;
+            }
+            buf = tmp;
+            cap = new_cap;
+        }
+        buf[len++] = (char)ch;
+    }
+    buf[len] = '\0';
+    pclose(fp);
+    return buf;
+}
+
+static void ensure_table_capacity(int target_row, int target_col) {
+    while (table_get_rows(g_table) <= target_row) {
+        table_add_row(g_table);
+    }
+    while (table_get_cols(g_table) <= target_col) {
+        int new_col_number = table_get_cols(g_table);
+        char default_header[MAX_INPUT];
+        snprintf(default_header, sizeof(default_header), "Column %d", new_col_number);
+        table_add_col(g_table, default_header);
+    }
+}
+
+static void paste_text_into_table(const char *text) {
+    if (!text) {
+        return;
+    }
+
+    int base_row = cur_row;
+    int base_col = cur_col;
+    const char *line_start = text;
+    int row_offset = 0;
+
+    while (line_start && *line_start) {
+        const char *line_end = strchr(line_start, '\n');
+        size_t line_len = line_end ? (size_t)(line_end - line_start) : strlen(line_start);
+        while (line_len > 0u && line_start[line_len - 1u] == '\r') {
+            line_len--;
+        }
+
+        char *line_buf = malloc(line_len + 1u);
+        if (!line_buf) {
+            return;
+        }
+        memcpy(line_buf, line_start, line_len);
+        line_buf[line_len] = '\0';
+
+        int col_offset = 0;
+        char *saveptr = NULL;
+        char *token = strtok_r(line_buf, "\t", &saveptr);
+        while (token) {
+            ensure_table_capacity(base_row + row_offset, base_col + col_offset);
+            table_set_cell(g_table, base_row + row_offset, base_col + col_offset, token);
+            col_offset++;
+            token = strtok_r(NULL, "\t", &saveptr);
+        }
+
+        if (col_offset == 0) {
+            ensure_table_capacity(base_row + row_offset, base_col);
+            table_set_cell(g_table, base_row + row_offset, base_col, "");
+        }
+
+        free(line_buf);
+
+        if (!line_end) {
+            break;
+        }
+        line_start = line_end + 1;
+        row_offset++;
+    }
+}
+
+static char *read_bracketed_paste(void) {
+    size_t cap = 1024u;
+    size_t len = 0u;
+    char *buf = malloc(cap);
+    if (!buf) {
+        return NULL;
+    }
+
+    const size_t end_len = strlen(BRACKETED_END);
+    while (1) {
+        int ch = getchar();
+        if (ch == EOF) {
+            break;
+        }
+        if (len + 2u >= cap) {
+            size_t new_cap = cap * 2u;
+            char *tmp = realloc(buf, new_cap);
+            if (!tmp) {
+                free(buf);
+                return NULL;
+            }
+            buf = tmp;
+            cap = new_cap;
+        }
+        buf[len++] = (char)ch;
+        if (len >= end_len && memcmp(buf + len - end_len, BRACKETED_END, end_len) == 0) {
+            len -= end_len;
+            buf[len] = '\0';
+            return buf;
+        }
+    }
+
+    buf[len] = '\0';
+    return buf;
+}
 
 /*
  * Terminal control functions using system("stty ...")
@@ -336,7 +485,16 @@ int main(int argc, char *argv[]) {
                     while ((ch = getchar()) >= '0' && ch <= '9')
                         num = num * 10 + (ch - '0');
                     if (ch == '~') {
-                        if (num == 1) { // HOME key
+                        if (num == 200) { // Bracketed paste start
+                            char *pasted = read_bracketed_paste();
+                            if (pasted) {
+                                strncpy(clipboard, pasted, sizeof(clipboard) - 1);
+                                clipboard[sizeof(clipboard) - 1] = '\0';
+                                clipboard_from_system = 1;
+                                paste_text_into_table(pasted);
+                                free(pasted);
+                            }
+                        } else if (num == 1) { // HOME key
                             cur_col = (cur_col - 5 < 1) ? 1 : cur_col - 5;
                         } else if (num == 4) { // END key
                             int maxcol = table_get_cols(g_table) - 1;
@@ -402,30 +560,48 @@ int main(int argc, char *argv[]) {
             }
         } else if (c == CTRL_KEY('c')) {  // Copy cell
             const char *content = table_get_cell(g_table, cur_row, cur_col);
-            if (content && (content[0] == '=' || isalpha(content[0]) || content[0] == '$')) {
+            const char *export_text = content ? content : "";
+            if (content && (content[0] == '=' || isalpha((unsigned char)content[0]) || content[0] == '$')) {
                 snprintf(clipboard, sizeof(clipboard), "CELLREF:%d:%d:%s", cur_row, cur_col, content);
             } else {
-                strncpy(clipboard, content, sizeof(clipboard)-1);
-                clipboard[sizeof(clipboard)-1] = '\0';
+                strncpy(clipboard, export_text, sizeof(clipboard) - 1);
+                clipboard[sizeof(clipboard) - 1] = '\0';
             }
+            clipboard_from_system = 0;
+            systemClipboardWrite(export_text);
         } else if (c == CTRL_KEY('x')) {  // Cut cell
             const char *content = table_get_cell(g_table, cur_row, cur_col);
-            if (content && (content[0] == '=' || isalpha(content[0]) || content[0] == '$')) {
+            const char *export_text = content ? content : "";
+            if (content && (content[0] == '=' || isalpha((unsigned char)content[0]) || content[0] == '$')) {
                 snprintf(clipboard, sizeof(clipboard), "CELLREF:%d:%d:%s", cur_row, cur_col, content);
             } else {
-                strncpy(clipboard, content, sizeof(clipboard)-1);
-                clipboard[sizeof(clipboard)-1] = '\0';
+                strncpy(clipboard, export_text, sizeof(clipboard) - 1);
+                clipboard[sizeof(clipboard) - 1] = '\0';
             }
+            clipboard_from_system = 0;
+            systemClipboardWrite(export_text);
             table_set_cell(g_table, cur_row, cur_col, "");
         } else if (c == CTRL_KEY('v')) {  // Paste
-            if (strncmp(clipboard, "CELLREF:", 8) == 0) {
-                int src_row = 0, src_col = 0;
+            char *sys_clip = systemClipboardRead();
+            if (sys_clip) {
+                size_t sys_len = strlen(sys_clip);
+                if (sys_len > 0u) {
+                    strncpy(clipboard, sys_clip, sizeof(clipboard) - 1);
+                    clipboard[sizeof(clipboard) - 1] = '\0';
+                    clipboard_from_system = 1;
+                }
+                free(sys_clip);
+            }
+
+            if (!clipboard_from_system && strncmp(clipboard, "CELLREF:", 8) == 0) {
+                int src_row = 0;
+                int src_col = 0;
                 const char *p = clipboard + 8;
                 src_row = atoi(p);
                 p = strchr(p, ':');
                 if (p) {
-                    src_col = atoi(p+1);
-                    p = strchr(p+1, ':');
+                    src_col = atoi(p + 1);
+                    p = strchr(p + 1, ':');
                 }
                 if (p) {
                     const char *cell_content = p + 1;
@@ -438,7 +614,7 @@ int main(int argc, char *argv[]) {
                     table_set_cell(g_table, cur_row, cur_col, clipboard);
                 }
             } else {
-                table_set_cell(g_table, cur_row, cur_col, clipboard);
+                paste_text_into_table(clipboard);
             }
         } else if (c == CTRL_KEY('F')) {  // Toggle formula view
             show_formulas = !show_formulas;

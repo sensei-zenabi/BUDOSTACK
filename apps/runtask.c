@@ -54,16 +54,22 @@ typedef enum {
     VALUE_UNSET = 0,
     VALUE_INT,
     VALUE_FLOAT,
-    VALUE_STRING
+    VALUE_STRING,
+    VALUE_ARRAY
 } ValueType;
 
-typedef struct {
+typedef struct Value Value;
+
+struct Value {
     ValueType type;
     long long int_val;
     double float_val;
     char *str_val;
     bool owns_string;
-} Value;
+    Value *array_val;
+    size_t array_len;
+    bool owns_array;
+};
 
 typedef struct {
     char name[64];
@@ -71,6 +77,8 @@ typedef struct {
     long long int_val;
     double float_val;
     char *str_val;
+    Value *array_val;
+    size_t array_len;
 } Variable;
 
 typedef struct {
@@ -436,6 +444,10 @@ static VariableScope *current_scope(void) {
     return &scopes[scope_depth - 1];
 }
 
+static void free_value(Value *value);
+static bool copy_value(Value *dest, const Value *src);
+static bool parse_expression(const char **cursor, Value *out, const char *terminators, int line, int debug);
+
 static void init_scopes(void) {
     for (size_t i = 0; i < MAX_SCOPES; ++i) {
         scopes[i].count = 0;
@@ -462,6 +474,14 @@ static void pop_scope(void) {
         if (scope->vars[i].type == VALUE_STRING && scope->vars[i].str_val) {
             free(scope->vars[i].str_val);
             scope->vars[i].str_val = NULL;
+        }
+        if (scope->vars[i].type == VALUE_ARRAY && scope->vars[i].array_val) {
+            for (size_t j = 0; j < scope->vars[i].array_len; ++j) {
+                free_value(&scope->vars[i].array_val[j]);
+            }
+            free(scope->vars[i].array_val);
+            scope->vars[i].array_val = NULL;
+            scope->vars[i].array_len = 0;
         }
         scope->vars[i].type = VALUE_UNSET;
     }
@@ -513,6 +533,14 @@ static void assign_variable(Variable *var, const Value *value) {
         free(var->str_val);
         var->str_val = NULL;
     }
+    if (var->type == VALUE_ARRAY && var->array_val) {
+        for (size_t i = 0; i < var->array_len; ++i) {
+            free_value(&var->array_val[i]);
+        }
+        free(var->array_val);
+        var->array_val = NULL;
+        var->array_len = 0;
+    }
     var->type = value->type;
     if (value->type == VALUE_INT) {
         var->int_val = value->int_val;
@@ -522,10 +550,40 @@ static void assign_variable(Variable *var, const Value *value) {
         var->int_val = (long long)value->float_val;
     } else if (value->type == VALUE_STRING) {
         var->str_val = value->str_val ? xstrdup(value->str_val) : xstrdup("");
+    } else if (value->type == VALUE_ARRAY) {
+        if (value->array_len > 0 && value->array_val) {
+            var->array_val = (Value *)calloc(value->array_len, sizeof(Value));
+            if (!var->array_val) {
+                perror("calloc");
+                var->type = VALUE_UNSET;
+                return;
+            }
+            var->array_len = value->array_len;
+            for (size_t i = 0; i < value->array_len; ++i) {
+                copy_value(&var->array_val[i], &value->array_val[i]);
+            }
+        } else {
+            var->array_val = NULL;
+            var->array_len = 0;
+        }
     } else {
         var->int_val = 0;
         var->float_val = 0.0;
     }
+}
+
+static bool assign_array_element(Variable *var, size_t index, const Value *value, int line, int debug) {
+    if (!var || !value || index == 0) {
+        return false;
+    }
+    if (var->type != VALUE_ARRAY || !var->array_val || index > var->array_len) {
+        if (debug) {
+            fprintf(stderr, "Line %d: cannot write index %zu of non-array $%s\n", line, index, var ? var->name : "");
+        }
+        return false;
+    }
+    free_value(&var->array_val[index - 1]);
+    return copy_value(&var->array_val[index - 1], value);
 }
 
 static void free_value(Value *value) {
@@ -536,10 +594,21 @@ static void free_value(Value *value) {
         free(value->str_val);
         value->str_val = NULL;
     }
+    if (value->type == VALUE_ARRAY && value->owns_array && value->array_val) {
+        for (size_t i = 0; i < value->array_len; ++i) {
+            free_value(&value->array_val[i]);
+        }
+        free(value->array_val);
+        value->array_val = NULL;
+        value->array_len = 0;
+    }
     value->type = VALUE_UNSET;
     value->owns_string = false;
     value->int_val = 0;
     value->float_val = 0.0;
+    value->array_val = NULL;
+    value->array_len = 0;
+    value->owns_array = false;
 }
 
 static bool copy_value(Value *dest, const Value *src) {
@@ -554,6 +623,9 @@ static bool copy_value(Value *dest, const Value *src) {
     dest->str_val = NULL;
     dest->int_val = src->int_val;
     dest->float_val = src->float_val;
+    dest->array_val = NULL;
+    dest->array_len = 0;
+    dest->owns_array = false;
 
     if (src->type == VALUE_STRING) {
         dest->str_val = xstrdup(src->str_val ? src->str_val : "");
@@ -564,6 +636,21 @@ static bool copy_value(Value *dest, const Value *src) {
         dest->float_val = (double)src->int_val;
     } else if (src->type == VALUE_FLOAT) {
         dest->int_val = (long long)src->float_val;
+    } else if (src->type == VALUE_ARRAY && src->array_len > 0 && src->array_val) {
+        dest->array_val = (Value *)calloc(src->array_len, sizeof(Value));
+        if (!dest->array_val) {
+            perror("calloc");
+            free_value(dest);
+            return false;
+        }
+        dest->array_len = src->array_len;
+        dest->owns_array = true;
+        for (size_t i = 0; i < src->array_len; ++i) {
+            if (!copy_value(&dest->array_val[i], &src->array_val[i])) {
+                free_value(dest);
+                return false;
+            }
+        }
     }
 
     return true;
@@ -582,9 +669,16 @@ static Value variable_to_value(const Variable *var) {
     if (var->type == VALUE_STRING) {
         v.str_val = var->str_val;
         v.owns_string = false;
+    } else if (var->type == VALUE_ARRAY) {
+        v.array_val = var->array_val;
+        v.array_len = var->array_len;
+        v.owns_array = false;
     } else {
         v.str_val = NULL;
         v.owns_string = false;
+        v.array_val = NULL;
+        v.array_len = 0;
+        v.owns_array = false;
     }
     return v;
 }
@@ -733,6 +827,129 @@ static bool parse_variable_name_token(const char *token, char *out, size_t size)
     return true;
 }
 
+typedef struct {
+    char name[64];
+    bool has_index;
+    size_t index; // 1-based
+} VariableReference;
+
+static bool value_to_index(const Value *value, size_t *out_index) {
+    if (!value || !out_index) {
+        return false;
+    }
+
+    if (value->type == VALUE_INT) {
+        if (value->int_val <= 0) {
+            return false;
+        }
+        *out_index = (size_t)value->int_val;
+        return true;
+    }
+
+    if (value->type == VALUE_FLOAT) {
+        if (value->float_val <= 0.0) {
+            return false;
+        }
+        *out_index = (size_t)value->float_val;
+        return true;
+    }
+
+    if (value->type == VALUE_STRING && value->str_val) {
+        errno = 0;
+        char *endptr = NULL;
+        long long iv = strtoll(value->str_val, &endptr, 10);
+        if (errno == 0 && endptr && *endptr == '\0' && iv > 0) {
+            *out_index = (size_t)iv;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool parse_variable_reference(const char *token, int line, int debug, VariableReference *out) {
+    if (!out) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    if (!token || token[0] != '$') {
+        return false;
+    }
+
+    const char *bracket = strchr(token, '[');
+    if (!bracket) {
+        return parse_variable_name_token(token, out->name, sizeof(out->name));
+    }
+
+    const char *closing = strchr(bracket, ']');
+    if (!closing || closing == bracket + 1 || closing[1] != '\0') {
+        if (debug) {
+            fprintf(stderr, "Line %d: malformed variable index '%s'\n", line, token);
+        }
+        return false;
+    }
+
+    size_t name_len = (size_t)(bracket - token);
+    if (name_len >= sizeof(out->name)) {
+        if (debug) {
+            fprintf(stderr, "Line %d: variable name too long in '%s'\n", line, token);
+        }
+        return false;
+    }
+
+    char name_buf[sizeof(out->name)];
+    memcpy(name_buf, token, name_len);
+    name_buf[name_len] = '\0';
+    if (!parse_variable_name_token(name_buf, out->name, sizeof(out->name))) {
+        if (debug) {
+            fprintf(stderr, "Line %d: invalid variable name in '%s'\n", line, token);
+        }
+        return false;
+    }
+
+    char expr_buf[128];
+    size_t expr_len = (size_t)(closing - bracket - 1);
+    if (expr_len >= sizeof(expr_buf)) {
+        if (debug) {
+            fprintf(stderr, "Line %d: index expression too long in '%s'\n", line, token);
+        }
+        return false;
+    }
+    memcpy(expr_buf, bracket + 1, expr_len);
+    expr_buf[expr_len] = '\0';
+
+    const char *cursor = expr_buf;
+    Value idx_value;
+    memset(&idx_value, 0, sizeof(idx_value));
+    if (!parse_expression(&cursor, &idx_value, NULL, line, debug)) {
+        return false;
+    }
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if (*cursor != '\0') {
+        if (debug) {
+            fprintf(stderr, "Line %d: unexpected characters in index '%s'\n", line, token);
+        }
+        free_value(&idx_value);
+        return false;
+    }
+
+    size_t idx = 0;
+    bool ok = value_to_index(&idx_value, &idx);
+    free_value(&idx_value);
+    if (!ok) {
+        if (debug) {
+            fprintf(stderr, "Line %d: invalid index for '%s'\n", line, token);
+        }
+        return false;
+    }
+
+    out->has_index = true;
+    out->index = idx;
+    return true;
+}
+
 static ValueType detect_numeric_type(const char *token, long long *out_int, double *out_float) {
     if (!token || !*token) {
         return VALUE_UNSET;
@@ -780,22 +997,34 @@ static bool parse_value_token(const char **p, Value *out, const char *delims, in
         result.str_val = token;
         result.owns_string = true;
     } else if (token[0] == '$') {
-        char name[64];
-        if (!parse_variable_name_token(token, name, sizeof(name))) {
-            if (debug) {
-                fprintf(stderr, "Line %d: invalid variable name '%s'\n", line, token);
-            }
+        VariableReference ref;
+        if (!parse_variable_reference(token, line, debug, &ref)) {
             free(token);
             return false;
         }
         free(token);
-        Variable *var = find_variable(name, false);
-        result = variable_to_value(var);
-        if (result.type == VALUE_UNSET) {
-            result.int_val = 0;
-            result.float_val = 0.0;
-            result.str_val = NULL;
-            result.owns_string = false;
+        Variable *var = find_variable(ref.name, false);
+        if (ref.has_index) {
+            if (!var || var->type != VALUE_ARRAY || !var->array_val || ref.index == 0 || ref.index > var->array_len) {
+                if (debug) {
+                    fprintf(stderr, "Line %d: array access out of range or undefined for $%s[%zu]\n", line, ref.name, ref.index);
+                }
+                return false;
+            }
+            if (!copy_value(&result, &var->array_val[ref.index - 1])) {
+                return false;
+            }
+        } else {
+            result = variable_to_value(var);
+            if (result.type == VALUE_UNSET) {
+                result.int_val = 0;
+                result.float_val = 0.0;
+                result.str_val = NULL;
+                result.owns_string = false;
+                result.array_val = NULL;
+                result.array_len = 0;
+                result.owns_array = false;
+            }
         }
     } else {
         long long iv = 0;
@@ -866,7 +1095,123 @@ static char *value_to_string(const Value *value) {
         snprintf(buf, sizeof(buf), "%.15g", value->float_val);
         return xstrdup(buf);
     }
+    if (value->type == VALUE_ARRAY && value->array_val && value->array_len > 0) {
+        size_t capacity = 32;
+        size_t len = 0;
+        char *buffer = (char *)malloc(capacity);
+        if (!buffer) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
+        buffer[0] = '\0';
+        for (size_t i = 0; i < value->array_len; ++i) {
+            char *elem = value_to_string(&value->array_val[i]);
+            size_t need = len + strlen(elem) + 1;
+            if (i + 1 < value->array_len) {
+                need++; // for comma
+            }
+            if (need > capacity) {
+                while (need > capacity) {
+                    if (capacity > SIZE_MAX / 2) {
+                        capacity = need;
+                        break;
+                    }
+                    capacity *= 2;
+                }
+                char *tmp = (char *)realloc(buffer, capacity);
+                if (!tmp) {
+                    perror("realloc");
+                    free(buffer);
+                    free(elem);
+                    exit(EXIT_FAILURE);
+                }
+                buffer = tmp;
+            }
+            memcpy(buffer + len, elem, strlen(elem));
+            len += strlen(elem);
+            if (i + 1 < value->array_len) {
+                buffer[len++] = ',';
+            }
+            buffer[len] = '\0';
+            free(elem);
+        }
+        return buffer;
+    }
     return xstrdup("");
+}
+
+static bool split_lines_to_array(const char *text, Value *out) {
+    if (!out) {
+        return false;
+    }
+    memset(out, 0, sizeof(*out));
+    out->type = VALUE_ARRAY;
+
+    if (!text || *text == '\0') {
+        return true;
+    }
+
+    Value *items = NULL;
+    size_t count = 0;
+    size_t cap = 0;
+    const char *cursor = text;
+
+    while (*cursor) {
+        const char *end = cursor;
+        while (*end && *end != '\n' && *end != '\r') {
+            end++;
+        }
+        if (end > cursor) {
+            size_t len = (size_t)(end - cursor);
+            char *segment = (char *)malloc(len + 1);
+            if (!segment) {
+                perror("malloc");
+                goto fail;
+            }
+            memcpy(segment, cursor, len);
+            segment[len] = '\0';
+
+            if (count == cap) {
+                size_t new_cap = cap ? cap * 2 : 4;
+                Value *tmp = (Value *)realloc(items, new_cap * sizeof(Value));
+                if (!tmp) {
+                    perror("realloc");
+                    free(segment);
+                    goto fail;
+                }
+                items = tmp;
+                cap = new_cap;
+            }
+
+            Value v;
+            memset(&v, 0, sizeof(v));
+            v.type = VALUE_STRING;
+            v.str_val = segment;
+            v.owns_string = true;
+            items[count++] = v;
+        }
+
+        while (*end == '\n' || *end == '\r') {
+            end++;
+        }
+        cursor = end;
+    }
+
+    out->array_val = items;
+    out->array_len = count;
+    out->owns_array = true;
+    return true;
+
+fail:
+    if (items) {
+        for (size_t i = 0; i < count; ++i) {
+            free_value(&items[i]);
+        }
+        free(items);
+    }
+    memset(out, 0, sizeof(*out));
+    out->type = VALUE_UNSET;
+    return false;
 }
 
 static bool value_add_inplace(Value *acc, const Value *term) {
@@ -1066,6 +1411,107 @@ static bool parse_expression(const char **cursor, Value *out, const char *termin
     }
 
     *out = accumulator;
+    return true;
+}
+
+static bool parse_value_or_array(const char **cursor, Value *out, const char *terminators, int line, int debug) {
+    if (!cursor || !out) {
+        return false;
+    }
+
+    const char *delims = ",";
+    char delim_buf[64];
+    if (terminators && *terminators) {
+        size_t len = strlen(terminators);
+        if (len > sizeof(delim_buf) - 2) {
+            len = sizeof(delim_buf) - 2;
+        }
+        delim_buf[0] = ',';
+        memcpy(&delim_buf[1], terminators, len);
+        delim_buf[len + 1] = '\0';
+        delims = delim_buf;
+    }
+
+    Value first;
+    memset(&first, 0, sizeof(first));
+    if (!parse_expression(cursor, &first, delims, line, debug)) {
+        return false;
+    }
+
+    while (isspace((unsigned char)**cursor)) {
+        (*cursor)++;
+    }
+    if (**cursor != ',') {
+        *out = first;
+        return true;
+    }
+
+    Value *items = (Value *)calloc(4, sizeof(Value));
+    size_t cap = items ? 4 : 0;
+    size_t count = 0;
+    if (!items) {
+        perror("calloc");
+        free_value(&first);
+        return false;
+    }
+
+    if (!copy_value(&items[count], &first)) {
+        free(items);
+        free_value(&first);
+        return false;
+    }
+    count++;
+
+    while (**cursor == ',') {
+        (*cursor)++;
+        while (isspace((unsigned char)**cursor)) {
+            (*cursor)++;
+        }
+
+        Value element;
+        memset(&element, 0, sizeof(element));
+        if (!parse_expression(cursor, &element, delims, line, debug)) {
+            for (size_t i = 0; i < count; ++i) {
+                free_value(&items[i]);
+            }
+            free(items);
+            free_value(&first);
+            return false;
+        }
+
+        if (count == cap) {
+            size_t new_cap = cap ? cap * 2 : 4;
+            Value *tmp = (Value *)realloc(items, new_cap * sizeof(Value));
+            if (!tmp) {
+                perror("realloc");
+                for (size_t i = 0; i < count; ++i) {
+                    free_value(&items[i]);
+                }
+                free(items);
+                free_value(&first);
+                free_value(&element);
+                return false;
+            }
+            items = tmp;
+            cap = new_cap;
+        }
+        items[count++] = element;
+
+        while (isspace((unsigned char)**cursor)) {
+            (*cursor)++;
+        }
+    }
+
+    Value array_value;
+    memset(&array_value, 0, sizeof(array_value));
+    array_value.type = VALUE_ARRAY;
+    array_value.array_val = items;
+    array_value.array_len = count;
+    array_value.owns_array = true;
+
+    free_value(&first);
+
+    *out = array_value;
     return true;
 }
 
@@ -1383,9 +1829,8 @@ static bool process_assignment_statement(const char *statement, int line, int de
         return false;
     }
 
-    char name[64];
-    if (!parse_variable_name_token(var_token, name, sizeof(name))) {
-        if (debug) fprintf(stderr, "Assignment: invalid variable name at line %d\n", line);
+    VariableReference ref;
+    if (!parse_variable_reference(var_token, line, debug, &ref)) {
         free(var_token);
         return false;
     }
@@ -1404,7 +1849,7 @@ static bool process_assignment_statement(const char *statement, int line, int de
     }
 
     Value value;
-    if (!parse_expression(&cursor, &value, NULL, line, debug)) {
+    if (!parse_value_or_array(&cursor, &value, NULL, line, debug)) {
         return false;
     }
     while (isspace((unsigned char)*cursor)) {
@@ -1414,9 +1859,13 @@ static bool process_assignment_statement(const char *statement, int line, int de
         fprintf(stderr, "Assignment: unexpected characters at %d\n", line);
     }
 
-    Variable *var = find_variable(name, true);
+    Variable *var = find_variable(ref.name, true);
     if (var) {
-        assign_variable(var, &value);
+        if (ref.has_index) {
+            assign_array_element(var, ref.index, &value, line, debug);
+        } else {
+            assign_variable(var, &value);
+        }
     }
     free_value(&value);
     return true;
@@ -1546,7 +1995,8 @@ static void print_help(void) {
     printf("============\n\n");
     printf("Commands:\n");
     printf("  SET $VAR = value\n");
-    printf("    Store integers, floats, or strings in a variable.\n");
+    printf("    Store integers, floats, strings, or comma-separated arrays.\n");
+    printf("    Access array elements with $VAR[1]-style indexing.\n");
     printf("  INPUT $VAR [-wait on|off]\n");
     printf("    Read input into $VAR. Default waits for Enter. OFF captures the first key\n");
     printf("    press.\n");
@@ -3046,9 +3496,8 @@ int main(int argc, char *argv[]) {
                 free(var_token);
                 continue;
             }
-            char name[64];
-            if (!parse_variable_name_token(var_token, name, sizeof(name))) {
-                if (debug) fprintf(stderr, "SET: invalid variable name at line %d\n", script[pc].source_line);
+            VariableReference ref;
+            if (!parse_variable_reference(var_token, script[pc].source_line, debug, &ref)) {
                 free(var_token);
                 continue;
             }
@@ -3065,7 +3514,7 @@ int main(int argc, char *argv[]) {
                 cursor++;
             }
             Value value;
-            if (!parse_expression(&cursor, &value, NULL, script[pc].source_line, debug)) {
+            if (!parse_value_or_array(&cursor, &value, NULL, script[pc].source_line, debug)) {
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
@@ -3074,9 +3523,13 @@ int main(int argc, char *argv[]) {
             if (*cursor != '\0' && debug) {
                 fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].source_line);
             }
-            Variable *var = find_variable(name, true);
+            Variable *var = find_variable(ref.name, true);
             if (var) {
-                assign_variable(var, &value);
+                if (ref.has_index) {
+                    assign_array_element(var, ref.index, &value, script[pc].source_line, debug);
+                } else {
+                    assign_variable(var, &value);
+                }
             }
             free_value(&value);
             note_branch_progress(if_stack, &if_sp);
@@ -3196,7 +3649,7 @@ int main(int argc, char *argv[]) {
                     ok = false;
                     break;
                 }
-                if (!parse_expression(&cursor, &args[arg_count], ",)", script[pc].source_line, debug)) {
+                if (!parse_value_or_array(&cursor, &args[arg_count], ")", script[pc].source_line, debug)) {
                     ok = false;
                     break;
                 }
@@ -3707,6 +4160,7 @@ int main(int argc, char *argv[]) {
                 }
                 _exit(EXIT_FAILURE);
             } else {
+                bool has_newline = false;
                 if (capture_output) {
                     close(pipefd[1]);
                     char buffer[4096];
@@ -3744,6 +4198,7 @@ int main(int argc, char *argv[]) {
                     }
                     if (captured_output) {
                         captured_output[captured_len] = '\0';
+                        has_newline = strpbrk(captured_output, "\r\n") != NULL;
                     } else {
                         captured_output = xstrdup("");
                         captured_len = 0;
@@ -3771,19 +4226,25 @@ int main(int argc, char *argv[]) {
                     double fv = 0.0;
                     Value value;
                     memset(&value, 0, sizeof(value));
-                    ValueType vt = detect_numeric_type(captured_output, &iv, &fv);
-                    if (vt == VALUE_INT) {
-                        value.type = VALUE_INT;
-                        value.int_val = iv;
-                        value.float_val = (double)iv;
-                    } else if (vt == VALUE_FLOAT) {
-                        value.type = VALUE_FLOAT;
-                        value.float_val = fv;
-                        value.int_val = (long long)fv;
-                    } else {
-                        value.type = VALUE_STRING;
-                        value.str_val = captured_output;
-                        value.owns_string = true;
+                    bool parsed_array = false;
+                    if (has_newline) {
+                        parsed_array = split_lines_to_array(captured_output, &value);
+                    }
+                    if (!parsed_array) {
+                        ValueType vt = detect_numeric_type(captured_output, &iv, &fv);
+                        if (vt == VALUE_INT) {
+                            value.type = VALUE_INT;
+                            value.int_val = iv;
+                            value.float_val = (double)iv;
+                        } else if (vt == VALUE_FLOAT) {
+                            value.type = VALUE_FLOAT;
+                            value.float_val = fv;
+                            value.int_val = (long long)fv;
+                        } else {
+                            value.type = VALUE_STRING;
+                            value.str_val = captured_output;
+                            value.owns_string = true;
+                        }
                     }
                     assign_variable(capture_var, &value);
                     if (value.type != VALUE_STRING) {
@@ -3812,7 +4273,7 @@ int main(int argc, char *argv[]) {
             memset(&ret, 0, sizeof(ret));
             bool has_value = false;
             if (*cursor != '\0') {
-                if (!parse_expression(&cursor, &ret, NULL, script[pc].source_line, debug)) {
+                if (!parse_value_or_array(&cursor, &ret, NULL, script[pc].source_line, debug)) {
                     continue;
                 }
                 has_value = true;

@@ -31,6 +31,7 @@
 #define CTRL_KEY(k) ((k) & 0x1F)
 #define MAX_INPUT 256
 #define BRACKETED_END "\x1b[201~"
+#define HELP_LINE_COUNT 7
 
 // Extern declarations from libtable.c
 typedef struct Table Table;
@@ -74,6 +75,12 @@ int show_formulas = 0;
 
 // New global flag to control display of the help/shortcut bar.
 static int show_help = 0;
+
+// Autofill mode state for equation extension via arrow keys.
+static int autofill_mode = 0;
+static int autofill_anchor_row = 0;
+static int autofill_anchor_col = 0;
+static char *autofill_anchor_content = NULL;
 
 // Viewport offsets for scrolling the table view.
 static int data_row_offset = 0;
@@ -291,10 +298,18 @@ static void print_help_bar(void) {
         {"Editing", "Ctrl+R add row   Ctrl+N add col   Ctrl+S save   Ctrl+Q quit"},
         {"Cells", "Del clear   Ctrl+D del col   Ctrl+E del row"},
         {"Clipboard", "Ctrl+C copy   Ctrl+X cut   Ctrl+V paste"},
-        {"Formulas", "Ctrl+F toggle view; prefix '=' for expressions"}
+        {"Formulas", "Ctrl+F toggle view; prefix '=' for expressions"},
+        {"Autofill", "Ctrl+A toggle autofill; arrows extend references"}
     };
-    static const char compact_help[] = "Press CTRL+T for help.";
-    const int total_lines = (int)(sizeof(detailed_help) / sizeof(detailed_help[0]));
+    _Static_assert((sizeof(detailed_help) / sizeof(detailed_help[0])) == HELP_LINE_COUNT,
+                   "HELP_LINE_COUNT mismatch with help entries");
+    const int total_lines = HELP_LINE_COUNT;
+    char compact_help[128];
+    if (autofill_mode) {
+        snprintf(compact_help, sizeof(compact_help), "Autofill active (Ctrl+A to stop)");
+    } else {
+        snprintf(compact_help, sizeof(compact_help), "Press CTRL+T for help.");
+    }
     int term_rows = 0;
     int term_cols = 0;
 
@@ -379,6 +394,44 @@ void save_table(void) {
     getchar();
 }
 
+static void clear_autofill_state(void) {
+    autofill_mode = 0;
+    autofill_anchor_row = 0;
+    autofill_anchor_col = 0;
+    free(autofill_anchor_content);
+    autofill_anchor_content = NULL;
+}
+
+static void toggle_autofill_mode(void) {
+    if (!autofill_mode) {
+        if (cur_row <= 0 || cur_col <= 0)
+            return; // Do not anchor on header/index cells.
+        const char *cell_content = table_get_cell(g_table, cur_row, cur_col);
+        clear_autofill_state();
+        autofill_anchor_row = cur_row;
+        autofill_anchor_col = cur_col;
+        autofill_anchor_content = strdup(cell_content ? cell_content : "");
+        if (!autofill_anchor_content)
+            return;
+        autofill_mode = 1;
+    } else {
+        clear_autofill_state();
+    }
+}
+
+static void apply_autofill(int target_row, int target_col) {
+    if (!autofill_mode || target_row <= 0 || target_col <= 0 || !autofill_anchor_content)
+        return;
+
+    int delta_row = target_row - autofill_anchor_row;
+    int delta_col = target_col - autofill_anchor_col;
+    char *adjusted = adjust_cell_references(autofill_anchor_content, delta_row, delta_col);
+    if (!adjusted)
+        return;
+    table_set_cell(g_table, target_row, target_col, adjusted);
+    free(adjusted);
+}
+
 int main(int argc, char *argv[]) {
     if (argc == 2) {
         strncpy(current_filename, argv[1], sizeof(current_filename) - 1);
@@ -419,7 +472,7 @@ int main(int argc, char *argv[]) {
             term_cols = BUDOSTACK_TARGET_COLS;
         }
 
-        const int help_lines = 6;  // Number of lines reserved by print_help_bar()
+        const int help_lines = HELP_LINE_COUNT;  // Number of lines reserved by print_help_bar()
         int usable_rows = term_rows - help_lines;
         if (usable_rows < 2)
             usable_rows = 2;
@@ -511,17 +564,29 @@ int main(int argc, char *argv[]) {
                         }
                     }
                 } else if (third == 'A') {       // Up arrow
+                    int old_row = cur_row;
                     if (cur_row > 0)
                         cur_row--;
+                    if (cur_row != old_row)
+                        apply_autofill(cur_row, cur_col);
                 } else if (third == 'B') {       // Down arrow
+                    int old_row = cur_row;
                     if (cur_row < table_get_rows(g_table) - 1)
                         cur_row++;
+                    if (cur_row != old_row)
+                        apply_autofill(cur_row, cur_col);
                 } else if (third == 'C') {       // Right arrow
+                    int old_col = cur_col;
                     if (cur_col < table_get_cols(g_table) - 1)
                         cur_col++;
+                    if (cur_col != old_col)
+                        apply_autofill(cur_row, cur_col);
                 } else if (third == 'D') {       // Left arrow
+                    int old_col = cur_col;
                     if (cur_col > 1)
                         cur_col--;
+                    if (cur_col != old_col)
+                        apply_autofill(cur_row, cur_col);
                 } else if (third == 'H') {       // Terminal sends ESC [ H for Home
                     cur_col = (cur_col - 5 < 1) ? 1 : cur_col - 5;
                 } else if (third == 'F') {       // or ESC [ F for End
@@ -633,6 +698,9 @@ int main(int argc, char *argv[]) {
         } else if (c == CTRL_KEY('T')) {  // Toggle help/shortcut bar
             show_help = !show_help;
             continue;
+        } else if (c == CTRL_KEY('A')) {  // Toggle autofill mode
+            toggle_autofill_mode();
+            continue;
         } else if (c == 127 || c == 8) {  // Backspace
             const char *curr = table_get_cell(g_table, cur_row, cur_col);
             char buffer[1024] = {0};
@@ -653,6 +721,7 @@ int main(int argc, char *argv[]) {
     show_cursor();
     disable_raw_mode();
     clear_screen();
+    clear_autofill_state();
     table_free(g_table);
     return EXIT_SUCCESS;
 }

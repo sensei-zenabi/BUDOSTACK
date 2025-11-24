@@ -32,6 +32,9 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+// Default delimiter used when reading/writing delimited table data.
+#define TABLE_DELIMITER ';'
+
 #define INITIAL_ROWS 1
 #define INITIAL_COLS 1
 #define MAX_CELL_LENGTH 256
@@ -387,11 +390,11 @@ int table_insert_col(Table *t, int col, const char *header) {
     return 0;
 }
 
-// Helper: Print a CSV field with necessary escaping.
+// Helper: Print a CSV field with necessary escaping using the default delimiter.
 static void fprint_csv_field(FILE *f, const char *field) {
     int need_quotes = 0;
     for (const char *p = field; *p; p++) {
-        if (*p == ',' || *p == '\"' || *p == '\n') {
+        if (*p == TABLE_DELIMITER || *p == '\"' || *p == '\n') {
             need_quotes = 1;
             break;
         }
@@ -418,7 +421,7 @@ int table_save_csv(const Table *t, const char *filename) {
             if (t->cells[i][j])
                 fprint_csv_field(f, t->cells[i][j]);
             if (j < t->cols - 1)
-                fputc(',', f);
+                fputc(TABLE_DELIMITER, f);
         }
         fputc('\n', f);
     }
@@ -457,7 +460,7 @@ static char **split_csv_line(const char *line, int *count) {
             }
             if (*p == '\"') p++;
         } else {
-            while (*p && *p != ',') {
+            while (*p && *p != TABLE_DELIMITER) {
                 buffer[buf_index++] = *p;
                 p++;
                 if (buf_index >= MAX_CELL_LENGTH - 1) break;
@@ -465,9 +468,9 @@ static char **split_csv_line(const char *line, int *count) {
         }
         buffer[buf_index] = '\0';
         fields[num++] = strdup(buffer);
-        if (*p == ',') {
-            p++;  // Skip the comma.
-            // If the comma is the last character, add an empty field.
+        if (*p == TABLE_DELIMITER) {
+            p++;  // Skip the delimiter.
+            // If the delimiter is the last character, add an empty field.
             if (*p == '\0') {
                 if (num >= capacity) {
                     capacity = capacity ? capacity * 2 : 4;

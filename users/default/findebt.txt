@@ -4,16 +4,22 @@
 
 Created: 24th of November, 2025
 
+
 Source Material:
 - Historical GDP data [stat.fi]
 - Debt data [www.valtionvelka.fi]
 - FIN GDP forecast data [economy-finance.ec.europa.eu] 
 
+
 European Commission estimates that Finland's GDP grows +0.5% in 2025.
 
-\tThis
+  2024 | GDB: 276.00 BEur       | Debt: 171.21 Beur
+  2025 | GDB: 278.76 BEur +0.1% | Debt: 186.14 Beur +8.7%
 
-Table. Finland's Debt-to-GDP percent for 2025 with above estimate.
+This will bring Finland's Debt-to-GDP ratio to 66.7%.
+
+
+Table. Finland's Debt-to-GDP ratio for 2025 with above estimate.
 ┌───────┬─────────┬───────────┬────────────┬─────────────┬────────┬──────────┐
 │ Index │ Time    │ Long Debt │ Short Debt │ Debt [Beur] │ GDB    │ Debt/GDP │
 ├───────┼─────────┼───────────┼────────────┼─────────────┼────────┼──────────┤
@@ -23,3 +29,5 @@ Table. Finland's Debt-to-GDP percent for 2025 with above estimate.
 │ 4     │ 2022-10 │ 122.77    │ 15.87      │ 138.64      │ 266.10 │ 52.1     │
 │ 5     │ 2021-10 │ 115.90    │ 16.12      │ 132.02      │ 248.80 │ 53       │
 └───────┴─────────┴───────────┴────────────┴─────────────┴────────┴──────────┘
+
+

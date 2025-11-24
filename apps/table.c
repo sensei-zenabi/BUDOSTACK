@@ -132,19 +132,28 @@ static void print_help_bar(void) {
         const char *detail;
     } HelpEntry;
     static const HelpEntry detailed_help[] = {
-        {"Detailed Shortcuts:", ""},
-        {"Nav", "Home/End +/-5 cols   PgUp/PgDn +/-10 rows   Arrows move cursor"},
-        {"Edit", "Ctrl+R add row   Ctrl+N add col   Ctrl+S save   Ctrl+Q quit"},
-        {"Formulas", "Ctrl+F toggle view; type '=' to enter expressions"},
-        {"Cells", "Del clear   Ctrl+D del col   Ctrl+E del row   Ctrl+C copy   Ctrl+X cut"},
-        {"Paste", "Ctrl+V paste   (Ctrl+T hides help)"}
+        {"Shortcuts:", "(Ctrl+T hides help)"},
+        {"Navigation", "Arrows move   Home/End \u00b15 cols   PgUp/PgDn \u00b110 rows"},
+        {"Editing", "Ctrl+R add row   Ctrl+N add col   Ctrl+S save   Ctrl+Q quit"},
+        {"Cells", "Del clear   Ctrl+D del col   Ctrl+E del row"},
+        {"Clipboard", "Ctrl+C copy   Ctrl+X cut   Ctrl+V paste"},
+        {"Formulas", "Ctrl+F toggle view; prefix '=' for expressions"}
     };
     static const char compact_help[] = "Press CTRL+T for help.";
     const int total_lines = (int)(sizeof(detailed_help) / sizeof(detailed_help[0]));
     int term_rows = 0;
+    int term_cols = 0;
 
-    if (!get_terminal_size(&term_rows, NULL) || term_rows <= 0) {
+    if (!get_terminal_size(&term_rows, &term_cols) || term_rows <= 0 || term_cols <= 0) {
         term_rows = BUDOSTACK_TARGET_ROWS;
+        term_cols = BUDOSTACK_TARGET_COLS;
+    }
+
+    int help_width = term_cols;
+    if (help_width > 80) {
+        help_width = 80;
+    } else if (help_width < 40) {
+        help_width = 40;
     }
 
     int start_row = term_rows - total_lines + 1;
@@ -155,13 +164,15 @@ static void print_help_bar(void) {
     for (int i = 0; i < total_lines; ++i) {
         move_cursor(start_row + i, 1);
         if (show_help) {
+            char line[256];
             if (detailed_help[i].detail[0] == '\0') {
-                printf("\r%s\033[K", detailed_help[i].label);
+                snprintf(line, sizeof(line), "%s", detailed_help[i].label);
             } else {
-                printf("\r%-10s %s\033[K", detailed_help[i].label, detailed_help[i].detail);
+                snprintf(line, sizeof(line), "%-12s %s", detailed_help[i].label, detailed_help[i].detail);
             }
+            printf("\r%-*.*s\033[K", help_width, help_width, line);
         } else if (i == total_lines - 1) {
-            printf("\r%s\033[K", compact_help);
+            printf("\r%-*.*s\033[K", help_width, help_width, compact_help);
         } else {
             printf("\r\033[K");
         }

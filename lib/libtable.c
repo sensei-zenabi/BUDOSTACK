@@ -166,12 +166,16 @@ void table_print_highlight_ex(const Table *t, int highlight_row, int highlight_c
     // The top-left corner is left blank.
     printf("%-15s", "");
     for (int j = start_col; j <= end_col; j++) {
-        char col_label[16];
-        get_column_label(j, col_label, sizeof(col_label));
+        const char *header = t->cells[0][j] ? t->cells[0][j] : "";
+        char fallback_label[16];
+        if (header[0] == '\0') {
+            get_column_label(j, fallback_label, sizeof(fallback_label));
+            header = fallback_label;
+        }
         if (highlight_row == 0 && highlight_col == j) {
-            printf("\033[7m%-15.15s\033[0m", col_label);
+            printf("\033[7m%-15.15s\033[0m", header);
         } else {
-            printf("%-15.15s", col_label);
+            printf("%-15.15s", header);
         }
     }
     printf("\n");

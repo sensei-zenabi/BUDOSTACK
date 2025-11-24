@@ -79,6 +79,8 @@ Clipboard *g_clipboard = NULL;
 
 static void systemClipboardWrite(const char *s);
 static char *systemClipboardRead(void);
+static int utf8Decode(const char *s, int *out_cp);
+static char asciiFromCodepoint(int cp);
 
 static void freeClipboardStruct(Clipboard *clip) {
     if (!clip)
@@ -126,21 +128,77 @@ static void exportClipboardToSystem(void) {
     free(buf);
 }
 
+static int utf8Decode(const char *s, int *out_cp) {
+    unsigned char c0 = (unsigned char)s[0];
+    if (c0 < 0x80) {
+        *out_cp = (int)c0;
+        return 1;
+    } else if ((c0 & 0xe0) == 0xc0 && s[1] != '\0' && (s[1] & 0xc0) == 0x80) {
+        *out_cp = ((c0 & 0x1f) << 6) | ((unsigned char)s[1] & 0x3f);
+        return 2;
+    } else if ((c0 & 0xf0) == 0xe0 && s[1] != '\0' && s[2] != '\0'
+               && (s[1] & 0xc0) == 0x80 && (s[2] & 0xc0) == 0x80) {
+        *out_cp = ((c0 & 0x0f) << 12) | (((unsigned char)s[1] & 0x3f) << 6)
+                  | ((unsigned char)s[2] & 0x3f);
+        return 3;
+    } else if ((c0 & 0xf8) == 0xf0 && s[1] != '\0' && s[2] != '\0' && s[3] != '\0'
+               && (s[1] & 0xc0) == 0x80 && (s[2] & 0xc0) == 0x80 && (s[3] & 0xc0) == 0x80) {
+        *out_cp = ((c0 & 0x07) << 18) | (((unsigned char)s[1] & 0x3f) << 12)
+                  | (((unsigned char)s[2] & 0x3f) << 6) | ((unsigned char)s[3] & 0x3f);
+        return 4;
+    }
+    *out_cp = '?';
+    return 1;
+}
+
+static char asciiFromCodepoint(int cp) {
+    if (cp == '\t')
+        return ' ';
+    if (cp >= 32 && cp <= 126)
+        return (char)cp;
+    /* Map common box-drawing characters to ASCII fallbacks. */
+    switch (cp) {
+        case 0x2500: case 0x2501: case 0x2504: case 0x2505:
+        case 0x250c: case 0x2510: case 0x2514: case 0x2518:
+        case 0x251c: case 0x2524: case 0x252c: case 0x2534:
+        case 0x253c: case 0x254b: case 0x2550: case 0x2554:
+        case 0x2557: case 0x255a: case 0x255d: case 0x2560:
+        case 0x2563: case 0x2566: case 0x2569: case 0x256c:
+            return (cp == 0x2500 || cp == 0x2501 || cp == 0x2504
+                    || cp == 0x2505 || cp == 0x2550) ? '-' : '+';
+        case 0x2502: case 0x2503: case 0x2551:
+            return '|';
+        case 0x00a0: /* non-breaking space */
+            return ' ';
+        default:
+            return '?';
+    }
+}
+
 static Clipboard *clipboardFromText(const char *text) {
     if (!text || !*text)
         return NULL;
+
+    /* UTF-8 helpers to normalize clipboard text into single-width ASCII. */
+    static const int tab_width = 4;
+
     size_t rows = 1;
     size_t max_cols = 0;
     size_t cur_len = 0;
-    for (const char *p = text; *p; p++) {
-        if (*p == '\n') {
+    for (const char *p = text; *p; ) {
+        int cp;
+        int adv = utf8Decode(p, &cp);
+        if (cp == '\n') {
             if (cur_len > max_cols)
                 max_cols = cur_len;
             rows++;
             cur_len = 0;
+        } else if (cp == '\t') {
+            cur_len += tab_width;
         } else {
             cur_len++;
         }
+        p += adv;
     }
     if (cur_len > max_cols)
         max_cols = cur_len;
@@ -170,17 +228,25 @@ static Clipboard *clipboardFromText(const char *text) {
 
     size_t r = 0;
     size_t c = 0;
-    for (const char *p = text; ; p++) {
-        if (*p == '\n' || *p == '\0') {
+    for (const char *p = text; ; ) {
+        int cp;
+        int adv = utf8Decode(p, &cp);
+        if (cp == '\n' || cp == '\0') {
             r++;
             c = 0;
-            if (*p == '\0' || r >= rows)
+            if (cp == '\0' || r >= rows)
                 break;
+        } else if (cp == '\t') {
+            for (int i = 0; i < tab_width && c < (size_t)clip->cols; i++)
+                clip->data[r][c++] = ' ';
         } else {
             if (c < (size_t)clip->cols)
-                clip->data[r][c] = *p;
+                clip->data[r][c] = asciiFromCodepoint(cp);
             c++;
         }
+        p += adv;
+        if (cp == '\0')
+            break;
     }
 
     return clip;

@@ -59,6 +59,9 @@ int cur_col = 1;   // first editable column (col 0 is index)
 // prefix "CELLREF:row:col:" before the cell content.
 static char clipboard[1024] = {0};
 
+// Track the currently loaded/saved filename so save prompts can provide a default.
+static char current_filename[MAX_INPUT] = {0};
+
 // Global flag: if set, display raw formulas instead of evaluated results.
 int show_formulas = 0;
 
@@ -185,20 +188,41 @@ static void print_help_bar(void) {
  */
 void save_table(void) {
     char filename[MAX_INPUT];
+    const int has_default = current_filename[0] != '\0';
+
     move_cursor(24, 1);
-    printf("\rEnter filename to save: ");
+    if (has_default) {
+        printf("\rEnter filename to save [%s]: ", current_filename);
+    } else {
+        printf("\rEnter filename to save: ");
+    }
     fflush(stdout);
+
     disable_raw_mode();
-    if (!fgets(filename, MAX_INPUT, stdin))
+    if (!fgets(filename, MAX_INPUT, stdin)) {
+        enable_raw_mode();
         return;
+    }
+    enable_raw_mode();
+
     size_t len = strlen(filename);
     if (len && filename[len - 1] == '\n')
         filename[len - 1] = '\0';
-    enable_raw_mode();
-    if (table_save_csv(g_table, filename) == 0)
+
+    if (filename[0] == '\0' && has_default) {
+        strncpy(filename, current_filename, sizeof(filename) - 1);
+        filename[sizeof(filename) - 1] = '\0';
+    }
+
+    if (filename[0] == '\0') {
+        printf("\rNo filename provided. Save canceled.");
+    } else if (table_save_csv(g_table, filename) == 0) {
+        strncpy(current_filename, filename, sizeof(current_filename) - 1);
+        current_filename[sizeof(current_filename) - 1] = '\0';
         printf("\rTable saved to '%s'.", filename);
-    else
+    } else {
         printf("\rError saving table to '%s'.", filename);
+    }
     printf("\rPress any key to continue...");
     fflush(stdout);
     getchar();
@@ -206,10 +230,13 @@ void save_table(void) {
 
 int main(int argc, char *argv[]) {
     if (argc == 2) {
+        strncpy(current_filename, argv[1], sizeof(current_filename) - 1);
+        current_filename[sizeof(current_filename) - 1] = '\0';
         g_table = table_load_csv(argv[1]);
         if (!g_table) {
             printf("Failed to load '%s'. Creating a new table.\n", argv[1]);
             g_table = table_create();
+            current_filename[0] = '\0';
         }
     } else {
         g_table = table_create();

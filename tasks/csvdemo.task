@@ -54,7 +54,7 @@ RUN _WAIT 1000
 # Finish
 PRINT "Printing the generated .csv file...\n\n"
 RUN _WAIT 1000
-RUN csv_print MYCSV.CSV
+RUN csvprint MYCSV.CSV
 # ToDo: _CSVSTATS and _CSVFILTER demo
 PRINT "\n"
 PRINT "TASK FINISHED!\n"

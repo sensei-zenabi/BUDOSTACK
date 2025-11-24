@@ -109,7 +109,7 @@ int main(int argc, char *argv[]) {
     printf("             To run existing macro, type 'cmath mymacro.m'.\n");
     printf("  csvclean : Basic .csv data cleaning method, type 'csvclean -help'.\n");
     printf("  csvplot  : ASCII x-y plotter for .csv files.\n");
-    printf("  csv_print: Pretty prints a .csv file.\n");
+    printf("  csvprint : Pretty prints a .csv file.\n");
     printf("  csvstat  : Calculate statistics from .csv file columns.\n");    
     printf("  mdread   : Pretty-prints .md files. Use: mdread readme.md\n");
     printf("  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n");

@@ -40,7 +40,8 @@ extern Table *table_load_csv(const char *filename);
 extern int table_get_rows(const Table *table);
 extern int table_get_cols(const Table *table);
 extern void table_print_highlight(const Table *table, int highlight_row, int highlight_col);
-extern void table_print_highlight_ex(const Table *table, int highlight_row, int highlight_col, int show_formulas);
+extern void table_print_highlight_ex(const Table *table, int highlight_row, int highlight_col, int show_formulas,
+                                     int data_row_offset, int data_col_offset, int max_data_rows, int max_data_cols);
 extern const char *table_get_cell(const Table *table, int row, int col);
 extern int table_delete_column(Table *table, int col);
 extern int table_delete_row(Table *table, int row);
@@ -63,6 +64,10 @@ int show_formulas = 0;
 
 // New global flag to control display of the help/shortcut bar.
 static int show_help = 0;
+
+// Viewport offsets for scrolling the table view.
+static int data_row_offset = 0;
+static int data_col_offset = 0;
 
 /*
  * Terminal control functions using system("stty ...")
@@ -122,13 +127,17 @@ static int get_terminal_size(int *rows, int *cols) {
 }
 
 static void print_help_bar(void) {
-    static const char *detailed_help[] = {
-        "Detailed Shortcuts:",
-        "Nav: Home/End +/-5 cols  PgUp/PgDn +/-10 rows  Arrows move cursor",
-        "Edit: Ctrl+R add row  Ctrl+N add col  Ctrl+S save  Ctrl+Q quit",
-        "Formulas: Ctrl+F toggles view; type '=' to enter expressions",
-        "Cells: Del clear  Ctrl+D del col  Ctrl+E del row  Ctrl+C copy  Ctrl+X cut",
-        "Paste: Ctrl+V paste (Ctrl+T hides help)"
+    typedef struct {
+        const char *label;
+        const char *detail;
+    } HelpEntry;
+    static const HelpEntry detailed_help[] = {
+        {"Detailed Shortcuts:", ""},
+        {"Nav", "Home/End +/-5 cols   PgUp/PgDn +/-10 rows   Arrows move cursor"},
+        {"Edit", "Ctrl+R add row   Ctrl+N add col   Ctrl+S save   Ctrl+Q quit"},
+        {"Formulas", "Ctrl+F toggle view; type '=' to enter expressions"},
+        {"Cells", "Del clear   Ctrl+D del col   Ctrl+E del row   Ctrl+C copy   Ctrl+X cut"},
+        {"Paste", "Ctrl+V paste   (Ctrl+T hides help)"}
     };
     static const char compact_help[] = "Press CTRL+T for help.";
     const int total_lines = (int)(sizeof(detailed_help) / sizeof(detailed_help[0]));
@@ -146,7 +155,11 @@ static void print_help_bar(void) {
     for (int i = 0; i < total_lines; ++i) {
         move_cursor(start_row + i, 1);
         if (show_help) {
-            printf("\r%s\033[K", detailed_help[i]);
+            if (detailed_help[i].detail[0] == '\0') {
+                printf("\r%s\033[K", detailed_help[i].label);
+            } else {
+                printf("\r%-10s %s\033[K", detailed_help[i].label, detailed_help[i].detail);
+            }
         } else if (i == total_lines - 1) {
             printf("\r%s\033[K", compact_help);
         } else {
@@ -210,9 +223,67 @@ int main(int argc, char *argv[]) {
 
     int running = 1;
     while (running) {
+        int term_rows = 0;
+        int term_cols = 0;
+        if (!get_terminal_size(&term_rows, &term_cols) || term_rows <= 0 || term_cols <= 0) {
+            term_rows = BUDOSTACK_TARGET_ROWS;
+            term_cols = BUDOSTACK_TARGET_COLS;
+        }
+
+        const int help_lines = 6;  // Number of lines reserved by print_help_bar()
+        int usable_rows = term_rows - help_lines;
+        if (usable_rows < 2)
+            usable_rows = 2;
+
+        const int cell_width = 15;
+        int visible_data_cols = (term_cols - cell_width) / cell_width;
+        if (visible_data_cols < 1)
+            visible_data_cols = 1;
+
+        int visible_data_rows = usable_rows - 1; // Leave room for header row
+        if (visible_data_rows < 1)
+            visible_data_rows = 1;
+
+        int total_data_rows = table_get_rows(g_table) - 1;
+        if (total_data_rows < 0)
+            total_data_rows = 0;
+
+        int total_data_cols = table_get_cols(g_table) - 1;
+        if (total_data_cols < 0)
+            total_data_cols = 0;
+
+        if (cur_row == 0) {
+            data_row_offset = 0;
+        } else {
+            int data_row_index = cur_row - 1;
+            if (data_row_index < data_row_offset)
+                data_row_offset = data_row_index;
+            else if (data_row_index >= data_row_offset + visible_data_rows)
+                data_row_offset = data_row_index - visible_data_rows + 1;
+
+            int max_row_offset = total_data_rows - visible_data_rows;
+            if (max_row_offset < 0)
+                max_row_offset = 0;
+            if (data_row_offset > max_row_offset)
+                data_row_offset = max_row_offset;
+        }
+
+        int data_col_index = cur_col - 1;
+        if (data_col_index < data_col_offset)
+            data_col_offset = data_col_index;
+        else if (data_col_index >= data_col_offset + visible_data_cols)
+            data_col_offset = data_col_index - visible_data_cols + 1;
+
+        int max_col_offset = total_data_cols - visible_data_cols;
+        if (max_col_offset < 0)
+            max_col_offset = 0;
+        if (data_col_offset > max_col_offset)
+            data_col_offset = max_col_offset;
+
         clear_screen();
-        // Print the table (this function clears the screen and prints the table grid)
-        table_print_highlight_ex(g_table, cur_row, cur_col, show_formulas);
+        // Print the table within the current viewport
+        table_print_highlight_ex(g_table, cur_row, cur_col, show_formulas,
+                                 data_row_offset, data_col_offset, visible_data_rows, visible_data_cols);
         // Print the improved help/shortcut bar below the table.
         print_help_bar();
 

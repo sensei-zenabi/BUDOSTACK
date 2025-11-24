@@ -121,8 +121,42 @@ static void get_column_label(int col, char *buf, size_t buf_size) {
  * This way, even if an earlier cell (alphabetically) has long text that overflows,
  * the highlighting for the selected cell always covers exactly its 15–character region.
  */
-void table_print_highlight_ex(const Table *t, int highlight_row, int highlight_col, int show_formulas) {
+void table_print_highlight_ex(const Table *t, int highlight_row, int highlight_col, int show_formulas,
+                              int data_row_offset, int data_col_offset, int max_data_rows, int max_data_cols) {
     if (!t) return;
+
+    const int cell_width = 15;
+    if (max_data_rows < 1)
+        max_data_rows = 1;
+    if (max_data_cols < 1)
+        max_data_cols = 1;
+
+    if (data_row_offset < 0)
+        data_row_offset = 0;
+    if (data_col_offset < 0)
+        data_col_offset = 0;
+
+    int total_data_rows = t->rows - 1;
+    if (total_data_rows < 0)
+        total_data_rows = 0;
+    int total_data_cols = t->cols - 1;
+    if (total_data_cols < 0)
+        total_data_cols = 0;
+
+    if (data_row_offset > total_data_rows)
+        data_row_offset = total_data_rows;
+    if (data_col_offset > total_data_cols)
+        data_col_offset = total_data_cols;
+
+    int start_col = data_col_offset + 1;
+    int end_col = start_col + max_data_cols - 1;
+    if (end_col > t->cols - 1)
+        end_col = t->cols - 1;
+
+    int start_row = data_row_offset + 1; // data rows start at 1
+    int end_row = start_row + max_data_rows - 1;
+    if (end_row > t->rows - 1)
+        end_row = t->rows - 1;
 
     // Clear the screen and move cursor to top-left.
     printf("\033[2J");    // clear screen
@@ -131,31 +165,38 @@ void table_print_highlight_ex(const Table *t, int highlight_row, int highlight_c
     // Print header row in fixed positions.
     // The top-left corner is left blank.
     printf("%-15s", "");
-    for (int j = 1; j < t->cols; j++) {
+    for (int j = start_col; j <= end_col; j++) {
         char col_label[16];
         get_column_label(j, col_label, sizeof(col_label));
-        // Header cells: use fixed width (clipped).
-        printf("%-15.15s", col_label);
+        if (highlight_row == 0 && highlight_col == j) {
+            printf("\033[7m%-15.15s\033[0m", col_label);
+        } else {
+            printf("%-15.15s", col_label);
+        }
     }
     printf("\n");
 
     // Now print each row with absolute positioning.
     // Assume header is line 1; data rows start at line 2.
-    for (int i = 0; i < t->rows; i++) {
+    for (int i = start_row; i <= end_row; i++) {
         // Terminal row for this table row.
-        int term_row = i + 2;
+        int term_row = (i - start_row) + 2;
 
         // Print row label (fixed 15 columns) at column 1.
         printf("\033[%d;1H", term_row);
         char row_label[16];
-        snprintf(row_label, sizeof(row_label), "%d", i + 1);
-        printf("%-15s", row_label);
+        snprintf(row_label, sizeof(row_label), "%d", i);
+        if (highlight_col == 0 && highlight_row == i) {
+            printf("\033[7m%-15s\033[0m", row_label);
+        } else {
+            printf("%-15s", row_label);
+        }
 
         // For each cell in the row (from column 1 onward).
-        for (int j = 1; j < t->cols; j++) {
+        for (int j = start_col; j <= end_col; j++) {
             // Compute the fixed starting column for cell j.
             // Row label occupies 15 characters. Each cell has a fixed slot of 15.
-            int term_col = 15 + (j - 1) * 15 + 1;
+            int term_col = 15 + (j - start_col) * cell_width + 1;
             // Move the cursor to the cell's fixed starting position.
             printf("\033[%d;%dH", term_row, term_col);
 
@@ -194,7 +235,7 @@ void table_print_highlight_ex(const Table *t, int highlight_row, int highlight_c
 
 // The previous highlight-print simply calls the extended version.
 void table_print_highlight(const Table *t, int highlight_row, int highlight_col) {
-    table_print_highlight_ex(t, highlight_row, highlight_col, 0);
+    table_print_highlight_ex(t, highlight_row, highlight_col, 0, 0, 0, t ? t->rows : 0, t ? t->cols : 0);
 }
 
 int table_get_rows(const Table *t) {

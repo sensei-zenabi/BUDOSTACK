@@ -235,16 +235,16 @@ static double parse_term(Parser *parser, int *error) {
     while (*error == 0) {
         skip_spaces(parser);
         char op = (char)peek_char(parser);
-        if (op == '*' || op == '/') {
+        if (op == '*' || op == 'x' || op == 'X' || op == '/') {
             parser->pos++;
             double rhs = parse_power(parser, error);
             if (*error != 0) {
                 return 0.0;
             }
-            if (op == '*') {
-                value *= rhs;
-            } else {
+            if (op == '/') {
                 value /= rhs;
+            } else {
+                value *= rhs;
             }
         } else {
             break;
@@ -446,7 +446,7 @@ static void print_help(void) {
     puts("Usage: _CALC <expression>");
     puts("");
     puts("Operators:");
-    puts("    +, -, *, /, ^, parentheses, unary +/-");
+    puts("    +, -, *, x, /, ^, parentheses, unary +/-");
     puts("");
     print_wrapped_list("Unary functions", unary_function_displays,
                        sizeof(unary_function_displays) / sizeof(unary_function_displays[0]));
@@ -464,6 +464,7 @@ static void print_help(void) {
     puts("    - fmin, fmax, and hypot accept two or more arguments.");
     puts("");
     puts("Example: _CALC (1*2 + 3) / 2 + 2^2 + sqrt(5) + sin(pi)");
+    puts("Tip: use 'x' as a multiplication operator if your shell expands '*'.");
 }
 
 static void print_wrapped_list(const char *title, const char *const *items, size_t count) {

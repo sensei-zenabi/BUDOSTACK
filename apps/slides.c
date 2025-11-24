@@ -77,6 +77,115 @@ typedef struct {
 
 Clipboard *g_clipboard = NULL;
 
+static void systemClipboardWrite(const char *s);
+static char *systemClipboardRead(void);
+
+static void freeClipboardStruct(Clipboard *clip) {
+    if (!clip)
+        return;
+    for (int i = 0; i < clip->rows; i++)
+        free(clip->data[i]);
+    free(clip->data);
+    free(clip);
+}
+
+static void freeClipboard(void) {
+    if (!g_clipboard)
+        return;
+    freeClipboardStruct(g_clipboard);
+    g_clipboard = NULL;
+}
+
+static void exportClipboardToSystem(void) {
+    if (!g_clipboard)
+        return;
+    size_t total = 0;
+    for (int r = 0; r < g_clipboard->rows; r++) {
+        int len = g_clipboard->cols;
+        while (len > 0 && g_clipboard->data[r][len - 1] == ' ')
+            len--;
+        total += (size_t)len;
+        if (r < g_clipboard->rows - 1)
+            total++;
+    }
+    char *buf = malloc(total + 1);
+    if (!buf)
+        return;
+    size_t pos = 0;
+    for (int r = 0; r < g_clipboard->rows; r++) {
+        int len = g_clipboard->cols;
+        while (len > 0 && g_clipboard->data[r][len - 1] == ' ')
+            len--;
+        memcpy(buf + pos, g_clipboard->data[r], len);
+        pos += (size_t)len;
+        if (r < g_clipboard->rows - 1)
+            buf[pos++] = '\n';
+    }
+    buf[pos] = '\0';
+    systemClipboardWrite(buf);
+    free(buf);
+}
+
+static Clipboard *clipboardFromText(const char *text) {
+    if (!text || !*text)
+        return NULL;
+    size_t rows = 1;
+    size_t max_cols = 0;
+    size_t cur_len = 0;
+    for (const char *p = text; *p; p++) {
+        if (*p == '\n') {
+            if (cur_len > max_cols)
+                max_cols = cur_len;
+            rows++;
+            cur_len = 0;
+        } else {
+            cur_len++;
+        }
+    }
+    if (cur_len > max_cols)
+        max_cols = cur_len;
+    if (max_cols == 0)
+        return NULL;
+
+    Clipboard *clip = malloc(sizeof(Clipboard));
+    if (!clip)
+        return NULL;
+    clip->rows = (int)rows;
+    clip->cols = (int)(max_cols > (size_t)g_content_width ? (size_t)g_content_width : max_cols);
+    clip->data = malloc(sizeof(char *) * rows);
+    if (!clip->data) {
+        free(clip);
+        return NULL;
+    }
+    for (size_t r = 0; r < rows; r++) {
+        clip->data[r] = malloc(clip->cols + 1);
+        if (!clip->data[r]) {
+            clip->rows = (int)r;
+            freeClipboardStruct(clip);
+            return NULL;
+        }
+        memset(clip->data[r], ' ', clip->cols);
+        clip->data[r][clip->cols] = '\0';
+    }
+
+    size_t r = 0;
+    size_t c = 0;
+    for (const char *p = text; ; p++) {
+        if (*p == '\n' || *p == '\0') {
+            r++;
+            c = 0;
+            if (*p == '\0' || r >= rows)
+                break;
+        } else {
+            if (c < (size_t)clip->cols)
+                clip->data[r][c] = *p;
+            c++;
+        }
+    }
+
+    return clip;
+}
+
 /************************************
  * Terminal raw mode helper functions
  ************************************/
@@ -558,12 +667,7 @@ void enterEditMode(void) {
                     int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
                     int sel_rows = sel_row_end - sel_row_start + 1;
                     int sel_cols = sel_col_end - sel_col_start + 1;
-                    if (g_clipboard) {
-                        for (i = 0; i < g_clipboard->rows; i++)
-                            free(g_clipboard->data[i]);
-                        free(g_clipboard->data);
-                        free(g_clipboard);
-                    }
+                    freeClipboard();
                     g_clipboard = malloc(sizeof(Clipboard));
                     g_clipboard->rows = sel_rows;
                     g_clipboard->cols = sel_cols;
@@ -580,6 +684,7 @@ void enterEditMode(void) {
                             g_slides[g_current_slide]->lines[sel_row_start + i][sel_col_start + j] = ' ';
                         }
                     }
+                    exportClipboardToSystem();
                     dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion cut!", g_term_rows - 1);
                     fsync(STDOUT_FILENO);
                     sleep(1);
@@ -593,12 +698,7 @@ void enterEditMode(void) {
                     int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
                     int sel_rows = sel_row_end - sel_row_start + 1;
                     int sel_cols = sel_col_end - sel_col_start + 1;
-                    if (g_clipboard) {
-                        for (i = 0; i < g_clipboard->rows; i++)
-                            free(g_clipboard->data[i]);
-                        free(g_clipboard->data);
-                        free(g_clipboard);
-                    }
+                    freeClipboard();
                     g_clipboard = malloc(sizeof(Clipboard));
                     g_clipboard->rows = sel_rows;
                     g_clipboard->cols = sel_cols;
@@ -610,6 +710,7 @@ void enterEditMode(void) {
                                 sel_cols);
                         g_clipboard->data[i][sel_cols] = '\0';
                     }
+                    exportClipboardToSystem();
                     dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion copied!", g_term_rows - 1);
                     fsync(STDOUT_FILENO);
                     sleep(1);
@@ -627,6 +728,15 @@ void enterEditMode(void) {
                 }
             }
         } else if (ch == CTRL_KEY('V')) {
+            char *sys = systemClipboardRead();
+            if (sys) {
+                Clipboard *from_text = clipboardFromText(sys);
+                if (from_text) {
+                    freeClipboard();
+                    g_clipboard = from_text;
+                }
+                free(sys);
+            }
             if (g_clipboard) {
                 int r, c;
                 for (r = 0; r < g_clipboard->rows; r++) {
@@ -648,6 +758,50 @@ void enterEditMode(void) {
     slide->undo_lines = NULL;
     clearScreen();
     g_edit_mode = 0;
+}
+
+/************************************
+ * System clipboard helpers
+ ************************************/
+static void systemClipboardWrite(const char *s) {
+    if (!s)
+        return;
+    FILE *fp = popen("xclip -selection clipboard", "w");
+    if (!fp)
+        return;
+    if (fwrite(s, 1, strlen(s), fp) != strlen(s))
+        perror("fwrite");
+    pclose(fp);
+}
+
+static char *systemClipboardRead(void) {
+    FILE *fp = popen("xclip -selection clipboard -o 2>/dev/null", "r");
+    if (!fp)
+        return NULL;
+    size_t cap = 256;
+    char *buf = malloc(cap);
+    if (!buf) {
+        pclose(fp);
+        return NULL;
+    }
+    size_t len = 0;
+    int ch;
+    while ((ch = fgetc(fp)) != EOF) {
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *tmp = realloc(buf, cap);
+            if (!tmp) {
+                free(buf);
+                pclose(fp);
+                return NULL;
+            }
+            buf = tmp;
+        }
+        buf[len++] = (char)ch;
+    }
+    buf[len] = '\0';
+    pclose(fp);
+    return buf;
 }
 
 /************************************

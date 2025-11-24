@@ -555,12 +555,53 @@ Table *table_load_csv(const char *filename) {
     }
     fclose(f);
     if (rows == 0) return NULL;
-    
+
     Table *t = malloc(sizeof(Table));
     if (!t) return NULL;
     t->rows = rows;
     t->cols = cols;
     t->cells = cells;
+
+    // Trim trailing empty columns (beyond the index column) that contain no
+    // header text and no data. Without this, repeatedly loading and saving a
+    // table with empty trailing columns would keep growing the column count.
+    int last_nonempty_col = 0;  // keep the index column
+    for (int col = t->cols - 1; col >= 1; col--) {
+        int has_content = 0;
+        const char *header = t->cells[0][col];
+        if (header && header[0] != '\0') {
+            has_content = 1;
+        } else {
+            for (int row = 1; row < t->rows; row++) {
+                const char *cell = t->cells[row][col];
+                if (cell && cell[0] != '\0') {
+                    has_content = 1;
+                    break;
+                }
+            }
+        }
+        if (has_content) {
+            last_nonempty_col = col;
+            break;
+        }
+    }
+
+    int new_cols = last_nonempty_col + 1;
+    if (new_cols < 1)
+        new_cols = 1;
+
+    if (new_cols < t->cols) {
+        for (int row = 0; row < t->rows; row++) {
+            for (int col = new_cols; col < t->cols; col++) {
+                free(t->cells[row][col]);
+            }
+            char **shrunk = realloc(t->cells[row], sizeof(char *) * new_cols);
+            if (shrunk)
+                t->cells[row] = shrunk;
+        }
+        t->cols = new_cols;
+    }
+
     return t;
 }
 

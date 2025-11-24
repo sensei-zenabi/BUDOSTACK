@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <stdarg.h>
+#include <stdint.h>
 
 /* 
    The following prototypes are added because with _POSIX_C_SOURCE=200112L, 
@@ -86,42 +87,171 @@ static void freeClipboard(void) {
     g_clipboard = NULL;
 }
 
+static const struct {
+    unsigned char byte;
+    int codepoint;
+} g_box_draw_map[] = {
+    {0xda, 0x250c}, /* ┌ */
+    {0xbf, 0x2510}, /* ┐ */
+    {0xc0, 0x2514}, /* └ */
+    {0xd9, 0x2518}, /* ┘ */
+    {0xc4, 0x2500}, /* ─ */
+    {0xb3, 0x2502}, /* │ */
+    {0xc3, 0x251c}, /* ├ */
+    {0xb4, 0x2524}, /* ┤ */
+    {0xc2, 0x252c}, /* ┬ */
+    {0xc1, 0x2534}, /* ┴ */
+    {0xc5, 0x253c}, /* ┼ */
+};
+
 static int isDrawableChar(int ch) {
     return (unsigned int)ch >= 32 && (unsigned int)ch <= 255;
+}
+
+static unsigned char glyphFromCodepoint(int cp) {
+    if (cp >= 0 && cp <= 255)
+        return (unsigned char)cp;
+    for (size_t i = 0; i < sizeof(g_box_draw_map) / sizeof(g_box_draw_map[0]); i++) {
+        if (g_box_draw_map[i].codepoint == cp)
+            return g_box_draw_map[i].byte;
+    }
+    return '?';
+}
+
+static int codepointFromGlyph(unsigned char glyph) {
+    for (size_t i = 0; i < sizeof(g_box_draw_map) / sizeof(g_box_draw_map[0]); i++) {
+        if (g_box_draw_map[i].byte == glyph)
+            return g_box_draw_map[i].codepoint;
+    }
+    return (int)glyph;
+}
+
+static int decodeUtf8Char(const char *s, size_t len, size_t *adv) {
+    unsigned char c = (unsigned char)s[0];
+    if (c < 0x80) {
+        *adv = 1;
+        return c;
+    }
+    if ((c & 0xe0) == 0xc0 && len >= 2) {
+        unsigned char c1 = (unsigned char)s[1];
+        if ((c1 & 0xc0) == 0x80) {
+            *adv = 2;
+            return ((c & 0x1f) << 6) | (c1 & 0x3f);
+        }
+    }
+    if ((c & 0xf0) == 0xe0 && len >= 3) {
+        unsigned char c1 = (unsigned char)s[1];
+        unsigned char c2 = (unsigned char)s[2];
+        if ((c1 & 0xc0) == 0x80 && (c2 & 0xc0) == 0x80) {
+            *adv = 3;
+            return ((c & 0x0f) << 12) | ((c1 & 0x3f) << 6) | (c2 & 0x3f);
+        }
+    }
+    if ((c & 0xf8) == 0xf0 && len >= 4) {
+        unsigned char c1 = (unsigned char)s[1];
+        unsigned char c2 = (unsigned char)s[2];
+        unsigned char c3 = (unsigned char)s[3];
+        if ((c1 & 0xc0) == 0x80 && (c2 & 0xc0) == 0x80 && (c3 & 0xc0) == 0x80) {
+            *adv = 4;
+            return ((c & 0x07) << 18) | ((c1 & 0x3f) << 12) | ((c2 & 0x3f) << 6) | (c3 & 0x3f);
+        }
+    }
+    *adv = 1;
+    return -1;
+}
+
+static int encodeUtf8Char(int cp, char *out) {
+    if (cp < 0)
+        return 0;
+    if (cp < 0x80) {
+        out[0] = (char)cp;
+        return 1;
+    } else if (cp < 0x800) {
+        out[0] = (char)(0xc0 | ((cp >> 6) & 0x1f));
+        out[1] = (char)(0x80 | (cp & 0x3f));
+        return 2;
+    } else if (cp < 0x10000) {
+        out[0] = (char)(0xe0 | ((cp >> 12) & 0x0f));
+        out[1] = (char)(0x80 | ((cp >> 6) & 0x3f));
+        out[2] = (char)(0x80 | (cp & 0x3f));
+        return 3;
+    } else if (cp <= 0x10ffff) {
+        out[0] = (char)(0xf0 | ((cp >> 18) & 0x07));
+        out[1] = (char)(0x80 | ((cp >> 12) & 0x3f));
+        out[2] = (char)(0x80 | ((cp >> 6) & 0x3f));
+        out[3] = (char)(0x80 | (cp & 0x3f));
+        return 4;
+    }
+    return 0;
+}
+
+static char *convertUtf8ToGlyphBytes(const char *text) {
+    size_t len = strlen(text);
+    char *out = malloc(len + 1);
+    if (!out)
+        return NULL;
+    size_t in_pos = 0, out_pos = 0;
+    while (in_pos < len) {
+        size_t adv = 1;
+        int cp = decodeUtf8Char(text + in_pos, len - in_pos, &adv);
+        if (cp < 0)
+            cp = (unsigned char)text[in_pos];
+        out[out_pos++] = (char)glyphFromCodepoint(cp);
+        in_pos += adv;
+    }
+    out[out_pos] = '\0';
+    return out;
+}
+
+static char *convertGlyphBytesToUtf8(const Clipboard *clip, size_t *utf8_len_out) {
+    if (!clip || clip->rows <= 0 || clip->cols <= 0)
+        return NULL;
+
+    size_t max_len = (size_t)clip->rows * (size_t)clip->cols * 4 + (size_t)clip->rows + 1;
+    char *buf = malloc(max_len);
+    if (!buf)
+        return NULL;
+
+    size_t pos = 0;
+    for (int r = 0; r < clip->rows; r++) {
+        for (int c = 0; c < clip->cols; c++) {
+            int cp = codepointFromGlyph((unsigned char)clip->data[r][c]);
+            char tmp[4];
+            int w = encodeUtf8Char(cp, tmp);
+            if (pos + (size_t)w >= max_len) {
+                free(buf);
+                return NULL;
+            }
+            memcpy(buf + pos, tmp, (size_t)w);
+            pos += (size_t)w;
+        }
+        if (r < clip->rows - 1) {
+            buf[pos++] = '\n';
+        }
+    }
+    buf[pos] = '\0';
+    if (utf8_len_out)
+        *utf8_len_out = pos;
+    return buf;
 }
 
 static int systemClipboardWrite(const Clipboard *clip) {
     if (!clip || clip->rows <= 0 || clip->cols <= 0)
         return -1;
 
-    size_t total = 0;
-    for (int r = 0; r < clip->rows; r++) {
-        total += (size_t)clip->cols;
-        if (r < clip->rows - 1)
-            total++;
-    }
-
-    char *buf = malloc(total + 1);
-    if (!buf)
+    size_t utf8_len = 0;
+    char *utf8_buf = convertGlyphBytesToUtf8(clip, &utf8_len);
+    if (!utf8_buf)
         return -1;
-
-    size_t pos = 0;
-    for (int r = 0; r < clip->rows; r++) {
-        memcpy(buf + pos, clip->data[r], (size_t)clip->cols);
-        pos += (size_t)clip->cols;
-        if (r < clip->rows - 1)
-            buf[pos++] = '\n';
-    }
-    buf[total] = '\0';
 
     FILE *fp = popen("xclip -selection clipboard", "w");
     if (!fp) {
-        free(buf);
+        free(utf8_buf);
         return -1;
     }
-    (void)fwrite(buf, 1, total, fp);
+    (void)fwrite(utf8_buf, 1, utf8_len, fp);
     pclose(fp);
-    free(buf);
+    free(utf8_buf);
     return 0;
 }
 
@@ -178,15 +308,21 @@ static Clipboard *clipboardFromText(const char *text) {
     if (!text || text[0] == '\0')
         return NULL;
 
+    char *glyph_text = convertUtf8ToGlyphBytes(text);
+    if (!glyph_text)
+        return NULL;
+
     int lines_cap = 8;
     int lines_count = 0;
     char **lines = malloc(sizeof(char*) * lines_cap);
-    if (!lines)
+    if (!lines) {
+        free(glyph_text);
         return NULL;
+    }
 
     size_t max_cols = 0;
-    const char *line_start = text;
-    const char *p = text;
+    const char *line_start = glyph_text;
+    const char *p = glyph_text;
     while (1) {
         if (*p == '\n' || *p == '\0') {
             size_t line_len = (size_t)(p - line_start);
@@ -199,6 +335,7 @@ static Clipboard *clipboardFromText(const char *text) {
                     for (int i = 0; i < lines_count; i++)
                         free(lines[i]);
                     free(lines);
+                    free(glyph_text);
                     return NULL;
                 }
                 lines = tmp;
@@ -208,6 +345,7 @@ static Clipboard *clipboardFromText(const char *text) {
                 for (int i = 0; i < lines_count; i++)
                     free(lines[i]);
                 free(lines);
+                free(glyph_text);
                 return NULL;
             }
             memcpy(lines[lines_count], line_start, line_len);
@@ -221,6 +359,8 @@ static Clipboard *clipboardFromText(const char *text) {
         }
         p++;
     }
+
+    free(glyph_text);
 
     if (lines_count == 0) {
         free(lines);

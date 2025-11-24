@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <sys/stat.h>
 #include <stdarg.h>
+#include <stdint.h>
 
 /* 
    The following prototypes are added because with _POSIX_C_SOURCE=200112L, 
@@ -21,6 +22,7 @@ ssize_t getline(char **lineptr, size_t *n, FILE *stream);
 char *strdup(const char *s);
 
 #define CTRL_KEY(k) ((k) & 0x1f)
+#define KEY_PASTE 2000
 
 enum EditorKey {
     ARROW_UP = 1000,
@@ -77,6 +79,143 @@ typedef struct {
 
 Clipboard *g_clipboard = NULL;
 
+static void freeClipboard(void) {
+    if (!g_clipboard) {
+        return;
+    }
+    for (int i = 0; i < g_clipboard->rows; i++)
+        free(g_clipboard->data[i]);
+    free(g_clipboard->data);
+    free(g_clipboard);
+    g_clipboard = NULL;
+}
+
+static char *base64_encode(const unsigned char *data, size_t input_length) {
+    static const char encoding_table[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    char *encoded_data;
+    size_t output_length = 4 * ((input_length + 2) / 3);
+    encoded_data = malloc(output_length + 1);
+    if (!encoded_data) return NULL;
+
+    for (size_t i = 0, j = 0; i < input_length;) {
+        uint32_t octet_a = i < input_length ? data[i++] : 0;
+        uint32_t octet_b = i < input_length ? data[i++] : 0;
+        uint32_t octet_c = i < input_length ? data[i++] : 0;
+
+        uint32_t triple = (octet_a << 16u) | (octet_b << 8u) | octet_c;
+
+        encoded_data[j++] = encoding_table[(triple >> 18u) & 0x3Fu];
+        encoded_data[j++] = encoding_table[(triple >> 12u) & 0x3Fu];
+        encoded_data[j++] = encoding_table[(triple >> 6u) & 0x3Fu];
+        encoded_data[j++] = encoding_table[triple & 0x3Fu];
+    }
+
+    size_t mod = input_length % 3;
+    if (mod > 0) {
+        encoded_data[output_length - 1] = '=';
+        if (mod == 1)
+            encoded_data[output_length - 2] = '=';
+    }
+    encoded_data[output_length] = '\0';
+    return encoded_data;
+}
+
+static char *clipboardToText(int trim_trailing_spaces) {
+    if (!g_clipboard) {
+        return NULL;
+    }
+    size_t total = 0;
+    for (int r = 0; r < g_clipboard->rows; r++) {
+        size_t len = strlen(g_clipboard->data[r]);
+        if (trim_trailing_spaces) {
+            while (len > 0 && g_clipboard->data[r][len - 1] == ' ')
+                len--;
+        }
+        total += len;
+        if (r < g_clipboard->rows - 1)
+            total++;
+    }
+    if (total == 0)
+        return NULL;
+
+    char *text = malloc(total + 1);
+    if (!text)
+        return NULL;
+    size_t pos = 0;
+    for (int r = 0; r < g_clipboard->rows; r++) {
+        size_t len = strlen(g_clipboard->data[r]);
+        if (trim_trailing_spaces) {
+            while (len > 0 && g_clipboard->data[r][len - 1] == ' ')
+                len--;
+        }
+        memcpy(text + pos, g_clipboard->data[r], len);
+        pos += len;
+        if (r < g_clipboard->rows - 1)
+            text[pos++] = '\n';
+    }
+    text[pos] = '\0';
+    return text;
+}
+
+static void syncClipboardToTerminal(void) {
+    char *text = clipboardToText(1);
+    if (!text)
+        return;
+    char *encoded = base64_encode((unsigned char *)text, strlen(text));
+    if (encoded) {
+        dprintf(STDOUT_FILENO, "\x1b]52;c;%s\x07", encoded);
+        fsync(STDOUT_FILENO);
+        free(encoded);
+    }
+    free(text);
+}
+
+static void pasteTextIntoSlide(Slide *slide, const char *text, int *cur_row, int *cur_col) {
+    if (!slide || !text || !cur_row || !cur_col) {
+        return;
+    }
+
+    int row = *cur_row;
+    int col = *cur_col;
+    for (const char *p = text; *p && row < g_content_height; p++) {
+        unsigned char ch = (unsigned char)*p;
+        if (ch == '\r') {
+            if (*(p + 1) == '\n')
+                p++;
+            col = 0;
+            row++;
+        } else if (ch == '\n') {
+            col = 0;
+            row++;
+        } else if (ch == '\t') {
+            int spaces = 4 - (col % 4);
+            for (int s = 0; s < spaces && row < g_content_height; s++) {
+                slide->lines[row][col] = ' ';
+                col++;
+                if (col >= g_content_width) {
+                    col = 0;
+                    row++;
+                }
+            }
+        } else if (isprint(ch)) {
+            slide->lines[row][col] = (char)ch;
+            col++;
+            if (col >= g_content_width) {
+                col = 0;
+                row++;
+            }
+        }
+    }
+
+    if (row >= g_content_height) {
+        row = g_content_height - 1;
+        col = g_content_width - 1;
+    }
+    *cur_row = row;
+    *cur_col = col;
+}
+
 /************************************
  * Terminal raw mode helper functions
  ************************************/
@@ -100,7 +239,34 @@ void enableRawMode(void) {
 }
 
 /* Read a key from STDIN (handles escape sequences for arrow keys) */
-int readKey(void) {
+static void enableBracketedPaste(void) {
+    if (write(STDOUT_FILENO, "\x1b[?2004h", 8) < 0) {
+        perror("write");
+    }
+}
+
+static void disableBracketedPaste(void) {
+    if (write(STDOUT_FILENO, "\x1b[?2004l", 8) < 0) {
+        perror("write");
+    }
+}
+
+static void appendChar(char **buffer, size_t *len, size_t *cap, char ch) {
+    if (!buffer || !len || !cap) return;
+    if (*len + 1 >= *cap) {
+        size_t new_cap = (*cap == 0) ? 64 : (*cap * 2);
+        char *new_buf = realloc(*buffer, new_cap);
+        if (!new_buf) return;
+        *buffer = new_buf;
+        *cap = new_cap;
+    }
+    (*buffer)[(*len)++] = ch;
+}
+
+int readKeyWithPaste(char **paste_text) {
+    if (paste_text) {
+        *paste_text = NULL;
+    }
     char c;
     ssize_t nread;
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1) {
@@ -111,6 +277,49 @@ int readKey(void) {
         if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
         if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
         if (seq[0] == '[') {
+            if (seq[1] == '2') {
+                char paste_seq[3];
+                if (read(STDIN_FILENO, &paste_seq[0], 1) != 1) return '\x1b';
+                if (read(STDIN_FILENO, &paste_seq[1], 1) != 1) return '\x1b';
+                if (paste_seq[0] == '0' && paste_seq[1] == '0') {
+                    char tilde;
+                    if (read(STDIN_FILENO, &tilde, 1) != 1) return '\x1b';
+                    if (tilde == '~' && paste_text) {
+                        char *buffer = NULL;
+                        size_t len = 0, cap = 0;
+                        while (1) {
+                            char paste_ch;
+                            if (read(STDIN_FILENO, &paste_ch, 1) != 1)
+                                continue;
+                            if (paste_ch == '\x1b') {
+                                char end_seq[4];
+                                if (read(STDIN_FILENO, &end_seq[0], 1) != 1) continue;
+                                if (end_seq[0] != '[') {
+                                    appendChar(&buffer, &len, &cap, paste_ch);
+                                    appendChar(&buffer, &len, &cap, end_seq[0]);
+                                    continue;
+                                }
+                                if (read(STDIN_FILENO, &end_seq[1], 1) != 1) continue;
+                                if (read(STDIN_FILENO, &end_seq[2], 1) != 1) continue;
+                                if (read(STDIN_FILENO, &end_seq[3], 1) != 1) continue;
+                                if (end_seq[1] == '0' && end_seq[2] == '1' && end_seq[3] == '~') {
+                                    appendChar(&buffer, &len, &cap, '\0');
+                                    *paste_text = buffer;
+                                    return KEY_PASTE;
+                                }
+                                appendChar(&buffer, &len, &cap, paste_ch);
+                                appendChar(&buffer, &len, &cap, end_seq[0]);
+                                appendChar(&buffer, &len, &cap, end_seq[1]);
+                                appendChar(&buffer, &len, &cap, end_seq[2]);
+                                appendChar(&buffer, &len, &cap, end_seq[3]);
+                                continue;
+                            }
+                            appendChar(&buffer, &len, &cap, paste_ch);
+                        }
+                    }
+                }
+                return '\x1b';
+            }
             switch (seq[1]) {
                 case 'A': return ARROW_UP;
                 case 'B': return ARROW_DOWN;
@@ -121,6 +330,10 @@ int readKey(void) {
         return '\x1b';
     }
     return c;
+}
+
+int readKey(void) {
+    return readKeyWithPaste(NULL);
 }
 
 /************************************
@@ -309,11 +522,13 @@ void displayHelp(void) {
     row++;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+T : Toggle rectangular selection mode (in Edit mode)", row, col);
     row++;
-    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+C : Copy selected region (in Toggle mode)", row, col);
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+C : Copy selected region to app & system clipboards", row, col);
     row++;
-    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+X : Cut selected region (in Toggle mode)", row, col);
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+X : Cut selected region to app & system clipboards", row, col);
     row++;
-    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+V : Paste copied region (in Edit mode)", row, col);
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+V : Paste clipboard contents (in Edit mode)", row, col);
+    row++;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHUse terminal paste (e.g. CTRL+SHIFT+V) for external text", row, col);
     row += 2;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHPress CTRL+H again to return.", row, col);
 }
@@ -468,7 +683,9 @@ void enterEditMode(void) {
     int cur_row = g_last_edit_row;
     int cur_col = g_last_edit_col;
     int ch, i;
-    
+
+    enableBracketedPaste();
+
     /* Backup for undo */
     if (slide->undo_lines) {
         for (i = 0; i < g_content_height; i++)
@@ -478,10 +695,17 @@ void enterEditMode(void) {
     slide->undo_lines = malloc(sizeof(char*) * g_content_height);
     for (i = 0; i < g_content_height; i++)
         slide->undo_lines[i] = strdup(slide->lines[i]);
-    
+
     while (1) {
         refreshEditScreen(cur_row, cur_col);
-        ch = readKey();
+        char *paste_text = NULL;
+        ch = readKeyWithPaste(&paste_text);
+        if (ch == KEY_PASTE) {
+            pasteTextIntoSlide(slide, paste_text, &cur_row, &cur_col);
+            free(paste_text);
+            continue;
+        }
+        free(paste_text);
         if (ch == CTRL_KEY('S')) {
             saveSlides();
             dprintf(STDOUT_FILENO, "\x1b[%d;2HSlideset saved!", g_term_rows - 1);
@@ -539,7 +763,7 @@ void enterEditMode(void) {
                 cur_col = 0;
                 cur_row++;
             }
-        } else if (ch == CTRL_KEY('T')) {
+        } else if (ch == CTRL_KEY('T')) { /* Toggle selection/copy/cut */
             int toggle_start_row = cur_row, toggle_start_col = cur_col;
             int toggle_row = cur_row, toggle_col = cur_col;
             int toggle_ch;
@@ -558,12 +782,7 @@ void enterEditMode(void) {
                     int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
                     int sel_rows = sel_row_end - sel_row_start + 1;
                     int sel_cols = sel_col_end - sel_col_start + 1;
-                    if (g_clipboard) {
-                        for (i = 0; i < g_clipboard->rows; i++)
-                            free(g_clipboard->data[i]);
-                        free(g_clipboard->data);
-                        free(g_clipboard);
-                    }
+                    freeClipboard();
                     g_clipboard = malloc(sizeof(Clipboard));
                     g_clipboard->rows = sel_rows;
                     g_clipboard->cols = sel_cols;
@@ -580,6 +799,7 @@ void enterEditMode(void) {
                             g_slides[g_current_slide]->lines[sel_row_start + i][sel_col_start + j] = ' ';
                         }
                     }
+                    syncClipboardToTerminal();
                     dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion cut!", g_term_rows - 1);
                     fsync(STDOUT_FILENO);
                     sleep(1);
@@ -593,12 +813,7 @@ void enterEditMode(void) {
                     int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
                     int sel_rows = sel_row_end - sel_row_start + 1;
                     int sel_cols = sel_col_end - sel_col_start + 1;
-                    if (g_clipboard) {
-                        for (i = 0; i < g_clipboard->rows; i++)
-                            free(g_clipboard->data[i]);
-                        free(g_clipboard->data);
-                        free(g_clipboard);
-                    }
+                    freeClipboard();
                     g_clipboard = malloc(sizeof(Clipboard));
                     g_clipboard->rows = sel_rows;
                     g_clipboard->cols = sel_cols;
@@ -610,6 +825,7 @@ void enterEditMode(void) {
                                 sel_cols);
                         g_clipboard->data[i][sel_cols] = '\0';
                     }
+                    syncClipboardToTerminal();
                     dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion copied!", g_term_rows - 1);
                     fsync(STDOUT_FILENO);
                     sleep(1);
@@ -628,18 +844,17 @@ void enterEditMode(void) {
             }
         } else if (ch == CTRL_KEY('V')) {
             if (g_clipboard) {
-                int r, c;
-                for (r = 0; r < g_clipboard->rows; r++) {
-                    if (cur_row + r >= g_content_height) break;
-                    for (c = 0; c < g_clipboard->cols; c++) {
-                        if (cur_col + c >= g_content_width) break;
-                        slide->lines[cur_row + r][cur_col + c] = g_clipboard->data[r][c];
-                    }
+                char *text = clipboardToText(0);
+                if (text) {
+                    pasteTextIntoSlide(slide, text, &cur_row, &cur_col);
+                    free(text);
                 }
             }
         }
     }
-    
+
+    disableBracketedPaste();
+
     g_last_edit_row = cur_row;
     g_last_edit_col = cur_col;
     for (i = 0; i < g_content_height; i++)
@@ -712,5 +927,6 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < g_slide_count; i++)
         freeSlide(g_slides[i]);
     free(g_slides);
+    freeClipboard();
     return 0;
 }

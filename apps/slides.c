@@ -81,6 +81,8 @@ static void systemClipboardWrite(const char *s);
 static char *systemClipboardRead(void);
 static int utf8Decode(const char *s, int *out_cp);
 static char asciiFromCodepoint(int cp);
+static const char *glyphFromChar(char ch);
+static void drawGlyphAt(int row, int col, char ch, int inverse);
 
 static void freeClipboardStruct(Clipboard *clip) {
     if (!clip)
@@ -106,7 +108,8 @@ static void exportClipboardToSystem(void) {
         int len = g_clipboard->cols;
         while (len > 0 && g_clipboard->data[r][len - 1] == ' ')
             len--;
-        total += (size_t)len;
+        for (int c = 0; c < len; c++)
+            total += strlen(glyphFromChar(g_clipboard->data[r][c]));
         if (r < g_clipboard->rows - 1)
             total++;
     }
@@ -118,8 +121,12 @@ static void exportClipboardToSystem(void) {
         int len = g_clipboard->cols;
         while (len > 0 && g_clipboard->data[r][len - 1] == ' ')
             len--;
-        memcpy(buf + pos, g_clipboard->data[r], len);
-        pos += (size_t)len;
+        for (int c = 0; c < len; c++) {
+            const char *glyph = glyphFromChar(g_clipboard->data[r][c]);
+            size_t glen = strlen(glyph);
+            memcpy(buf + pos, glyph, glen);
+            pos += glen;
+        }
         if (r < g_clipboard->rows - 1)
             buf[pos++] = '\n';
     }
@@ -127,6 +134,22 @@ static void exportClipboardToSystem(void) {
     systemClipboardWrite(buf);
     free(buf);
 }
+
+/* Internal glyph placeholders used to render box-drawing characters while
+   keeping slide storage single-byte per column. These values map to actual
+   box glyphs when drawing to the terminal or exporting to the system
+   clipboard. */
+#define BOX_H 1
+#define BOX_V 2
+#define BOX_UL 3
+#define BOX_UR 4
+#define BOX_LL 5
+#define BOX_LR 6
+#define BOX_T 7
+#define BOX_B 8
+#define BOX_L 9
+#define BOX_R 10
+#define BOX_C 11
 
 static int utf8Decode(const char *s, int *out_cp) {
     unsigned char c0 = (unsigned char)s[0];
@@ -156,23 +179,64 @@ static char asciiFromCodepoint(int cp) {
         return ' ';
     if (cp >= 32 && cp <= 126)
         return (char)cp;
-    /* Map common box-drawing characters to ASCII fallbacks. */
+    /* Map common box-drawing characters to internal placeholders. */
     switch (cp) {
-        case 0x2500: case 0x2501: case 0x2504: case 0x2505:
-        case 0x250c: case 0x2510: case 0x2514: case 0x2518:
-        case 0x251c: case 0x2524: case 0x252c: case 0x2534:
-        case 0x253c: case 0x254b: case 0x2550: case 0x2554:
-        case 0x2557: case 0x255a: case 0x255d: case 0x2560:
-        case 0x2563: case 0x2566: case 0x2569: case 0x256c:
-            return (cp == 0x2500 || cp == 0x2501 || cp == 0x2504
-                    || cp == 0x2505 || cp == 0x2550) ? '-' : '+';
-        case 0x2502: case 0x2503: case 0x2551:
-            return '|';
+        case 0x2500: case 0x2501: case 0x2502: case 0x2503:
+        case 0x2504: case 0x2505: case 0x2550: case 0x2551:
+            return (cp == 0x2502 || cp == 0x2503 || cp == 0x2551) ? BOX_V : BOX_H;
+        case 0x250c: case 0x2554:
+            return BOX_UL;
+        case 0x2510: case 0x2557:
+            return BOX_UR;
+        case 0x2514: case 0x255a:
+            return BOX_LL;
+        case 0x2518: case 0x255d:
+            return BOX_LR;
+        case 0x252c: case 0x2566:
+            return BOX_T;
+        case 0x2534: case 0x2569:
+            return BOX_B;
+        case 0x251c: case 0x2560:
+            return BOX_L;
+        case 0x2524: case 0x2563:
+            return BOX_R;
+        case 0x253c: case 0x254b: case 0x256c:
+            return BOX_C;
         case 0x00a0: /* non-breaking space */
             return ' ';
         default:
             return '?';
     }
+}
+
+static const char *glyphFromChar(char ch) {
+    switch (ch) {
+        case BOX_H: return "\u2500"; /* ─ */
+        case BOX_V: return "\u2502"; /* │ */
+        case BOX_UL: return "\u250c"; /* ┌ */
+        case BOX_UR: return "\u2510"; /* ┐ */
+        case BOX_LL: return "\u2514"; /* └ */
+        case BOX_LR: return "\u2518"; /* ┘ */
+        case BOX_T: return "\u252c";  /* ┬ */
+        case BOX_B: return "\u2534";  /* ┴ */
+        case BOX_L: return "\u251c";  /* ├ */
+        case BOX_R: return "\u2524";  /* ┤ */
+        case BOX_C: return "\u253c";  /* ┼ */
+        default: {
+            static char buf[2];
+            buf[0] = ch;
+            buf[1] = '\0';
+            return buf;
+        }
+    }
+}
+
+static void drawGlyphAt(int row, int col, char ch, int inverse) {
+    const char *glyph = glyphFromChar(ch);
+    if (inverse)
+        dprintf(STDOUT_FILENO, "\x1b[%d;%dH\x1b[7m%s\x1b[0m", row, col, glyph);
+    else
+        dprintf(STDOUT_FILENO, "\x1b[%d;%dH%s", row, col, glyph);
 }
 
 static Clipboard *clipboardFromText(const char *text) {
@@ -376,11 +440,9 @@ void drawBorder(void) {
  */
 void drawFullSlideContent(Slide *slide) {
     for (int i = 0; i < g_content_height; i++) {
-        dprintf(STDOUT_FILENO, "\x1b[%d;%dH%-*s", 
-            g_content_offset_y + i, 
-            g_content_offset_x, 
-            g_content_width, 
-            slide->lines[i]);
+        for (int c = 0; c < g_content_width; c++) {
+            drawGlyphAt(g_content_offset_y + i, g_content_offset_x + c, slide->lines[i][c], 0);
+        }
     }
 }
 
@@ -421,7 +483,7 @@ void drawToggleOverlay(int start_row, int start_col, int curr_row, int curr_col)
     for (int r = row1; r <= row2; r++) {
         for (int c = col1; c <= col2; c++) {
             char ch = g_slides[g_current_slide]->lines[r][c];
-            dprintf(STDOUT_FILENO, "\x1b[%d;%dH\x1b[7m%c\x1b[0m", g_content_offset_y + r, g_content_offset_x + c, ch);
+            drawGlyphAt(g_content_offset_y + r, g_content_offset_x + c, ch, 1);
         }
     }
 }

@@ -113,6 +113,17 @@ char *trim_left(char *str) {
     return str;
 }
 
+// is_line_empty: Returns 1 if the string contains only whitespace characters.
+// Useful for handling markdown blank lines even when they contain spaces or tabs.
+static int is_line_empty(const char *str) {
+    while (*str) {
+        if (!isspace((unsigned char)*str))
+            return 0;
+        str++;
+    }
+    return 1;
+}
+
 // remove_trailing_hashes: Removes trailing spaces and '#' characters from header text
 // if the '#' markers are preceded by at least one whitespace.
 // This ensures that headers like "### MY HEADER ###" are printed as "MY HEADER".
@@ -197,10 +208,10 @@ int main(int argc, char *argv[]) {
         // Trim leading whitespace.
         char *trimmed = trim_left(cleaned);
 
-        // If the line is empty, only print a newline if the previous line wasn't a list item.
-        if (*trimmed == '\0') {
-            if (!last_was_list_item)
-                printf("\n");
+        // If the line is empty (or contains only whitespace), emit a blank line and reset list state.
+        if (is_line_empty(trimmed)) {
+            printf("\n");
+            last_was_list_item = 0;
             continue;
         }
 

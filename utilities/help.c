@@ -111,7 +111,6 @@ int main(int argc, char *argv[]) {
     printf("  csvplot  : ASCII x-y plotter for .csv files.\n");
     printf("  csvprint : Pretty prints a .csv file.\n");
     printf("  csvstat  : Calculate statistics from .csv file columns.\n");    
-    printf("  mdread   : Pretty-prints .md files. Use: mdread readme.md\n");
     printf("  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n");
     printf("             For help CTRL+H when the app is running.\n");
     printf("  table    : Lightweight spreadsheet tool, open file 'table mytable.csv'.\n");

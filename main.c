@@ -41,12 +41,67 @@ char base_directory[PATH_MAX] = {0};
 char **realtime_commands = NULL;
 int realtime_command_count = 0;
 
-/* 
+/*
  * Global copies of the original command-line arguments.
  * These will be used by the "restart" command when re-executing the new binary.
  */
 static int g_argc;
 static char **g_argv;
+
+static FILE *log_file = NULL;
+static char log_file_path[PATH_MAX] = {0};
+
+static void stop_logging(void) {
+    if (log_file != NULL) {
+        if (fclose(log_file) != 0) {
+            perror("_TOFILE: fclose");
+        }
+        log_file = NULL;
+    }
+    log_file_path[0] = '\0';
+}
+
+static int start_logging(const char *path) {
+    if (path == NULL || path[0] == '\0') {
+        fprintf(stderr, "_TOFILE: missing file path for --start\n");
+        return -1;
+    }
+
+    stop_logging();
+
+    log_file = fopen(path, "w");
+    if (!log_file) {
+        perror("_TOFILE: fopen");
+        return -1;
+    }
+
+    if (snprintf(log_file_path, sizeof(log_file_path), "%s", path) >= (int)sizeof(log_file_path)) {
+        fprintf(stderr, "_TOFILE: log path too long\n");
+        stop_logging();
+        return -1;
+    }
+
+    if (setvbuf(log_file, NULL, _IOLBF, 0) != 0) {
+        perror("_TOFILE: setvbuf");
+        stop_logging();
+        return -1;
+    }
+
+    printf("_TOFILE: logging started to %s\n", log_file_path);
+    return 0;
+}
+
+static void log_output(const char *data, size_t len) {
+    if (log_file == NULL || data == NULL || len == 0)
+        return;
+
+    size_t written = fwrite(data, 1, len, log_file);
+    if (written < len) {
+        perror("_TOFILE: fwrite");
+        stop_logging();
+    }
+    fflush(log_file);
+}
 
 static int realtime_command_exists(const char *command_name) {
     for (int i = 0; i < realtime_command_count; i++) {
@@ -344,7 +399,9 @@ int execute_command_with_paging(CommandStruct *cmd) {
      * - The "-nopaging" flag is provided, or
      * - The command is in the realtime command list loaded from apps/ folder.
      */
-    if (nopaging || is_realtime_command(cmd->command)) {
+    int realtime_mode = nopaging || is_realtime_command(cmd->command);
+
+    if (realtime_mode && log_file == NULL) {
         return execute_command(cmd);
     }
     
@@ -387,13 +444,16 @@ int execute_command_with_paging(CommandStruct *cmd) {
     time_t start_time = time(NULL);
     int timeout_seconds = 5; // Timeout in seconds.
     size_t total_size = 0;
-    size_t buffer_size = 4096;
-    char *output = malloc(buffer_size);
-    if (!output) {
-        perror("malloc");
-        close(pipefd[0]);
-        int status; waitpid(pid, &status, 0);
-        return (WIFEXITED(status) && WEXITSTATUS(status) == 127) ? -1 : 0;
+    size_t buffer_size = realtime_mode ? 0 : 4096;
+    char *output = NULL;
+    if (!realtime_mode) {
+        output = malloc(buffer_size);
+        if (!output) {
+            perror("malloc");
+            close(pipefd[0]);
+            int status; waitpid(pid, &status, 0);
+            return (WIFEXITED(status) && WEXITSTATUS(status) == 127) ? -1 : 0;
+        }
     }
     char buffer[4096];
     int child_status = 0;
@@ -408,20 +468,28 @@ int execute_command_with_paging(CommandStruct *cmd) {
         if (sel_ret > 0 && FD_ISSET(pipefd[0], &readfds)) {
             ssize_t bytes = read(pipefd[0], buffer, sizeof(buffer));
             if (bytes > 0) {
-                if (total_size + bytes >= buffer_size) {
-                    buffer_size *= 2;
-                    char *temp = realloc(output, buffer_size);
-                    if (!temp) {
-                        perror("realloc");
-                        free(output);
-                        close(pipefd[0]);
-                        int status; waitpid(pid, &status, 0);
-                        return (WIFEXITED(status) && WEXITSTATUS(status) == 127) ? -1 : 0;
+                if (!realtime_mode) {
+                    if (total_size + bytes >= buffer_size) {
+                        buffer_size *= 2;
+                        char *temp = realloc(output, buffer_size);
+                        if (!temp) {
+                            perror("realloc");
+                            free(output);
+                            close(pipefd[0]);
+                            int status; waitpid(pid, &status, 0);
+                            return (WIFEXITED(status) && WEXITSTATUS(status) == 127) ? -1 : 0;
+                        }
+                        output = temp;
                     }
-                    output = temp;
+                    memcpy(output + total_size, buffer, bytes);
+                    total_size += bytes;
+                } else {
+                    if (fwrite(buffer, 1, (size_t)bytes, stdout) < (size_t)bytes) {
+                        perror("write");
+                    }
+                    fflush(stdout);
                 }
-                memcpy(output + total_size, buffer, bytes);
-                total_size += bytes;
+                log_output(buffer, (size_t)bytes);
             } else if (bytes == 0) {
                 // End-of-file reached.
                 break;
@@ -443,11 +511,17 @@ int execute_command_with_paging(CommandStruct *cmd) {
     if (waitpid(pid, &child_status, 0) < 0)
         perror("waitpid");
 
+    if (realtime_mode) {
+        return (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 127) ? -1 : 0;
+    }
+
     if (total_size == 0) {
         free(output);
         return (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 127) ? -1 : 0;
     }
     output[total_size] = '\0';
+
+    log_output(output, total_size);
     
     /*
      * Manually split output into lines while preserving empty lines.
@@ -514,6 +588,49 @@ static void run_shell_command(const char *shell_command) {
         int status;
         waitpid(pid, &status, 0);
     }
+}
+
+static int handle_tofile(CommandStruct *cmd) {
+    if (strcmp(cmd->command, "_TOFILE") != 0)
+        return 0;
+
+    int start_flag = 0;
+    int stop_flag = 0;
+    const char *path = NULL;
+
+    for (int i = 0; i < cmd->opt_count; i++) {
+        if (strcmp(cmd->options[i], "-file") == 0 && i + 1 < cmd->opt_count) {
+            path = cmd->options[i + 1];
+            i++;
+        } else if (strcmp(cmd->options[i], "--start") == 0) {
+            start_flag = 1;
+        } else if (strcmp(cmd->options[i], "--stop") == 0) {
+            stop_flag = 1;
+        }
+    }
+
+    if (start_flag && stop_flag) {
+        fprintf(stderr, "_TOFILE: cannot use --start and --stop together\n");
+        return 1;
+    }
+
+    if (start_flag) {
+        (void)start_logging(path);
+        return 1;
+    }
+
+    if (stop_flag) {
+        if (log_file != NULL) {
+            printf("_TOFILE: logging stopped (%s)\n", log_file_path[0] != '\0' ? log_file_path : "<unknown>");
+        } else {
+            printf("_TOFILE: logging was not active\n");
+        }
+        stop_logging();
+        return 1;
+    }
+
+    fprintf(stderr, "Usage: _TOFILE -file <path> --start | _TOFILE --stop\n");
+    return 1;
 }
 
 int main(int argc, char *argv[]) {
@@ -741,6 +858,11 @@ int main(int argc, char *argv[]) {
         }
         /* Default processing for other commands */
         parse_input(input, &cmd);
+        if (handle_tofile(&cmd)) {
+            free(input);
+            free_command_struct(&cmd);
+            continue;
+        }
         if (execute_command_with_paging(&cmd) == -1) {
             run_shell_command(input);
         }
@@ -750,7 +872,9 @@ int main(int argc, char *argv[]) {
     
     /* Free the realtime command list resources before exiting */
     free_realtime_commands();
-    
+
+    stop_logging();
+
     printf("Exiting terminal...\n");
     return 0;
 }

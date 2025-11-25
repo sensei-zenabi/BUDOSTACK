@@ -11,7 +11,7 @@ Source Material:
 - FIN GDP forecast data [economy-finance.ec.europa.eu] 
 
 
-European Commission estimates that Finland's GDP grows +0.5% in 2025.
+European Commission estimates that Finland's GDP grows +0.1% in 2025.
 
   2024 | GDB: 276.00 BEur       | Debt: 171.21 Beur
   2025 | GDB: 278.76 BEur +0.1% | Debt: 186.14 Beur +8.7%

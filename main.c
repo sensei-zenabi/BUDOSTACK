@@ -67,17 +67,49 @@ static int start_logging(const char *path) {
         return -1;
     }
 
+    if (snprintf(log_file_path, sizeof(log_file_path), "%s", path) >= (int)sizeof(log_file_path)) {
+        fprintf(stderr, "_TOFILE: log path too long\n");
+        log_file_path[0] = '\0';
+        return -1;
+    }
+
+    char parent_dir[PATH_MAX];
+    if (snprintf(parent_dir, sizeof(parent_dir), "%s", path) >= (int)sizeof(parent_dir)) {
+        fprintf(stderr, "_TOFILE: log path too long\n");
+        log_file_path[0] = '\0';
+        return -1;
+    }
+    char *last_slash = strrchr(parent_dir, '/');
+    if (last_slash != NULL && last_slash != parent_dir) {
+        *last_slash = '\0';
+    } else if (last_slash == parent_dir) {
+        parent_dir[1] = '\0';
+    }
+    if (last_slash != NULL) {
+        struct stat sb;
+        if (stat(parent_dir, &sb) != 0) {
+            perror("_TOFILE: parent directory");
+            log_file_path[0] = '\0';
+            return -1;
+        }
+        if (!S_ISDIR(sb.st_mode)) {
+            fprintf(stderr, "_TOFILE: parent path is not a directory: %s\n", parent_dir);
+            log_file_path[0] = '\0';
+            return -1;
+        }
+        if (access(parent_dir, W_OK) != 0) {
+            perror("_TOFILE: directory not writable");
+            log_file_path[0] = '\0';
+            return -1;
+        }
+    }
+
     stop_logging();
 
     log_file = fopen(path, "w");
     if (!log_file) {
         perror("_TOFILE: fopen");
-        return -1;
-    }
-
-    if (snprintf(log_file_path, sizeof(log_file_path), "%s", path) >= (int)sizeof(log_file_path)) {
-        fprintf(stderr, "_TOFILE: log path too long\n");
-        stop_logging();
+        log_file_path[0] = '\0';
         return -1;
     }
 

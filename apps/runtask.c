@@ -40,6 +40,7 @@
 #include <stdint.h>
 #include <limits.h>   // PATH_MAX
 #include <math.h>
+#include <sys/stat.h>
 
 #define MAX_VARIABLES 128
 #define MAX_LABELS 256
@@ -114,6 +115,8 @@ typedef struct {
 volatile sig_atomic_t stop = 0;
 
 static char initial_argv0[PATH_MAX];
+static FILE *log_file = NULL;
+static char log_file_path[PATH_MAX];
 
 static void set_initial_argv0(const char *argv0) {
     if (!argv0) {
@@ -124,6 +127,95 @@ static void set_initial_argv0(const char *argv0) {
     if (snprintf(initial_argv0, sizeof(initial_argv0), "%s", argv0) >= (int)sizeof(initial_argv0)) {
         initial_argv0[sizeof(initial_argv0) - 1] = '\0';
     }
+}
+
+static void stop_logging(void) {
+    if (log_file) {
+        if (fclose(log_file) != 0) {
+            perror("_TOFILE: fclose");
+        }
+        log_file = NULL;
+    }
+    log_file_path[0] = '\0';
+}
+
+static int start_logging(const char *path) {
+    if (!path || !*path) {
+        fprintf(stderr, "_TOFILE: missing file path for --start\n");
+        return -1;
+    }
+
+    if (snprintf(log_file_path, sizeof(log_file_path), "%s", path) >= (int)sizeof(log_file_path)) {
+        fprintf(stderr, "_TOFILE: log path too long\n");
+        log_file_path[0] = '\0';
+        return -1;
+    }
+
+    char parent_dir[PATH_MAX];
+    if (snprintf(parent_dir, sizeof(parent_dir), "%s", path) >= (int)sizeof(parent_dir)) {
+        fprintf(stderr, "_TOFILE: log path too long\n");
+        log_file_path[0] = '\0';
+        return -1;
+    }
+
+    char *last_slash = strrchr(parent_dir, '/');
+    if (last_slash != NULL && last_slash != parent_dir) {
+        *last_slash = '\0';
+    } else if (last_slash == parent_dir) {
+        parent_dir[1] = '\0';
+    }
+
+    if (last_slash != NULL) {
+        struct stat sb;
+        if (stat(parent_dir, &sb) != 0) {
+            perror("_TOFILE: parent directory");
+            log_file_path[0] = '\0';
+            return -1;
+        }
+        if (!S_ISDIR(sb.st_mode)) {
+            fprintf(stderr, "_TOFILE: parent path is not a directory: %s\n", parent_dir);
+            log_file_path[0] = '\0';
+            return -1;
+        }
+        if (access(parent_dir, W_OK) != 0) {
+            perror("_TOFILE: directory not writable");
+            log_file_path[0] = '\0';
+            return -1;
+        }
+    }
+
+    stop_logging();
+
+    log_file = fopen(path, "w");
+    if (!log_file) {
+        perror("_TOFILE: fopen");
+        log_file_path[0] = '\0';
+        return -1;
+    }
+
+    if (setvbuf(log_file, NULL, _IOLBF, 0) != 0) {
+        perror("_TOFILE: setvbuf");
+        stop_logging();
+        return -1;
+    }
+
+    printf("_TOFILE: logging started to %s\n", log_file_path);
+    return 0;
+}
+
+static void log_output(const char *data, size_t len) {
+    if (!log_file || !data || len == 0) {
+        return;
+    }
+
+    size_t written = fwrite(data, 1, len, log_file);
+    if (written < len) {
+        perror("_TOFILE: fwrite");
+        stop_logging();
+        return;
+    }
+
+    fflush(log_file);
 }
 
 static const char *get_base_dir(void) {
@@ -3139,16 +3231,17 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "PRINT: unexpected characters at %d\n", script[pc].source_line);
                 }
             }
-		    if (ok) {
-		        out_buf[out_len] = '\0';
-		        size_t len = strlen(out_buf);
-		        if (len > 0 && out_buf[len - 1] == '\n') {
-		            fputs(out_buf, stdout);
-		        } else {
-		            fputs(out_buf, stdout);
-		            fflush(stdout); // keep INPUT on the same line if needed
-		        }
-		    }
+                    if (ok) {
+                        out_buf[out_len] = '\0';
+                        size_t len = strlen(out_buf);
+                        if (len > 0 && out_buf[len - 1] == '\n') {
+                            fputs(out_buf, stdout);
+                        } else {
+                            fputs(out_buf, stdout);
+                            fflush(stdout); // keep INPUT on the same line if needed
+                        }
+                        log_output(out_buf, len);
+                    }
 		    free(out_buf);
                     note_branch_progress(if_stack, &if_sp);
         }
@@ -3569,6 +3662,42 @@ int main(int argc, char *argv[]) {
 
             expand_argv_variables(argv_heap, argcnt, script[pc].source_line, debug);
 
+            if (argcnt > 0 && strcmp(argv_heap[0], "_TOFILE") == 0) {
+                int start_flag = 0;
+                int stop_flag = 0;
+                const char *path = NULL;
+
+                for (int i = 1; i < argcnt; ++i) {
+                    if (strcmp(argv_heap[i], "-file") == 0 && i + 1 < argcnt) {
+                        path = argv_heap[i + 1];
+                        i++;
+                    } else if (strcmp(argv_heap[i], "--start") == 0) {
+                        start_flag = 1;
+                    } else if (strcmp(argv_heap[i], "--stop") == 0) {
+                        stop_flag = 1;
+                    }
+                }
+
+                if (start_flag && stop_flag) {
+                    fprintf(stderr, "_TOFILE: cannot use --start and --stop together\n");
+                } else if (start_flag) {
+                    (void)start_logging(path);
+                } else if (stop_flag) {
+                    if (log_file != NULL) {
+                        printf("_TOFILE: logging stopped (%s)\n", log_file_path[0] != '\0' ? log_file_path : "<unknown>");
+                    } else {
+                        printf("_TOFILE: logging was not active\n");
+                    }
+                    stop_logging();
+                } else {
+                    fprintf(stderr, "Usage: _TOFILE -file <path> --start | _TOFILE --stop\n");
+                }
+
+                free_argv(argv_heap);
+                note_branch_progress(if_stack, &if_sp);
+                continue;
+            }
+
             if (argcnt > 0) {
                 explicit_path_requested = strchr(argv_heap[0], '/') != NULL;
             }
@@ -3671,8 +3800,11 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
+            bool log_child_output = (log_file != NULL && blocking_mode && !capture_output);
+            bool need_pipe = capture_output || log_child_output;
+
             int pipefd[2] = { -1, -1 };
-            if (capture_output) {
+            if (need_pipe) {
                 if (pipe(pipefd) < 0) {
                     perror("pipe");
                     free_argv(argv_heap);
@@ -3683,16 +3815,20 @@ int main(int argc, char *argv[]) {
             pid_t pid = fork();
             if (pid < 0) {
                 perror("fork");
-                if (capture_output) {
+                if (need_pipe) {
                     close(pipefd[0]);
                     close(pipefd[1]);
                 }
                 free_argv(argv_heap);
                 continue;
             } else if (pid == 0) {
-                if (capture_output) {
+                if (need_pipe) {
                     close(pipefd[0]);
                     if (dup2(pipefd[1], STDOUT_FILENO) < 0) {
+                        perror("dup2");
+                        _exit(EXIT_FAILURE);
+                    }
+                    if (dup2(pipefd[1], STDERR_FILENO) < 0) {
                         perror("dup2");
                         _exit(EXIT_FAILURE);
                     }
@@ -3707,31 +3843,40 @@ int main(int argc, char *argv[]) {
                 }
                 _exit(EXIT_FAILURE);
             } else {
-                if (capture_output) {
+                if (need_pipe) {
                     close(pipefd[1]);
                     char buffer[4096];
                     ssize_t rd;
                     while (1) {
                         rd = read(pipefd[0], buffer, sizeof(buffer));
                         if (rd > 0) {
-                            if (captured_len + (size_t)rd + 1 > captured_cap) {
-                                size_t new_cap = captured_cap ? captured_cap : 128;
-                                while (captured_len + (size_t)rd + 1 > new_cap) {
-                                    new_cap *= 2;
+                            if (capture_output) {
+                                if (captured_len + (size_t)rd + 1 > captured_cap) {
+                                    size_t new_cap = captured_cap ? captured_cap : 128;
+                                    while (captured_len + (size_t)rd + 1 > new_cap) {
+                                        new_cap *= 2;
+                                    }
+                                    char *tmp = (char *)realloc(captured_output, new_cap);
+                                    if (!tmp) {
+                                        perror("realloc");
+                                        free(captured_output);
+                                        captured_output = NULL;
+                                        captured_cap = captured_len = 0;
+                                        break;
+                                    }
+                                    captured_output = tmp;
+                                    captured_cap = new_cap;
                                 }
-                                char *tmp = (char *)realloc(captured_output, new_cap);
-                                if (!tmp) {
-                                    perror("realloc");
-                                    free(captured_output);
-                                    captured_output = NULL;
-                                    captured_cap = captured_len = 0;
-                                    break;
-                                }
-                                captured_output = tmp;
-                                captured_cap = new_cap;
+                                memcpy(captured_output + captured_len, buffer, (size_t)rd);
+                                captured_len += (size_t)rd;
                             }
-                            memcpy(captured_output + captured_len, buffer, (size_t)rd);
-                            captured_len += (size_t)rd;
+                            if (log_child_output) {
+                                if (fwrite(buffer, 1, (size_t)rd, stdout) < (size_t)rd) {
+                                    perror("write");
+                                }
+                                fflush(stdout);
+                                log_output(buffer, (size_t)rd);
+                            }
                         } else if (rd == 0) {
                             break;
                         } else {
@@ -3742,12 +3887,14 @@ int main(int argc, char *argv[]) {
                             break;
                         }
                     }
-                    if (captured_output) {
-                        captured_output[captured_len] = '\0';
-                    } else {
-                        captured_output = xstrdup("");
-                        captured_len = 0;
-                        captured_cap = 1;
+                    if (capture_output) {
+                        if (captured_output) {
+                            captured_output[captured_len] = '\0';
+                        } else {
+                            captured_output = xstrdup("");
+                            captured_len = 0;
+                            captured_cap = 1;
+                        }
                     }
                     close(pipefd[0]);
                 }
@@ -3896,6 +4043,7 @@ int main(int argc, char *argv[]) {
         skip_consumed_first = false;
     }
 
+    stop_logging();
     cleanup_variables();
     return 0;
 }

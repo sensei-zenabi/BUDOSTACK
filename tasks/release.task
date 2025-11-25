@@ -1,6 +1,8 @@
 # release.task
 
 # Initialization
+# Generate release notes and a change log for a given tag range. Uses _TOFILE to
+# capture console output into release_notes.txt while running.
 SET $COMMIT = 0
 SET $TAG = "none"
 SET $TAG_OLD = "none"
@@ -15,6 +17,7 @@ PRINT "\nEnter baseline release tag ('none' if no baseline): "
 INPUT $TAG_OLD
 RUN cls
 RUN _VERSION to $COMMIT
+RUN _TOFILE -file release_notes.txt --start
 PRINT "\n\n=============================== RELEASE NOTES ===============================\n"
 PRINT "\n Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git\n"
 PRINT "\n  Releance branch:         main"
@@ -31,4 +34,5 @@ IF ($TAG_OLD == none):
 ELSE:
   RUN git --no-pager log --name-only $TAG_OLD..HEAD
 END
+RUN _TOFILE --stop
 

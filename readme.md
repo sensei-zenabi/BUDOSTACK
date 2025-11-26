@@ -13,11 +13,11 @@ copyleft license, that allows you to:
 - Redistribute copies, both original and modified, provided you will 
 distribute them under the same GPL-2.0 terms and include the source 
 code.
-<br>
+
 Files shared under folders:
-- ./fonts/
-- ./shaders/
-- ./sounds/
+- fonts/
+- shaders/
+- sounds/
 Are not distributed using the GLP-2.0 license. Instead folders contain
 their own LICENSE.txt files indicating their licensing conditions.
 

@@ -65,7 +65,9 @@ int main(int argc, char *argv[]) {
     printf("  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n");
     printf("             Use 'restart -f' to clean before building.\n");
     printf("  runtask  : Run a TASK script. See below help for details.\n");
+    printf("\n");
     printf("  update   : Update your BUDOSTACK version automatically.\n");     
+    printf("\n");
     printf("\n");
     printf(" /* Folder Structure */\n");
     printf("\n");
@@ -80,8 +82,6 @@ int main(int argc, char *argv[]) {
     printf("  ./tasks/       - Reserved for tasks. Few built-in examples provided.\n");
     printf("  ./users/       - User folders for those who like them.\n");
     printf("  ./utilities/   - System utilities that use paging.\n");
-    printf("\n");
-    printf("\n");
     printf("\n");
     printf("\n");
     printf("\n");

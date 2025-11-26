@@ -252,7 +252,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  audiodemo.task       : Collection of in-built sound capabilities\n");
     printf("  autoexec.task        : Determines what happens before BUDOSTACK login screen\n");
-    printf("  codedemo.task        : Coding basics, for, while, arrays, etc.\n");
+    printf("  codedemo.task        : Coding basics: for, while, arrays, functions, etc.\n");
     printf("  csvdemo.task         : Dynamic .csv file manipulation demo\n");
     printf("  demo.task            : Work-In-Progress\n");    
     printf("  release.task         : Used to generate release notes\n");    

@@ -11,7 +11,7 @@ SET $TAG_OLD = "none"
 RUN clear
 PRINT "\nRetrieving tags...\n\n"
 RUN git tag --sort=-v:refname
-PRINT "\nEnter release tag: "
+PRINT "\nEnter NEW release tag: "
 INPUT $TAG
 PRINT "\nEnter baseline release tag ('none' if no baseline): "
 INPUT $TAG_OLD

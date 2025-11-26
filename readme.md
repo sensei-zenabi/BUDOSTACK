@@ -29,7 +29,7 @@ Screenshots from BUDOSTACK built-in retro terminal emulator (apps/terminal).
 
 ## How to Install and Run?
 1. Checkout the repo
-2. Run the ./setup.sh shell script
-3. Type "./start.sh"
+2. Run ./setup.sh 
+3. Run ./start.sh
 4. Then type "help"
 

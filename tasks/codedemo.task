@@ -1,5 +1,7 @@
 # fcntest.task
 
+@START
+
 RUN _CLEAR
 # ---------------------------------------------------------
 # GLOBAL VARIABLES
@@ -56,8 +58,12 @@ WHILE ($STATUS == 1):
 
 END
 
-PRINT "\n\nExiting..."
-PRINT "\n"
+SET $INPUT = "y"
+PRINT "\n\nDo you want to exit [y/n]: "
+INPUT $INPUT
+IF ($INPUT == "n"):
+  GOTO START
+END
 
 
 

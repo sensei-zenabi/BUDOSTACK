@@ -5,22 +5,6 @@
 
 → Check out website from [HERE](https://sensei-zenabi.github.io/suoranta/index.html)
 
-### Licence:
-BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 
-copyleft license, that allows you to:
-- Run the software for any purpose
-- Study and modify the source code
-- Redistribute copies, both original and modified, provided you will 
-distribute them under the same GPL-2.0 terms and include the source 
-code.
-
-Files shared under folders:
-- fonts/
-- shaders/
-- sounds/
-Are not distributed using the GLP-2.0 license. Instead folders contain
-their own LICENSE.txt files indicating their licensing conditions.
-
 ## Description:
 A lightweight operating "layer" built atop POSIX-compliant Linux, 
 specifically designed for those who value the elegant simplicity 
@@ -40,4 +24,21 @@ Screenshots from BUDOSTACK built-in retro terminal emulator (apps/terminal).
 2. Run ./setup.sh 
 3. Run ./start.sh
 4. Then type "help"
+
+## Licence:
+BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 
+copyleft license, that allows you to:
+- Run the software for any purpose
+- Study and modify the source code
+- Redistribute copies, both original and modified, provided you will 
+distribute them under the same GPL-2.0 terms and include the source 
+code.
+
+**Note!** Files shared under folders:
+- ./fonts/
+- ./shaders/
+- ./sounds/
+
+Are not distributed using the GLP-2.0 license. Instead, these folders 
+contain their own LICENSE.txt files indicating their licensing conditions.
 

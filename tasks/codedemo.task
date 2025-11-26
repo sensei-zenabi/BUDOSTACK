@@ -1,32 +1,59 @@
 # fcntest.task
 
-$VALUE1 = 10
-$VALUE2 = 5
-$VALUE3 = 0.0
+RUN _CLEAR
+# ---------------------------------------------------------
+# GLOBAL VARIABLES
+
+PRINT "\nInitializing global variables..."
+SET $STATUS = 1
+SET $RESULT = 0.0
+SET $MULTIPLIER = 8.0
+SET $ARRAY = { 2.0,
+               4.0,
+               6.0,
+               8.0,
+               10.0 }
+RUN _WAIT 1000
+
+# ---------------------------------------------------------
+# FUNCTIONS:
 
 FUNCTION CALC_SQRT($ARG1,$ARG2):
   # Local variables
   SET $RETVAL = 0.0
-  
+  PRINT "\narg1: " + $ARG1
+  PRINT ", arg2: " + $ARG2  
   # Calculate
-  RUN _CALC sqrt($ARG1) + $ARG2 TO $RETVAL
-  
+  RUN _CALC sqrt($ARG1) * $ARG2 TO $RETVAL
+      
   RETURN $RETVAL
 END
 
-# --- Main ---
-RUN cls
-PRINT "\n"
-PRINT "\n--- Function Test ---"
-PRINT "\n"
-PRINT "\n  VALUE1 : " + $VALUE1
-PRINT "\n  VALUE2 : " + $VALUE2
-PRINT "\n"
-PRINT "\n  Calculating with CALC_SQRT()..."
-EVAL CALC_SQRT($VALUE1, $VALUE2) TO $VALUE3
-PRINT "\n"
-PRINT "\n  VALUE3 : " + $VALUE3
-PRINT "\n"
-PRINT "\n  Finish!"
-PRINT "\n"
-PRINT "\n"
+
+# ---------------------------------------------------------
+# APPLICATION
+
+PRINT "\nArray length: " + LEN($ARRAY)
+
+WHILE ($STATUS == 1):
+
+  FOR ($i=1; $i<LEN($ARRAY); $i++):
+
+    PRINT "\nindex: " + $i
+    PRINT "\nvalue: " + $ARRAY[$i]
+
+    EVAL CALC_SQRT($ARRAY[1], $MULTIPLIER) TO $RESULT
+  
+    PRINT "\nResult: " + $RESULT
+  
+  END
+   
+  SET $STATUS = 0
+
+END
+
+PRINT "\nExiting...\n"
+
+
+
+

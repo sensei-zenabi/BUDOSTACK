@@ -1,5 +1,6 @@
 # BUDOSTACK - The Martial Art of Software
-**Programmed by:** Ville Suoranta<br>
+**Creator:** Ville Suoranta<br>
+**Email:** ville.m.suoranta(at)gmail.com<br>
 **Status:** Early Access (in development)
 
 → Check out website from [HERE](https://sensei-zenabi.github.io/suoranta/index.html)

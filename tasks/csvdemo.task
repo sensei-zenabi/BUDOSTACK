@@ -23,9 +23,9 @@ RUN _WAIT 1000
 
 # Write header
 PRINT "Writing header...\n"
-RUN _TOCSV -file MYCSV.CSV -column 1 -row $ROW -value Index
-RUN _TOCSV -file MYCSV.CSV -column 2 -row $ROW -value Value
-RUN _TOCSV -file MYCSV.CSV -column 3 -row $ROW -value Result
+RUN _TOCSV -file csvdemo.csv -column 1 -row $ROW -value Index
+RUN _TOCSV -file csvdemo.csv -column 2 -row $ROW -value Value
+RUN _TOCSV -file csvdemo.csv -column 3 -row $ROW -value Result
 SET $ROW = $ROW + 1 
 RUN _WAIT 1000
 
@@ -34,13 +34,13 @@ PRINT "Filling table...\n"
 
 @WRITE
 
-RUN _TOCSV -file MYCSV.CSV -column 1 -row $ROW -value $INDEX
-RUN _TOCSV -file MYCSV.CSV -column 2 -row $ROW -value $VALUE
+RUN _TOCSV -file csvdemo.csv -column 1 -row $ROW -value $INDEX
+RUN _TOCSV -file csvdemo.csv -column 2 -row $ROW -value $VALUE
 
 # Calculate the third column
-RUN _FROMCSV -file MYCSV.CSV -column 2 -row $ROW TO $INPUT
+RUN _FROMCSV -file csvdemo.csv -column 2 -row $ROW TO $INPUT
 RUN _CALC sqrt($INPUT) + $INPUT^2 TO $RESULT
-RUN _TOCSV -file MYCSV.CSV -column 3 -row $ROW -value $RESULT
+RUN _TOCSV -file csvdemo.csv -column 3 -row $ROW -value $RESULT
 
 # Increment until finish
 SET $INDEX = $INDEX + 1
@@ -54,7 +54,7 @@ RUN _WAIT 1000
 # Finish
 PRINT "Printing the generated .csv file...\n\n"
 RUN _WAIT 1000
-RUN csvprint MYCSV.CSV
+RUN csvprint csvdemo.csv
 # ToDo: _CSVSTATS and _CSVFILTER demo
 PRINT "\n"
 PRINT "TASK FINISHED!\n"

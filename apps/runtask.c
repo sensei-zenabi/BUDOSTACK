@@ -1120,6 +1120,39 @@ static bool parse_value_token(const char **p, Value *out, const char *delims, in
         return parse_array_literal(p, out, line, debug);
     }
 
+    const char *s = *p;
+    if (strncmp(s, "LEN(", 4) == 0) {
+        s += 4;
+        Value target;
+        if (!parse_expression(&s, &target, ")", line, debug)) {
+            if (debug) {
+                fprintf(stderr, "Line %d: invalid LEN() argument\n", line);
+            }
+            return false;
+        }
+        while (isspace((unsigned char)*s)) {
+            s++;
+        }
+        if (*s != ')') {
+            free_value(&target);
+            if (debug) {
+                fprintf(stderr, "Line %d: expected ')' to close LEN()\n", line);
+            }
+            return false;
+        }
+        Value result;
+        memset(&result, 0, sizeof(result));
+        result.type = VALUE_INT;
+        if (target.type == VALUE_ARRAY) {
+            result.int_val = (long long)target.array_len;
+            result.float_val = (double)target.array_len;
+        }
+        free_value(&target);
+        *out = result;
+        *p = s + 1;
+        return true;
+    }
+
     char *token = NULL;
     bool quoted = false;
     if (!parse_token(p, &token, &quoted, delims)) {

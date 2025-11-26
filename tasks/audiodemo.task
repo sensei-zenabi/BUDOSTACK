@@ -1,6 +1,21 @@
 # audiodemo.task
 
+RUN _BEEP -A3 -100
+RUN _BEEP -B3 -100
+RUN _BEEP -C4 -100
+RUN _BEEP -D4 -100
+RUN _BEEP -E4 -100
+RUN _BEEP -F4 -100
+RUN _BEEP -G4 -100
+RUN _BEEP -A4 -100
+RUN _BEEP -B4 -100
+RUN _BEEP -E5 -100
+RUN _BEEP -C5 -500
+
+
 # Play wav file
 RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
-RUN _WAIT 500
+RUN _WAIT 1000
+RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
+RUN _WAIT 1000
 RUN _TERM_SOUND_PLAY 2 sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100

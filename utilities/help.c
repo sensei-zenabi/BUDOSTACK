@@ -257,8 +257,8 @@ int main(int argc, char *argv[]) {
     printf("  demo.task            : Work-In-Progress\n");    
     printf("  release.task         : Used to generate release notes\n");    
     printf("  screen.task          : Screen calibration TASK\n");
-    printf("  unicode.task         : Unicode character support unit-test\n");
     printf("  waves.task           : Demonstration how to plot basic math\n");
+    printf("\n");
     printf("\n");
     printf("\n");
     printf("\n");

@@ -22,6 +22,8 @@ int main(int argc, char *argv[]) {
     printf("  You can use, modify, and sell GPLv2 software freely, but if you distribute\n");
     printf("  it, you must provide the source code and keep it under the same license.\n");
     printf("\n");
+    printf("  Note! Some files in sub-folders have their own licensing policies!\n");
+    printf("\n");
     printf("\n");
     printf(" How to Install & Run?\n");
     printf("\n");
@@ -46,8 +48,6 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  - Ubuntu\n");
     printf("  - Kubuntu\n");
-    printf("\n");
-    printf("\n");
     printf("\n");
     printf("\n");
     printf(" Note! BUDOSTACK is intended to be ran with the apps/terminal application.\n");

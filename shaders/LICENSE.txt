@@ -1,10 +1,7 @@
-=== CRT-GEOM.GLSL LICENSE ===
 
 Source:
-  https://github.com/libretro/glsl-shaders/blob/master/crt/shaders/crt-geom.glsl
+  https://github.com/libretro/glsl-shaders/tree/master/crt/shaders  
 
-This shader is licensed under the GNU General Public License version 3 (GPLv3).
-You may copy, modify, and redistribute this file, but any distributed
-derivative works must also be licensed under GPLv3 and include the same license notice.
-For full terms of the license, see: https://www.gnu.org/licenses/gpl-3.0.txt
-
+License information can be found from above source. The shaders have
+been renamed and modified, but their headers contain the original
+author.

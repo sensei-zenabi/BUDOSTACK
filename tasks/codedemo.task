@@ -19,12 +19,15 @@ RUN _WAIT 1000
 # FUNCTIONS:
 
 FUNCTION CALC_SQRT($ARG1,$ARG2):
+
   # Local variables
   SET $RETVAL = 0.0
-  PRINT "\narg1: " + $ARG1
+  
+  PRINT "\n\narg1: " + $ARG1
   PRINT ", arg2: " + $ARG2  
+  
   # Calculate
-  RUN _CALC sqrt($ARG1) * $ARG2 TO $RETVAL
+  RUN _CALC floor(sqrt($ARG1) * $ARG2, 1) TO $RETVAL
       
   RETURN $RETVAL
 END
@@ -33,16 +36,17 @@ END
 # ---------------------------------------------------------
 # APPLICATION
 
-PRINT "\nArray length: " + LEN($ARRAY)
+PRINT "\n\nExecuting application..."
+PRINT "\n\nArray length: " + LEN($ARRAY)
 
 WHILE ($STATUS == 1):
 
-  FOR ($i=1; $i<LEN($ARRAY); $i++):
+  FOR ($i=0; $i<LEN($ARRAY); $i++):
 
-    PRINT "\nindex: " + $i
-    PRINT "\nvalue: " + $ARRAY[$i]
+    #PRINT "\nindex: " + $i
+    #PRINT "\nvalue: " + $ARRAY[$i]
 
-    EVAL CALC_SQRT($ARRAY[1], $MULTIPLIER) TO $RESULT
+    EVAL CALC_SQRT($ARRAY[$i], $MULTIPLIER) TO $RESULT
   
     PRINT "\nResult: " + $RESULT
   
@@ -52,7 +56,8 @@ WHILE ($STATUS == 1):
 
 END
 
-PRINT "\nExiting...\n"
+PRINT "\n\nExiting..."
+PRINT "\n"
 
 
 

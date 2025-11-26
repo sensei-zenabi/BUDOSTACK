@@ -55,6 +55,7 @@ static void set_initial_argv0(const char *argv0);
 static void free_value(Value *value);
 static bool copy_value(Value *dest, const Value *src);
 static bool parse_expression(const char **cursor, Value *out, const char *terminators, int line, int debug);
+static bool value_as_double(const Value *value, double *out);
 
 typedef enum {
     VALUE_UNSET = 0,
@@ -941,7 +942,64 @@ typedef struct {
     size_t index;
 } VariableRef;
 
-static bool parse_variable_reference_token(const char *token, VariableRef *ref) {
+static bool convert_value_to_index(const Value *value, size_t *index_out, int line, int debug) {
+    if (!value || !index_out) {
+        return false;
+    }
+
+    double idx_num = 0.0;
+    if (!value_as_double(value, &idx_num)) {
+        if (debug) {
+            fprintf(stderr, "Line %d: array index must be numeric\n", line);
+        }
+        return false;
+    }
+
+    if (idx_num < 0.0 || fabs(idx_num - floor(idx_num)) > 1e-9) {
+        if (debug) {
+            fprintf(stderr, "Line %d: array index must be a non-negative integer\n", line);
+        }
+        return false;
+    }
+
+    *index_out = (size_t)idx_num;
+    return true;
+}
+
+static bool evaluate_index_expression(const char *expr, size_t *index_out, int line, int debug) {
+    if (!expr || !index_out) {
+        return false;
+    }
+
+    const char *cursor = expr;
+    Value idx_value;
+    if (!parse_expression(&cursor, &idx_value, NULL, line, debug)) {
+        return false;
+    }
+
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if (*cursor != '\0') {
+        if (debug) {
+            fprintf(stderr, "Line %d: invalid array index expression\n", line);
+        }
+        free_value(&idx_value);
+        return false;
+    }
+
+    size_t idx = 0;
+    bool ok = convert_value_to_index(&idx_value, &idx, line, debug);
+    free_value(&idx_value);
+    if (!ok) {
+        return false;
+    }
+
+    *index_out = idx;
+    return true;
+}
+
+static bool parse_variable_reference_token(const char *token, VariableRef *ref, int line, int debug) {
     if (!token || !ref || token[0] != '$') {
         return false;
     }
@@ -971,18 +1029,32 @@ static bool parse_variable_reference_token(const char *token, VariableRef *ref) 
     if (*token != '[') {
         return false;
     }
+
     token++;
-    if (!isdigit((unsigned char)*token)) {
+    const char *end = strchr(token, ']');
+    if (!end || end[1] != '\0') {
         return false;
     }
-    char *endptr = NULL;
-    unsigned long idx = strtoul(token, &endptr, 10);
-    if (!endptr || *endptr != ']') {
+
+    size_t expr_len = (size_t)(end - token);
+    char *expr = (char *)malloc(expr_len + 1);
+    if (!expr) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
+    }
+    memcpy(expr, token, expr_len);
+    expr[expr_len] = '\0';
+
+    size_t idx = 0;
+    bool ok = evaluate_index_expression(expr, &idx, line, debug);
+    free(expr);
+    if (!ok) {
         return false;
     }
+
     ref->has_index = true;
-    ref->index = (size_t)idx;
-    return endptr[1] == '\0';
+    ref->index = idx;
+    return true;
 }
 
 static ValueType detect_numeric_type(const char *token, long long *out_int, double *out_float) {
@@ -1169,7 +1241,7 @@ static bool parse_value_token(const char **p, Value *out, const char *delims, in
         result.owns_string = true;
     } else if (token[0] == '$') {
         VariableRef ref;
-        if (!parse_variable_reference_token(token, &ref)) {
+        if (!parse_variable_reference_token(token, &ref, line, debug)) {
             if (debug) {
                 fprintf(stderr, "Line %d: invalid variable name '%s'\n", line, token);
             }
@@ -1827,7 +1899,7 @@ static bool process_assignment_statement(const char *statement, int line, int de
     }
 
     VariableRef ref;
-    if (!parse_variable_reference_token(var_token, &ref)) {
+    if (!parse_variable_reference_token(var_token, &ref, line, debug)) {
         if (debug) fprintf(stderr, "Assignment: invalid variable name at line %d\n", line);
         free(var_token);
         return false;
@@ -3574,7 +3646,7 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             VariableRef ref;
-            if (!parse_variable_reference_token(var_token, &ref)) {
+            if (!parse_variable_reference_token(var_token, &ref, script[pc].source_line, debug)) {
                 if (debug) fprintf(stderr, "SET: invalid variable name at line %d\n", script[pc].source_line);
                 free(var_token);
                 continue;

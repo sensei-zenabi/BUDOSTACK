@@ -13,7 +13,7 @@ int main(int argc, char *argv[]) {
     // PAGE 1
     printf("================== BUDOSTACK - The Martial Arts of Software  ================\n");
     printf("\n");
-    printf(" Programmed by:   Ville Suoranta\n");
+    printf(" Created by:      Ville Suoranta\n");
     printf(" Contact email:   ville.m.suoranta(at)gmail.com\n");
     printf("\n");
     printf("\n");

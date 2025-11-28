@@ -13,6 +13,7 @@ Built-In Capabilities:
 - Math capabilities.
 - Connection Management and Messaging Tool.
 - RSS News Reader.
+- Linux command passthrough.
 - And more...
 
 ### SYSTEM REQUIREMENTS: ###
@@ -29,7 +30,7 @@ Tested distributions:
 - Ubuntu
 - Kubuntu
 
-### LATEST RELEASE: v0.8.1 ###
+### LATEST RELEASE: v0.8.2 ###
 
 Project Status: Hardening phase from v0.8.0 to v1.0.0
 

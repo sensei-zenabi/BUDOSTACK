@@ -896,6 +896,7 @@ static int terminal_resize_buffer(struct terminal_buffer *buffer, size_t columns
 enum ansi_parser_state {
     ANSI_STATE_GROUND = 0,
     ANSI_STATE_ESCAPE,
+    ANSI_STATE_ESCAPE_CHARSET,
     ANSI_STATE_CSI,
     ANSI_STATE_OSC,
     ANSI_STATE_OSC_ESCAPE
@@ -4643,6 +4644,14 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             if (sizeof(parser->osc_buffer) > 0u) {
                 parser->osc_buffer[0] = '\0';
             }
+        } else if (ch == '(' || ch == ')' || ch == '*' || ch == '+' || ch == '-' || ch == '.') {
+            /*
+             * Consume ISO-2022 character set designation sequences like ESC ( B
+             * or ESC ) 0. We don't implement alternate charsets, but we should
+             * still swallow the final designator byte instead of rendering it
+             * as a literal character.
+             */
+            parser->state = ANSI_STATE_ESCAPE_CHARSET;
         } else if (ch == 'c') {
             terminal_buffer_clear_display(buffer);
             parser->state = ANSI_STATE_GROUND;
@@ -4659,6 +4668,10 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             parser->state = ANSI_STATE_GROUND;
             ansi_parser_reset_utf8(parser);
         }
+        break;
+    case ANSI_STATE_ESCAPE_CHARSET:
+        parser->state = ANSI_STATE_GROUND;
+        ansi_parser_reset_utf8(parser);
         break;
     case ANSI_STATE_CSI:
         if (ch >= '0' && ch <= '9') {

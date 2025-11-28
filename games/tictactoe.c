@@ -109,8 +109,7 @@ int main(void) {
     int last_move_col = -1;
 
     if ((current_player == 'X' && human_x) || (current_player == 'O' && human_o)) {
-        snprintf(status_line, sizeof(status_line),
-                 "Player %c: Arrows move. Space/Enter place. q quits.", current_player);
+        snprintf(status_line, sizeof(status_line), "Player %c to move.", current_player);
     } else {
         snprintf(status_line, sizeof(status_line), "Computer (%c) is thinking...", current_player);
     }
@@ -166,8 +165,7 @@ int main(void) {
 
         current_player = (current_player == 'X') ? 'O' : 'X';
         if ((current_player == 'X' && human_x) || (current_player == 'O' && human_o)) {
-            snprintf(status_line, sizeof(status_line),
-                     "Player %c: Arrows move. Space/Enter place. q quits.", current_player);
+            snprintf(status_line, sizeof(status_line), "Player %c to move.", current_player);
         } else {
             snprintf(status_line, sizeof(status_line), "Computer (%c) is thinking...", current_player);
         }

@@ -7,7 +7,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define BOARD_SIZE 25
+#define BOARD_SIZE 16
 #define WIN_CONDITION 4
 #define MAX_LINE 128
 #define INF 1000000000

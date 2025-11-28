@@ -6,18 +6,19 @@
 #include <fcntl.h>
 #include <time.h>
 
-// Board dimensions. Match width and height so the playfield remains square when
-// rendered with the 8x8 terminal font.
-#define WIDTH 20
-#define HEIGHT 20
-// Maximum snake length
-#define MAX_SNAKE_LENGTH 100
+// Board dimensions tuned for an 80x42 terminal window
+#define WIDTH 80
+#define HEIGHT 42
+// Maximum snake length equals total board cells
+#define MAX_SNAKE_LENGTH (WIDTH * HEIGHT)
 
-// Minimum delay (in microseconds) to ensure game remains playable
-#define MIN_DELAY 30000
+// Delay tuning (in microseconds) to control speed progression
+#define INITIAL_DELAY 120000
+#define MIN_DELAY 20000
+#define SPEED_STEP 1500
 
 // Global delay variable (in microseconds) controlling game speed
-unsigned int delay_time = 100000;
+unsigned int delay_time = INITIAL_DELAY;
 
 // Enum for snake movement directions
 enum Direction { UP, DOWN, LEFT, RIGHT };
@@ -63,7 +64,7 @@ void initGame() {
     // Reset snake length, direction, and delay
     snake_length = 3;
     dir = RIGHT;
-    delay_time = 100000;
+    delay_time = INITIAL_DELAY;
     // Start snake at center going right
     snake[0].x = WIDTH / 2;
     snake[0].y = HEIGHT / 2;
@@ -166,9 +167,12 @@ void updateSnake() {
             snake_length = MAX_SNAKE_LENGTH;
         // Calculate score (number of apples eaten)
         int score = snake_length - 3;
-        // Speed up after every 5 apples, reducing delay by 10000 microseconds until a minimum delay is reached
-        if(score % 5 == 0 && delay_time > MIN_DELAY) {
-            delay_time -= 10000;
+        // Progressively speed up with each apple until reaching the minimum delay
+        if(delay_time > MIN_DELAY) {
+            int new_delay = INITIAL_DELAY - (score * SPEED_STEP);
+            if(new_delay < (int)MIN_DELAY)
+                new_delay = MIN_DELAY;
+            delay_time = (unsigned int)new_delay;
         }
         // Place new fruit ensuring it does not appear on the snake
         int valid = 0;

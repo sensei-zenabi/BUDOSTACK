@@ -1,3 +1,17 @@
+### SYSTEM REQUIREMENTS: ###
+
+Operating System: Debian Linux
+
+Hardware Requirements:
+
+- Minimum CPU Intel CORE i5
+- GPU with OpenGL support
+
+Tested distributions:
+
+- Ubuntu
+- Kubuntu
+
 ### Thursday, 27th of November 2025 ###
 
 With the release of v0.8.0 - BUDOSTACK is entering "hardening"

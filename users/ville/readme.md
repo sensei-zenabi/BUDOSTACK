@@ -14,9 +14,9 @@ Built-In Capabilities:
 - Connection Management and Messaging Tool.
 - RSS News Reader.
 - And more...
-<br>
+
 ### SYSTEM REQUIREMENTS: ###
-<br>
+
 Operating System: Debian Linux
 <br>
 Hardware Requirements:
@@ -28,9 +28,9 @@ Tested distributions:
 <br>
 - Ubuntu
 - Kubuntu
-<br>
+
 ### LATEST RELEASE: v0.8.0 ###
-<br>
+
 Project Status: Hardening phase from v0.8.0 to v1.0.0
 <br>
 BUDOSTACK has entered "hardening" phase. This means that no major 

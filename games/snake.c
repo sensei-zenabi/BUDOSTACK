@@ -7,15 +7,15 @@
 #include <time.h>
 
 // Board dimensions tuned for an 80x42 terminal window
-#define WIDTH 80
-#define HEIGHT 42
+#define WIDTH 78
+#define HEIGHT 40
 // Maximum snake length equals total board cells
 #define MAX_SNAKE_LENGTH (WIDTH * HEIGHT)
 
 // Delay tuning (in microseconds) to control speed progression
-#define INITIAL_DELAY 120000
-#define MIN_DELAY 20000
-#define SPEED_STEP 1500
+#define INITIAL_DELAY 10000
+#define MIN_DELAY 10000
+#define SPEED_STEP 2500
 
 // Global delay variable (in microseconds) controlling game speed
 unsigned int delay_time = INITIAL_DELAY;
@@ -36,6 +36,10 @@ enum Direction dir = RIGHT;
 
 // Global fruit position
 Point fruit;
+
+static void drawStaticBoard(void);
+static void drawCell(int x, int y, const char *symbol);
+static void drawStatus(void);
 
 // Flag to indicate game over state
 int game_over = 0;
@@ -77,7 +81,7 @@ void initGame() {
     srand(time(NULL));
     fruit.x = rand() % WIDTH;
     fruit.y = rand() % HEIGHT;
-    
+
     game_over = 0;
 }
 
@@ -92,17 +96,17 @@ char getInput() {
 
 // Update the snake's movement direction based on user input.
 // Supports arrow keys and WASD controls. 'q' quits and 'r' restarts.
-void updateDirection() {
+int updateDirection() {
     char c = getInput();
     if(c == 0)
-        return;
+        return 0;
     // Check for escape sequence (arrow keys)
     if(c == '\033') {
         char seq[2];
         if(read(STDIN_FILENO, &seq[0], 1) != 1)
-            return;
+            return 0;
         if(read(STDIN_FILENO, &seq[1], 1) != 1)
-            return;
+            return 0;
         if(seq[0] == '[') {
             if(seq[1] == 'A' && dir != DOWN)       // Up arrow
                 dir = UP;
@@ -127,15 +131,27 @@ void updateDirection() {
             exit(0);
         else if(c == 'r' || c == 'R') {
             initGame();
+            return 1;
         }
     }
+    return 0;
 }
 
 // Update the snake position based on the current direction and check for collisions.
 // Instead of exiting on collision, set game_over to 1.
-void updateSnake() {
+typedef struct {
+    Point previous_head;
+    Point tail;
+    int removed_tail;
+    int ate_fruit;
+} MoveResult;
+
+MoveResult updateSnake() {
+    MoveResult result = {0};
     // Calculate new head position
-    Point new_head = snake[0];
+    Point old_head = snake[0];
+    Point old_tail = snake[snake_length - 1];
+    Point new_head = old_head;
     switch(dir) {
         case UP:    new_head.y--; break;
         case DOWN:  new_head.y++; break;
@@ -145,26 +161,32 @@ void updateSnake() {
     // Check collision with walls
     if(new_head.x < 0 || new_head.x >= WIDTH || new_head.y < 0 || new_head.y >= HEIGHT) {
         game_over = 1;
-        return;
+        return result;
     }
     // Check collision with itself
     for (int i = 0; i < snake_length; i++) {
         if(snake[i].x == new_head.x && snake[i].y == new_head.y) {
             game_over = 1;
-            return;
+            return result;
         }
     }
+    // Check if fruit is eaten
+    int ate = (new_head.x == fruit.x && new_head.y == fruit.y);
+    int new_length = snake_length + (ate ? 1 : 0);
+    if(new_length > MAX_SNAKE_LENGTH)
+        new_length = MAX_SNAKE_LENGTH;
+
     // Move snake segments: shift each segment to the position of the previous one
-    for (int i = snake_length; i > 0; i--) {
+    for (int i = new_length - 1; i > 0; i--) {
         snake[i] = snake[i - 1];
     }
+    snake_length = new_length;
     snake[0] = new_head;
-    
-    // Check if fruit is eaten
-    if(new_head.x == fruit.x && new_head.y == fruit.y) {
-        snake_length++;
-        if(snake_length >= MAX_SNAKE_LENGTH)
-            snake_length = MAX_SNAKE_LENGTH;
+
+    result.previous_head = old_head;
+
+    if(ate) {
+        result.ate_fruit = 1;
         // Calculate score (number of apples eaten)
         int score = snake_length - 3;
         // Progressively speed up with each apple until reaching the minimum delay
@@ -187,89 +209,101 @@ void updateSnake() {
                 }
             }
         }
+    } else {
+        result.tail = old_tail;
+        result.removed_tail = 1;
     }
+
+    return result;
 }
 
-// Draw the game board using line-drawing characters for the borders,
-// and display the snake, fruit, score, and instructions.
-void drawBoard() {
-    // Clear the screen and move cursor to home position
+static void moveCursor(int row, int col) {
+    printf("\033[%d;%dH", row, col);
+}
+
+static void drawCell(int x, int y, const char *symbol) {
+    moveCursor(y + 2, x + 2); // offset for borders
+    printf("%s", symbol);
+}
+
+static void drawStaticBoard(void) {
     printf("\033[2J\033[H");
-    
-    // Draw top border using line-drawing characters
+
+    // Top border
     printf("┌");
-    for (int x = 0; x < WIDTH; x++) {
+    for (int x = 0; x < WIDTH; x++)
         printf("─");
-    }
     printf("┐\n");
-    
-    // Draw board rows with left/right borders
+
+    // Side borders
     for (int y = 0; y < HEIGHT; y++) {
-        printf("│"); // left border
-        for (int x = 0; x < WIDTH; x++) {
-            int printed = 0;
-            // Draw fruit if at this position
-            if(fruit.x == x && fruit.y == y) {
-                printf("*");
-                printed = 1;
-            } else {
-                // Check if snake occupies this cell
-                for (int k = 0; k < snake_length; k++) {
-                    if(snake[k].x == x && snake[k].y == y) {
-                        if(k == 0)
-                            // Unicode full block for snake head
-                            printf("\u2588");
-                        else
-                            // Unicode dark shade block for snake body
-                            printf("\u2593");
-                        printed = 1;
-                        break;
-                    }
-                }
-            }
-            if(!printed)
-                printf(" ");
-        }
-        printf("│\n"); // right border
+        printf("│\033[%d;%dH│\n", y + 2, WIDTH + 2);
     }
-    
-    // Draw bottom border using line-drawing characters
+
+    // Bottom border
     printf("└");
-    for (int x = 0; x < WIDTH; x++) {
+    for (int x = 0; x < WIDTH; x++)
         printf("─");
-    }
     printf("┘\n");
-    
-    // Display game status, score, and instructions
+}
+
+static void drawStatus(void) {
+    moveCursor(HEIGHT + 3, 1);
+    printf("\033[KScore: %d\n", snake_length - 3);
     if(game_over)
-        printf("Game Over!\n");
-    printf("Score: %d\n", snake_length - 3);
-    printf("Press 'r' to restart, 'q' to quit.\n");
+        printf("\033[KGame Over!\n");
+    else
+        printf("\033[K                \n");
+    printf("\033[KPress 'r' to restart, 'q' to quit.\n");
+}
+
+static void drawFullBoard(void) {
+    drawStaticBoard();
+    for (int i = 0; i < snake_length; i++) {
+        const char *symbol = (i == 0) ? "\u2588" : "\u2593";
+        drawCell(snake[i].x, snake[i].y, symbol);
+    }
+    drawCell(fruit.x, fruit.y, "*");
+    drawStatus();
+    fflush(stdout);
 }
 
 // Main game loop: if game_over is set, wait for 'r' (restart) or 'q' (quit)
 int main() {
     enableRawMode();
     initGame();
-    
+    drawFullBoard();
+
     while(1) {
         if(!game_over) {
-            updateDirection();  // process user input
-            updateSnake();      // update snake's position and check collisions
-        }
-        
-        drawBoard();        // render the game board
-        
-        // If game over, wait for restart or quit input
-        if(game_over) {
+            int restarted = updateDirection();  // process user input
+            if(restarted) {
+                drawFullBoard();
+                continue;
+            }
+            MoveResult move = updateSnake();      // update snake's position and check collisions
+            if(!game_over) {
+                drawCell(move.previous_head.x, move.previous_head.y, "\u2593");
+                if(move.removed_tail)
+                    drawCell(move.tail.x, move.tail.y, " ");
+                drawCell(snake[0].x, snake[0].y, "\u2588");
+                if(move.ate_fruit)
+                    drawCell(fruit.x, fruit.y, "*");
+            }
+        } else {
             char c = getInput();
             if(c == 'r' || c == 'R') {
                 initGame();
+                drawFullBoard();
+                continue;
             } else if(c == 'q' || c == 'Q') {
                 break;
             }
         }
-        
+
+        drawStatus();
+        fflush(stdout);
+
         usleep(delay_time); // delay to control game speed
     }
     

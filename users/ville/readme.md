@@ -3,7 +3,7 @@
 BUDOSTACK is a framework built on top of Debian Linux that allows
 users to enjoy the focus provided by the simplicity of 1980s personal
 computers.
-<br>
+<br><br>
 Built-In Capabilities:
 <br>
 - Terminal Emulator with CRT simulation.

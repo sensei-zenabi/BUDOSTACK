@@ -7,7 +7,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define BOARD_SIZE 16
+#define BOARD_SIZE 17
 #define WIN_CONDITION 4
 #define MAX_LINE 128
 #define INF 1000000000
@@ -58,8 +58,8 @@ int main(void) {
     init_board(board);
 
     printf("%dx%d Tic-Tac-Toe (connect %d)\n\n", BOARD_SIZE, BOARD_SIZE, WIN_CONDITION);
-    printf("The board uses arrow-key controls once the game begins.\n");
-    printf("You can exit at any time with 'q'.\n\n");
+    printf("Arrow keys move, Space/Enter place, q quits.\n");
+    printf("Keep the window at least 80x42 characters for best results.\n\n");
 
     int mode = prompt_mode();
     if (mode == 0) {
@@ -110,8 +110,7 @@ int main(void) {
 
     if ((current_player == 'X' && human_x) || (current_player == 'O' && human_o)) {
         snprintf(status_line, sizeof(status_line),
-                 "Player %c: Use arrow keys to choose a square. Press Space or Enter to place. Press q to quit.",
-                 current_player);
+                 "Player %c: Arrows move. Space/Enter place. q quits.", current_player);
     } else {
         snprintf(status_line, sizeof(status_line), "Computer (%c) is thinking...", current_player);
     }
@@ -168,8 +167,7 @@ int main(void) {
         current_player = (current_player == 'X') ? 'O' : 'X';
         if ((current_player == 'X' && human_x) || (current_player == 'O' && human_o)) {
             snprintf(status_line, sizeof(status_line),
-                     "Player %c: Use arrow keys to choose a square. Press Space or Enter to place. Press q to quit.",
-                     current_player);
+                     "Player %c: Arrows move. Space/Enter place. q quits.", current_player);
         } else {
             snprintf(status_line, sizeof(status_line), "Computer (%c) is thinking...", current_player);
         }
@@ -194,7 +192,7 @@ static void render_game(char board[BOARD_SIZE][BOARD_SIZE], char current_player,
     printf("%dx%d Tic-Tac-Toe (connect %d)\n", BOARD_SIZE, BOARD_SIZE, WIN_CONDITION);
     printf("Mode: %s\n", mode_name);
     printf("Current player: %c\n", current_player);
-    printf("Controls: Arrow keys move, Space/Enter place, q quits.\n");
+    printf("Controls: Arrows move, Space/Enter place, q quits.\n");
     printf("%s\n\n", status_line);
 
     printf("    ");

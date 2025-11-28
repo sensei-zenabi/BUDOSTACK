@@ -3,8 +3,8 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 
-#define TARGET_COLS 80
-#define TARGET_ROWS 45
+#define TARGET_COLS 79
+#define TARGET_ROWS 44
 #define TEXT_BAR_ROWS 2
 
 int main() {
@@ -24,8 +24,8 @@ int main() {
     }
     close(tty_fd);
 
-    int term_cols = w.ws_col;
-    int term_rows = w.ws_row;
+    int term_cols = w.ws_col-1;
+    int term_rows = w.ws_row-1;
 
     // Clear the screen
     printf("\033[2J\033[H");
@@ -46,7 +46,7 @@ int main() {
         char bottom_row_digit = (char)('0' + ((grid_rows - 1) % 10));
         putchar(bottom_row_digit);
         for (int c = 1; c < TARGET_COLS; c++) {
-            char col_digit = (char)('0' + ((c - 1) % 10));
+            char col_digit = (char)('0' + ((c) % 10));
             putchar(col_digit);
         }
         putchar('\n');

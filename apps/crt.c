@@ -9,6 +9,13 @@
 #include <string.h>
 #include <unistd.h>
 
+#if defined(__linux__)
+#include <fcntl.h>
+#include <linux/fb.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#endif
+
 #if defined(__has_include)
 #if __has_include(<SDL2/SDL.h>)
 #include <SDL2/SDL.h>
@@ -65,6 +72,18 @@ struct crt_state {
     struct crt_program shader;
     Uint32 frame_count;
     float target_opacity;
+#if defined(__linux__)
+    int framebuffer_fd;
+    uint8_t *framebuffer_map;
+    size_t framebuffer_size;
+    size_t framebuffer_stride;
+    uint32_t framebuffer_red_offset;
+    uint32_t framebuffer_green_offset;
+    uint32_t framebuffer_blue_offset;
+    uint32_t framebuffer_alpha_offset;
+    int framebuffer_has_alpha;
+#endif
+    int use_framebuffer;
 };
 
 static void crt_print_usage(const char *progname) {
@@ -261,6 +280,102 @@ static int crt_initialize_geometry(struct crt_state *state) {
     return 0;
 }
 
+#if defined(__linux__)
+static int crt_initialize_framebuffer(struct crt_state *state) {
+    struct fb_fix_screeninfo fix_info;
+    struct fb_var_screeninfo var_info;
+
+    state->framebuffer_fd = open("/dev/fb0", O_RDONLY);
+    if (state->framebuffer_fd < 0) {
+        return -1;
+    }
+
+    if (ioctl(state->framebuffer_fd, FBIOGET_FSCREENINFO, &fix_info) != 0) {
+        close(state->framebuffer_fd);
+        state->framebuffer_fd = -1;
+        return -1;
+    }
+
+    if (ioctl(state->framebuffer_fd, FBIOGET_VSCREENINFO, &var_info) != 0) {
+        close(state->framebuffer_fd);
+        state->framebuffer_fd = -1;
+        return -1;
+    }
+
+    if (var_info.bits_per_pixel != 32 || var_info.red.length != 8 || var_info.green.length != 8 || var_info.blue.length != 8) {
+        close(state->framebuffer_fd);
+        state->framebuffer_fd = -1;
+        return -1;
+    }
+
+    size_t mapped_size = (size_t)fix_info.line_length * (size_t)var_info.yres;
+    void *mapped = mmap(NULL, mapped_size, PROT_READ, MAP_SHARED, state->framebuffer_fd, 0);
+    if (mapped == MAP_FAILED) {
+        close(state->framebuffer_fd);
+        state->framebuffer_fd = -1;
+        return -1;
+    }
+
+    state->screen_width = (int)var_info.xres;
+    state->screen_height = (int)var_info.yres;
+    state->framebuffer_map = (uint8_t *)mapped;
+    state->framebuffer_size = mapped_size;
+    state->framebuffer_stride = (size_t)fix_info.line_length;
+    state->framebuffer_red_offset = var_info.red.offset;
+    state->framebuffer_green_offset = var_info.green.offset;
+    state->framebuffer_blue_offset = var_info.blue.offset;
+    state->framebuffer_alpha_offset = var_info.transp.offset;
+    state->framebuffer_has_alpha = (var_info.transp.length == 8);
+
+    return 0;
+}
+
+static void crt_shutdown_framebuffer(struct crt_state *state) {
+    if (state->framebuffer_map && state->framebuffer_size > 0u) {
+        munmap(state->framebuffer_map, state->framebuffer_size);
+        state->framebuffer_map = NULL;
+    }
+    if (state->framebuffer_fd >= 0) {
+        close(state->framebuffer_fd);
+        state->framebuffer_fd = -1;
+    }
+}
+
+static int crt_capture_framebuffer(struct crt_state *state, uint8_t *buffer, size_t buffer_size) {
+    if (!state->framebuffer_map) {
+        return -1;
+    }
+
+    size_t expected = (size_t)state->screen_width * (size_t)state->screen_height * 4u;
+    if (buffer_size < expected) {
+        return -1;
+    }
+
+    size_t src_stride = state->framebuffer_stride;
+    size_t dst_stride = (size_t)state->screen_width * 4u;
+
+    for (int y = 0; y < state->screen_height; y++) {
+        const uint8_t *src_row = state->framebuffer_map + (size_t)y * src_stride;
+        uint8_t *dst_row = buffer + (size_t)y * dst_stride;
+        for (int x = 0; x < state->screen_width; x++) {
+            size_t src_index = (size_t)x * 4u;
+            uint32_t pixel = *(const uint32_t *)(src_row + src_index);
+            uint8_t r = (uint8_t)((pixel >> state->framebuffer_red_offset) & 0xFFu);
+            uint8_t g = (uint8_t)((pixel >> state->framebuffer_green_offset) & 0xFFu);
+            uint8_t b = (uint8_t)((pixel >> state->framebuffer_blue_offset) & 0xFFu);
+            uint8_t a = state->framebuffer_has_alpha ? (uint8_t)((pixel >> state->framebuffer_alpha_offset) & 0xFFu) : 0xFFu;
+
+            dst_row[src_index + 0u] = b;
+            dst_row[src_index + 1u] = g;
+            dst_row[src_index + 2u] = r;
+            dst_row[src_index + 3u] = a;
+        }
+    }
+
+    return 0;
+}
+#endif
+
 static int crt_initialize_texture(struct crt_state *state) {
     glGenTextures(1, &state->framebuffer_texture);
     if (state->framebuffer_texture == 0u) {
@@ -420,6 +535,9 @@ static void crt_shutdown(struct crt_state *state) {
         SDL_DestroyWindow(state->window);
         state->window = NULL;
     }
+#if defined(__linux__)
+    crt_shutdown_framebuffer(state);
+#endif
     if (state->display) {
         XCloseDisplay(state->display);
         state->display = NULL;
@@ -472,6 +590,13 @@ int main(int argc, char **argv) {
     state.screen_width = mode.w;
     state.screen_height = mode.h;
     state.target_opacity = 1.0f;
+    state.use_framebuffer = 0;
+#if defined(__linux__)
+    state.framebuffer_fd = -1;
+    if (crt_initialize_framebuffer(&state) == 0) {
+        state.use_framebuffer = 1;
+    }
+#endif
 
     state.display = XOpenDisplay(NULL);
     if (!state.display) {
@@ -545,19 +670,27 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (SDL_SetWindowOpacity(state.window, 0.0f) != 0) {
-            fprintf(stderr, "Warning: failed to change window opacity: %s\n", SDL_GetError());
+        int captured = -1;
+#if defined(__linux__)
+        if (state.use_framebuffer) {
+            captured = crt_capture_framebuffer(&state, pixel_buffer, pixel_buffer_size);
         }
+#endif
 
-        if (crt_capture_screen(&state, pixel_buffer, pixel_buffer_size) == 0) {
+        if (captured != 0) {
+            if (SDL_SetWindowOpacity(state.window, 0.0f) != 0) {
+                fprintf(stderr, "Warning: failed to change window opacity: %s\n", SDL_GetError());
+            }
+
+            captured = crt_capture_screen(&state, pixel_buffer, pixel_buffer_size);
+
             if (SDL_SetWindowOpacity(state.window, state.target_opacity) != 0) {
                 fprintf(stderr, "Warning: failed to restore window opacity: %s\n", SDL_GetError());
             }
+        }
+
+        if (captured == 0) {
             crt_render_frame(&state, pixel_buffer);
-        } else {
-            if (SDL_SetWindowOpacity(state.window, state.target_opacity) != 0) {
-                fprintf(stderr, "Warning: failed to restore window opacity after capture failure: %s\n", SDL_GetError());
-            }
         }
 
         if (frame_delay_ms > 0u) {

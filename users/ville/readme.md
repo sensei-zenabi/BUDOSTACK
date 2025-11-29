@@ -30,7 +30,7 @@ Tested distributions:
 - Ubuntu
 - Kubuntu
 
-### LATEST RELEASE: v0.8.3 ###
+### LATEST RELEASE: v0.8.4 ###
 
 Project Status: Hardening phase from v0.8.0 to v1.0.0
 

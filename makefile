@@ -59,9 +59,26 @@ ifeq ($(strip $(SDL2_GL_LIBS)),)
 SDL2_ENABLED = 0
 endif
 
+X11_CFLAGS = $(shell pkg-config --cflags x11 2>/dev/null)
+X11_LIBS = $(shell pkg-config --libs x11 2>/dev/null)
+X11_ENABLED = 1
+
+ifeq ($(strip $(X11_LIBS)),)
+X11_LIB_FILES := $(wildcard /usr/lib*/libX11.so*)
+ifneq ($(strip $(X11_LIB_FILES)),)
+X11_LIBS = -lX11
+endif
+endif
+
+ifeq ($(strip $(X11_LIBS)),)
+X11_ENABLED = 0
+endif
+
 ifeq ($(SDL2_ENABLED),1)
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
+apps/crt.o: CFLAGS += $(SDL2_CFLAGS) $(X11_CFLAGS)
+apps/crt: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS) $(X11_LIBS)
 endif
 
 # --------------------------------------------------------------------
@@ -92,6 +109,11 @@ APPS_EXES = $(APPS_SRCS:.c=)
 ifeq ($(SDL2_ENABLED),0)
 APPS_SRCS := $(filter-out ./apps/terminal.c, $(APPS_SRCS))
 APPS_EXES := $(filter-out ./apps/terminal, $(APPS_EXES))
+endif
+
+ifeq ($(X11_ENABLED),0)
+APPS_SRCS := $(filter-out ./apps/crt.c, $(APPS_SRCS))
+APPS_EXES := $(filter-out ./apps/crt, $(APPS_EXES))
 endif
 
 # Find all .c files in the games folder

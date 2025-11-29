@@ -375,7 +375,7 @@ static void draw_map_area(int map_rows) {
 static void draw_info_bars(int map_rows) {
     int help_row = map_rows + 1;
     int status_row = map_rows + 2;
-    const char *help = "[Arrows] Move  [Type] Place  [Backspace] Erase  [S]ave  [L]oad  [R]oll Dice  [Q]uit";
+    const char *help = "Move:Ctrl+Arrows Place:type Erase:Backspace Save:^S Load:^L Roll:^R Quit:^Q";
     if (help_row <= g_term_rows) {
         dprintf(STDOUT_FILENO, "\x1b[%d;1H\x1b[0m", help_row);
         dprintf(STDOUT_FILENO, "%-*.*s", g_term_cols, g_term_cols, help);
@@ -1107,7 +1107,7 @@ int main(int argc, char *argv[]) {
         ensure_cursor_visible();
         draw_interface();
         int key = read_key();
-        if (key == 'q' || key == 'Q' || key == 17) {
+        if (key == 17) {
             break;
         }
         if (key == KEY_ARROW_LEFT) {
@@ -1174,7 +1174,7 @@ int main(int argc, char *argv[]) {
             }
             continue;
         }
-        if (key == 's' || key == 'S') {
+        if (key == 19) {
             char buffer[PATH_MAX];
             char actual[PATH_MAX];
             actual[0] = '\0';
@@ -1203,7 +1203,7 @@ int main(int argc, char *argv[]) {
             }
             continue;
         }
-        if (key == 'l' || key == 'L') {
+        if (key == 12) {
             char buffer[PATH_MAX];
             if (!prompt_input("Load session: ", buffer, sizeof(buffer))) {
                 update_status("Load cancelled");
@@ -1221,7 +1221,7 @@ int main(int argc, char *argv[]) {
             }
             continue;
         }
-        if (key == 'r' || key == 'R') {
+        if (key == 18) {
             perform_roll();
             continue;
         }

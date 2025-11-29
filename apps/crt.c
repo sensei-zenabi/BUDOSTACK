@@ -64,6 +64,7 @@ struct crt_state {
     GLuint framebuffer_texture;
     struct crt_program shader;
     Uint32 frame_count;
+    float target_opacity;
 };
 
 static void crt_print_usage(const char *progname) {
@@ -470,6 +471,7 @@ int main(int argc, char **argv) {
     memset(&state, 0, sizeof(state));
     state.screen_width = mode.w;
     state.screen_height = mode.h;
+    state.target_opacity = 1.0f;
 
     state.display = XOpenDisplay(NULL);
     if (!state.display) {
@@ -543,8 +545,19 @@ int main(int argc, char **argv) {
             }
         }
 
+        if (SDL_SetWindowOpacity(state.window, 0.0f) != 0) {
+            fprintf(stderr, "Warning: failed to change window opacity: %s\n", SDL_GetError());
+        }
+
         if (crt_capture_screen(&state, pixel_buffer, pixel_buffer_size) == 0) {
+            if (SDL_SetWindowOpacity(state.window, state.target_opacity) != 0) {
+                fprintf(stderr, "Warning: failed to restore window opacity: %s\n", SDL_GetError());
+            }
             crt_render_frame(&state, pixel_buffer);
+        } else {
+            if (SDL_SetWindowOpacity(state.window, state.target_opacity) != 0) {
+                fprintf(stderr, "Warning: failed to restore window opacity after capture failure: %s\n", SDL_GetError());
+            }
         }
 
         if (frame_delay_ms > 0u) {

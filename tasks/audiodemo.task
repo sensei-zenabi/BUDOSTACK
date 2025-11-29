@@ -1,21 +1,55 @@
 # audiodemo.task
 
-RUN _BEEP -A3 -100
-RUN _BEEP -B3 -100
-RUN _BEEP -C4 -100
-RUN _BEEP -D4 -100
-RUN _BEEP -E4 -100
-RUN _BEEP -F4 -100
-RUN _BEEP -G4 -100
-RUN _BEEP -A4 -100
-RUN _BEEP -B4 -100
-RUN _BEEP -E5 -100
-RUN _BEEP -C5 -500
+SET $INPUT = "none"
+PRINT "\nAudio Demos:"
+PRINT "\n[0] Beep Demo"
+PRINT "\n[1] Wav Demo"
+PRINT "\n[2] Signal Demo"
+PRINT "\nSelect: "
+INPUT $SELECT
+
+IF ($SELECT==0):
+  RUN _BEEP -A3 -100
+  RUN _BEEP -B3 -100
+  RUN _BEEP -C4 -100
+  RUN _BEEP -D4 -100
+  RUN _BEEP -E4 -100
+  RUN _BEEP -F4 -100
+  RUN _BEEP -G4 -100
+  RUN _BEEP -A4 -100
+  RUN _BEEP -B4 -100
+  RUN _BEEP -E5 -100
+  RUN _BEEP -C5 -500
+END
+
+IF ($SELECT==1):
+  # Play wav file
+  RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
+  RUN _WAIT 1000
+  RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
+  RUN _WAIT 1000
+  RUN _TERM_SOUND_PLAY 2 sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
+END
+
+IF ($SELECT==2):
+
+  SET @WAIT = 500
+
+  FOR ($i=0;$i<10;$i++):
+    
+    RUN signal -square 20 0.05 1
+    RUN signal -sine 175 0.1 1
+    RUN _WAIT 250
+    RUN signal -noise 1 0.05 1
+    RUN signal -sine 200 0.1 1
+    RUN _WAIT 250
+    
+  END
+
+END
 
 
-# Play wav file
-RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
-RUN _WAIT 1000
-RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
-RUN _WAIT 1000
-RUN _TERM_SOUND_PLAY 2 sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
+
+
+
+

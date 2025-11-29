@@ -176,7 +176,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.\n");
     printf("  paint    : ASCII paint application to edit bitmaps.\n");    
-    printf("  psfedit  : Font editor for .psf fonts used in linux TTY.\n");
+    printf("  psfedit  : Font editor for .psf fonts.\n");
     printf("  signal   : Signal generator. Type 'signal' for help.\n");
     printf("  skydial  : Simple sky-dial to identify and locate celestial objects.\n");
     printf("             Type 'skydial lat lon' to tell your position.\n");

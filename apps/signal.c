@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
             return 0;
         }
 
-        out = popen("aplay -q -f S16_LE -c1 -r44100 -D plug:dmix", "w");
+        out = popen("aplay -q -f S16_LE -c1 -r44100", "w");
         if (!out) {
             fprintf(stderr, "Failed to launch aplay: %s\n", strerror(errno));
             return EXIT_FAILURE;

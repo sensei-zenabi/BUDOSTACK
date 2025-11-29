@@ -17,16 +17,18 @@
 
 static void usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s -<waveform> <freq_Hz> <duration_s|inf> [format]\n"
+        "Usage: %s -<waveform> <freq_Hz> <duration_s> <channel> [format]\n"
         "  waveforms: sine, square, triangle, sawtooth, noise\n"
         "  freq      : positive number (e.g. 1200)\n"
-        "  duration  : seconds (e.g. 5.0) or inf\n"
+        "  duration  : seconds (e.g. 5.0)\n"
         "  format    : raw, text, wav\n"
-        "If format is omitted, the tone will play on the default ALSA device.\n"
+        "  channel   : 1-32 (to enable parallel sounds)\n"
+        "If format is omitted, the tone will play on the default ALSA device in"
+        " the background.\n"
         "Examples:\n"
-        "  %s -sine 440 5            # play a 440 Hz sine for 5 s\n"
-        "  %s -square 1000 inf raw   # stream raw floats to stdout\n"
-        "  %s -sine 1200 3 wav > tone.wav\n",
+        "  %s -sine 440 5 1          # play a 440 Hz sine for 5 s on channel 1\n"
+        "  %s -square 1000 2 2 raw   # stream raw floats to stdout\n"
+        "  %s -sine 1200 3 3 wav > tone.wav\n",
         prog, prog, prog, prog);
     exit(EXIT_FAILURE);
 }
@@ -62,7 +64,7 @@ static int write_wav_header(FILE *f, uint32_t total_samples) {
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 4 && argc != 5) {
+    if (argc != 5 && argc != 6) {
         usage(argv[0]);
     }
 
@@ -87,21 +89,22 @@ int main(int argc, char *argv[]) {
     }
 
     // Parse duration
-    int infinite = 0;
-    double duration = 0.0;
-    if (!strcmp(argv[3], "inf")) {
-        infinite = 1;
-    } else {
-        duration = atof(argv[3]);
-        if (duration <= 0.0) {
-            fprintf(stderr, "Duration must be positive or 'inf'.\n");
-            usage(argv[0]);
-        }
+    double duration = atof(argv[3]);
+    if (duration <= 0.0) {
+        fprintf(stderr, "Duration must be positive.\n");
+        usage(argv[0]);
+    }
+
+    // Parse channel
+    int channel = atoi(argv[4]);
+    if (channel < 1 || channel > 32) {
+        fprintf(stderr, "Channel must be between 1 and 32.\n");
+        usage(argv[0]);
     }
 
     // Determine output mode
     enum { F_RAW, F_TEXT, F_WAV, F_PLAY } mode;
-    const char *fmt = (argc == 5 ? argv[4] : NULL);
+    const char *fmt = (argc == 6 ? argv[5] : NULL);
     if (!fmt) {
         mode = F_PLAY;
     } else if (!strcmp(fmt, "raw")) {
@@ -115,28 +118,33 @@ int main(int argc, char *argv[]) {
         usage(argv[0]);
     }
 
-    if (mode == F_WAV && infinite) {
-        fprintf(stderr, "WAV format requires finite duration.\n");
-        usage(argv[0]);
+    uint64_t total_samples = (uint64_t)(duration * SAMPLE_RATE);
+    if (total_samples == 0) {
+        total_samples = 1;
     }
 
-    uint64_t total_samples = infinite
-        ? 0
-        : (uint64_t)(duration * SAMPLE_RATE);
-
     // Seed RNG for noise
-    srand((unsigned)time(NULL));
+    srand((unsigned)time(NULL) ^ (unsigned)channel);
 
     // Set up phase increment
     const double two_pi = 2.0 * M_PI;
     const double phase_inc = two_pi * freq / SAMPLE_RATE;
-    double phase = 0.0;
+    double phase = (two_pi / 32.0) * (double)(channel - 1);
 
     // Open output stream
     FILE *out = stdout;
     if (mode == F_PLAY) {
         // play via aplay: 16-bit little-endian mono 44.1 kHz
-        out = popen("aplay -q -f S16_LE -c1 -r44100", "w");
+        pid_t pid = fork();
+        if (pid < 0) {
+            fprintf(stderr, "Failed to fork for playback: %s\n", strerror(errno));
+            return EXIT_FAILURE;
+        }
+        if (pid > 0) {
+            return 0;
+        }
+
+        out = popen("aplay -q -f S16_LE -c1 -r44100 -D plug:dmix", "w");
         if (!out) {
             fprintf(stderr, "Failed to launch aplay: %s\n", strerror(errno));
             return EXIT_FAILURE;
@@ -157,7 +165,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Generate and output samples
-    for (uint64_t n = 0; infinite || n < total_samples; ++n) {
+    for (uint64_t n = 0; n < total_samples; ++n) {
         float fval;
         switch (wave) {
           case W_SINE:

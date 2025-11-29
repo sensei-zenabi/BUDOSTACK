@@ -376,13 +376,23 @@ static void draw_info_bars(int map_rows) {
     int help_row = map_rows + 1;
     int status_row = map_rows + 2;
     const char *help = "Move:Ctrl+Arrows Place:type Erase:Backspace Save:^S Load:^L Roll:^R Quit:^Q";
+    int bar_width = g_term_cols;
+    if (bar_width > 79) {
+        bar_width = 79;
+    }
     if (help_row <= g_term_rows) {
         dprintf(STDOUT_FILENO, "\x1b[%d;1H\x1b[0m", help_row);
-        dprintf(STDOUT_FILENO, "%-*.*s", g_term_cols, g_term_cols, help);
+        if (g_term_cols > bar_width) {
+            dprintf(STDOUT_FILENO, "%-*.*s", g_term_cols, g_term_cols, "");
+        }
+        dprintf(STDOUT_FILENO, "%-*.*s", bar_width, bar_width, help);
     }
     if (status_row <= g_term_rows) {
         dprintf(STDOUT_FILENO, "\x1b[%d;1H\x1b[0m", status_row);
-        dprintf(STDOUT_FILENO, "%-*.*s", g_term_cols, g_term_cols, g_status);
+        if (g_term_cols > bar_width) {
+            dprintf(STDOUT_FILENO, "%-*.*s", g_term_cols, g_term_cols, "");
+        }
+        dprintf(STDOUT_FILENO, "%-*.*s", bar_width, bar_width, g_status);
     }
 }
 
@@ -1045,8 +1055,12 @@ static int perform_roll(void) {
         draw_interface();
         return -1;
     }
+    const char *dice_path = "./commands/_DICE";
+    if (access(dice_path, X_OK) != 0) {
+        dice_path = "_DICE";
+    }
     char command[PATH_MAX + 32];
-    if (snprintf(command, sizeof(command), "./commands/_DICE %s", notation) >= (int)sizeof(command)) {
+    if (snprintf(command, sizeof(command), "%s %s", dice_path, notation) >= (int)sizeof(command)) {
         update_status("Dice command too long");
         draw_interface();
         return -1;

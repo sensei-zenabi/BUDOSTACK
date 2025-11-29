@@ -33,7 +33,7 @@ END
 RUN _RETROPROFILE apply $SCHEME
 RUN cls
 
-# Loadin screen
+# Loading screen
 RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
 @LOADING
 RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
@@ -49,7 +49,6 @@ END
 # Intro logo
 @INTRO
 RUN clear
-RUN _RECT -x 0 -y 0 -width 118 -height 66 -color 0 -fill on
 RUN _WAIT 200
 RUN _DISPLAY -x 0 -y 15 -file tasks/assets/login_logo.png
 RUN _TERM_SOUND_PLAY 2 sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100

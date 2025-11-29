@@ -33,6 +33,8 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  3. Modify the BUDOSTACK.desktop to create a desktop shortcut.\n");
     printf("\n");
+    printf("  4. (Opt.) Use your own terminal, start with './budostack' and match the\n");
+    printf("     displayed columns and rows using the 'runtask screen.task'.\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     printf("                           - SYSTEM REQUIREMENTS -\n");
@@ -49,10 +51,8 @@ int main(int argc, char *argv[]) {
     printf("  - Ubuntu\n");
     printf("  - Kubuntu\n");
     printf("\n");
-    printf("\n");
     printf(" Note! BUDOSTACK is intended to be ran with the apps/terminal application.\n");
     printf("       that uses 640x360 resolution with 80 columns and 42 rows.\n");
-    printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     // PAGE 2
     printf("-----------------------------------------------------------------------------\n");

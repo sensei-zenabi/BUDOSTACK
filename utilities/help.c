@@ -289,7 +289,7 @@ int main(int argc, char *argv[]) {
     printf(" External Terminals:\n");
     printf("\n");
     printf("  Terminals like 'Konsole' experience random command line printing offsets\n");
-    printf("  e.g. when typing 'git status' and looking the current branch line.\n");
+    printf("  e.g. when typing 'git status' or switching directories with 'cd'.\n");
     printf("\n");
     printf("\n");
     printf("\n");

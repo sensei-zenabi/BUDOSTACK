@@ -25,6 +25,10 @@ Screenshots from BUDOSTACK built-in retro terminal emulator (apps/terminal).
 3. Run ./start.sh
 4. Then type "help"
 
+### Running outside the built-in terminal
+* `./start.sh` still launches BUDOSTACK inside the retro-styled `apps/terminal` emulator with the CRT shader stack enabled by default.
+* If you prefer to stay in your own GUI terminal emulator, you can run `./budostack` directly. The shell detects VTE/Konsole-style terminals and skips the resize escape sequence that used to displace the cursor, so the prompt and block cursor stay aligned.
+
 ## Licence:
 BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 
 copyleft license, that allows you to:

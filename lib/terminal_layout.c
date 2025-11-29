@@ -4,6 +4,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if !defined(_WIN32)
 #include <sys/types.h>
@@ -22,6 +23,29 @@ static void clamp_single_value(int *value, int limit) {
 void budostack_clamp_terminal_size(int *rows, int *cols) {
     clamp_single_value(rows, BUDOSTACK_TARGET_ROWS);
     clamp_single_value(cols, BUDOSTACK_TARGET_COLS);
+}
+
+static int terminal_resize_disabled(void) {
+    const char *explicit_disable = getenv("BUDOSTACK_DISABLE_LAYOUT");
+    if (explicit_disable != NULL && explicit_disable[0] != '\0' && explicit_disable[0] != '0') {
+        return 1;
+    }
+
+    /*
+     * Konsole and many VTE-based emulators handle window-resize sequences
+     * inconsistently. When we emit CSI 8 ; rows ; cols t during startup the
+     * hardware cursor can end up offset vertically from subsequent output.
+     * Detecting those terminals via their exported variables lets us skip the
+     * resize escape and keep the cursor aligned with the prompt.
+     */
+    if (getenv("KONSOLE_VERSION") != NULL) {
+        return 1;
+    }
+    if (getenv("VTE_VERSION") != NULL) {
+        return 1;
+    }
+
+    return 0;
 }
 
 static void set_layout_env(void) {
@@ -52,6 +76,9 @@ void budostack_apply_terminal_layout(void) {
     set_layout_env();
 #if !defined(_WIN32)
     if (!isatty(STDOUT_FILENO)) {
+        return;
+    }
+    if (terminal_resize_disabled()) {
         return;
     }
     char seq[32];

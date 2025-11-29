@@ -101,6 +101,7 @@ static int read_le16(FILE *fp, uint16_t *out);
 static int read_le32(FILE *fp, uint32_t *out);
 static int load_bmp(const char *path, DungeonMap *out_map);
 static int validate_dice(const char *notation);
+static int build_dice_command(const char *notation, char *command, size_t size);
 static int perform_roll(void);
 
 static void cleanup(void) {
@@ -1033,6 +1034,32 @@ static int validate_dice(const char *notation) {
     return 1;
 }
 
+static int build_dice_command(const char *notation, char *command, size_t size) {
+    char exe_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len == -1 || len >= (ssize_t)sizeof(exe_path)) {
+        return -1;
+    }
+    exe_path[len] = '\0';
+
+    char *slash = strrchr(exe_path, '/');
+    if (slash == NULL) {
+        return -1;
+    }
+    *slash = '\0';
+
+    char *parent = strrchr(exe_path, '/');
+    if (parent != NULL && strcmp(parent + 1, "apps") == 0) {
+        *parent = '\0';
+    }
+
+    if (snprintf(command, size, "%s/commands/_DICE %s", exe_path, notation) >= (int)size) {
+        return -1;
+    }
+
+    return 0;
+}
+
 static int perform_roll(void) {
     char notation[32];
     if (!prompt_input("Dice roll (e.g. 1d20): ", notation, sizeof(notation))) {
@@ -1046,8 +1073,8 @@ static int perform_roll(void) {
         return -1;
     }
     char command[PATH_MAX + 32];
-    if (snprintf(command, sizeof(command), "./commands/_DICE %s", notation) >= (int)sizeof(command)) {
-        update_status("Dice command too long");
+    if (build_dice_command(notation, command, sizeof(command)) != 0) {
+        update_status("Failed to locate dice command");
         draw_interface();
         return -1;
     }

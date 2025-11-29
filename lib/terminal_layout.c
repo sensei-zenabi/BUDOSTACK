@@ -73,12 +73,13 @@ static void set_layout_env(void) {
 }
 
 void budostack_apply_terminal_layout(void) {
+    if (terminal_resize_disabled()) {
+        return;
+    }
+
     set_layout_env();
 #if !defined(_WIN32)
     if (!isatty(STDOUT_FILENO)) {
-        return;
-    }
-    if (terminal_resize_disabled()) {
         return;
     }
     char seq[32];

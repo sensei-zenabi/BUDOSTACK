@@ -53,6 +53,16 @@ static int g_view_y = 0;
 static int g_term_rows = 24;
 static int g_term_cols = 80;
 static int g_dirty = 0;
+static int g_full_redraw = 1;
+static int g_status_dirty = 1;
+static int g_dirty_cell_x = -1;
+static int g_dirty_cell_y = -1;
+static int g_last_cursor_x = -1;
+static int g_last_cursor_y = -1;
+static int g_last_term_rows = 0;
+static int g_last_term_cols = 0;
+static int g_last_view_x = -1;
+static int g_last_view_y = -1;
 static char g_status[256];
 static char g_map_path[PATH_MAX];
 static char g_session_path[PATH_MAX];
@@ -67,6 +77,9 @@ static void update_status(const char *fmt, ...);
 static int component_to_level(uint8_t v);
 static int pixel_to_ansi256(const Pixel *pixel);
 static int cursor_contrast_color(const Pixel *pixel);
+static int cell_is_visible(int map_x, int map_y, int map_rows);
+static void draw_cell(int map_x, int map_y, int map_rows);
+static void mark_dirty_cell(int map_x, int map_y);
 static void draw_map_area(int map_rows);
 static void draw_info_bars(int map_rows);
 static void draw_interface(void);
@@ -223,12 +236,14 @@ static int read_key(void) {
 static void update_status(const char *fmt, ...) {
     if (fmt == NULL) {
         g_status[0] = '\0';
+        g_status_dirty = 1;
         return;
     }
     va_list args;
     va_start(args, fmt);
     vsnprintf(g_status, sizeof(g_status), fmt, args);
     va_end(args);
+    g_status_dirty = 1;
 }
 
 static int component_to_level(uint8_t v) {
@@ -282,6 +297,53 @@ static int cursor_contrast_color(const Pixel *pixel) {
     return 231;
 }
 
+static int cell_is_visible(int map_x, int map_y, int map_rows) {
+    if (map_rows <= 0) {
+        return 0;
+    }
+    if (map_x < g_view_x || map_y < g_view_y) {
+        return 0;
+    }
+    if (map_x >= g_view_x + g_term_cols) {
+        return 0;
+    }
+    if (map_y >= g_view_y + map_rows) {
+        return 0;
+    }
+    return 1;
+}
+
+static void draw_cell(int map_x, int map_y, int map_rows) {
+    if (!cell_is_visible(map_x, map_y, map_rows)) {
+        return;
+    }
+    int screen_row = map_y - g_view_y + 1;
+    int screen_col = map_x - g_view_x + 1;
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dH", screen_row, screen_col);
+    if (map_x >= 0 && map_x < g_map.width && map_y >= 0 && map_y < g_map.height) {
+        const Pixel *px = &g_map.pixels[(size_t)map_y * (size_t)g_map.width + (size_t)map_x];
+        int color = pixel_to_ansi256(px);
+        unsigned char overlay = g_map.overlay[(size_t)map_y * (size_t)g_map.width + (size_t)map_x];
+        dprintf(STDOUT_FILENO, "\x1b[48;5;%dm", color);
+        if (map_x == g_cursor_x && map_y == g_cursor_y) {
+            int cursor_color = cursor_contrast_color(px);
+            dprintf(STDOUT_FILENO, "\x1b[38;5;%dm\x1b[1m+", cursor_color);
+        } else if (overlay != 0U) {
+            dprintf(STDOUT_FILENO, "\x1b[38;5;231m\x1b[1m%c", overlay);
+        } else {
+            dprintf(STDOUT_FILENO, " ");
+        }
+        dprintf(STDOUT_FILENO, "\x1b[0m");
+    } else {
+        dprintf(STDOUT_FILENO, " \x1b[0m");
+    }
+}
+
+static void mark_dirty_cell(int map_x, int map_y) {
+    g_dirty_cell_x = map_x;
+    g_dirty_cell_y = map_y;
+}
+
 static void draw_map_area(int map_rows) {
     for (int row = 0; row < map_rows; ++row) {
         int screen_row = row + 1;
@@ -331,12 +393,45 @@ static void draw_interface(void) {
     if (map_rows < 0) {
         map_rows = 0;
     }
-    write(STDOUT_FILENO, "\x1b[2J\x1b[H", 7);
-    if (map_rows > 0) {
-        draw_map_area(map_rows);
+    if (g_term_rows != g_last_term_rows || g_term_cols != g_last_term_cols || g_view_x != g_last_view_x
+        || g_view_y != g_last_view_y) {
+        g_full_redraw = 1;
     }
-    draw_info_bars(map_rows);
-    fflush(stdout);
+    if (g_full_redraw) {
+        write(STDOUT_FILENO, "\x1b[2J\x1b[H", 7);
+        if (map_rows > 0) {
+            draw_map_area(map_rows);
+        }
+        draw_info_bars(map_rows);
+        fflush(stdout);
+        g_full_redraw = 0;
+        g_status_dirty = 0;
+        g_dirty_cell_x = -1;
+        g_dirty_cell_y = -1;
+    } else {
+        if (g_dirty_cell_x >= 0 && g_dirty_cell_y >= 0) {
+            draw_cell(g_dirty_cell_x, g_dirty_cell_y, map_rows);
+            g_dirty_cell_x = -1;
+            g_dirty_cell_y = -1;
+        }
+        if (g_cursor_x != g_last_cursor_x || g_cursor_y != g_last_cursor_y) {
+            if (g_last_cursor_x >= 0 && g_last_cursor_y >= 0) {
+                draw_cell(g_last_cursor_x, g_last_cursor_y, map_rows);
+            }
+            draw_cell(g_cursor_x, g_cursor_y, map_rows);
+        }
+        if (g_status_dirty) {
+            draw_info_bars(map_rows);
+            g_status_dirty = 0;
+        }
+        fflush(stdout);
+    }
+    g_last_cursor_x = g_cursor_x;
+    g_last_cursor_y = g_cursor_y;
+    g_last_term_rows = g_term_rows;
+    g_last_term_cols = g_term_cols;
+    g_last_view_x = g_view_x;
+    g_last_view_y = g_view_y;
 }
 
 static void clamp_cursor(void) {
@@ -649,6 +744,9 @@ static int load_map(const char *path) {
     g_cursor_y = 0;
     g_view_x = 0;
     g_view_y = 0;
+    g_full_redraw = 1;
+    g_last_cursor_x = -1;
+    g_last_cursor_y = -1;
     strncpy(g_map_path, path, sizeof(g_map_path) - 1U);
     g_map_path[sizeof(g_map_path) - 1U] = '\0';
     g_session_path[0] = '\0';
@@ -744,6 +842,9 @@ static int load_session(const char *path) {
     clamp_cursor();
     g_view_x = 0;
     g_view_y = 0;
+    g_full_redraw = 1;
+    g_last_cursor_x = -1;
+    g_last_cursor_y = -1;
     g_dirty = 0;
     update_status("Loaded session %s", path);
     return 0;
@@ -1068,6 +1169,7 @@ int main(int argc, char *argv[]) {
                 size_t index = (size_t)g_cursor_y * (size_t)g_map.width + (size_t)g_cursor_x;
                 g_map.overlay[index] = 0;
                 g_dirty = 1;
+                mark_dirty_cell(g_cursor_x, g_cursor_y);
                 update_status("Cleared marker at %d,%d", g_cursor_x, g_cursor_y);
             }
             continue;
@@ -1128,6 +1230,7 @@ int main(int argc, char *argv[]) {
                 size_t index = (size_t)g_cursor_y * (size_t)g_map.width + (size_t)g_cursor_x;
                 g_map.overlay[index] = (unsigned char)key;
                 g_dirty = 1;
+                mark_dirty_cell(g_cursor_x, g_cursor_y);
                 update_status("Placed '%c' at %d,%d", (char)key, g_cursor_x, g_cursor_y);
                 if (g_map.width > 0 && g_cursor_x + 1 < g_map.width) {
                     ++g_cursor_x;

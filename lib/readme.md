@@ -3,10 +3,6 @@
 - Update this file whenever a library in `lib/` is added, removed, or when consumer files change their includes.
 - Remove entries for deleted libraries and add new consumers as they appear to keep this list accurate for future maintenance.
 
-## Recent verification notes
-
-- Confirmed no code paths reference the former `libdraw.c` helpers; rendering for `display` and `paint` relies on `libimage.h` and bespoke drawing logic instead.
-
 ## Include and usage map
 
 | Library file | Files including or using it |

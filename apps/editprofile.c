@@ -42,7 +42,8 @@ static void enable_raw_mode(void) {
     raw.c_lflag &= ~(ECHO | ICANON);
     raw.c_lflag &= ~(IEXTEN | ISIG);
     raw.c_iflag &= ~(IXON | ICRNL);
-    raw.c_oflag &= ~(OPOST);
+    /* Preserve newline translation so external terminals keep carriage returns. */
+    raw.c_oflag = original_termios.c_oflag;
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 1;
 

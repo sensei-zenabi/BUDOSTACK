@@ -42,6 +42,8 @@ IF ($SELECTION==1):
   SET $DT = 0.0
   SET $STEP = 0.0
   SET $SPEED = 220
+  SET $ACCEL = 1100
+  SET $FRICTION = 8.0
   SET $JUMP = 460
   SET $GRAVITY = 980
   SET $GROUND = 300
@@ -56,31 +58,46 @@ IF ($SELECTION==1):
   RUN _TIMER --start
   RUN _TIMER --reset
   PRINT "SCENE 1 - Move with arrows or A/D, jump with SPACE"
-  RUN _TEXT -x 0 -y 22 -text "LEFT/RIGHT: Move  SPACE: Jump  Q/ESC: Quit" -color 229
 
   WHILE ($RUNNING==1):
     RUN _TIMER --get TO $DT
     RUN _TIMER --reset
     RUN _CALC $DT/1000 TO $STEP
 
-    RUN _TERM_KEYBOARD TO $KEY
+    RUN _TERM_KEYBOARD --quiet TO $KEY
     IF ($KEY==""):
       SET $KEY = "NONE"
     END
 
-    # Horizontal input
-    SET $VX = 0
+    # Horizontal input (acceleration + damping for smoother motion)
+    SET $AX = 0
     IF ($KEY=="LEFT_ARROW"):
-      RUN _CALC -$SPEED TO $VX
+      RUN _CALC -$ACCEL TO $AX
     END
     IF ($KEY=="A"):
-      RUN _CALC -$SPEED TO $VX
+      RUN _CALC -$ACCEL TO $AX
     END
     IF ($KEY=="RIGHT_ARROW"):
-      RUN _CALC $SPEED TO $VX
+      RUN _CALC $ACCEL TO $AX
     END
     IF ($KEY=="D"):
+      RUN _CALC $ACCEL TO $AX
+    END
+
+    RUN _CALC $VX + ($AX * $STEP) TO $VX
+    IF ($VX > $SPEED):
       RUN _CALC $SPEED TO $VX
+    END
+    IF ($VX < -$SPEED):
+      RUN _CALC -$SPEED TO $VX
+    END
+
+    IF ($AX==0):
+      RUN _CALC 1 - ($FRICTION * $STEP) TO $DECAY
+      IF ($DECAY < 0):
+        SET $DECAY = 0
+      END
+      RUN _CALC $VX * $DECAY TO $VX
     END
 
     # Jump input
@@ -114,8 +131,10 @@ IF ($SELECTION==1):
     END
     RUN _CALC floor($YRAW) TO $Y
 
-    # Render sprite
+    # Clear frame and render sprite/text
+    RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360
     RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE
+    RUN _TEXT -x 0 -y 22 -text "LEFT/RIGHT: Move  SPACE: Jump  Q/ESC: Quit" -color 229
     RUN _TERM_RENDER
 
     # Exit condition

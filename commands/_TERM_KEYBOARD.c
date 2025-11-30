@@ -226,43 +226,43 @@ static const char *decode_escape(const unsigned char *buf, size_t len, size_t *c
     return "ESC";
 }
 
-static void emit_event(const char *name) {
-    if (name && *name) {
+static void emit_event(const char *name, int quiet) {
+    if (!quiet && name && *name) {
         printf("%s\n", name);
     }
 }
 
-static void process_bytes(const unsigned char *data, size_t len) {
+static void process_bytes(const unsigned char *data, size_t len, int quiet) {
     size_t i = 0;
     while (i < len) {
         unsigned char b = data[i];
         if (b == 27) {
             size_t consumed = 0;
             const char *name = decode_escape(&data[i + 1], len - i - 1, &consumed);
-            emit_event(name);
+            emit_event(name, quiet);
             i += 1 + consumed;
             continue;
         }
 
         if (b == '\n' || b == '\r') {
-            emit_event("ENTER");
+            emit_event("ENTER", quiet);
         } else if (b == '\t') {
-            emit_event("TAB");
+            emit_event("TAB", quiet);
         } else if (b == ' ') {
-            emit_event("SPACE");
+            emit_event("SPACE", quiet);
         } else if (b == 127 || b == 8) {
-            emit_event("BACKSPACE");
+            emit_event("BACKSPACE", quiet);
         } else if (b >= '0' && b <= '9') {
             char out[2] = { (char)b, '\0' };
-            emit_event(out);
+            emit_event(out, quiet);
         } else if (isalpha(b)) {
             char out[2] = { (char)toupper(b), '\0' };
-            emit_event(out);
+            emit_event(out, quiet);
         } else if (b == 3) {
-            emit_event("CTRL_C");
+            emit_event("CTRL_C", quiet);
         } else if (isprint(b)) {
             char out[2] = { (char)b, '\0' };
-            emit_event(out);
+            emit_event(out, quiet);
         }
         i++;
     }
@@ -273,6 +273,8 @@ static void print_help(void) {
     printf("Capture all key presses since the last invocation and print each name\n");
     printf("on its own line. Intended for use from TASK scripts via\n");
     printf("  RUN _TERM_KEYBOARD TO $EVENT_ARRAY\n\n");
+    printf("Options:\n");
+    printf("  --quiet   Do not print captured key names (still written to TASK vars)\n\n");
     printf("Names:\n");
     printf("  Letters: A-Z  Digits: 0-9\n");
     printf("  ENTER, SPACE, TAB, BACKSPACE, ESC, CTRL_C\n");
@@ -287,6 +289,13 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    int quiet = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--quiet") == 0) {
+            quiet = 1;
+        }
+    }
+
     if (enable_raw_mode() != 0) {
         return 1;
     }
@@ -299,7 +308,7 @@ int main(int argc, char **argv) {
     }
 
     if (len > 0) {
-        process_bytes(buffer, (size_t)len);
+        process_bytes(buffer, (size_t)len, quiet);
     }
 
     free(buffer);

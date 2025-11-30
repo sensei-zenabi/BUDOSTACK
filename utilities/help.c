@@ -182,8 +182,8 @@ int main(int argc, char *argv[]) {
     printf("             Type 'skydial lat lon' to tell your position.\n");
     printf("  solar    : Visualizes the solar system and it's planets. 'solar X', where\n");
     printf("             X is the number of planets from 2 to 8.\n");
-    printf("  time     : Display time now in different time-zones. 'time -s' for\n");     
-    printf("             astronomical events.\n");    
+    printf("  time     : Display time with IP-based timezone lookup and online checks.\n");
+    printf("             Uses ipinfo.io and worldtimeapi.org; 'time -s' for astronomy.\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     // PAGE 5

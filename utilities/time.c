@@ -4,10 +4,262 @@
 #include <time.h>
 #include <string.h>
 #include <math.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <unistd.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846  /* Define M_PI if not defined */
 #endif
+
+// ---------- Networking helpers ----------
+
+#define TIME_RESPONSE_BUF 16384
+
+struct HttpResponse {
+    char body[TIME_RESPONSE_BUF];
+};
+
+// Perform a simple HTTP GET request over port 80.
+static int http_get(const char *host, const char *path, struct HttpResponse *response) {
+    if (!host || !path || !response) {
+        return -1;
+    }
+
+    struct addrinfo hints;
+    struct addrinfo *result = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    int ret = getaddrinfo(host, "80", &hints, &result);
+    if (ret != 0 || result == NULL) {
+        fprintf(stderr, "Failed to resolve host %s: %s\n", host, gai_strerror(ret));
+        return -1;
+    }
+
+    int sockfd = -1;
+    for (struct addrinfo *rp = result; rp != NULL; rp = rp->ai_next) {
+        sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sockfd == -1) {
+            continue;
+        }
+        if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            break;
+        }
+        close(sockfd);
+        sockfd = -1;
+    }
+
+    if (sockfd == -1) {
+        fprintf(stderr, "Unable to connect to %s\n", host);
+        freeaddrinfo(result);
+        return -1;
+    }
+
+    char request[512];
+    int written = snprintf(request, sizeof(request),
+                           "GET %s HTTP/1.0\r\n"
+                           "Host: %s\r\n"
+                           "User-Agent: budostack-time/1.0\r\n"
+                           "Connection: close\r\n\r\n",
+                           path, host);
+    if (written < 0 || (size_t)written >= sizeof(request)) {
+        fprintf(stderr, "Request too large\n");
+        close(sockfd);
+        freeaddrinfo(result);
+        return -1;
+    }
+
+    if (send(sockfd, request, (size_t)written, 0) < 0) {
+        fprintf(stderr, "Failed to send HTTP request to %s\n", host);
+        close(sockfd);
+        freeaddrinfo(result);
+        return -1;
+    }
+
+    size_t total = 0;
+    while (1) {
+        ssize_t n = recv(sockfd, response->body + total, TIME_RESPONSE_BUF - 1 - total, 0);
+        if (n < 0) {
+            fprintf(stderr, "Error reading response from %s\n", host);
+            close(sockfd);
+            freeaddrinfo(result);
+            return -1;
+        }
+        if (n == 0) {
+            break;
+        }
+        total += (size_t)n;
+        if (total >= TIME_RESPONSE_BUF - 1) {
+            break;
+        }
+    }
+    response->body[total] = '\0';
+
+    close(sockfd);
+    freeaddrinfo(result);
+    return (int)total;
+}
+
+// Extract a JSON string value for the given key (very small parser).
+static int extract_json_value(const char *json, const char *key, char *out, size_t out_size) {
+    if (!json || !key || !out || out_size == 0) {
+        return 0;
+    }
+
+    const char *key_pos = strstr(json, key);
+    if (!key_pos) {
+        return 0;
+    }
+
+    const char *colon = strchr(key_pos, ':');
+    if (!colon) {
+        return 0;
+    }
+
+    const char *start = colon + 1;
+    while (*start == ' ' || *start == '\t') {
+        start++;
+    }
+    if (*start == '"') {
+        start++;
+    }
+
+    const char *end = strchr(start, '"');
+    if (!end) {
+        end = start;
+        while (*end && *end != ',' && *end != '\n' && *end != '\r') {
+            end++;
+        }
+    }
+
+    size_t len = (size_t)(end - start);
+    if (len >= out_size) {
+        len = out_size - 1;
+    }
+    memcpy(out, start, len);
+    out[len] = '\0';
+    return 1;
+}
+
+// Skip HTTP headers to obtain the body pointer.
+static const char *get_http_body(const char *response_text) {
+    if (!response_text) {
+        return NULL;
+    }
+    const char *body = strstr(response_text, "\r\n\r\n");
+    if (body) {
+        return body + 4;
+    }
+    body = strstr(response_text, "\n\n");
+    if (body) {
+        return body + 2;
+    }
+    return response_text;
+}
+
+// Format a datetime string from worldtimeapi into "YYYY-MM-DD HH:MM:SS".
+static void format_datetime(const char *raw, char *out, size_t out_size) {
+    if (!raw || !out || out_size == 0) {
+        return;
+    }
+    const char *t_ptr = strchr(raw, 'T');
+    if (!t_ptr || strlen(raw) < 19) {
+        snprintf(out, out_size, "%s", raw);
+        return;
+    }
+    // Copy YYYY-MM-DD
+    size_t date_len = (size_t)(t_ptr - raw);
+    if (date_len > 10) {
+        date_len = 10;
+    }
+    char date_part[11];
+    memcpy(date_part, raw, date_len);
+    date_part[date_len] = '\0';
+
+    // Copy HH:MM:SS
+    const char *time_part = t_ptr + 1;
+    char clock_part[9];
+    size_t copy_len = 8;
+    if (strlen(time_part) < 8) {
+        copy_len = strlen(time_part);
+    }
+    memcpy(clock_part, time_part, copy_len);
+    clock_part[copy_len] = '\0';
+
+    snprintf(out, out_size, "%s %s", date_part, clock_part);
+}
+
+// ---------- IP and time zone lookup ----------
+
+struct IpLocation {
+    char city[64];
+    char region[64];
+    char country[16];
+    char timezone[128];
+};
+
+struct RemoteTime {
+    char datetime[64];
+    char utc_offset[16];
+    char timezone[128];
+};
+
+// Fetch IP-based location data from ipinfo.io.
+static int fetch_ip_location(struct IpLocation *loc) {
+    if (!loc) {
+        return 0;
+    }
+    struct HttpResponse resp;
+    if (http_get("ipinfo.io", "/json", &resp) <= 0) {
+        return 0;
+    }
+
+    const char *body = get_http_body(resp.body);
+    if (!body) {
+        return 0;
+    }
+
+    int ok = 1;
+    ok &= extract_json_value(body, "\"city\"", loc->city, sizeof(loc->city));
+    ok &= extract_json_value(body, "\"region\"", loc->region, sizeof(loc->region));
+    ok &= extract_json_value(body, "\"country\"", loc->country, sizeof(loc->country));
+    ok &= extract_json_value(body, "\"timezone\"", loc->timezone, sizeof(loc->timezone));
+    return ok;
+}
+
+// Fetch time data from worldtimeapi.org for the given path (e.g., "/api/ip" or "/api/timezone/Europe/London").
+static int fetch_remote_time(const char *path, struct RemoteTime *rtime) {
+    if (!path || !rtime) {
+        return 0;
+    }
+    struct HttpResponse resp;
+    if (http_get("worldtimeapi.org", path, &resp) <= 0) {
+        return 0;
+    }
+
+    const char *body = get_http_body(resp.body);
+    if (!body) {
+        return 0;
+    }
+
+    char raw_datetime[80] = {0};
+    if (!extract_json_value(body, "\"datetime\"", raw_datetime, sizeof(raw_datetime))) {
+        return 0;
+    }
+    format_datetime(raw_datetime, rtime->datetime, sizeof(rtime->datetime));
+
+    if (!extract_json_value(body, "\"utc_offset\"", rtime->utc_offset, sizeof(rtime->utc_offset))) {
+        return 0;
+    }
+    if (!extract_json_value(body, "\"timezone\"", rtime->timezone, sizeof(rtime->timezone))) {
+        return 0;
+    }
+
+    return 1;
+}
 
 // Determine if a given year is a leap year.
 int is_leap(int year) {
@@ -209,9 +461,37 @@ int main(int argc, char *argv[]) {
 
     char buffer[100];
 
+    // Attempt to fetch remote location and time data.
+    struct IpLocation location;
+    memset(&location, 0, sizeof(location));
+    struct RemoteTime remote_now;
+    memset(&remote_now, 0, sizeof(remote_now));
+    int has_location = fetch_ip_location(&location);
+    int has_remote_now = fetch_remote_time("/api/ip", &remote_now);
+
     // "Time now:" in local time.
     strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S", &local_tm);
-    printf("%-30s %s\n", "Time now:", buffer);
+    if (has_remote_now) {
+        printf("%-30s %s (UTC%s, via worldtimeapi.org)\n", "Time now:", buffer, remote_now.utc_offset);
+    } else {
+        double tz_offset = get_tz_offset(now);
+        printf("%-30s %s (UTC%+0.0f)\n", "Time now:", buffer, tz_offset);
+    }
+
+    if (has_location) {
+        printf("%-30s %s, %s, %s (timezone: %s via ipinfo.io)\n", "Detected location:",
+               location.city[0] ? location.city : "Unknown city",
+               location.region[0] ? location.region : "Unknown region",
+               location.country[0] ? location.country : "Unknown country",
+               location.timezone[0] ? location.timezone : "Unknown");
+    } else {
+        printf("%-30s %s\n", "Detected location:", "Unavailable (internet lookup failed)");
+    }
+    if (has_remote_now) {
+        printf("%-30s %s (%s)\n", "Internet time:", remote_now.datetime, remote_now.timezone);
+    } else {
+        printf("%-30s %s\n", "Internet time:", "Unavailable (worldtimeapi.org unreachable)");
+    }
 
     // ISO week number.
     char week[3];
@@ -228,57 +508,54 @@ int main(int argc, char *argv[]) {
     printf("%-30s %03d\n\n", "Days till year end:", days_till_end);
 
     // Regional times header.
-    printf("Regional standard times: (non-DST):\n\n");
+    printf("Regional times verified online (worldtimeapi.org):\n\n");
 
-    // Array of 24 time zones (UTC -11 to UTC +12).
     struct Timezone zones[] = {
-        { -11, "PagoPago11", "Pago Pago (American Samoa)" },
-        { -10, "Honolulu10", "Honolulu (USA)" },
-        { -9,  "Anchorage9", "Anchorage (USA)" },
-        { -8,  "LosAngeles8", "Los Angeles (USA), Vancouver (Canada)" },
-        { -7,  "Denver7", "Denver (USA), Calgary (Canada)" },
-        { -6,  "Chicago6", "Chicago (USA), Winnipeg (Canada)" },
-        { -5,  "NewYork5", "New York (USA), Toronto (Canada)" },
-        { -4,  "Santiago4", "Santiago (Chile)" },
-        { -3,  "BuenosAires3", "Buenos Aires (Argentina)" },
-        { -2,  "FernandoNoronha2", "Fernando de Noronha (Brazil)" },
-        { -1,  "Praia1", "Praia (Cape Verde)" },
-        {  0,  "London0", "London (England)" },
-        {  1,  "Paris-1", "Paris (France), Berlin (Germany)" },
-        {  2,  "Helsinki-2", "Helsinki (Finland)" },
-        {  3,  "Moscow-3", "Moscow (Russia)" },
-        {  4,  "Dubai-4", "Dubai (UAE)" },
-        {  5,  "NewDelhi-5", "New Delhi (India)" },
-        {  6,  "Dhaka-6", "Dhaka (Bangladesh)" },
-        {  7,  "Bangkok-7", "Bangkok (Thailand)" },
-        {  8,  "Beijing-8", "Beijing (China), Hong Kong (China)" },
-        {  9,  "Tokyo-9", "Tokyo (Japan)" },
-        { 10,  "Sydney-10", "Sydney (Australia)" },
-        { 11,  "Honiara-11", "Honiara (Solomon Islands)" },
-        { 12,  "Auckland-12", "Auckland (New Zealand)" }
+        { -11, "Pacific/Pago_Pago", "Pago Pago (American Samoa)" },
+        { -10, "Pacific/Honolulu", "Honolulu (USA)" },
+        { -9,  "America/Anchorage", "Anchorage (USA)" },
+        { -8,  "America/Los_Angeles", "Los Angeles (USA), Vancouver (Canada)" },
+        { -7,  "America/Denver", "Denver (USA), Calgary (Canada)" },
+        { -6,  "America/Chicago", "Chicago (USA), Winnipeg (Canada)" },
+        { -5,  "America/New_York", "New York (USA), Toronto (Canada)" },
+        { -4,  "America/Santiago", "Santiago (Chile)" },
+        { -3,  "America/Argentina/Buenos_Aires", "Buenos Aires (Argentina)" },
+        { -2,  "America/Noronha", "Fernando de Noronha (Brazil)" },
+        { -1,  "Atlantic/Cape_Verde", "Praia (Cape Verde)" },
+        {  0,  "Europe/London", "London (England)" },
+        {  1,  "Europe/Paris", "Paris (France), Berlin (Germany)" },
+        {  2,  "Europe/Helsinki", "Helsinki (Finland)" },
+        {  3,  "Europe/Moscow", "Moscow (Russia)" },
+        {  4,  "Asia/Dubai", "Dubai (UAE)" },
+        {  5,  "Asia/Kolkata", "New Delhi (India)" },
+        {  6,  "Asia/Dhaka", "Dhaka (Bangladesh)" },
+        {  7,  "Asia/Bangkok", "Bangkok (Thailand)" },
+        {  8,  "Asia/Shanghai", "Beijing (China), Hong Kong (China)" },
+        {  9,  "Asia/Tokyo", "Tokyo (Japan)" },
+        { 10,  "Australia/Sydney", "Sydney (Australia)" },
+        { 11,  "Pacific/Honiara", "Honiara (Solomon Islands)" },
+        { 12,  "Pacific/Auckland", "Auckland (New Zealand)" }
     };
 
-    int numZones = sizeof(zones) / sizeof(zones[0]);
+    int numZones = (int)(sizeof(zones) / sizeof(zones[0]));
     char label[150];
-    char time_str[100];
-    struct tm tm_city;
-
-    // Iterate through each time zone and display its regional time.
     for (int i = 0; i < numZones; i++) {
-        // Set the TZ environment variable to the zone's TZ string.
-        setenv("TZ", zones[i].tzString, 1);
-        tzset();
-        localtime_r(&now, &tm_city);
-        strftime(time_str, sizeof(time_str), "%d-%m-%Y %H:%M:%S", &tm_city);
-
-        // Build the label in the format: "UTC±offset - cities".
+        struct RemoteTime city_time;
+        memset(&city_time, 0, sizeof(city_time));
+        char path[160];
+        snprintf(path, sizeof(path), "/api/timezone/%s", zones[i].tzString);
+        int ok = fetch_remote_time(path, &city_time);
         if (zones[i].offset >= 0) {
             snprintf(label, sizeof(label), "UTC+%d - %s", zones[i].offset, zones[i].cities);
         } else {
             snprintf(label, sizeof(label), "UTC%d - %s", zones[i].offset, zones[i].cities);
         }
-        // Print the label and the regional time.
-        printf("    %-45s %s\n", label, time_str);
+
+        if (ok) {
+            printf("    %-45s %s (%s)\n", label, city_time.datetime, city_time.utc_offset);
+        } else {
+            printf("    %-45s %s\n", label, "Unavailable (worldtimeapi.org unreachable)");
+        }
     }
 
     return 0;

@@ -1,8 +1,8 @@
 # demo.task
 # --------------------------------------------------------
-# This demo is used to measure pixel graphics performance
-# between _TERM* commands and app/terminal. It contains 
-# various scenes that are used to do the benchmarking.
+# Interactive sprite playground showcasing movement in
+# the terminal pixel renderer. Move left/right and jump
+# across a single stage.
 # --------------------------------------------------------
 
 # --- Global Variables ---
@@ -12,7 +12,7 @@ SET $SELECTION = 0
 RUN _CLEAR
 PRINT "\nSelect Demo"
 PRINT "\n"
-PRINT "\n[1] Sprite rendering test"
+PRINT "\n[1] Sprite movement playground"
 PRINT "\n"
 PRINT "\nEnter selection: "
 INPUT $SELECTION
@@ -20,44 +20,115 @@ INPUT $SELECTION
 
 # ======================= SCENE 1 ========================
 # Render sprites and demonstrate movement in 640x360.
-# ========================================================  
-
+# ========================================================
 
 IF ($SELECTION==1):
-  
+
   # Initialization:
-  
+
   RUN _CLEAR
   RUN _TERM_RESOLUTION 640 360
+  RUN _TERM_MARGIN 0
 
   # Variables
-  SET $X = 20
+  SET $X = 120
+  SET $Y = 300
   SET $XRAW = $X
+  SET $YRAW = $Y
   SET $DX = 0
-  SET $Y = 40
-  SET $VX = 150
+  SET $DY = 0
+  SET $VX = 0
+  SET $VY = 0
   SET $DT = 0.0
+  SET $STEP = 0.0
+  SET $SPEED = 220
+  SET $JUMP = 460
+  SET $GRAVITY = 980
+  SET $GROUND = 300
+  SET $SPRITE_W = 48
+  SET $STAGE_W = 640 - $SPRITE_W
   SET $SPRITE = "./tasks/assets/char_1_1.png"
-      
+  SET $RUNNING = 1
+  SET $CAN_JUMP = 1
+  SET $KEY = "NONE"
+
   # Rendering loop:
   RUN _TIMER --start
-  PRINT "SCENE 2 - Demonstrating sprite rendering"
-  WHILE ($X<590):
+  RUN _TIMER --reset
+  PRINT "SCENE 1 - Move with arrows or A/D, jump with SPACE"
+  RUN _TEXT -x 0 -y 22 -text "LEFT/RIGHT: Move  SPACE: Jump  Q/ESC: Quit" -color 229
+
+  WHILE ($RUNNING==1):
+    RUN _TIMER --get TO $DT
     RUN _TIMER --reset
+    RUN _CALC $DT/1000 TO $STEP
+
+    RUN _TERM_KEYBOARD TO $KEY
+    IF ($KEY==""):
+      SET $KEY = "NONE"
+    END
+
+    # Horizontal input
+    SET $VX = 0
+    IF ($KEY=="LEFT_ARROW"):
+      RUN _CALC -$SPEED TO $VX
+    END
+    IF ($KEY=="A"):
+      RUN _CALC -$SPEED TO $VX
+    END
+    IF ($KEY=="RIGHT_ARROW"):
+      RUN _CALC $SPEED TO $VX
+    END
+    IF ($KEY=="D"):
+      RUN _CALC $SPEED TO $VX
+    END
+
+    # Jump input
+    IF ($KEY=="SPACE"):
+      IF ($CAN_JUMP==1):
+        RUN _CALC -$JUMP TO $VY
+        SET $CAN_JUMP = 0
+      END
+    END
+
+    # Apply gravity
+    RUN _CALC $VY + ($GRAVITY * $STEP) TO $VY
+
+    # Integrate movement
+    RUN _CALC $STEP * $VX TO $DX
+    SET $XRAW = $XRAW + $DX
+    IF ($XRAW < 0):
+      SET $XRAW = 0
+    END
+    IF ($XRAW > $STAGE_W):
+      SET $XRAW = $STAGE_W
+    END
+    RUN _CALC floor($XRAW) TO $X
+
+    RUN _CALC $STEP * $VY TO $DY
+    SET $YRAW = $YRAW + $DY
+    IF ($YRAW > $GROUND):
+      SET $YRAW = $GROUND
+      SET $VY = 0
+      SET $CAN_JUMP = 1
+    END
+    RUN _CALC floor($YRAW) TO $Y
+
+    # Render sprite
     RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE
     RUN _TERM_RENDER
-    #RUN _WAIT 10    
-    IF ($X>48):
-      RUN _TERM_CLEAN -x $X-48 -y $Y -width 48 -height 48
+
+    # Exit condition
+    IF ($KEY=="Q"):
+      SET $RUNNING = 0
     END
-    RUN _CALC ($DT/1000 * $VX) TO $DX
-    SET $XRAW = $XRAW + $DX
-    RUN _CALC floor($XRAW) TO $X    
-    RUN _TIMER --get TO $DT
+    IF ($KEY=="ESC"):
+      SET $RUNNING = 0
+    END
   END
   RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360
 END
-  
+
 # ------------- EXIT CLEANUP -------------
 SET $KEY
 INPUT $KEY

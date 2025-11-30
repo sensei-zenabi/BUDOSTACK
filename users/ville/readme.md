@@ -7,7 +7,7 @@ computers.
 Built-In Capabilities:
 
 - Terminal Emulator with CRT simulation.
-- Rich and powerful TASK Scripting Language.
+- Rich and powerful TASK Scripting Language for building apps.
 - Office tools from Text Editors to Presentations and Spreadsheets.
 - File manipulation and System Utilities.
 - Math capabilities.
@@ -30,7 +30,7 @@ Tested distributions:
 - Ubuntu
 - Kubuntu
 
-### LATEST RELEASE: v0.8.4 ###
+### LATEST RELEASE: v0.8.5 ###
 
 Project Status: Hardening phase from v0.8.0 to v1.0.0
 

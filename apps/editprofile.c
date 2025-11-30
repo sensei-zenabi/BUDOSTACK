@@ -203,7 +203,7 @@ static void print_color_cell(const RetroColor *color, int selected_channel) {
 
 static void draw_color_line(const char *label, int row_number, const RetroColor *color, int selected_row, int selected_channel) {
     draw_row_prefix(selected_row == row_number);
-    printf("%02d %-24s ", row_number, label);
+    printf("%02d %-24.24s ", row_number, label);
     print_color_cell(color, selected_row == row_number ? selected_channel : -1);
     putchar('\n');
 }

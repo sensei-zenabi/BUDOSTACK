@@ -15,6 +15,74 @@
 #define M_PI 3.14159265358979323846  /* Define M_PI if not defined */
 #endif
 
+// ---------- Output helpers ----------
+
+#define MAX_OUTPUT_COLS 78
+#define LABEL_WIDTH 24
+
+// Print a label/value pair with wrapping so no line exceeds MAX_OUTPUT_COLS.
+static void print_wrapped_label(const char *label, const char *content) {
+    if (!label) {
+        label = "";
+    }
+    if (!content) {
+        content = "";
+    }
+
+    char prefix[LABEL_WIDTH + 2];
+    int prefix_len = snprintf(prefix, sizeof(prefix), "%-*s", LABEL_WIDTH, label);
+    if (prefix_len < 0) {
+        return;
+    }
+    if (prefix_len >= (int)sizeof(prefix)) {
+        prefix_len = (int)sizeof(prefix) - 1;
+    }
+
+    char indent[LABEL_WIDTH + 2];
+    memset(indent, ' ', (size_t)prefix_len);
+    indent[prefix_len] = '\0';
+
+    const char *text = content;
+    int line_len = 0;
+    int first_word = 1;
+
+    fputs(prefix, stdout);
+    line_len = prefix_len;
+
+    while (*text) {
+        while (*text == ' ') {
+            text++;
+        }
+        if (*text == '\0') {
+            break;
+        }
+        const char *word_start = text;
+        size_t word_len = 0;
+        while (text[word_len] && text[word_len] != ' ') {
+            word_len++;
+        }
+
+        if (!first_word && line_len + 1 + (int)word_len > MAX_OUTPUT_COLS) {
+            fputc('\n', stdout);
+            fputs(indent, stdout);
+            line_len = prefix_len;
+            first_word = 1;
+        }
+
+        if (!first_word) {
+            fputc(' ', stdout);
+            line_len++;
+        }
+
+        fwrite(word_start, 1, word_len, stdout);
+        line_len += (int)word_len;
+        text += word_len;
+        first_word = 0;
+    }
+
+    fputc('\n', stdout);
+}
+
 // ---------- Networking helpers ----------
 
 #define TIME_RESPONSE_BUF 16384
@@ -523,17 +591,21 @@ int main(int argc, char *argv[]) {
     // "Time now:" in local time.
     strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S", &local_tm);
     double tz_offset = get_tz_offset(base_time);
-    printf("%-24s %s (UTC%+0.0f via NTP)\n", "Time now:", buffer, tz_offset);
+    char linebuf[512];
+    snprintf(linebuf, sizeof(linebuf), "%s (UTC%+0.0f via NTP)", buffer,
+             tz_offset);
+    print_wrapped_label("Time now:", linebuf);
 
     if (has_location) {
-        printf("%-24s %s, %s, %s (tz %s via ip-api.com)\n", "Detected location:",
-               location.city[0] ? location.city : "Unknown city",
-               location.region[0] ? location.region : "Unknown region",
-               location.country[0] ? location.country : "Unknown country",
-               location.timezone[0] ? location.timezone : "Unknown");
+        snprintf(linebuf, sizeof(linebuf), "%s, %s, %s (tz %s via ip-api.com)",
+                 location.city[0] ? location.city : "Unknown city",
+                 location.region[0] ? location.region : "Unknown region",
+                 location.country[0] ? location.country : "Unknown country",
+                 location.timezone[0] ? location.timezone : "Unknown");
+        print_wrapped_label("Detected location:", linebuf);
     } else {
-        printf("%-24s %s\n", "Detected location:",
-               "Unavailable (internet lookup failed)");
+        print_wrapped_label("Detected location:",
+                            "Unavailable (internet lookup failed)");
     }
 
     if (has_location && location.timezone[0]) {
@@ -541,35 +613,41 @@ int main(int argc, char *argv[]) {
         char remote_time[64];
         if (format_zone_time(location.timezone, base_time, remote_time,
                              sizeof(remote_time), &remote_offset)) {
-            printf("%-24s %s (%s, UTC%+.1f)\n", "Internet time:", remote_time,
-                   location.timezone, remote_offset);
+            snprintf(linebuf, sizeof(linebuf), "%s (%s, UTC%+.1f)", remote_time,
+                     location.timezone, remote_offset);
+            print_wrapped_label("Internet time:", linebuf);
         } else {
-            printf("%-24s %s\n", "Internet time:",
-                   "Unavailable (timezone formatting failed)");
+            print_wrapped_label("Internet time:",
+                                "Unavailable (timezone formatting failed)");
         }
     } else {
-        printf("%-24s %s\n", "Internet time:",
-               "Unavailable (timezone missing)");
+        print_wrapped_label("Internet time:",
+                            "Unavailable (timezone missing)");
     }
 
     // ISO week number.
     char week[3];
     strftime(week, sizeof(week), "%V", &local_tm);
-    printf("%-24s %02d\n", "Current Week:", atoi(week));
+    snprintf(linebuf, sizeof(linebuf), "%02d", atoi(week));
+    print_wrapped_label("Current Week:", linebuf);
 
     // Days since year start.
-    printf("%-24s %03d\n", "Days since year start:", local_tm.tm_yday);
+    snprintf(linebuf, sizeof(linebuf), "%03d", local_tm.tm_yday);
+    print_wrapped_label("Days since year start:", linebuf);
 
     // Calculate days until year end.
     int year = local_tm.tm_year + 1900;
     int total_days = is_leap(year) ? 366 : 365;
     int days_till_end = total_days - (local_tm.tm_yday + 1);
-    printf("%-24s %03d\n\n", "Days till year end:", days_till_end);
+    snprintf(linebuf, sizeof(linebuf), "%03d", days_till_end);
+    print_wrapped_label("Days till year end:", linebuf);
+    printf("\n");
 
     // Regional times header.
     printf("Regional times (NTP-synced base time):\n\n");
 
     struct Timezone zones[] = {
+        { -12, "Etc/GMT+12", "Baker Island" },
         { -11, "Pacific/Pago_Pago", "Pago Pago" },
         { -10, "Pacific/Honolulu", "Honolulu" },
         { -9,  "America/Anchorage", "Anchorage" },
@@ -577,23 +655,25 @@ int main(int argc, char *argv[]) {
         { -7,  "America/Denver", "Denver" },
         { -6,  "America/Chicago", "Chicago" },
         { -5,  "America/New_York", "New York" },
-        { -4,  "America/Santiago", "Santiago" },
-        { -3,  "America/Argentina/Buenos_Aires", "Buenos Aires" },
-        { -2,  "America/Noronha", "Noronha" },
+        { -4,  "America/Halifax", "Halifax" },
+        { -3,  "America/Sao_Paulo", "Sao Paulo" },
+        { -2,  "America/Noronha", "Fernando de Noronha" },
         { -1,  "Atlantic/Cape_Verde", "Praia" },
         {  0,  "Europe/London", "London" },
         {  1,  "Europe/Paris", "Paris" },
-        {  2,  "Europe/Helsinki", "Helsinki" },
+        {  2,  "Africa/Cairo", "Cairo" },
         {  3,  "Europe/Moscow", "Moscow" },
         {  4,  "Asia/Dubai", "Dubai" },
-        {  5,  "Asia/Kolkata", "New Delhi" },
+        {  5,  "Asia/Karachi", "Karachi" },
         {  6,  "Asia/Dhaka", "Dhaka" },
         {  7,  "Asia/Bangkok", "Bangkok" },
         {  8,  "Asia/Shanghai", "Beijing" },
         {  9,  "Asia/Tokyo", "Tokyo" },
         { 10,  "Australia/Sydney", "Sydney" },
-        { 11,  "Pacific/Honiara", "Honiara" },
-        { 12,  "Pacific/Auckland", "Auckland" }
+        { 11,  "Pacific/Guadalcanal", "Honiara" },
+        { 12,  "Pacific/Auckland", "Auckland" },
+        { 13,  "Pacific/Tongatapu", "Nuku'alofa" },
+        { 14,  "Pacific/Kiritimati", "Kiritimati" }
     };
 
     int numZones = (int)(sizeof(zones) / sizeof(zones[0]));
@@ -603,12 +683,14 @@ int main(int argc, char *argv[]) {
         double off = 0.0;
         int ok = format_zone_time(zones[i].tzString, base_time, city_time,
                                   sizeof(city_time), &off);
-        snprintf(label, sizeof(label), "UTC%+d %s", zones[i].offset,
+        snprintf(label, sizeof(label), "  UTC%+d %s", zones[i].offset,
                  zones[i].cities);
         if (ok) {
-            printf("  %-28s %s (UTC%+.1f)\n", label, city_time, off);
+            snprintf(linebuf, sizeof(linebuf), "%s (UTC%+.1f)", city_time,
+                     off);
+            print_wrapped_label(label, linebuf);
         } else {
-            printf("  %-28s %s\n", label, "Unavailable (tz data)");
+            print_wrapped_label(label, "Unavailable (tz data)");
         }
     }
 

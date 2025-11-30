@@ -18,7 +18,7 @@
 // ---------- Output helpers ----------
 
 #define MAX_OUTPUT_COLS 78
-#define LABEL_WIDTH 24
+#define LABEL_WIDTH 30
 
 // Print a label/value pair with wrapping so no line exceeds MAX_OUTPUT_COLS.
 static void print_wrapped_label(const char *label, const char *content) {
@@ -29,7 +29,7 @@ static void print_wrapped_label(const char *label, const char *content) {
         content = "";
     }
 
-    char prefix[LABEL_WIDTH + 2];
+    char prefix[LABEL_WIDTH + 64];
     int prefix_len = snprintf(prefix, sizeof(prefix), "%-*s", LABEL_WIDTH, label);
     if (prefix_len < 0) {
         return;
@@ -38,7 +38,7 @@ static void print_wrapped_label(const char *label, const char *content) {
         prefix_len = (int)sizeof(prefix) - 1;
     }
 
-    char indent[LABEL_WIDTH + 2];
+    char indent[LABEL_WIDTH + 64];
     memset(indent, ' ', (size_t)prefix_len);
     indent[prefix_len] = '\0';
 

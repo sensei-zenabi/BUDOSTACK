@@ -75,7 +75,6 @@ char* read_input(void) {
     }
     newt = oldt;
     newt.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
-    newt.c_oflag &= ~(OPOST);
     newt.c_cflag |= CS8;
     newt.c_lflag &= ~(ICANON | ECHO | IEXTEN | ISIG);
     newt.c_cc[VMIN] = 1;

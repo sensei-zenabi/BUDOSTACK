@@ -107,22 +107,22 @@ static Key read_key(char *out_char) {
 }
 
 static const char *color_roles[16] = {
-    "0 background canvas for code blocks",
-    "1 plain text and general prose",
+    "0 canvas (code blocks)",
+    "1 plain text / prose",
     "2 control-flow keywords",
-    "3 data-type keywords",
-    "4 string and character literals",
+    "3 datatype keywords",
+    "4 string / char literals",
     "5 numeric literals",
     "6 function identifiers",
-    "7 punctuation, braces, and brackets",
+    "7 punctuation & brackets",
     "8 preprocessor directives",
-    "9 comments and documentation",
+    "9 comments / docs",
     "10 markdown headers",
-    "11 list bullets and markers",
+    "11 list bullets/markers",
     "12 markup tags",
     "13 inline code spans",
-    "14 bold text emphasis",
-    "15 italic text emphasis",
+    "14 bold emphasis",
+    "15 italic emphasis",
 };
 
 static void copy_profiles(RetroProfile *out, size_t out_count) {
@@ -146,15 +146,21 @@ static int clamp_channel(int value) {
 }
 
 static void draw_profile_header(const RetroProfile *profile, size_t profile_index, size_t total, int dirty) {
+    char name[25];
+    char key[13];
+    snprintf(name, sizeof(name), "%.24s", profile->display_name);
+    snprintf(key, sizeof(key), "%.12s", profile->key);
+
     printf("\x1b[2J\x1b[H");
-    printf("RetroProfile Editor (%zu/%zu) — %s [%s]%s\n",
+    printf("RetroProfile Editor %zu/%zu  %s [%s]%s\n",
            profile_index + 1,
            total,
-           profile->display_name,
-           profile->key,
+           name,
+           key,
            dirty ? " *" : "");
-    printf("Use Arrow Keys to move, +/- to tweak, < and > for x10 steps, Tab to move between RGB columns.\n");
-    printf("Press 'p' to switch profile, 's' or Ctrl+S to save, 'q' or Ctrl+Q to quit. Changes apply after restart.\n\n");
+    printf("Arrows: move  Tab: next channel  +/-: fine step  </>: coarse step\n");
+    printf("p: next profile  c: copy row to defaults  s/Ctrl+S: save  q/Ctrl+Q: quit\n");
+    printf("Changes apply after restart. Keep terminal at least 78 cols wide.\n\n");
 }
 
 static void draw_row_prefix(int selected) {
@@ -168,38 +174,33 @@ static void print_color_cell(const RetroColor *color, int selected_channel) {
     const uint8_t components[3] = {color->r, color->g, color->b};
     for (int i = 0; i < 3; ++i) {
         if (i == selected_channel)
-            printf("[%c:%3u] ", labels[i], components[i]);
+            printf("[%c:%3u]", labels[i], components[i]);
         else
-            printf(" %c:%3u  ", labels[i], components[i]);
+            printf(" %c:%3u ", labels[i], components[i]);
+        if (i != 2)
+            putchar(' ');
     }
+}
+
+static void draw_color_line(const char *label, int row_number, const RetroColor *color, int selected_row, int selected_channel) {
+    draw_row_prefix(selected_row == row_number);
+    printf("%02d %-24s ", row_number, label);
+    print_color_cell(color, selected_row == row_number ? selected_channel : -1);
+    putchar('\n');
 }
 
 static void draw_screen(const RetroProfile *profile, size_t profile_index, size_t total_profiles, int selected_row, int selected_channel, const int dirty_flags[4]) {
     draw_profile_header(profile, profile_index, total_profiles, dirty_flags[profile_index]);
 
-    for (int i = 0; i < 16; ++i) {
-        draw_row_prefix(selected_row == i);
-        printf("Color %2d — %-40s ", i, color_roles[i]);
-        print_color_cell(&profile->colors[i], selected_row == i ? selected_channel : -1);
-        putchar('\n');
-    }
+    for (int i = 0; i < 16; ++i)
+        draw_color_line(color_roles[i], i, &profile->colors[i], selected_row, selected_channel);
 
-    draw_row_prefix(selected_row == 16);
-    printf("Default FG  — foreground fallback        ");
-    print_color_cell(&profile->defaults.foreground, selected_row == 16 ? selected_channel : -1);
+    draw_color_line("default foreground", 16, &profile->defaults.foreground, selected_row, selected_channel);
+    draw_color_line("default background", 17, &profile->defaults.background, selected_row, selected_channel);
+    draw_color_line("cursor highlight", 18, &profile->defaults.cursor, selected_row, selected_channel);
+
     putchar('\n');
-
-    draw_row_prefix(selected_row == 17);
-    printf("Default BG  — background fallback        ");
-    print_color_cell(&profile->defaults.background, selected_row == 17 ? selected_channel : -1);
-    putchar('\n');
-
-    draw_row_prefix(selected_row == 18);
-    printf("Cursor     — caret highlight             ");
-    print_color_cell(&profile->defaults.cursor, selected_row == 18 ? selected_channel : -1);
-    putchar('\n');
-
-    printf("\nTip: Use 'c' to copy selected palette color into defaults. Profiles reload after restarting BUDOSTACK.\n");
+    printf("Tip: keep rows under 78 cols. Saves write overrides; restart to apply.\n");
     fflush(stdout);
 }
 

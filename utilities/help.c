@@ -184,7 +184,6 @@ int main(int argc, char *argv[]) {
     printf("             X is the number of planets from 2 to 8.\n");
     printf("  time     : Display time with IP-based timezone lookup and NTP clocks.\n");
     printf("             Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).\n");
-    printf("             Use 'time -s' for astronomy.\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     // PAGE 5

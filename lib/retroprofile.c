@@ -2,6 +2,7 @@
 
 #include "retroprofile.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -30,7 +31,18 @@
 #define RETROPROFILE_STATE_PATH "users/.retroprofile"
 #endif
 
-static const RetroProfile retro_profiles[] = {
+#ifndef RETROPROFILE_OVERRIDE_PATH
+#define RETROPROFILE_OVERRIDE_PATH "users/retroprofile_presets.ini"
+#endif
+
+static const char *override_path(void) {
+    const char *env = getenv("BUDOSTACK_RETROPROFILE_PRESETS");
+    if (env != NULL && env[0] != '\0')
+        return env;
+    return RETROPROFILE_OVERRIDE_PATH;
+}
+
+static const RetroProfile builtin_profiles[] = {
     {
         "c64",
         "Commodore 64",
@@ -145,12 +157,149 @@ static const RetroProfile retro_profiles[] = {
     },
 };
 
+static RetroProfile mutable_profiles[sizeof(builtin_profiles) / sizeof(builtin_profiles[0])];
+static int profiles_loaded = 0;
+
+static size_t builtin_profile_count(void) {
+    return sizeof(builtin_profiles) / sizeof(builtin_profiles[0]);
+}
+
+static int parse_rgb(const char *text, RetroColor *out_color) {
+    if (text == NULL || out_color == NULL)
+        return -1;
+    int r = 0, g = 0, b = 0;
+    if (sscanf(text, "%d,%d,%d", &r, &g, &b) != 3)
+        return -1;
+    if (r < 0 || r > 255 || g < 0 || g > 255 || b < 0 || b > 255)
+        return -1;
+    out_color->r = (uint8_t)r;
+    out_color->g = (uint8_t)g;
+    out_color->b = (uint8_t)b;
+    return 0;
+}
+
+static int parse_colors_line(const char *text, RetroProfile *profile) {
+    if (text == NULL || profile == NULL)
+        return -1;
+
+    const char *cursor = text;
+    for (int i = 0; i < 16; ++i) {
+        while (*cursor == ' ' || *cursor == '\t')
+            ++cursor;
+
+        RetroColor color;
+        if (parse_rgb(cursor, &color) != 0)
+            return -1;
+        profile->colors[i] = color;
+
+        const char *semicolon = strchr(cursor, ';');
+        if (i == 15) {
+            if (semicolon != NULL)
+                return -1;
+            break;
+        }
+        if (semicolon == NULL)
+            return -1;
+        cursor = semicolon + 1;
+    }
+
+    return 0;
+}
+
+static void trim(char *text) {
+    if (text == NULL)
+        return;
+    char *start = text;
+    while (*start && isspace((unsigned char)*start))
+        ++start;
+    char *end = start + strlen(start);
+    while (end > start && isspace((unsigned char)end[-1]))
+        --end;
+    *end = '\0';
+    if (start != text)
+        memmove(text, start, (size_t)(end - start + 1));
+}
+
+static RetroProfile *mutable_profile_from_key(const char *key) {
+    if (key == NULL)
+        return NULL;
+    size_t count = builtin_profile_count();
+    for (size_t i = 0; i < count; ++i) {
+        RetroProfile *profile = &mutable_profiles[i];
+        if (profile->key != NULL && strcasecmp(profile->key, key) == 0)
+            return profile;
+    }
+    return NULL;
+}
+
+static void load_overrides(void) {
+    const char *path = override_path();
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+        return;
+
+    char line[512];
+    RetroProfile *current = NULL;
+
+    while (fgets(line, (int)sizeof(line), file) != NULL) {
+        trim(line);
+        if (line[0] == '\0' || line[0] == '#')
+            continue;
+
+        if (line[0] == '[') {
+            char *end = strchr(line, ']');
+            if (end == NULL)
+                continue;
+            *end = '\0';
+            current = mutable_profile_from_key(line + 1);
+            continue;
+        }
+
+        if (current == NULL)
+            continue;
+
+        char *equals = strchr(line, '=');
+        if (equals == NULL)
+            continue;
+        *equals = '\0';
+        char *key = line;
+        char *value = equals + 1;
+        trim(key);
+        trim(value);
+
+        if (strcasecmp(key, "colors") == 0) {
+            (void)parse_colors_line(value, current);
+        } else if (strcasecmp(key, "foreground") == 0) {
+            (void)parse_rgb(value, &current->defaults.foreground);
+        } else if (strcasecmp(key, "background") == 0) {
+            (void)parse_rgb(value, &current->defaults.background);
+        } else if (strcasecmp(key, "cursor") == 0) {
+            (void)parse_rgb(value, &current->defaults.cursor);
+        }
+    }
+
+    fclose(file);
+}
+
+static void retroprofile_ensure_loaded(void) {
+    if (profiles_loaded)
+        return;
+
+    size_t count = builtin_profile_count();
+    for (size_t i = 0; i < count; ++i)
+        mutable_profiles[i] = builtin_profiles[i];
+
+    load_overrides();
+    profiles_loaded = 1;
+}
+
 static const RetroProfile *retroprofile_validate(const char *key) {
+    retroprofile_ensure_loaded();
     if (key == NULL)
         return NULL;
     size_t count = retroprofile_count();
     for (size_t i = 0; i < count; ++i) {
-        const RetroProfile *profile = &retro_profiles[i];
+        const RetroProfile *profile = &mutable_profiles[i];
         if (strcasecmp(profile->key, key) == 0)
             return profile;
     }
@@ -158,13 +307,14 @@ static const RetroProfile *retroprofile_validate(const char *key) {
 }
 
 size_t retroprofile_count(void) {
-    return sizeof(retro_profiles) / sizeof(retro_profiles[0]);
+    return builtin_profile_count();
 }
 
 const RetroProfile *retroprofile_get(size_t index) {
+    retroprofile_ensure_loaded();
     if (index >= retroprofile_count())
         return NULL;
-    return &retro_profiles[index];
+    return &mutable_profiles[index];
 }
 
 const RetroProfile *retroprofile_find(const char *key) {
@@ -172,7 +322,8 @@ const RetroProfile *retroprofile_find(const char *key) {
 }
 
 const RetroProfile *retroprofile_default(void) {
-    return &retro_profiles[0];
+    retroprofile_ensure_loaded();
+    return &mutable_profiles[0];
 }
 
 static const char *state_path(void) {
@@ -323,4 +474,8 @@ int retroprofile_active_default_foreground_index(void) {
         return -1;
 
     return retroprofile_color_index(profile, profile->defaults.foreground);
+}
+
+const char *retroprofile_override_path(void) {
+    return override_path();
 }

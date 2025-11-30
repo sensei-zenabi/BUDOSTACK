@@ -12,7 +12,7 @@
 | `lib/libedit.c` | `apps/edit.c`
 | `lib/libimage.h` | `commands/_IMAGE.c`, `commands/_DISPLAY.c`, `utilities/display.c`, `lib/libimage.c`
 | `lib/libtable.c` | `apps/table.c`
-| `lib/retroprofile.h` | `commands/_TEXT.c`, `commands/_RETROPROFILE.c`, `commands/_COLORS.c`, `commands/_RECT.c`, `commands/_BAR.c`, `lib/retroprofile.c`
+| `lib/retroprofile.h` | `commands/_TEXT.c`, `commands/_RETROPROFILE.c`, `commands/_COLORS.c`, `commands/_RECT.c`, `commands/_BAR.c`, `apps/editprofile.c`, `lib/retroprofile.c`
 | `lib/termbg.h` | `commands/_EXE.c`, `commands/_TEXT.c`, `commands/_DISPLAY.c`, `commands/_RECT.c`, `commands/_BAR.c`, `commands/_IMAGE.c`, `apps/cls.c`, `lib/libimage.c`, `lib/termbg.c`
 | `lib/terminal_layout.h` | `apps/exchange.c`, `apps/edit.c`, `apps/spectrum.c`, `apps/inet.c`, `apps/table.c`, `apps/paint.c`, `lib/terminal_layout.c`
 | `lib/dr_mp3.h` | `apps/terminal.c`

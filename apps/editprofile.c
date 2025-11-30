@@ -1,0 +1,405 @@
+#define _POSIX_C_SOURCE 200809L
+
+#include <ctype.h>
+#include <errno.h>
+#include <limits.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <termios.h>
+#include <unistd.h>
+
+#include "../lib/retroprofile.h"
+
+typedef enum {
+    KEY_UNKNOWN = 0,
+    KEY_UP,
+    KEY_DOWN,
+    KEY_LEFT,
+    KEY_RIGHT,
+    KEY_CTRL_S,
+    KEY_CTRL_Q,
+    KEY_OTHER,
+    KEY_ENTER,
+} Key;
+
+static struct termios original_termios;
+
+static void restore_terminal(void) {
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
+    write(STDOUT_FILENO, "\x1b[?25h", 6);
+}
+
+static void enable_raw_mode(void) {
+    if (tcgetattr(STDIN_FILENO, &original_termios) == -1) {
+        perror("tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+
+    struct termios raw = original_termios;
+    raw.c_lflag &= ~(ECHO | ICANON);
+    raw.c_lflag &= ~(IEXTEN | ISIG);
+    raw.c_iflag &= ~(IXON | ICRNL);
+    raw.c_oflag &= ~(OPOST);
+    raw.c_cc[VMIN] = 0;
+    raw.c_cc[VTIME] = 1;
+
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        perror("tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+
+    write(STDOUT_FILENO, "\x1b[?25l", 6);
+    atexit(restore_terminal);
+}
+
+static Key read_key(char *out_char) {
+    char c = 0;
+    if (read(STDIN_FILENO, &c, 1) != 1)
+        return KEY_UNKNOWN;
+
+    if (out_char != NULL)
+        *out_char = c;
+
+    if (c == '\x1b') {
+        char seq[2];
+        if (read(STDIN_FILENO, &seq[0], 1) != 1)
+            return KEY_OTHER;
+        if (read(STDIN_FILENO, &seq[1], 1) != 1)
+            return KEY_OTHER;
+
+        if (seq[0] == '[') {
+            switch (seq[1]) {
+                case 'A':
+                    return KEY_UP;
+                case 'B':
+                    return KEY_DOWN;
+                case 'C':
+                    return KEY_RIGHT;
+                case 'D':
+                    return KEY_LEFT;
+                default:
+                    return KEY_OTHER;
+            }
+        }
+        return KEY_OTHER;
+    }
+
+    if (c == 19) {
+        if (out_char != NULL)
+            *out_char = 0;
+        return KEY_CTRL_S;
+    }
+    if (c == 17) {
+        if (out_char != NULL)
+            *out_char = 0;
+        return KEY_CTRL_Q;
+    }
+    if (c == '\r' || c == '\n') {
+        if (out_char != NULL)
+            *out_char = 0;
+        return KEY_ENTER;
+    }
+
+    return KEY_OTHER;
+}
+
+static const char *color_roles[16] = {
+    "0 background canvas for code blocks",
+    "1 plain text and general prose",
+    "2 control-flow keywords",
+    "3 data-type keywords",
+    "4 string and character literals",
+    "5 numeric literals",
+    "6 function identifiers",
+    "7 punctuation, braces, and brackets",
+    "8 preprocessor directives",
+    "9 comments and documentation",
+    "10 markdown headers",
+    "11 list bullets and markers",
+    "12 markup tags",
+    "13 inline code spans",
+    "14 bold text emphasis",
+    "15 italic text emphasis",
+};
+
+static void copy_profiles(RetroProfile *out, size_t out_count) {
+    size_t count = retroprofile_count();
+    if (out_count < count)
+        count = out_count;
+    for (size_t i = 0; i < count; ++i) {
+        const RetroProfile *src = retroprofile_get(i);
+        if (src == NULL)
+            continue;
+        out[i] = *src;
+    }
+}
+
+static int clamp_channel(int value) {
+    if (value < 0)
+        return 0;
+    if (value > 255)
+        return 255;
+    return value;
+}
+
+static void draw_profile_header(const RetroProfile *profile, size_t profile_index, size_t total, int dirty) {
+    printf("\x1b[2J\x1b[H");
+    printf("RetroProfile Editor (%zu/%zu) — %s [%s]%s\n",
+           profile_index + 1,
+           total,
+           profile->display_name,
+           profile->key,
+           dirty ? " *" : "");
+    printf("Use Arrow Keys to move, +/- to tweak, < and > for x10 steps, Tab to move between RGB columns.\n");
+    printf("Press 'p' to switch profile, 's' or Ctrl+S to save, 'q' or Ctrl+Q to quit. Changes apply after restart.\n\n");
+}
+
+static void draw_row_prefix(int selected) {
+    printf(selected ? "> " : "  ");
+}
+
+static void print_color_cell(const RetroColor *color, int selected_channel) {
+    printf("#%02X%02X%02X ", color->r, color->g, color->b);
+    printf("\x1b[48;2;%u;%u;%um  \x1b[0m ", color->r, color->g, color->b);
+    const char labels[3] = {'R', 'G', 'B'};
+    const uint8_t components[3] = {color->r, color->g, color->b};
+    for (int i = 0; i < 3; ++i) {
+        if (i == selected_channel)
+            printf("[%c:%3u] ", labels[i], components[i]);
+        else
+            printf(" %c:%3u  ", labels[i], components[i]);
+    }
+}
+
+static void draw_screen(const RetroProfile *profile, size_t profile_index, size_t total_profiles, int selected_row, int selected_channel, const int dirty_flags[4]) {
+    draw_profile_header(profile, profile_index, total_profiles, dirty_flags[profile_index]);
+
+    for (int i = 0; i < 16; ++i) {
+        draw_row_prefix(selected_row == i);
+        printf("Color %2d — %-40s ", i, color_roles[i]);
+        print_color_cell(&profile->colors[i], selected_row == i ? selected_channel : -1);
+        putchar('\n');
+    }
+
+    draw_row_prefix(selected_row == 16);
+    printf("Default FG  — foreground fallback        ");
+    print_color_cell(&profile->defaults.foreground, selected_row == 16 ? selected_channel : -1);
+    putchar('\n');
+
+    draw_row_prefix(selected_row == 17);
+    printf("Default BG  — background fallback        ");
+    print_color_cell(&profile->defaults.background, selected_row == 17 ? selected_channel : -1);
+    putchar('\n');
+
+    draw_row_prefix(selected_row == 18);
+    printf("Cursor     — caret highlight             ");
+    print_color_cell(&profile->defaults.cursor, selected_row == 18 ? selected_channel : -1);
+    putchar('\n');
+
+    printf("\nTip: Use 'c' to copy selected palette color into defaults. Profiles reload after restarting BUDOSTACK.\n");
+    fflush(stdout);
+}
+
+static void adjust_channel(RetroColor *color, int channel, int delta) {
+    if (channel < 0 || channel > 2)
+        return;
+    int value = 0;
+    if (channel == 0)
+        value = color->r;
+    else if (channel == 1)
+        value = color->g;
+    else
+        value = color->b;
+
+    value = clamp_channel(value + delta);
+
+    if (channel == 0)
+        color->r = (uint8_t)value;
+    else if (channel == 1)
+        color->g = (uint8_t)value;
+    else
+        color->b = (uint8_t)value;
+}
+
+static RetroColor *selected_color(RetroProfile *profile, int row) {
+    if (row < 0)
+        return NULL;
+    if (row < 16)
+        return &profile->colors[row];
+    if (row == 16)
+        return &profile->defaults.foreground;
+    if (row == 17)
+        return &profile->defaults.background;
+    if (row == 18)
+        return &profile->defaults.cursor;
+    return NULL;
+}
+
+static int write_presets(const RetroProfile *profiles, size_t profile_count) {
+    const char *path = retroprofile_override_path();
+    FILE *file = fopen(path, "w");
+    if (file == NULL)
+        return -1;
+
+    size_t count = profile_count;
+    for (size_t i = 0; i < count; ++i) {
+        const RetroProfile *profile = &profiles[i];
+        fprintf(file, "[%s]\n", profile->key);
+        fprintf(file, "colors=");
+        for (int c = 0; c < 16; ++c) {
+            const RetroColor *color = &profile->colors[c];
+            fprintf(file, "%u,%u,%u", color->r, color->g, color->b);
+            if (c != 15)
+                fputc(';', file);
+        }
+        fputc('\n', file);
+        fprintf(file, "foreground=%u,%u,%u\n",
+                profile->defaults.foreground.r,
+                profile->defaults.foreground.g,
+                profile->defaults.foreground.b);
+        fprintf(file, "background=%u,%u,%u\n",
+                profile->defaults.background.r,
+                profile->defaults.background.g,
+                profile->defaults.background.b);
+        fprintf(file, "cursor=%u,%u,%u\n\n",
+                profile->defaults.cursor.r,
+                profile->defaults.cursor.g,
+                profile->defaults.cursor.b);
+    }
+
+    if (fclose(file) != 0)
+        return -1;
+    return 0;
+}
+
+static void ensure_override_directory(void) {
+    const char *path = retroprofile_override_path();
+    const char *slash = strrchr(path, '/');
+    if (slash == NULL)
+        return;
+    size_t len = (size_t)(slash - path);
+    char buffer[PATH_MAX];
+    if (len >= sizeof(buffer))
+        return;
+    memcpy(buffer, path, len);
+    buffer[len] = '\0';
+    if (buffer[0] == '\0')
+        return;
+    mkdir(buffer, 0777);
+}
+
+int main(void) {
+    RetroProfile editable[4];
+    int dirty_flags[4] = {0, 0, 0, 0};
+    size_t profile_count = retroprofile_count();
+    if (profile_count > 4)
+        profile_count = 4;
+
+    copy_profiles(editable, profile_count);
+
+    int current_profile = 0;
+    int selected_row = 0;
+    int selected_channel = 0;
+
+    enable_raw_mode();
+    draw_screen(&editable[current_profile], (size_t)current_profile, profile_count, selected_row, selected_channel, dirty_flags);
+
+    for (;;) {
+        char raw_char = 0;
+        Key key = read_key(&raw_char);
+        if (key == KEY_UNKNOWN)
+            continue;
+
+        if (key == KEY_UP) {
+            if (selected_row > 0)
+                --selected_row;
+        } else if (key == KEY_DOWN) {
+            if (selected_row < 18)
+                ++selected_row;
+        } else if (key == KEY_LEFT) {
+            if (selected_channel > 0)
+                --selected_channel;
+        } else if (key == KEY_RIGHT) {
+            if (selected_channel < 2)
+                ++selected_channel;
+        } else if (key == KEY_CTRL_Q) {
+            break;
+        } else if (key == KEY_CTRL_S) {
+            ensure_override_directory();
+            if (write_presets(editable, profile_count) == 0) {
+                for (size_t i = 0; i < profile_count && i < 4; ++i)
+                    dirty_flags[i] = 0;
+                printf("\nSaved overrides to %s. Restart to apply.\n", retroprofile_override_path());
+            } else {
+                printf("\nFailed to save overrides (%s).\n", strerror(errno));
+            }
+            fflush(stdout);
+            continue;
+        } else if (key == KEY_ENTER) {
+            /* no-op */
+        } else if (key == KEY_OTHER) {
+            char ch = raw_char;
+            if (ch == 'q' || ch == 'Q' || ch == 17) {
+                break;
+            } else if (ch == 's' || ch == 'S') {
+                ensure_override_directory();
+                if (write_presets(editable, profile_count) == 0) {
+                    for (size_t i = 0; i < profile_count && i < 4; ++i)
+                        dirty_flags[i] = 0;
+                    printf("\nSaved overrides to %s. Restart to apply.\n", retroprofile_override_path());
+                } else {
+                    printf("\nFailed to save overrides (%s).\n", strerror(errno));
+                }
+                fflush(stdout);
+                continue;
+            } else if (ch == '+') {
+                RetroColor *color = selected_color(&editable[current_profile], selected_row);
+                if (color) {
+                    adjust_channel(color, selected_channel, 1);
+                    dirty_flags[current_profile] = 1;
+                }
+            } else if (ch == '-') {
+                RetroColor *color = selected_color(&editable[current_profile], selected_row);
+                if (color) {
+                    adjust_channel(color, selected_channel, -1);
+                    dirty_flags[current_profile] = 1;
+                }
+            } else if (ch == '>') {
+                RetroColor *color = selected_color(&editable[current_profile], selected_row);
+                if (color) {
+                    adjust_channel(color, selected_channel, 10);
+                    dirty_flags[current_profile] = 1;
+                }
+            } else if (ch == '<') {
+                RetroColor *color = selected_color(&editable[current_profile], selected_row);
+                if (color) {
+                    adjust_channel(color, selected_channel, -10);
+                    dirty_flags[current_profile] = 1;
+                }
+            } else if (ch == 'p' || ch == 'P') {
+                current_profile = (current_profile + 1) % (int)profile_count;
+                selected_row = 0;
+                selected_channel = 0;
+            } else if (ch == '\t') {
+                selected_channel = (selected_channel + 1) % 3;
+            } else if (ch == 'c' || ch == 'C') {
+                if (selected_row < 16) {
+                    RetroColor source = editable[current_profile].colors[selected_row];
+                    editable[current_profile].defaults.foreground = source;
+                    editable[current_profile].defaults.background = source;
+                    editable[current_profile].defaults.cursor = source;
+                    dirty_flags[current_profile] = 1;
+                }
+            }
+        }
+
+        draw_screen(&editable[current_profile], (size_t)current_profile, profile_count, selected_row, selected_channel, dirty_flags);
+    }
+
+    printf("\nNo changes applied to running session. Restart to see new palettes.\n");
+    return EXIT_SUCCESS;
+}
+

@@ -181,6 +181,10 @@ int main(int argc, char *argv[]) {
     printf("  time     : Display time with IP-based timezone lookup and NTP clocks.\n");
     printf("             Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).\n");
     printf("\n");
+    printf("\n");
+    printf("\n");
+    printf("\n");
+    printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     // PAGE 5
     printf("-----------------------------------------------------------------------------\n");  

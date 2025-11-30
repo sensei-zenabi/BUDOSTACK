@@ -4,9 +4,11 @@
 #include <time.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 
 #ifndef M_PI
@@ -160,38 +162,6 @@ static const char *get_http_body(const char *response_text) {
     return response_text;
 }
 
-// Format a datetime string from worldtimeapi into "YYYY-MM-DD HH:MM:SS".
-static void format_datetime(const char *raw, char *out, size_t out_size) {
-    if (!raw || !out || out_size == 0) {
-        return;
-    }
-    const char *t_ptr = strchr(raw, 'T');
-    if (!t_ptr || strlen(raw) < 19) {
-        snprintf(out, out_size, "%s", raw);
-        return;
-    }
-    // Copy YYYY-MM-DD
-    size_t date_len = (size_t)(t_ptr - raw);
-    if (date_len > 10) {
-        date_len = 10;
-    }
-    char date_part[11];
-    memcpy(date_part, raw, date_len);
-    date_part[date_len] = '\0';
-
-    // Copy HH:MM:SS
-    const char *time_part = t_ptr + 1;
-    char clock_part[9];
-    size_t copy_len = 8;
-    if (strlen(time_part) < 8) {
-        copy_len = strlen(time_part);
-    }
-    memcpy(clock_part, time_part, copy_len);
-    clock_part[copy_len] = '\0';
-
-    snprintf(out, out_size, "%s %s", date_part, clock_part);
-}
-
 // ---------- IP and time zone lookup ----------
 
 struct IpLocation {
@@ -201,19 +171,13 @@ struct IpLocation {
     char timezone[128];
 };
 
-struct RemoteTime {
-    char datetime[64];
-    char utc_offset[16];
-    char timezone[128];
-};
-
-// Fetch IP-based location data from ipinfo.io.
+// Fetch IP-based location data from ip-api.com.
 static int fetch_ip_location(struct IpLocation *loc) {
     if (!loc) {
         return 0;
     }
     struct HttpResponse resp;
-    if (http_get("ipinfo.io", "/json", &resp) <= 0) {
+    if (http_get("ip-api.com", "/json", &resp) <= 0) {
         return 0;
     }
 
@@ -224,40 +188,77 @@ static int fetch_ip_location(struct IpLocation *loc) {
 
     int ok = 1;
     ok &= extract_json_value(body, "\"city\"", loc->city, sizeof(loc->city));
-    ok &= extract_json_value(body, "\"region\"", loc->region, sizeof(loc->region));
-    ok &= extract_json_value(body, "\"country\"", loc->country, sizeof(loc->country));
-    ok &= extract_json_value(body, "\"timezone\"", loc->timezone, sizeof(loc->timezone));
+    ok &= extract_json_value(body, "\"regionName\"", loc->region,
+                             sizeof(loc->region));
+    ok &= extract_json_value(body, "\"countryCode\"", loc->country,
+                             sizeof(loc->country));
+    ok &= extract_json_value(body, "\"timezone\"", loc->timezone,
+                             sizeof(loc->timezone));
     return ok;
 }
 
-// Fetch time data from worldtimeapi.org for the given path (e.g., "/api/ip" or "/api/timezone/Europe/London").
-static int fetch_remote_time(const char *path, struct RemoteTime *rtime) {
-    if (!path || !rtime) {
-        return 0;
-    }
-    struct HttpResponse resp;
-    if (http_get("worldtimeapi.org", path, &resp) <= 0) {
+// ---------- NTP time lookup ----------
+
+// Minimal NTP client that queries an NTP server over UDP port 123.
+static int fetch_ntp_time(const char *host, time_t *out_time) {
+    if (!host || !out_time) {
         return 0;
     }
 
-    const char *body = get_http_body(resp.body);
-    if (!body) {
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    struct addrinfo *result = NULL;
+    if (getaddrinfo(host, "123", &hints, &result) != 0 || !result) {
         return 0;
     }
 
-    char raw_datetime[80] = {0};
-    if (!extract_json_value(body, "\"datetime\"", raw_datetime, sizeof(raw_datetime))) {
-        return 0;
+    int sockfd = -1;
+    for (struct addrinfo *rp = result; rp; rp = rp->ai_next) {
+        sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sockfd == -1) {
+            continue;
+        }
+        if (connect(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            break;
+        }
+        close(sockfd);
+        sockfd = -1;
     }
-    format_datetime(raw_datetime, rtime->datetime, sizeof(rtime->datetime));
 
-    if (!extract_json_value(body, "\"utc_offset\"", rtime->utc_offset, sizeof(rtime->utc_offset))) {
-        return 0;
-    }
-    if (!extract_json_value(body, "\"timezone\"", rtime->timezone, sizeof(rtime->timezone))) {
+    if (sockfd == -1) {
+        freeaddrinfo(result);
         return 0;
     }
 
+    unsigned char packet[48];
+    memset(packet, 0, sizeof(packet));
+    packet[0] = 0x1b;  // LI = 0, VN = 3, Mode = 3 (client).
+
+    ssize_t sent = send(sockfd, packet, sizeof(packet), 0);
+    if (sent != (ssize_t)sizeof(packet)) {
+        close(sockfd);
+        freeaddrinfo(result);
+        return 0;
+    }
+
+    ssize_t received = recv(sockfd, packet, sizeof(packet), 0);
+    close(sockfd);
+    freeaddrinfo(result);
+    if (received < 44) {
+        return 0;
+    }
+
+    uint32_t seconds;
+    memcpy(&seconds, packet + 40, sizeof(seconds));
+    seconds = ntohl(seconds);
+    const uint32_t seventy_years = 2208988800U; // Seconds from 1900 to 1970.
+    if (seconds < seventy_years) {
+        return 0;
+    }
+    *out_time = (time_t)(seconds - seventy_years);
     return 1;
 }
 
@@ -327,6 +328,49 @@ double get_tz_offset(time_t now) {
     time_t local_sec = mktime(&local_tm);
     time_t gm_sec = mktime(&gm_tm);
     return difftime(local_sec, gm_sec) / 3600.0;
+}
+
+// Compute local time and UTC offset for a given IANA time zone using a base
+// UTC time (from NTP if available).
+static int format_zone_time(const char *tz, time_t base_utc, char *time_buf,
+                            size_t time_bufsz, double *offset_hours) {
+    if (!tz || !time_buf || time_bufsz == 0) {
+        return 0;
+    }
+
+    char prev_tz[128];
+    const char *current = getenv("TZ");
+    if (current) {
+        snprintf(prev_tz, sizeof(prev_tz), "%s", current);
+    } else {
+        prev_tz[0] = '\0';
+    }
+
+    if (setenv("TZ", tz, 1) != 0) {
+        return 0;
+    }
+    tzset();
+
+    struct tm local_tm;
+    struct tm gm_tm;
+    localtime_r(&base_utc, &local_tm);
+    gmtime_r(&base_utc, &gm_tm);
+
+    strftime(time_buf, time_bufsz, "%d-%m-%Y %H:%M:%S", &local_tm);
+
+    if (offset_hours) {
+        time_t local_sec = mktime(&local_tm);
+        time_t gm_sec = mktime(&gm_tm);
+        *offset_hours = difftime(local_sec, gm_sec) / 3600.0;
+    }
+
+    if (prev_tz[0] != '\0') {
+        setenv("TZ", prev_tz, 1);
+    } else {
+        unsetenv("TZ");
+    }
+    tzset();
+    return 1;
 }
 
 // Compute sunrise or sunset (is_sunrise nonzero for sunrise, zero for sunset)
@@ -455,106 +499,116 @@ int main(int argc, char *argv[]) {
     }
 
     // Regular time display.
-    time_t now = time(NULL);
+    time_t base_time = time(NULL);
+    time_t ntp_time = 0;
+    const char *ntp_hosts[] = { "time.google.com", "time.cloudflare.com",
+                                "pool.ntp.org" };
+    for (size_t i = 0; i < sizeof(ntp_hosts) / sizeof(ntp_hosts[0]); i++) {
+        if (fetch_ntp_time(ntp_hosts[i], &ntp_time)) {
+            base_time = ntp_time;
+            break;
+        }
+    }
+
     struct tm local_tm;
-    localtime_r(&now, &local_tm);
+    localtime_r(&base_time, &local_tm);
 
     char buffer[100];
 
     // Attempt to fetch remote location and time data.
     struct IpLocation location;
     memset(&location, 0, sizeof(location));
-    struct RemoteTime remote_now;
-    memset(&remote_now, 0, sizeof(remote_now));
     int has_location = fetch_ip_location(&location);
-    int has_remote_now = fetch_remote_time("/api/ip", &remote_now);
 
     // "Time now:" in local time.
     strftime(buffer, sizeof(buffer), "%d-%m-%Y %H:%M:%S", &local_tm);
-    if (has_remote_now) {
-        printf("%-30s %s (UTC%s, via worldtimeapi.org)\n", "Time now:", buffer, remote_now.utc_offset);
-    } else {
-        double tz_offset = get_tz_offset(now);
-        printf("%-30s %s (UTC%+0.0f)\n", "Time now:", buffer, tz_offset);
-    }
+    double tz_offset = get_tz_offset(base_time);
+    printf("%-24s %s (UTC%+0.0f via NTP)\n", "Time now:", buffer, tz_offset);
 
     if (has_location) {
-        printf("%-30s %s, %s, %s (timezone: %s via ipinfo.io)\n", "Detected location:",
+        printf("%-24s %s, %s, %s (tz %s via ip-api.com)\n", "Detected location:",
                location.city[0] ? location.city : "Unknown city",
                location.region[0] ? location.region : "Unknown region",
                location.country[0] ? location.country : "Unknown country",
                location.timezone[0] ? location.timezone : "Unknown");
     } else {
-        printf("%-30s %s\n", "Detected location:", "Unavailable (internet lookup failed)");
+        printf("%-24s %s\n", "Detected location:",
+               "Unavailable (internet lookup failed)");
     }
-    if (has_remote_now) {
-        printf("%-30s %s (%s)\n", "Internet time:", remote_now.datetime, remote_now.timezone);
+
+    if (has_location && location.timezone[0]) {
+        double remote_offset = 0.0;
+        char remote_time[64];
+        if (format_zone_time(location.timezone, base_time, remote_time,
+                             sizeof(remote_time), &remote_offset)) {
+            printf("%-24s %s (%s, UTC%+.1f)\n", "Internet time:", remote_time,
+                   location.timezone, remote_offset);
+        } else {
+            printf("%-24s %s\n", "Internet time:",
+                   "Unavailable (timezone formatting failed)");
+        }
     } else {
-        printf("%-30s %s\n", "Internet time:", "Unavailable (worldtimeapi.org unreachable)");
+        printf("%-24s %s\n", "Internet time:",
+               "Unavailable (timezone missing)");
     }
 
     // ISO week number.
     char week[3];
     strftime(week, sizeof(week), "%V", &local_tm);
-    printf("%-30s %02d\n", "Current Week:", atoi(week));
+    printf("%-24s %02d\n", "Current Week:", atoi(week));
 
-    // Days since year start (tm_yday starts at 0).
-    printf("%-30s %03d\n", "Days since year start:", local_tm.tm_yday);
+    // Days since year start.
+    printf("%-24s %03d\n", "Days since year start:", local_tm.tm_yday);
 
     // Calculate days until year end.
     int year = local_tm.tm_year + 1900;
     int total_days = is_leap(year) ? 366 : 365;
     int days_till_end = total_days - (local_tm.tm_yday + 1);
-    printf("%-30s %03d\n\n", "Days till year end:", days_till_end);
+    printf("%-24s %03d\n\n", "Days till year end:", days_till_end);
 
     // Regional times header.
-    printf("Regional times verified online (worldtimeapi.org):\n\n");
+    printf("Regional times (NTP-synced base time):\n\n");
 
     struct Timezone zones[] = {
-        { -11, "Pacific/Pago_Pago", "Pago Pago (American Samoa)" },
-        { -10, "Pacific/Honolulu", "Honolulu (USA)" },
-        { -9,  "America/Anchorage", "Anchorage (USA)" },
-        { -8,  "America/Los_Angeles", "Los Angeles (USA), Vancouver (Canada)" },
-        { -7,  "America/Denver", "Denver (USA), Calgary (Canada)" },
-        { -6,  "America/Chicago", "Chicago (USA), Winnipeg (Canada)" },
-        { -5,  "America/New_York", "New York (USA), Toronto (Canada)" },
-        { -4,  "America/Santiago", "Santiago (Chile)" },
-        { -3,  "America/Argentina/Buenos_Aires", "Buenos Aires (Argentina)" },
-        { -2,  "America/Noronha", "Fernando de Noronha (Brazil)" },
-        { -1,  "Atlantic/Cape_Verde", "Praia (Cape Verde)" },
-        {  0,  "Europe/London", "London (England)" },
-        {  1,  "Europe/Paris", "Paris (France), Berlin (Germany)" },
-        {  2,  "Europe/Helsinki", "Helsinki (Finland)" },
-        {  3,  "Europe/Moscow", "Moscow (Russia)" },
-        {  4,  "Asia/Dubai", "Dubai (UAE)" },
-        {  5,  "Asia/Kolkata", "New Delhi (India)" },
-        {  6,  "Asia/Dhaka", "Dhaka (Bangladesh)" },
-        {  7,  "Asia/Bangkok", "Bangkok (Thailand)" },
-        {  8,  "Asia/Shanghai", "Beijing (China), Hong Kong (China)" },
-        {  9,  "Asia/Tokyo", "Tokyo (Japan)" },
-        { 10,  "Australia/Sydney", "Sydney (Australia)" },
-        { 11,  "Pacific/Honiara", "Honiara (Solomon Islands)" },
-        { 12,  "Pacific/Auckland", "Auckland (New Zealand)" }
+        { -11, "Pacific/Pago_Pago", "Pago Pago" },
+        { -10, "Pacific/Honolulu", "Honolulu" },
+        { -9,  "America/Anchorage", "Anchorage" },
+        { -8,  "America/Los_Angeles", "Los Angeles" },
+        { -7,  "America/Denver", "Denver" },
+        { -6,  "America/Chicago", "Chicago" },
+        { -5,  "America/New_York", "New York" },
+        { -4,  "America/Santiago", "Santiago" },
+        { -3,  "America/Argentina/Buenos_Aires", "Buenos Aires" },
+        { -2,  "America/Noronha", "Noronha" },
+        { -1,  "Atlantic/Cape_Verde", "Praia" },
+        {  0,  "Europe/London", "London" },
+        {  1,  "Europe/Paris", "Paris" },
+        {  2,  "Europe/Helsinki", "Helsinki" },
+        {  3,  "Europe/Moscow", "Moscow" },
+        {  4,  "Asia/Dubai", "Dubai" },
+        {  5,  "Asia/Kolkata", "New Delhi" },
+        {  6,  "Asia/Dhaka", "Dhaka" },
+        {  7,  "Asia/Bangkok", "Bangkok" },
+        {  8,  "Asia/Shanghai", "Beijing" },
+        {  9,  "Asia/Tokyo", "Tokyo" },
+        { 10,  "Australia/Sydney", "Sydney" },
+        { 11,  "Pacific/Honiara", "Honiara" },
+        { 12,  "Pacific/Auckland", "Auckland" }
     };
 
     int numZones = (int)(sizeof(zones) / sizeof(zones[0]));
-    char label[150];
+    char label[96];
+    char city_time[64];
     for (int i = 0; i < numZones; i++) {
-        struct RemoteTime city_time;
-        memset(&city_time, 0, sizeof(city_time));
-        char path[160];
-        snprintf(path, sizeof(path), "/api/timezone/%s", zones[i].tzString);
-        int ok = fetch_remote_time(path, &city_time);
-        if (zones[i].offset >= 0) {
-            snprintf(label, sizeof(label), "UTC+%d - %s", zones[i].offset, zones[i].cities);
-        } else {
-            snprintf(label, sizeof(label), "UTC%d - %s", zones[i].offset, zones[i].cities);
-        }
-
+        double off = 0.0;
+        int ok = format_zone_time(zones[i].tzString, base_time, city_time,
+                                  sizeof(city_time), &off);
+        snprintf(label, sizeof(label), "UTC%+d %s", zones[i].offset,
+                 zones[i].cities);
         if (ok) {
-            printf("    %-45s %s (%s)\n", label, city_time.datetime, city_time.utc_offset);
+            printf("  %-28s %s (UTC%+.1f)\n", label, city_time, off);
         } else {
-            printf("    %-45s %s\n", label, "Unavailable (worldtimeapi.org unreachable)");
+            printf("  %-28s %s\n", label, "Unavailable (tz data)");
         }
     }
 

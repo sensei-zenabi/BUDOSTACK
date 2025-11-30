@@ -220,24 +220,18 @@ static void trim(char *text) {
         memmove(text, start, (size_t)(end - start + 1));
 }
 
-static RetroProfile *mutable_profile_from_key(const char *key) {
+static RetroProfile *profile_from_key(RetroProfile *profiles, size_t profile_count, const char *key) {
     if (key == NULL)
         return NULL;
-    size_t count = builtin_profile_count();
-    for (size_t i = 0; i < count; ++i) {
-        RetroProfile *profile = &mutable_profiles[i];
+    for (size_t i = 0; i < profile_count; ++i) {
+        RetroProfile *profile = &profiles[i];
         if (profile->key != NULL && strcasecmp(profile->key, key) == 0)
             return profile;
     }
     return NULL;
 }
 
-static void load_overrides(void) {
-    const char *path = override_path();
-    FILE *file = fopen(path, "r");
-    if (file == NULL)
-        return;
-
+static void parse_profile_stream(FILE *file, RetroProfile *profiles, size_t profile_count) {
     char line[512];
     RetroProfile *current = NULL;
 
@@ -251,7 +245,7 @@ static void load_overrides(void) {
             if (end == NULL)
                 continue;
             *end = '\0';
-            current = mutable_profile_from_key(line + 1);
+            current = profile_from_key(profiles, profile_count, line + 1);
             continue;
         }
 
@@ -277,7 +271,15 @@ static void load_overrides(void) {
             (void)parse_rgb(value, &current->defaults.cursor);
         }
     }
+}
 
+static void load_overrides(void) {
+    const char *path = override_path();
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+        return;
+
+    parse_profile_stream(file, mutable_profiles, builtin_profile_count());
     fclose(file);
 }
 
@@ -364,6 +366,38 @@ static int ensure_directory(const char *path) {
                 return -1;
         }
         buffer[i] = path[i];
+    }
+
+    return 0;
+}
+
+static int write_profiles(FILE *file, const RetroProfile *profiles, size_t profile_count) {
+    if (file == NULL || profiles == NULL)
+        return -1;
+
+    for (size_t i = 0; i < profile_count; ++i) {
+        const RetroProfile *profile = &profiles[i];
+        fprintf(file, "[%s]\n", profile->key);
+        fprintf(file, "colors=");
+        for (int c = 0; c < 16; ++c) {
+            const RetroColor *color = &profile->colors[c];
+            fprintf(file, "%u,%u,%u", color->r, color->g, color->b);
+            if (c != 15)
+                fputc(';', file);
+        }
+        fputc('\n', file);
+        fprintf(file, "foreground=%u,%u,%u\n",
+                profile->defaults.foreground.r,
+                profile->defaults.foreground.g,
+                profile->defaults.foreground.b);
+        fprintf(file, "background=%u,%u,%u\n",
+                profile->defaults.background.r,
+                profile->defaults.background.g,
+                profile->defaults.background.b);
+        fprintf(file, "cursor=%u,%u,%u\n\n",
+                profile->defaults.cursor.r,
+                profile->defaults.cursor.g,
+                profile->defaults.cursor.b);
     }
 
     return 0;
@@ -478,4 +512,34 @@ int retroprofile_active_default_foreground_index(void) {
 
 const char *retroprofile_override_path(void) {
     return override_path();
+}
+
+int retroprofile_save_prf(const char *path, const RetroProfile *profiles, size_t profile_count) {
+    if (path == NULL || profiles == NULL)
+        return -1;
+
+    if (ensure_directory(path) != 0)
+        return -1;
+
+    FILE *file = fopen(path, "w");
+    if (file == NULL)
+        return -1;
+
+    int rc = write_profiles(file, profiles, profile_count);
+    if (fclose(file) != 0)
+        return -1;
+    return rc;
+}
+
+int retroprofile_load_prf(const char *path, RetroProfile *profiles, size_t profile_count) {
+    if (path == NULL || profiles == NULL)
+        return -1;
+
+    FILE *file = fopen(path, "r");
+    if (file == NULL)
+        return -1;
+
+    parse_profile_stream(file, profiles, profile_count);
+    fclose(file);
+    return 0;
 }

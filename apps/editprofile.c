@@ -26,6 +26,8 @@ typedef enum {
 } Key;
 
 static struct termios original_termios;
+static struct termios raw_termios;
+static int raw_enabled = 0;
 
 static void restore_terminal(void) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
@@ -52,8 +54,24 @@ static void enable_raw_mode(void) {
         exit(EXIT_FAILURE);
     }
 
+    raw_termios = raw;
+    raw_enabled = 1;
     write(STDOUT_FILENO, "\x1b[?25l", 6);
     atexit(restore_terminal);
+}
+
+static void suspend_raw_mode(void) {
+    if (!raw_enabled)
+        return;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
+    write(STDOUT_FILENO, "\x1b[?25h", 6);
+}
+
+static void resume_raw_mode(void) {
+    if (!raw_enabled)
+        return;
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw_termios);
+    write(STDOUT_FILENO, "\x1b[?25l", 6);
 }
 
 static Key read_key(char *out_char) {
@@ -160,8 +178,8 @@ static void draw_profile_header(const RetroProfile *profile, size_t profile_inde
            key,
            dirty ? " *" : "");
     printf("Arrows: move  Tab: next channel  +/-: fine step  </>: coarse step\n");
-    printf("p: next profile  c: copy row to defaults  s/Ctrl+S: save  q/Ctrl+Q: quit\n");
-    printf("Changes apply after restart. Keep terminal at least 78 cols wide.\n\n");
+    printf("p: next  c: copy to defaults  s/Ctrl+S: save  w: write .prf  l: load .prf\n");
+    printf("a: apply profile  q/Ctrl+Q: quit (changes apply after restart)\n\n");
 }
 
 static void draw_row_prefix(int selected) {
@@ -200,8 +218,6 @@ static void draw_screen(const RetroProfile *profile, size_t profile_index, size_
     draw_color_line("default background", 17, &profile->defaults.background, selected_row, selected_channel);
     draw_color_line("cursor highlight", 18, &profile->defaults.cursor, selected_row, selected_channel);
 
-    putchar('\n');
-    printf("Tip: keep rows under 78 cols. Saves write overrides; restart to apply.\n");
     fflush(stdout);
 }
 
@@ -240,57 +256,32 @@ static RetroColor *selected_color(RetroProfile *profile, int row) {
     return NULL;
 }
 
-static int write_presets(const RetroProfile *profiles, size_t profile_count) {
-    const char *path = retroprofile_override_path();
-    FILE *file = fopen(path, "w");
-    if (file == NULL)
+static int prompt_path(const char *message, char *buffer, size_t buffer_size, const char *default_path) {
+    if (buffer == NULL || buffer_size == 0)
         return -1;
 
-    size_t count = profile_count;
-    for (size_t i = 0; i < count; ++i) {
-        const RetroProfile *profile = &profiles[i];
-        fprintf(file, "[%s]\n", profile->key);
-        fprintf(file, "colors=");
-        for (int c = 0; c < 16; ++c) {
-            const RetroColor *color = &profile->colors[c];
-            fprintf(file, "%u,%u,%u", color->r, color->g, color->b);
-            if (c != 15)
-                fputc(';', file);
-        }
-        fputc('\n', file);
-        fprintf(file, "foreground=%u,%u,%u\n",
-                profile->defaults.foreground.r,
-                profile->defaults.foreground.g,
-                profile->defaults.foreground.b);
-        fprintf(file, "background=%u,%u,%u\n",
-                profile->defaults.background.r,
-                profile->defaults.background.g,
-                profile->defaults.background.b);
-        fprintf(file, "cursor=%u,%u,%u\n\n",
-                profile->defaults.cursor.r,
-                profile->defaults.cursor.g,
-                profile->defaults.cursor.b);
+    suspend_raw_mode();
+    printf("\n%s (default: %s)\n> ", message, default_path);
+    fflush(stdout);
+
+    char *result = fgets(buffer, (int)buffer_size, stdin);
+    if (result == NULL) {
+        resume_raw_mode();
+        return -1;
     }
 
-    if (fclose(file) != 0)
-        return -1;
+    size_t len = strcspn(buffer, "\r\n");
+    buffer[len] = '\0';
+    if (buffer[0] == '\0' && default_path != NULL)
+        snprintf(buffer, buffer_size, "%s", default_path);
+
+    resume_raw_mode();
     return 0;
 }
 
-static void ensure_override_directory(void) {
-    const char *path = retroprofile_override_path();
-    const char *slash = strrchr(path, '/');
-    if (slash == NULL)
-        return;
-    size_t len = (size_t)(slash - path);
-    char buffer[PATH_MAX];
-    if (len >= sizeof(buffer))
-        return;
-    memcpy(buffer, path, len);
-    buffer[len] = '\0';
-    if (buffer[0] == '\0')
-        return;
-    mkdir(buffer, 0777);
+static void mark_dirty_all(int dirty_flags[4], size_t profile_count) {
+    for (size_t i = 0; i < profile_count && i < 4; ++i)
+        dirty_flags[i] = 1;
 }
 
 int main(void) {
@@ -305,6 +296,7 @@ int main(void) {
     int current_profile = 0;
     int selected_row = 0;
     int selected_channel = 0;
+    char last_prf_path[PATH_MAX] = "users/retroprofile.prf";
 
     enable_raw_mode();
     draw_screen(&editable[current_profile], (size_t)current_profile, profile_count, selected_row, selected_channel, dirty_flags);
@@ -330,8 +322,7 @@ int main(void) {
         } else if (key == KEY_CTRL_Q) {
             break;
         } else if (key == KEY_CTRL_S) {
-            ensure_override_directory();
-            if (write_presets(editable, profile_count) == 0) {
+            if (retroprofile_save_prf(retroprofile_override_path(), editable, profile_count) == 0) {
                 for (size_t i = 0; i < profile_count && i < 4; ++i)
                     dirty_flags[i] = 0;
                 printf("\nSaved overrides to %s. Restart to apply.\n", retroprofile_override_path());
@@ -347,14 +338,46 @@ int main(void) {
             if (ch == 'q' || ch == 'Q' || ch == 17) {
                 break;
             } else if (ch == 's' || ch == 'S') {
-                ensure_override_directory();
-                if (write_presets(editable, profile_count) == 0) {
+                if (retroprofile_save_prf(retroprofile_override_path(), editable, profile_count) == 0) {
                     for (size_t i = 0; i < profile_count && i < 4; ++i)
                         dirty_flags[i] = 0;
                     printf("\nSaved overrides to %s. Restart to apply.\n", retroprofile_override_path());
                 } else {
                     printf("\nFailed to save overrides (%s).\n", strerror(errno));
                 }
+                fflush(stdout);
+                continue;
+            } else if (ch == 'w' || ch == 'W') {
+                char path[PATH_MAX];
+                if (prompt_path("Save .prf file", path, sizeof(path), last_prf_path) == 0) {
+                    if (retroprofile_save_prf(path, editable, profile_count) == 0) {
+                        snprintf(last_prf_path, sizeof(last_prf_path), "%s", path);
+                        printf("\nSaved presets to %s. Restart to apply.\n", path);
+                    } else {
+                        printf("\nFailed to save %s (%s).\n", path, strerror(errno));
+                    }
+                }
+                fflush(stdout);
+                continue;
+            } else if (ch == 'l' || ch == 'L') {
+                char path[PATH_MAX];
+                if (prompt_path("Load .prf file", path, sizeof(path), last_prf_path) == 0) {
+                    if (retroprofile_load_prf(path, editable, profile_count) == 0) {
+                        snprintf(last_prf_path, sizeof(last_prf_path), "%s", path);
+                        mark_dirty_all(dirty_flags, profile_count);
+                        printf("\nLoaded presets from %s. Save overrides to apply after restart.\n", path);
+                    } else {
+                        printf("\nFailed to load %s (%s).\n", path, strerror(errno));
+                    }
+                }
+                fflush(stdout);
+                continue;
+            } else if (ch == 'a' || ch == 'A') {
+                const RetroProfile *current = &editable[current_profile];
+                if (retroprofile_set_active(current->key) == 0)
+                    printf("\nApplied active profile: %s. Restart to see it.\n", current->key);
+                else
+                    printf("\nFailed to set active profile (%s).\n", strerror(errno));
                 fflush(stdout);
                 continue;
             } else if (ch == '+') {

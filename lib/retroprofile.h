@@ -39,6 +39,8 @@ int retroprofile_color_from_active(int index, RetroColor *out_color);
 int retroprofile_color_index(const RetroProfile *profile, RetroColor color);
 int retroprofile_active_default_foreground_index(void);
 const char *retroprofile_override_path(void);
+int retroprofile_save_prf(const char *path, const RetroProfile *profiles, size_t profile_count);
+int retroprofile_load_prf(const char *path, RetroProfile *profiles, size_t profile_count);
 
 #ifdef __cplusplus
 }

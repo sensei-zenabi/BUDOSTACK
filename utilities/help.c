@@ -178,10 +178,6 @@ int main(int argc, char *argv[]) {
     printf("  paint    : ASCII paint application to edit bitmaps.\n");    
     printf("  psfedit  : Font editor for .psf fonts.\n");
     printf("  signal   : Signal generator. Type 'signal' for help.\n");
-    printf("  skydial  : Simple sky-dial to identify and locate celestial objects.\n");
-    printf("             Type 'skydial lat lon' to tell your position.\n");
-    printf("  solar    : Visualizes the solar system and it's planets. 'solar X', where\n");
-    printf("             X is the number of planets from 2 to 8.\n");
     printf("  time     : Display time with IP-based timezone lookup and NTP clocks.\n");
     printf("             Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).\n");
     printf("\n");

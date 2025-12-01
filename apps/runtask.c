@@ -57,6 +57,7 @@ static bool copy_value(Value *dest, const Value *src);
 static bool parse_expression(const char **cursor, Value *out, const char *terminators, int line, int debug);
 static bool value_as_double(const Value *value, double *out);
 static char *value_to_string(const Value *value);
+static bool evaluate_expression_statement(const char *expr, int line, int debug);
 
 typedef enum {
     VALUE_UNSET = 0,
@@ -1898,6 +1899,34 @@ static void copy_trimmed_segment(const char *start, const char *end, char *dest,
     dest[len] = '\0';
 }
 
+static bool evaluate_expression_statement(const char *expr, int line, int debug) {
+    if (!expr) {
+        return false;
+    }
+
+    const char *cursor = expr;
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if (*cursor == '\0') {
+        return true;
+    }
+
+    Value value;
+    if (!parse_expression(&cursor, &value, NULL, line, debug)) {
+        return false;
+    }
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+    if (*cursor != '\0' && debug) {
+        fprintf(stderr, "Expression: unexpected characters at %d\n", line);
+    }
+
+    free_value(&value);
+    return true;
+}
+
 static bool process_assignment_statement(const char *statement, int line, int debug) {
     if (!statement) {
         return false;
@@ -1962,18 +1991,20 @@ static bool apply_increment_step(const char *expr, int line, int debug) {
         return false;
     }
 
-    const char *cursor = expr;
-    while (isspace((unsigned char)*cursor)) {
-        cursor++;
-    }
+    char trimmed[128];
+    copy_trimmed_segment(expr, expr + strlen(expr), trimmed, sizeof(trimmed));
 
-    if (*cursor == '(') {
-        cursor++;
-        while (isspace((unsigned char)*cursor)) {
-            cursor++;
+    if (strchr(trimmed, '=')) {
+        if (process_assignment_statement(trimmed, line, debug)) {
+            return true;
         }
+        if (debug) {
+            fprintf(stderr, "FOR: failed to evaluate step assignment at line %d\n", line);
+        }
+        return false;
     }
 
+    const char *cursor = trimmed;
     if (*cursor == '$') {
         cursor++;
     }
@@ -1991,11 +2022,6 @@ static bool apply_increment_step(const char *expr, int line, int debug) {
     }
     name[len] = '\0';
 
-    if (len == 0 || too_long) {
-        if (debug) fprintf(stderr, "FOR: invalid step variable at line %d\n", line);
-        return false;
-    }
-
     while (isspace((unsigned char)*cursor)) {
         cursor++;
     }
@@ -2008,21 +2034,23 @@ static bool apply_increment_step(const char *expr, int line, int debug) {
         increment = false;
         cursor += 2;
     } else {
-        if (debug) fprintf(stderr, "FOR: unsupported step at line %d (only $VAR++ or $VAR--)\n", line);
-        return false;
+        bool ok = evaluate_expression_statement(trimmed, line, debug);
+        if (!ok && debug) {
+            fprintf(stderr, "FOR: unsupported step at line %d\n", line);
+        }
+        return ok;
     }
 
     while (isspace((unsigned char)*cursor)) {
         cursor++;
     }
-    if (*cursor == ')' ) {
-        cursor++;
-        while (isspace((unsigned char)*cursor)) {
-            cursor++;
-        }
-    }
     if (*cursor != '\0') {
         if (debug) fprintf(stderr, "FOR: unexpected characters after step at line %d\n", line);
+        return false;
+    }
+
+    if (len == 0 || too_long) {
+        if (debug) fprintf(stderr, "FOR: invalid step variable at line %d\n", line);
         return false;
     }
 
@@ -2093,8 +2121,8 @@ static void print_help(void) {
     printf("  WHILE(<condition>):\n");
     printf("    Repeat a block terminated by END while the condition remains true.\n");
     printf("  FOR (init; cond; step)\n");
-    printf("    Loop with inline init/condition/step terminated by END. Supports $VAR++ and\n");
-    printf("    $VAR-- steps.\n");
+    printf("    Loop with inline init/condition/step terminated by END. Supports $VAR++/--\n");
+    printf("    as well as assignment-style steps (e.g., $I=$I+2).\n");
     printf("  PRINT expr\n");
     printf("    Print literals and variables (use '+' to concatenate). Supports array\n");
     printf("    elements (e.g., PRINT $ARR[0]) and LEN($ARR).\n");
@@ -3472,7 +3500,8 @@ int main(int argc, char *argv[]) {
             copy_trimmed_segment(second_semi + 1, step_end, step_buf, sizeof(step_buf));
 
             if (init_buf[0] != '\0') {
-                if (!process_assignment_statement(init_buf, script[pc].source_line, debug)) {
+                if (!process_assignment_statement(init_buf, script[pc].source_line, debug) &&
+                    !evaluate_expression_statement(init_buf, script[pc].source_line, debug)) {
                     continue;
                 }
             }

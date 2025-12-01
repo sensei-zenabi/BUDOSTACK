@@ -5830,8 +5830,8 @@ int main(int argc, char **argv) {
     free(shader_args);
     shader_args = NULL;
 
-    size_t glyph_width_size = (size_t)terminal_terminal_font.width * (size_t)TERMINAL_FONT_SCALE;
-    size_t glyph_height_size = (size_t)terminal_terminal_font.height * (size_t)TERMINAL_FONT_SCALE;
+    size_t glyph_width_size = (size_t)terminal_font.width * (size_t)TERMINAL_FONT_SCALE;
+    size_t glyph_height_size = (size_t)terminal_font.height * (size_t)TERMINAL_FONT_SCALE;
     if (glyph_width_size == 0u || glyph_height_size == 0u ||
         glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
         fprintf(stderr, "Scaled font dimensions invalid.\n");

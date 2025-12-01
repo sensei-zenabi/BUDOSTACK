@@ -2758,12 +2758,70 @@ static void expand_argv_variables(char **argv, int argc, int line, int debug) {
                 continue;
             }
 
+            const char *after_name = name_start + name_len;
+            bool has_index = false;
+            size_t idx_value = 0;
+            const char *after_index = after_name;
+
+            if (*after_name == '[') {
+                const char *closing = strchr(after_name + 1, ']');
+                if (!closing) {
+                    if (debug) {
+                        fprintf(stderr, "RUN: missing closing ']' in '%s' at line %d\n", token, line);
+                    }
+                    append_chunk(&result, &res_len, &res_cap, "$", 1);
+                    cursor = after_name;
+                    continue;
+                }
+
+                size_t expr_len = (size_t)(closing - (after_name + 1));
+                char *expr = (char *)malloc(expr_len + 1);
+                if (!expr) {
+                    perror("malloc");
+                    free(result);
+                    exit(EXIT_FAILURE);
+                }
+                memcpy(expr, after_name + 1, expr_len);
+                expr[expr_len] = '\0';
+
+                bool ok = evaluate_index_expression(expr, &idx_value, line, debug);
+                free(expr);
+                if (!ok) {
+                    append_chunk(&result, &res_len, &res_cap, "", 0);
+                    cursor = closing + 1;
+                    substituted = true;
+                    continue;
+                }
+
+                has_index = true;
+                after_index = closing + 1;
+            }
+
             char name[sizeof(((Variable *)0)->name)];
             memcpy(name, name_start, name_len);
             name[name_len] = '\0';
 
             Variable *var = find_variable(name, false);
-            Value value = variable_to_value(var);
+            Value value;
+            memset(&value, 0, sizeof(value));
+            if (!var) {
+                value.type = VALUE_UNSET;
+                if (debug) {
+                    fprintf(stderr, "RUN: undefined variable '%s' at line %d\n", name, line);
+                }
+            } else if (has_index) {
+                if (var->type != VALUE_ARRAY || idx_value >= var->array_len) {
+                    value.type = VALUE_UNSET;
+                    if (debug) {
+                        fprintf(stderr, "RUN: array access out of range or not an array for '%s' at line %d\n", name, line);
+                    }
+                } else {
+                    value = var->array_val[idx_value];
+                }
+            } else {
+                value = variable_to_value(var);
+            }
+
             char *replacement = value_to_string(&value);
             if (!replacement) {
                 replacement = xstrdup("");
@@ -2771,7 +2829,7 @@ static void expand_argv_variables(char **argv, int argc, int line, int debug) {
             append_chunk(&result, &res_len, &res_cap, replacement, strlen(replacement));
             free(replacement);
             substituted = true;
-            cursor = name_start + name_len;
+            cursor = after_index;
         }
 
         if (substituted) {

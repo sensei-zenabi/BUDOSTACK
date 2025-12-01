@@ -3335,8 +3335,17 @@ int main(int argc, char *argv[]) {
                 line_end--;
             }
 
-            if (line_end == cursor || *(line_end - 1) != ':') {
-                if (debug) fprintf(stderr, "FOR: expected ':' at line %d\n", script[pc].source_line);
+            bool has_colon = false;
+            if (line_end > cursor && *(line_end - 1) == ':') {
+                has_colon = true;
+                line_end--;
+                while (line_end > cursor && isspace((unsigned char)*(line_end - 1))) {
+                    line_end--;
+                }
+            }
+
+            if (line_end == cursor) {
+                if (debug) fprintf(stderr, "FOR: expected loop body after header at line %d\n", script[pc].source_line);
                 continue;
             }
 
@@ -3357,18 +3366,18 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
-            const char *step_end = line_end - 1;
+            const char *step_end = line_end;
             if (has_paren) {
                 const char *closing = strchr(second_semi + 1, ')');
                 if (!closing) {
                     if (debug) fprintf(stderr, "FOR: missing closing ')' at line %d\n", script[pc].source_line);
                     continue;
                 }
-                if (closing >= line_end) {
+                step_end = closing;
+                if (has_colon && closing >= line_end) {
                     if (debug) fprintf(stderr, "FOR: ':' must appear after ')' at line %d\n", script[pc].source_line);
                     continue;
                 }
-                step_end = closing;
             } else {
                 while (step_end > second_semi + 1 && isspace((unsigned char)*(step_end - 1))) {
                     step_end--;

@@ -56,6 +56,7 @@ static void free_value(Value *value);
 static bool copy_value(Value *dest, const Value *src);
 static bool parse_expression(const char **cursor, Value *out, const char *terminators, int line, int debug);
 static bool value_as_double(const Value *value, double *out);
+static char *value_to_string(const Value *value);
 
 typedef enum {
     VALUE_UNSET = 0,
@@ -1218,6 +1219,14 @@ static bool parse_value_token(const char **p, Value *out, const char *delims, in
         if (target.type == VALUE_ARRAY) {
             result.int_val = (long long)target.array_len;
             result.float_val = (double)target.array_len;
+        } else if (target.type == VALUE_STRING && target.str_val) {
+            result.int_val = (long long)strlen(target.str_val);
+            result.float_val = (double)result.int_val;
+        } else {
+            char *tmp = value_to_string(&target);
+            result.int_val = (long long)strlen(tmp);
+            result.float_val = (double)result.int_val;
+            free(tmp);
         }
         free_value(&target);
         *out = result;
@@ -1252,7 +1261,12 @@ static bool parse_value_token(const char **p, Value *out, const char *delims, in
         Variable *var = find_variable(ref.name, false);
         if (ref.has_index) {
             if (!var || var->type != VALUE_ARRAY || ref.index >= var->array_len) {
+                if (debug) {
+                    fprintf(stderr, "Line %d: array access out of range or not an array\n", line);
+                }
                 result.type = VALUE_UNSET;
+                result.int_val = 0;
+                result.float_val = 0.0;
             } else {
                 copy_value(&result, &var->array_val[ref.index]);
             }
@@ -2067,7 +2081,9 @@ static void print_help(void) {
     printf("============\n\n");
     printf("Commands:\n");
     printf("  SET $VAR = value\n");
-    printf("    Store integers, floats, or strings in a variable.\n");
+    printf("    Store integers, floats, strings, or arrays in a variable. Arrays use\n");
+    printf("    braces: {1, 2, 3} or {\"a\", \"b\"}. Access elements with\n");
+    printf("    $VAR[index].\n");
     printf("  INPUT $VAR [-wait on|off]\n");
     printf("    Read input into $VAR. Default waits for Enter. OFF captures the first key\n");
     printf("    press.\n");
@@ -2080,7 +2096,8 @@ static void print_help(void) {
     printf("    Loop with inline init/condition/step terminated by END. Supports $VAR++ and\n");
     printf("    $VAR-- steps.\n");
     printf("  PRINT expr\n");
-    printf("    Print literals and variables (use '+' to concatenate).\n");
+    printf("    Print literals and variables (use '+' to concatenate). Supports array\n");
+    printf("    elements (e.g., PRINT $ARR[0]) and LEN($ARR).\n");
     printf("  FUNCTION name($A, $B):\n");
     printf("    Define a callable block. Body ends when indentation returns to the\n");
     printf("    function's column or the file ends.\n");

@@ -1,62 +1,60 @@
 # demo.task
-# --------------------------------------------------------
-# This demo is used to measure pixel graphics performance
-# between _TERM* commands and app/terminal. It contains 
-# various scenes that are used to do the benchmarking.
-# --------------------------------------------------------
-
-# --- Global Variables ---
-SET $SELECTION = 0
-
-# Menu
-RUN _CLEAR
-PRINT "\nSelect Demo"
-PRINT "\n"
-PRINT "\n[1] Sprite rendering test"
-PRINT "\n"
-PRINT "\nEnter selection: "
-INPUT $SELECTION
 
 
 # ======================= SCENE 1 ========================
 # Render sprites and demonstrate movement in 640x360.
 # ========================================================  
-
-
-IF ($SELECTION==1):
   
-  # Initialization:
+# Initialization:
   
-  RUN _CLEAR
-  RUN _TERM_RESOLUTION 640 360
+RUN _CLEAR
+RUN _TERM_RESOLUTION 640 360
 
-  # Variables
-  SET $X = 20
-  SET $XRAW = $X
-  SET $DX = 0
-  SET $Y = 40
-  SET $VX = 150
-  SET $DT = 0.0
-  SET $SPRITE = "./tasks/assets/char_1_1.png"
-      
-  # Rendering loop:
-  RUN _TIMER --start
-  PRINT "SCENE 2 - Demonstrating sprite rendering"
-  WHILE ($X<590):
-    RUN _TIMER --reset
-    RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE
-    RUN _TERM_RENDER
-    #RUN _WAIT 10    
-    IF ($X>48):
-      RUN _TERM_CLEAN -x $X-48 -y $Y -width 48 -height 48
+# Variable Definition:
+
+SET $X = 20
+SET $XRAW = $X
+SET $DX = 0
+SET $Y = 40
+SET $VX = 150
+SET $DT = 0.0
+SET $TILE = {"./tasks/assets/tile001.png",
+             "./tasks/assets/tile002.png"}
+            
+# Render Background:
+
+FOR ($i=0;$i<=640;$i=$i+20):
+  FOR ($j=0;$j<=360;$j=$j+20):
+    IF ($j<=200):
+      RUN _TERM_SPRITE -x $i -y $j -file $TILE[0]
+    ELSE
+      RUN _TERM_SPRITE -x $i -y $j -file $TILE[1]
     END
-    RUN _CALC ($DT/1000 * $VX) TO $DX
-    SET $XRAW = $XRAW + $DX
-    RUN _CALC floor($XRAW) TO $X    
-    RUN _TIMER --get TO $DT
   END
-  RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360
 END
+RUN _TERM_RENDER
+
+RUN _WAIT 2500
+
+# TO BE DONE SECTION
+#RUN _TIMER --start
+#WHILE ($X<590):
+#  RUN _TIMER --reset
+#  RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE
+#  RUN _TERM_RENDER
+#  #RUN _WAIT 10    
+#  IF ($X>48):
+#    RUN _TERM_CLEAN -x $X-48 -y $Y -width 48 -height 48
+#  END
+#  RUN _CALC ($DT/1000 * $VX) TO $DX
+#  SET $XRAW = $XRAW + $DX
+#  RUN _CALC floor($XRAW) TO $X    
+#  RUN _TIMER --get TO $DT
+#END
+
+# CLEAR SCREEN
+RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360
+
   
 # ------------- EXIT CLEANUP -------------
 SET $KEY

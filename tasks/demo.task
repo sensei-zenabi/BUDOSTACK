@@ -13,6 +13,8 @@ PRINT "\n"
 
 # Player and physics constants
 SET $SPRITE = "./tasks/assets/char_1_1.png"
+SET $SPRITE_W = 48
+SET $SPRITE_H = 48
 SET $X = 120
 SET $Y = 260
 SET $LAST_X = $X
@@ -24,13 +26,17 @@ SET $SPEED = 180
 SET $JUMP = 360
 SET $GRAVITY = 900
 SET $GROUND = 276
-RUN _CALC $GROUND + 48 TO $GROUND_LINE
+RUN _CALC $GROUND + $SPRITE_H TO $GROUND_LINE
 RUN _CALC $GROUND_LINE + 12 TO $GROUND_LINE2
 SET $RUNNING = 1
 SET $DT = 16.0
 
 RUN _TIMER --start
 RUN _TIMER --reset
+
+# Draw the static ground once to avoid repainting the full width each frame
+RUN _RECT -x 0 -y $GROUND_LINE -width 640 -height 12 -color 24 -fill on
+RUN _RECT -x 0 -y $GROUND_LINE2 -width 640 -height 12 -color 18 -fill on
 
 WHILE ($RUNNING==1):
   RUN _TIMER --get TO $DT
@@ -81,14 +87,37 @@ WHILE ($RUNNING==1):
     SET $VY = 0
   END
 
-  # Clean the previous sprite footprint
+  # Clean only the sprite footprint and repaint the small region it occupied
   RUN _CALC fmax(0, $LAST_X - 4) TO $CLEAN_X
   RUN _CALC fmax(0, $LAST_Y - 4) TO $CLEAN_Y
-  RUN _TERM_CLEAN -x $CLEAN_X -y $CLEAN_Y -width 64 -height 64
+  RUN _CALC $SPRITE_W + 8 TO $CLEAN_W
+  RUN _CALC $CLEAN_Y + $SPRITE_H + 8 TO $CLEAN_BOTTOM
 
-  # Simple layered ground
-  RUN _RECT -x 0 -y $GROUND_LINE -width 640 -height 12 -color 24 -fill on
-  RUN _RECT -x 0 -y $GROUND_LINE2 -width 640 -height 12 -color 18 -fill on
+  # Sky above the first ground stripe
+  IF ($CLEAN_Y < $GROUND_LINE):
+    RUN _CALC fmin($GROUND_LINE, $CLEAN_BOTTOM) - $CLEAN_Y TO $SKY_H
+    IF ($SKY_H > 0):
+      RUN _RECT -x $CLEAN_X -y $CLEAN_Y -width $CLEAN_W -height $SKY_H -color 0 -fill on
+    END
+  END
+
+  # Upper ground stripe (color 24)
+  IF ($CLEAN_BOTTOM > $GROUND_LINE):
+    RUN _CALC fmax($CLEAN_Y, $GROUND_LINE) TO $GROUND1_Y
+    RUN _CALC fmin($GROUND_LINE2, $CLEAN_BOTTOM) - $GROUND1_Y TO $GROUND1_H
+    IF ($GROUND1_H > 0):
+      RUN _RECT -x $CLEAN_X -y $GROUND1_Y -width $CLEAN_W -height $GROUND1_H -color 24 -fill on
+    END
+  END
+
+  # Lower ground stripe (color 18)
+  IF ($CLEAN_BOTTOM > $GROUND_LINE2):
+    RUN _CALC fmax($CLEAN_Y, $GROUND_LINE2) TO $GROUND2_Y
+    RUN _CALC $CLEAN_BOTTOM - $GROUND2_Y TO $GROUND2_H
+    IF ($GROUND2_H > 0):
+      RUN _RECT -x $CLEAN_X -y $GROUND2_Y -width $CLEAN_W -height $GROUND2_H -color 18 -fill on
+    END
+  END
 
   # Rotate while airborne and mirror based on direction
   SET $ROTATE = 0

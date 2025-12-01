@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -226,53 +227,148 @@ static const char *decode_escape(const unsigned char *buf, size_t len, size_t *c
     return "ESC";
 }
 
-static void emit_event(const char *name) {
-    if (name && *name) {
-        printf("%s\n", name);
+struct OutputBuffer {
+    char *data;
+    size_t length;
+    size_t capacity;
+};
+
+enum KeyStateBits {
+    KEYSTATE_LEFT = 1u << 0,
+    KEYSTATE_RIGHT = 1u << 1,
+    KEYSTATE_UP = 1u << 2,
+    KEYSTATE_DOWN = 1u << 3,
+    KEYSTATE_ACTION = 1u << 4,
+    KEYSTATE_EXIT = 1u << 5
+};
+
+static int append_output(struct OutputBuffer *out, const char *text, bool csv_mode) {
+    if (!out || !text) {
+        return 0;
+    }
+
+    size_t text_len = strlen(text);
+    size_t extra = text_len + (csv_mode && out->length > 0 ? 1 : 0) + 1;
+    if (out->length + extra > out->capacity) {
+        size_t new_capacity = out->capacity == 0 ? 128 : out->capacity * 2;
+        while (new_capacity < out->length + extra) {
+            new_capacity *= 2;
+        }
+        char *tmp = realloc(out->data, new_capacity);
+        if (!tmp) {
+            perror("realloc");
+            return -1;
+        }
+        out->data = tmp;
+        out->capacity = new_capacity;
+    }
+
+    if (csv_mode && out->length > 0) {
+        out->data[out->length++] = ',';
+    }
+    memcpy(out->data + out->length, text, text_len);
+    out->length += text_len;
+    out->data[out->length] = '\0';
+    return 0;
+}
+
+static void update_state(const char *name, unsigned int *state_bits) {
+    if (!name || !state_bits) {
+        return;
+    }
+
+    if (strcmp(name, "LEFT_ARROW") == 0 || strcmp(name, "A") == 0) {
+        *state_bits |= KEYSTATE_LEFT;
+    } else if (strcmp(name, "RIGHT_ARROW") == 0 || strcmp(name, "D") == 0) {
+        *state_bits |= KEYSTATE_RIGHT;
+    } else if (strcmp(name, "UP_ARROW") == 0 || strcmp(name, "W") == 0) {
+        *state_bits |= KEYSTATE_UP;
+    } else if (strcmp(name, "DOWN_ARROW") == 0 || strcmp(name, "S") == 0) {
+        *state_bits |= KEYSTATE_DOWN;
+    } else if (strcmp(name, "SPACE") == 0 || strcmp(name, "ENTER") == 0) {
+        *state_bits |= KEYSTATE_ACTION;
+    } else if (strcmp(name, "ESC") == 0 || strcmp(name, "CTRL_C") == 0) {
+        *state_bits |= KEYSTATE_EXIT;
     }
 }
 
-static void process_bytes(const unsigned char *data, size_t len) {
+static int process_event(const char *name, struct OutputBuffer *out, bool csv_mode, unsigned int *state_bits) {
+    if (!name || !*name) {
+        return 0;
+    }
+
+    if (append_output(out, name, csv_mode) != 0) {
+        return -1;
+    }
+
+    update_state(name, state_bits);
+    if (!csv_mode) {
+        if (append_output(out, "\n", false) != 0) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int process_bytes(const unsigned char *data, size_t len, struct OutputBuffer *out, bool csv_mode,
+                         unsigned int *state_bits) {
     size_t i = 0;
     while (i < len) {
         unsigned char b = data[i];
         if (b == 27) {
             size_t consumed = 0;
             const char *name = decode_escape(&data[i + 1], len - i - 1, &consumed);
-            emit_event(name);
+            if (process_event(name, out, csv_mode, state_bits) != 0) {
+                return -1;
+            }
             i += 1 + consumed;
             continue;
         }
 
+        const char *name = NULL;
         if (b == '\n' || b == '\r') {
-            emit_event("ENTER");
+            name = "ENTER";
         } else if (b == '\t') {
-            emit_event("TAB");
+            name = "TAB";
         } else if (b == ' ') {
-            emit_event("SPACE");
+            name = "SPACE";
         } else if (b == 127 || b == 8) {
-            emit_event("BACKSPACE");
+            name = "BACKSPACE";
         } else if (b >= '0' && b <= '9') {
-            char out[2] = { (char)b, '\0' };
-            emit_event(out);
+            static char outbuf[2];
+            outbuf[0] = (char)b;
+            outbuf[1] = '\0';
+            name = outbuf;
         } else if (isalpha(b)) {
-            char out[2] = { (char)toupper(b), '\0' };
-            emit_event(out);
+            static char outbuf[2];
+            outbuf[0] = (char)toupper(b);
+            outbuf[1] = '\0';
+            name = outbuf;
         } else if (b == 3) {
-            emit_event("CTRL_C");
+            name = "CTRL_C";
         } else if (isprint(b)) {
-            char out[2] = { (char)b, '\0' };
-            emit_event(out);
+            static char outbuf[2];
+            outbuf[0] = (char)b;
+            outbuf[1] = '\0';
+            name = outbuf;
+        }
+
+        if (name) {
+            if (process_event(name, out, csv_mode, state_bits) != 0) {
+                return -1;
+            }
         }
         i++;
     }
+    return 0;
 }
 
 static void print_help(void) {
     printf("_TERM_KEYBOARD\n");
-    printf("Capture all key presses since the last invocation and print each name\n");
-    printf("on its own line. Intended for use from TASK scripts via\n");
-    printf("  RUN _TERM_KEYBOARD TO $EVENT_ARRAY\n\n");
+    printf("Capture all key presses since the last invocation.\n");
+    printf("Options:\n");
+    printf("  --csv     Combine events onto a single comma-separated line.\n");
+    printf("  --state   Output a bitfield summarizing held keys (arrows, WASD, SPACE/ENTER, ESC/CTRL+C).\n");
     printf("Names:\n");
     printf("  Letters: A-Z  Digits: 0-9\n");
     printf("  ENTER, SPACE, TAB, BACKSPACE, ESC, CTRL_C\n");
@@ -282,9 +378,22 @@ static void print_help(void) {
 }
 
 int main(int argc, char **argv) {
-    if (argc > 1 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0)) {
-        print_help();
-        return 0;
+    bool csv_mode = false;
+    bool state_mode = false;
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            print_help();
+            return 0;
+        } else if (strcmp(argv[i], "--csv") == 0) {
+            csv_mode = true;
+        } else if (strcmp(argv[i], "--state") == 0) {
+            state_mode = true;
+        } else {
+            fprintf(stderr, "_TERM_KEYBOARD: unknown argument '%s'\n", argv[i]);
+            print_help();
+            return 1;
+        }
     }
 
     if (enable_raw_mode() != 0) {
@@ -298,10 +407,24 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    struct OutputBuffer out = { 0 };
+    unsigned int state_bits = 0u;
+
     if (len > 0) {
-        process_bytes(buffer, (size_t)len);
+        if (process_bytes(buffer, (size_t)len, &out, csv_mode || state_mode, &state_bits) != 0) {
+            free(out.data);
+            free(buffer);
+            return 1;
+        }
     }
 
+    if (state_mode) {
+        printf("%u\n", state_bits);
+    } else if (out.length > 0) {
+        fputs(out.data, stdout);
+    }
+
+    free(out.data);
     free(buffer);
     return 0;
 }

@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,8 +11,12 @@
 #include "../lib/stb_image.h"
 
 static void print_usage(void) {
-    fprintf(stderr, "Usage: _TERM_SPRITE -x <pixels> -y <pixels> -file <path>\n");
+    fprintf(stderr, "Usage: _TERM_SPRITE -x <pixels> -y <pixels> -file <path> [options]\n");
     fprintf(stderr, "  Draws a PNG or BMP sprite onto the terminal's pixel surface.\n");
+    fprintf(stderr, "Options:\n");
+    fprintf(stderr, "  -mirrorX           Flip the sprite horizontally before rendering.\n");
+    fprintf(stderr, "  -mirrorY           Flip the sprite vertically before rendering.\n");
+    fprintf(stderr, "  -rotate <angle>    Rotate the sprite clockwise (0/90/180/270).\n");
 }
 
 static int parse_long(const char *arg, const char *name, long min_value, long max_value, long *out_value) {
@@ -47,6 +52,106 @@ static size_t base64_encoded_size(size_t raw_size) {
         encoded += 4u;
     }
     return encoded;
+}
+
+static void mirror_horizontal(stbi_uc *pixels, int width, int height, int channels) {
+    for (int y = 0; y < height; ++y) {
+        stbi_uc *row = pixels + (size_t)y * (size_t)width * (size_t)channels;
+        for (int x = 0; x < width / 2; ++x) {
+            stbi_uc *left = row + (size_t)x * (size_t)channels;
+            stbi_uc *right = row + (size_t)(width - 1 - x) * (size_t)channels;
+            for (int c = 0; c < channels; ++c) {
+                stbi_uc tmp = left[c];
+                left[c] = right[c];
+                right[c] = tmp;
+            }
+        }
+    }
+}
+
+static void mirror_vertical(stbi_uc *pixels, int width, int height, int channels) {
+    size_t row_bytes = (size_t)width * (size_t)channels;
+    stbi_uc *tmp_row = malloc(row_bytes);
+    if (!tmp_row) {
+        fprintf(stderr, "_TERM_SPRITE: failed to allocate temporary row for vertical flip.\n");
+        return;
+    }
+
+    for (int y = 0; y < height / 2; ++y) {
+        stbi_uc *top = pixels + (size_t)y * row_bytes;
+        stbi_uc *bottom = pixels + (size_t)(height - 1 - y) * row_bytes;
+        memcpy(tmp_row, top, row_bytes);
+        memcpy(top, bottom, row_bytes);
+        memcpy(bottom, tmp_row, row_bytes);
+    }
+
+    free(tmp_row);
+}
+
+static stbi_uc *rotate_sprite(const stbi_uc *pixels, int width, int height, int channels, int rotation,
+                              int *out_width, int *out_height) {
+    int rot = rotation % 360;
+    if (rot < 0) {
+        rot += 360;
+    }
+
+    if (rot == 0) {
+        *out_width = width;
+        *out_height = height;
+        stbi_uc *copy = malloc((size_t)width * (size_t)height * (size_t)channels);
+        if (!copy) {
+            fprintf(stderr, "_TERM_SPRITE: failed to allocate rotation buffer.\n");
+            return NULL;
+        }
+        memcpy(copy, pixels, (size_t)width * (size_t)height * (size_t)channels);
+        return copy;
+    }
+
+    int new_width = width;
+    int new_height = height;
+    if (rot == 90 || rot == 270) {
+        new_width = height;
+        new_height = width;
+    }
+
+    stbi_uc *rotated = malloc((size_t)new_width * (size_t)new_height * (size_t)channels);
+    if (!rotated) {
+        fprintf(stderr, "_TERM_SPRITE: failed to allocate rotation buffer.\n");
+        return NULL;
+    }
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const stbi_uc *src = pixels + ((size_t)y * (size_t)width + (size_t)x) * (size_t)channels;
+            int dst_x = 0;
+            int dst_y = 0;
+            switch (rot) {
+                case 90:
+                    dst_x = height - 1 - y;
+                    dst_y = x;
+                    break;
+                case 180:
+                    dst_x = width - 1 - x;
+                    dst_y = height - 1 - y;
+                    break;
+                case 270:
+                    dst_x = y;
+                    dst_y = width - 1 - x;
+                    break;
+                default:
+                    free(rotated);
+                    fprintf(stderr, "_TERM_SPRITE: unsupported rotation %d.\n", rot);
+                    return NULL;
+            }
+
+            stbi_uc *dst = rotated + ((size_t)dst_y * (size_t)new_width + (size_t)dst_x) * (size_t)channels;
+            memcpy(dst, src, (size_t)channels);
+        }
+    }
+
+    *out_width = new_width;
+    *out_height = new_height;
+    return rotated;
 }
 
 static char base64_encode_table(int idx) {
@@ -103,6 +208,10 @@ int main(int argc, char **argv) {
     long origin_x = -1;
     long origin_y = -1;
     const char *file = NULL;
+    bool mirror_x = false;
+    bool mirror_y = false;
+    int rotation = 0;
+    long rotation_arg = 0;
 
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
@@ -128,6 +237,19 @@ int main(int argc, char **argv) {
                 return EXIT_FAILURE;
             }
             file = argv[i];
+        } else if (strcmp(arg, "-mirrorX") == 0) {
+            mirror_x = true;
+        } else if (strcmp(arg, "-mirrorY") == 0) {
+            mirror_y = true;
+        } else if (strcmp(arg, "-rotate") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_SPRITE: missing value for -rotate.\n");
+                return EXIT_FAILURE;
+            }
+            if (parse_long(argv[i], "-rotate", 0, 270, &rotation_arg) != 0) {
+                return EXIT_FAILURE;
+            }
+            rotation = (int)rotation_arg;
         } else {
             fprintf(stderr, "_TERM_SPRITE: unknown argument '%s'.\n", arg);
             print_usage();
@@ -138,6 +260,11 @@ int main(int argc, char **argv) {
     if (origin_x < 0 || origin_y < 0 || file == NULL) {
         fprintf(stderr, "_TERM_SPRITE: missing required arguments.\n");
         print_usage();
+        return EXIT_FAILURE;
+    }
+
+    if (rotation != 0 && rotation != 90 && rotation != 180 && rotation != 270) {
+        fprintf(stderr, "_TERM_SPRITE: rotation must be 0, 90, 180, or 270.\n");
         return EXIT_FAILURE;
     }
 
@@ -161,17 +288,32 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    size_t width_sz = (size_t)width;
-    size_t height_sz = (size_t)height;
+    if (mirror_x) {
+        mirror_horizontal(pixels, width, height, 4);
+    }
+    if (mirror_y) {
+        mirror_vertical(pixels, width, height, 4);
+    }
+
+    int render_width = width;
+    int render_height = height;
+    stbi_uc *render_pixels = rotate_sprite(pixels, width, height, 4, rotation, &render_width, &render_height);
+    stbi_image_free(pixels);
+    if (!render_pixels) {
+        return EXIT_FAILURE;
+    }
+
+    size_t width_sz = (size_t)render_width;
+    size_t height_sz = (size_t)render_height;
     if (width_sz != 0 && height_sz > SIZE_MAX / width_sz) {
-        stbi_image_free(pixels);
+        free(render_pixels);
         fprintf(stderr, "_TERM_SPRITE: image dimensions overflow.\n");
         return EXIT_FAILURE;
     }
 
     size_t pixel_count = width_sz * height_sz;
     if (pixel_count > SIZE_MAX / 4u) {
-        stbi_image_free(pixels);
+        free(render_pixels);
         fprintf(stderr, "_TERM_SPRITE: image too large to encode.\n");
         return EXIT_FAILURE;
     }
@@ -179,32 +321,33 @@ int main(int argc, char **argv) {
     size_t raw_size = pixel_count * 4u;
     size_t encoded_size = base64_encoded_size(raw_size);
     if (encoded_size == 0 || encoded_size > SIZE_MAX - 1u) {
-        stbi_image_free(pixels);
+        free(render_pixels);
         fprintf(stderr, "_TERM_SPRITE: failed to compute encoded size.\n");
         return EXIT_FAILURE;
     }
 
     char *encoded = malloc(encoded_size + 1u);
     if (!encoded) {
-        stbi_image_free(pixels);
+        free(render_pixels);
         fprintf(stderr, "_TERM_SPRITE: failed to allocate %zu bytes for encoding.\n", encoded_size + 1u);
         return EXIT_FAILURE;
     }
 
-    int encode_status = encode_base64(pixels, raw_size, encoded, encoded_size + 1u);
-    stbi_image_free(pixels);
+    int encode_status = encode_base64(render_pixels, raw_size, encoded, encoded_size + 1u);
+    free(render_pixels);
     if (encode_status != 0) {
         free(encoded);
         fprintf(stderr, "_TERM_SPRITE: failed to encode image data.\n");
         return EXIT_FAILURE;
     }
 
-    int print_status = printf("\x1b]777;sprite=draw;sprite_x=%ld;sprite_y=%ld;sprite_w=%d;sprite_h=%d;sprite_data=%s\a",
-                              origin_x,
-                              origin_y,
-                              width,
-                              height,
-                              encoded);
+    int print_status =
+        printf("\x1b]777;sprite=draw;sprite_x=%ld;sprite_y=%ld;sprite_w=%d;sprite_h=%d;sprite_data=%s\a",
+               origin_x,
+               origin_y,
+               render_width,
+               render_height,
+               encoded);
     free(encoded);
     if (print_status < 0) {
         perror("_TERM_SPRITE: printf");

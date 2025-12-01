@@ -1,66 +1,120 @@
 # demo.task
 # --------------------------------------------------------
-# This demo is used to measure pixel graphics performance
-# between _TERM* commands and app/terminal. It contains 
-# various scenes that are used to do the benchmarking.
+# Mario-style movement demo that keeps a sprite responsive
+# with keyboard polling and smooth frame pacing.
 # --------------------------------------------------------
 
-# --- Global Variables ---
-SET $SELECTION = 0
-
-# Menu
 RUN _CLEAR
-PRINT "\nSelect Demo"
-PRINT "\n"
-PRINT "\n[1] Sprite rendering test"
-PRINT "\n"
-PRINT "\nEnter selection: "
-INPUT $SELECTION
-
-
-# ======================= SCENE 1 ========================
-# Render sprites and demonstrate movement in 640x360.
-# ========================================================  
-
-
-IF ($SELECTION==1):
-  
-  # Initialization:
-  
-  RUN _CLEAR
-  RUN _TERM_RESOLUTION 640 360
-
-  # Variables
-  SET $X = 20
-  SET $XRAW = $X
-  SET $DX = 0
-  SET $Y = 40
-  SET $VX = 150
-  SET $DT = 0.0
-  SET $SPRITE = "./tasks/assets/char_1_1.png"
-      
-  # Rendering loop:
-  RUN _TIMER --start
-  PRINT "SCENE 2 - Demonstrating sprite rendering"
-  WHILE ($X<590):
-    RUN _TIMER --reset
-    RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE
-    RUN _TERM_RENDER
-    #RUN _WAIT 10    
-    IF ($X>48):
-      RUN _TERM_CLEAN -x $X-48 -y $Y -width 48 -height 48
-    END
-    RUN _CALC ($DT/1000 * $VX) TO $DX
-    SET $XRAW = $XRAW + $DX
-    RUN _CALC floor($XRAW) TO $X    
-    RUN _TIMER --get TO $DT
-  END
-  RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360
-END
-  
-# ------------- EXIT CLEANUP -------------
-SET $KEY
-INPUT $KEY
 RUN _TERM_RESOLUTION 640 360
 
+PRINT "\nRetro platforming demo"
+PRINT "\nUse LEFT/RIGHT (or A/D) to run, SPACE/UP to jump, ESC to exit."
+PRINT "\n" 
 
+# Player and physics constants
+SET $SPRITE = "./tasks/assets/char_1_1.png"
+SET $X = 120
+SET $Y = 260
+SET $LAST_X = $X
+SET $LAST_Y = $Y
+SET $FACING = 1
+SET $VX = 0
+SET $VY = 0
+SET $SPEED = 180
+SET $JUMP = 360
+SET $GRAVITY = 900
+SET $GROUND = 276
+RUN _CALC $GROUND + 48 TO $GROUND_LINE
+RUN _CALC $GROUND_LINE + 12 TO $GROUND_LINE2
+SET $RUNNING = 1
+SET $DT = 16.0
+
+RUN _TIMER --start
+RUN _TIMER --reset
+
+WHILE ($RUNNING==1):
+  RUN _TIMER --get TO $DT
+  RUN _TIMER --reset
+
+  # Input state via _TERM_KEYBOARD bitfield
+  RUN _TERM_KEYBOARD --state TO $INPUT_STATE
+  RUN _CALC fmod($INPUT_STATE, 2) TO $LEFT_HELD
+  RUN _CALC fmod(floor($INPUT_STATE/2), 2) TO $RIGHT_HELD
+  RUN _CALC fmod(floor($INPUT_STATE/4), 2) TO $JUMP_HELD
+  RUN _CALC fmod(floor($INPUT_STATE/32), 2) TO $EXIT_HELD
+
+  IF ($EXIT_HELD==1):
+    SET $RUNNING = 0
+  END
+
+  SET $LAST_X = $X
+  SET $LAST_Y = $Y
+
+  IF ($JUMP_HELD==1 AND $Y >= $GROUND):
+    RUN _CALC 0 - $JUMP TO $VY
+  END
+
+  SET $VX = 0
+  IF ($LEFT_HELD==1):
+    RUN _CALC 0 - $SPEED TO $VX
+    SET $FACING = -1
+  END
+  IF ($RIGHT_HELD==1):
+    RUN _CALC $SPEED TO $VX
+    SET $FACING = 1
+  END
+
+  RUN _CALC $VY + $GRAVITY * ($DT/1000) TO $VY
+
+  RUN _CALC $X + $VX * ($DT/1000) TO $X
+  RUN _CALC $Y + $VY * ($DT/1000) TO $Y
+
+  IF ($X < 0):
+    SET $X = 0
+  END
+  RUN _CALC 640 - 48 TO $MAX_X
+  IF ($X > $MAX_X):
+    SET $X = $MAX_X
+  END
+  IF ($Y > $GROUND):
+    SET $Y = $GROUND
+    SET $VY = 0
+  END
+
+  # Clean the previous sprite footprint
+  RUN _CALC fmax(0, $LAST_X - 4) TO $CLEAN_X
+  RUN _CALC fmax(0, $LAST_Y - 4) TO $CLEAN_Y
+  RUN _TERM_CLEAN -x $CLEAN_X -y $CLEAN_Y -width 64 -height 64
+
+  # Simple layered ground
+  RUN _RECT -x 0 -y $GROUND_LINE -width 640 -height 12 -color 24 -fill on
+  RUN _RECT -x 0 -y $GROUND_LINE2 -width 640 -height 12 -color 18 -fill on
+
+  # Rotate while airborne and mirror based on direction
+  SET $ROTATE = 0
+  IF ($VY < -30):
+    SET $ROTATE = 90
+  END
+  IF ($VY > 60):
+    SET $ROTATE = 270
+  END
+
+  IF ($FACING < 0):
+    RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE -mirrorX -rotate $ROTATE
+  ELSE:
+    RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE -rotate $ROTATE
+  END
+
+  RUN _TERM_RENDER
+
+  # Frame pacing for smooth motion
+  RUN _CALC 1000/60 TO $FRAME_MS
+  RUN _CALC $FRAME_MS - $DT TO $SLEEP
+  RUN _CALC ceil($SLEEP) TO $SLEEP
+  IF ($SLEEP > 0):
+    RUN _WAIT $SLEEP
+  END
+END
+
+RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360
+RUN _TERM_RESOLUTION 640 360

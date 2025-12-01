@@ -151,6 +151,7 @@ struct terminal_custom_pixel {
     uint8_t r;
     uint8_t g;
     uint8_t b;
+    uint8_t layer;
 };
 
 static struct terminal_custom_pixel *terminal_custom_pixels = NULL;
@@ -301,12 +302,12 @@ static void terminal_mark_full_redraw(void);
 static void terminal_mark_background_dirty(void);
 static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b);
 static uint32_t terminal_rgba_from_color(uint32_t color);
-static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b);
+static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t layer);
 static void terminal_custom_pixels_clear(void);
-static void terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int width, int height);
+static void terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int width, int height, uint8_t layer);
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
 static int terminal_custom_pixels_reserve(size_t additional);
-static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const uint8_t *rgba, int width, int height);
+static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const uint8_t *rgba, int width, int height, uint8_t layer);
 static void terminal_custom_pixels_shutdown(void);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
@@ -1474,12 +1475,16 @@ static void terminal_custom_pixels_clear(void) {
     terminal_mark_full_redraw();
 }
 
-static void terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int width, int height) {
+static void terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int width, int height, uint8_t layer) {
     if (width <= 0 || height <= 0) {
         return;
     }
 
     if (origin_x < 0 || origin_y < 0) {
+        return;
+    }
+
+    if (layer < 1u || layer > 16u) {
         return;
     }
 
@@ -1492,7 +1497,7 @@ static void terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int wi
     size_t write_idx = 0u;
     for (size_t read_idx = 0u; read_idx < terminal_custom_pixel_count; read_idx++) {
         struct terminal_custom_pixel *entry = &terminal_custom_pixels[read_idx];
-        if (entry->x >= origin_x && entry->x < max_x && entry->y >= origin_y && entry->y < max_y) {
+        if (entry->layer == layer && entry->x >= origin_x && entry->x < max_x && entry->y >= origin_y && entry->y < max_y) {
             continue;
         }
         if (write_idx != read_idx) {
@@ -1543,14 +1548,18 @@ static int terminal_custom_pixels_reserve(size_t additional) {
     return 0;
 }
 
-static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t layer) {
     if (x < 0 || y < 0) {
+        return -1;
+    }
+
+    if (layer < 1u || layer > 16u) {
         return -1;
     }
 
     for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
         struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
-        if (entry->x == x && entry->y == y) {
+        if (entry->x == x && entry->y == y && entry->layer == layer) {
             if (entry->r == r && entry->g == g && entry->b == b) {
                 return 0;
             }
@@ -1572,15 +1581,19 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
     entry->r = r;
     entry->g = g;
     entry->b = b;
+    entry->layer = layer;
     terminal_custom_pixels_need_render = 1;
     return 0;
 }
 
-static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const uint8_t *rgba, int width, int height) {
+static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const uint8_t *rgba, int width, int height, uint8_t layer) {
     if (!rgba || width <= 0 || height <= 0) {
         return -1;
     }
     if (origin_x < 0 || origin_y < 0) {
+        return -1;
+    }
+    if (layer < 1u || layer > 16u) {
         return -1;
     }
     if (width > INT_MAX - origin_x || height > INT_MAX - origin_y) {
@@ -1632,6 +1645,7 @@ static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const 
             entry->r = r;
             entry->g = g;
             entry->b = b;
+            entry->layer = layer;
         }
     }
 
@@ -1646,17 +1660,22 @@ static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int he
     }
 
     size_t frame_pitch = (size_t)width * 4u;
-    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
-        const struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
-        if (entry->x < 0 || entry->y < 0) {
-            continue;
+    for (int layer = 16; layer >= 1; layer--) {
+        for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
+            const struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
+            if (entry->layer != (uint8_t)layer) {
+                continue;
+            }
+            if (entry->x < 0 || entry->y < 0) {
+                continue;
+            }
+            if (entry->x >= width || entry->y >= height) {
+                continue;
+            }
+            uint8_t *dst = framebuffer + (size_t)entry->y * frame_pitch + (size_t)entry->x * 4u;
+            uint32_t *dst32 = (uint32_t *)dst;
+            *dst32 = terminal_rgba_from_components(entry->r, entry->g, entry->b);
         }
-        if (entry->x >= width || entry->y >= height) {
-            continue;
-        }
-        uint8_t *dst = framebuffer + (size_t)entry->y * frame_pitch + (size_t)entry->x * 4u;
-        uint32_t *dst32 = (uint32_t *)dst;
-        *dst32 = terminal_rgba_from_components(entry->r, entry->g, entry->b);
     }
 }
 
@@ -4018,6 +4037,7 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long sprite_y = -1;
             long sprite_w = -1;
             long sprite_h = -1;
+            long sprite_layer = 1;
             char *sprite_data_value = NULL;
             uint8_t *sprite_pixels = NULL;
             size_t sprite_bytes = 0u;
@@ -4185,6 +4205,13 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         if (errno == 0 && endptr && *endptr == '\0') {
                             sprite_h = parsed;
                         }
+                    } else if (strcmp(key, "sprite_layer") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 1 && parsed <= 16) {
+                            sprite_layer = parsed;
+                        }
                     } else if (strcmp(key, "sprite_data") == 0 && value) {
                         sprite_data_value = value;
                     }
@@ -4238,7 +4265,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                                                                            (int)sprite_y,
                                                                            sprite_pixels,
                                                                            (int)sprite_w,
-                                                                           (int)sprite_h) != 0) {
+                                                                           (int)sprite_h,
+                                                                           (uint8_t)sprite_layer) != 0) {
                                 fprintf(stderr, "terminal: Failed to draw sprite.\n");
                             }
                         }
@@ -4249,7 +4277,7 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     sprite_x > INT_MAX || sprite_y > INT_MAX || sprite_w > INT_MAX || sprite_h > INT_MAX) {
                     fprintf(stderr, "terminal: Invalid sprite clear parameters.\n");
                 } else {
-                    terminal_custom_pixels_clear_rect((int)sprite_x, (int)sprite_y, (int)sprite_w, (int)sprite_h);
+                    terminal_custom_pixels_clear_rect((int)sprite_x, (int)sprite_y, (int)sprite_w, (int)sprite_h, (uint8_t)sprite_layer);
                 }
             }
 
@@ -4262,7 +4290,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                                                    (int)pixel_y,
                                                    (uint8_t)pixel_r,
                                                    (uint8_t)pixel_g,
-                                                   (uint8_t)pixel_b) != 0) {
+                                                   (uint8_t)pixel_b,
+                                                   1u) != 0) {
                         fprintf(stderr, "terminal: Failed to draw custom pixel.\n");
                     }
                 } else {

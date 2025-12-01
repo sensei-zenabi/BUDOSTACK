@@ -7,8 +7,9 @@
 #include <string.h>
 
 static void print_usage(void) {
-    fprintf(stderr, "Usage: _TERM_CLEAN -x <pixels> -y <pixels> -width <pixels> -height <pixels>\n");
+    fprintf(stderr, "Usage: _TERM_CLEAN -x <pixels> -y <pixels> -width <pixels> -height <pixels> [-layer <1-16>]\n");
     fprintf(stderr, "  Clears a rectangular pixel region on the terminal.\n");
+    fprintf(stderr, "  Layers are numbered 1 (top) through 16 (bottom). Defaults to 1.\n");
 }
 
 static int parse_long(const char *arg, const char *name, long min_value, long max_value, long *out_value) {
@@ -43,6 +44,7 @@ int main(int argc, char **argv) {
     long origin_y = -1;
     long width = -1;
     long height = -1;
+    long layer = 1;
 
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
@@ -78,6 +80,14 @@ int main(int argc, char **argv) {
             if (parse_long(argv[i], "-height", 1, INT_MAX, &height) != 0) {
                 return EXIT_FAILURE;
             }
+        } else if (strcmp(arg, "-layer") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_CLEAN: missing value for -layer.\n");
+                return EXIT_FAILURE;
+            }
+            if (parse_long(argv[i], "-layer", 1, 16, &layer) != 0) {
+                return EXIT_FAILURE;
+            }
         } else if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
             print_usage();
             return EXIT_SUCCESS;
@@ -94,11 +104,12 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    int print_status = printf("\x1b]777;sprite=clear;sprite_x=%ld;sprite_y=%ld;sprite_w=%ld;sprite_h=%ld\a",
+    int print_status = printf("\x1b]777;sprite=clear;sprite_x=%ld;sprite_y=%ld;sprite_w=%ld;sprite_h=%ld;sprite_layer=%ld\a",
                               origin_x,
                               origin_y,
                               width,
-                              height);
+                              height,
+                              layer);
     if (print_status < 0) {
         perror("_TERM_CLEAN: printf");
         return EXIT_FAILURE;

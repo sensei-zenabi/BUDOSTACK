@@ -1,16 +1,39 @@
 # autoexec.task
+#=========================================================================
+# This TASK is being ran when BUDOSTACK starts.
+# If you want to release your own application or game, modify the marked
+# section below according to instructions.
+#=========================================================================
+
+
+#-------------------------------------------------------------------------
+# DO NOT EDIT THIS SECTION!
+
+# Initialize variables
 
 SET $SELECTION = 0
 SET $SCHEME = "c64"
 SET $LOAD = 0
 
-# Set resolution to 80x45, i.e. wide screen VGA
+# Set resolution to ~80x45, i.e. wide screen VGA
+
 RUN _TERM_RESOLUTION 640 360
 
 # Adjust the margin
+
 RUN _TERM_MARGIN 8
 
-# Change terminal color scheme
+#-------------------------------------------------------------------------
+# OPTION 1: Your Customized Starting Sequence
+
+# Start directly to your application
+# - to be defined -
+
+#-------------------------------------------------------------------------
+# OPTION 2: BUDOSTACK Default Starting Sequence 
+
+# Select terminal color scheme
+
 PRINT "\nSelect BUDOSTACK colorscheme:"
 PRINT "\n[0] Commodore 64"
 PRINT "\n[1] IBM 5150 (Recommended)"
@@ -33,7 +56,8 @@ END
 RUN _RETROPROFILE apply $SCHEME
 RUN cls
 
-# Loading screen
+# Display "simulated" loading screen and play related sound effects
+
 RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
 @LOADING
 RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
@@ -46,7 +70,8 @@ IF ($LOAD < 100):
   GOTO LOADING
 END
 
-# Intro logo
+# Display intro logo and play starting tune
+
 @INTRO
 RUN clear
 RUN _WAIT 200

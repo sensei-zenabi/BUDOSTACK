@@ -238,6 +238,8 @@ struct psf_unicode_map {
     uint32_t glyph_index;
 };
 
+static struct psf_font terminal_font = {0};
+
 #if BUDOSTACK_HAVE_SDL2
 #define TERMINAL_SOUND_CHANNEL_COUNT 32
 
@@ -333,6 +335,15 @@ static void terminal_reset_render_cache(void);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
 static const char *terminal_skip_utf8_bom(const char *src, size_t *size);
 static const char *terminal_skip_leading_space_and_comments(const char *src, const char *end);
+static int terminal_utf8_next(const uint8_t *data, size_t length, size_t *offset, uint32_t *out_codepoint);
+static int terminal_render_text_sprite(const struct psf_font *font,
+                                       const uint8_t *text,
+                                       size_t length,
+                                       uint32_t color,
+                                       uint8_t **out_pixels,
+                                       int *out_width,
+                                       int *out_height);
+static int terminal_scheme_color_for_index(const struct terminal_buffer *buffer, long color_index, uint32_t *out_color);
 struct terminal_shader_parameter {
     char *name;
     float default_value;
@@ -4142,6 +4153,201 @@ static int terminal_base64_decode(const char *input, uint8_t **out_data, size_t 
     return 0;
 }
 
+static int terminal_utf8_next(const uint8_t *data, size_t length, size_t *offset, uint32_t *out_codepoint) {
+    if (!data || !offset || !out_codepoint || *offset >= length) {
+        return -1;
+    }
+
+    uint8_t first = data[*offset];
+    (*offset)++;
+
+    if ((first & 0x80u) == 0u) {
+        *out_codepoint = (uint32_t)first;
+        return 0;
+    }
+
+    uint32_t codepoint = 0u;
+    size_t expected = 0u;
+    uint32_t min_value = 0u;
+
+    if ((first & 0xE0u) == 0xC0u) {
+        codepoint = (uint32_t)(first & 0x1Fu);
+        expected = 1u;
+        min_value = 0x80u;
+    } else if ((first & 0xF0u) == 0xE0u) {
+        codepoint = (uint32_t)(first & 0x0Fu);
+        expected = 2u;
+        min_value = 0x800u;
+    } else if ((first & 0xF8u) == 0xF0u) {
+        codepoint = (uint32_t)(first & 0x07u);
+        expected = 3u;
+        min_value = 0x10000u;
+    } else {
+        *out_codepoint = '?';
+        return 0;
+    }
+
+    if (*offset + expected > length) {
+        *out_codepoint = '?';
+        *offset = length;
+        return 0;
+    }
+
+    for (size_t i = 0u; i < expected; i++) {
+        uint8_t byte = data[*offset];
+        (*offset)++;
+        if ((byte & 0xC0u) != 0x80u) {
+            *out_codepoint = '?';
+            return 0;
+        }
+        codepoint = (codepoint << 6u) | (uint32_t)(byte & 0x3Fu);
+    }
+
+    if (codepoint < min_value || codepoint > 0x10FFFFu || (codepoint >= 0xD800u && codepoint <= 0xDFFFu)) {
+        *out_codepoint = '?';
+        return 0;
+    }
+
+    *out_codepoint = codepoint;
+    return 0;
+}
+
+static int terminal_render_text_sprite(const struct psf_font *font,
+                                       const uint8_t *text,
+                                       size_t length,
+                                       uint32_t color,
+                                       uint8_t **out_pixels,
+                                       int *out_width,
+                                       int *out_height) {
+    if (!font || !text || length == 0u || !out_pixels || !out_width || !out_height) {
+        return -1;
+    }
+    if (!font->glyphs || font->glyph_size == 0u || font->width == 0u || font->height == 0u) {
+        return -1;
+    }
+
+    int glyph_scale = TERMINAL_FONT_SCALE;
+    if (glyph_scale <= 0) {
+        glyph_scale = 1;
+    }
+
+    size_t glyph_width_size = (size_t)font->width * (size_t)glyph_scale;
+    size_t glyph_height_size = (size_t)font->height * (size_t)glyph_scale;
+    if (glyph_width_size == 0u || glyph_height_size == 0u ||
+        glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
+        return -1;
+    }
+
+    size_t offset = 0u;
+    size_t glyph_count = 0u;
+    while (offset < length) {
+        uint32_t cp = 0u;
+        if (terminal_utf8_next(text, length, &offset, &cp) != 0) {
+            return -1;
+        }
+        glyph_count++;
+    }
+
+    if (glyph_count == 0u || glyph_count > SIZE_MAX / glyph_width_size) {
+        return -1;
+    }
+
+    size_t text_width_size = glyph_count * glyph_width_size;
+    size_t text_height_size = glyph_height_size;
+    if (text_width_size == 0u || text_height_size == 0u ||
+        text_width_size > (size_t)INT_MAX || text_height_size > (size_t)INT_MAX) {
+        return -1;
+    }
+
+    if (text_width_size > SIZE_MAX / text_height_size) {
+        return -1;
+    }
+
+    size_t pixel_count = text_width_size * text_height_size;
+    if (pixel_count == 0u || pixel_count > SIZE_MAX / 4u) {
+        return -1;
+    }
+
+    uint8_t *pixels = calloc(pixel_count, 4u);
+    if (!pixels) {
+        return -1;
+    }
+
+    uint8_t r = terminal_color_r(color);
+    uint8_t g = terminal_color_g(color);
+    uint8_t b = terminal_color_b(color);
+
+    offset = 0u;
+    size_t glyph_index = 0u;
+    while (offset < length) {
+        uint32_t cp = 0u;
+        if (terminal_utf8_next(text, length, &offset, &cp) != 0) {
+            free(pixels);
+            return -1;
+        }
+
+        uint32_t glyph_id = psf_font_resolve_glyph(font, cp);
+        if (glyph_id >= font->glyph_count) {
+            glyph_id = 0u;
+        }
+        const uint8_t *glyph_bitmap = font->glyphs + glyph_id * font->glyph_size;
+
+        size_t dest_x = glyph_index * glyph_width_size;
+        for (size_t py = 0u; py < text_height_size; py++) {
+            size_t src_y = py / (size_t)glyph_scale;
+            if (src_y >= font->height) {
+                break;
+            }
+            const uint8_t *glyph_row = glyph_bitmap + src_y * font->stride;
+            for (uint32_t src_x = 0u; src_x < font->width; src_x++) {
+                uint8_t mask = (uint8_t)(0x80u >> (src_x & 7u));
+                if ((glyph_row[src_x / 8u] & mask) == 0u) {
+                    continue;
+                }
+                size_t start_px = (size_t)src_x * (size_t)glyph_scale;
+                size_t end_px = start_px + (size_t)glyph_scale;
+                if (end_px > glyph_width_size) {
+                    end_px = glyph_width_size;
+                }
+                for (size_t px = start_px; px < end_px; px++) {
+                    size_t dst_index = ((py * text_width_size) + dest_x + px) * 4u;
+                    pixels[dst_index + 0u] = r;
+                    pixels[dst_index + 1u] = g;
+                    pixels[dst_index + 2u] = b;
+                    pixels[dst_index + 3u] = 255u;
+                }
+            }
+        }
+
+        glyph_index++;
+    }
+
+    *out_pixels = pixels;
+    *out_width = (int)text_width_size;
+    *out_height = (int)text_height_size;
+    return 0;
+}
+
+static int terminal_scheme_color_for_index(const struct terminal_buffer *buffer, long color_index, uint32_t *out_color) {
+    if (!buffer || !out_color) {
+        return -1;
+    }
+
+    uint32_t color = 0u;
+    if (color_index >= 1 && color_index <= 16) {
+        color = buffer->palette[(size_t)(color_index - 1)];
+    } else if (color_index == 17) {
+        color = buffer->default_fg;
+    } else if (color_index == 18) {
+        color = buffer->default_bg;
+    } else {
+        return -1;
+    }
+
+    *out_color = color;
+    return 0;
+}
+
 static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *args) {
     if (!buffer) {
         return;
@@ -4180,6 +4386,11 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_SPRITE_ACTION_CLEAR = 2
             };
             enum terminal_sprite_action sprite_action = TERMINAL_SPRITE_ACTION_NONE;
+            enum terminal_text_action {
+                TERMINAL_TEXT_ACTION_NONE = 0,
+                TERMINAL_TEXT_ACTION_DRAW = 1
+            };
+            enum terminal_text_action text_action = TERMINAL_TEXT_ACTION_NONE;
             long pixel_x = -1;
             long pixel_y = -1;
             long pixel_r = -1;
@@ -4191,9 +4402,16 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long sprite_w = -1;
             long sprite_h = -1;
             long sprite_layer = 1;
+            long text_x = -1;
+            long text_y = -1;
+            long text_layer = 1;
+            long text_color = -1;
             char *sprite_data_value = NULL;
+            char *text_data_value = NULL;
             uint8_t *sprite_pixels = NULL;
             size_t sprite_bytes = 0u;
+            uint8_t *text_bytes = NULL;
+            size_t text_length = 0u;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -4374,6 +4592,40 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         }
                     } else if (strcmp(key, "sprite_data") == 0 && value) {
                         sprite_data_value = value;
+                    } else if (strcmp(key, "text") == 0 && value && *value != '\0') {
+                        if (strcmp(value, "draw") == 0) {
+                            text_action = TERMINAL_TEXT_ACTION_DRAW;
+                        }
+                    } else if (strcmp(key, "text_x") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            text_x = parsed;
+                        }
+                    } else if (strcmp(key, "text_y") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            text_y = parsed;
+                        }
+                    } else if (strcmp(key, "text_layer") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 1 && parsed <= 16) {
+                            text_layer = parsed;
+                        }
+                    } else if (strcmp(key, "text_color") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 1 && parsed <= 18) {
+                            text_color = parsed;
+                        }
+                    } else if (strcmp(key, "text_data") == 0 && value) {
+                        text_data_value = value;
                     }
                 }
                 token = strtok_r(NULL, ";", &saveptr);
@@ -4448,6 +4700,52 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             }
 
             free(sprite_pixels);
+
+            if (text_action == TERMINAL_TEXT_ACTION_DRAW) {
+                if (text_x < 0 || text_y < 0 || text_x > INT_MAX || text_y > INT_MAX) {
+                    fprintf(stderr, "terminal: Invalid text coordinates.\n");
+                } else if (text_layer < 1 || text_layer > 16) {
+                    fprintf(stderr, "terminal: Text layer must be between 1 and 16.\n");
+                } else if (text_color < 1 || text_color > 18) {
+                    fprintf(stderr, "terminal: Text color must be between 1 and 18.\n");
+                } else if (!text_data_value) {
+                    fprintf(stderr, "terminal: Missing text data.\n");
+                } else if (!terminal_font.glyphs) {
+                    fprintf(stderr, "terminal: Font is not available for text rendering.\n");
+                } else if (terminal_base64_decode(text_data_value, &text_bytes, &text_length) != 0 || text_length == 0u) {
+                    fprintf(stderr, "terminal: Failed to decode text data.\n");
+                } else {
+                    uint32_t resolved_color = 0u;
+                    if (terminal_scheme_color_for_index(buffer, text_color, &resolved_color) != 0) {
+                        fprintf(stderr, "terminal: Invalid text color index.\n");
+                    } else {
+                        uint8_t *text_pixels = NULL;
+                        int text_w = 0;
+                        int text_h = 0;
+                        if (terminal_render_text_sprite(&terminal_font,
+                                                        text_bytes,
+                                                        text_length,
+                                                        resolved_color,
+                                                        &text_pixels,
+                                                        &text_w,
+                                                        &text_h) != 0) {
+                            fprintf(stderr, "terminal: Failed to render text sprite.\n");
+                        } else {
+                            if (terminal_custom_pixels_draw_sprite((int)text_x,
+                                                                   (int)text_y,
+                                                                   text_pixels,
+                                                                   text_w,
+                                                                   text_h,
+                                                                   (uint8_t)text_layer) != 0) {
+                                fprintf(stderr, "terminal: Failed to draw text.\n");
+                            }
+                        }
+                        free(text_pixels);
+                    }
+                }
+            }
+
+            free(text_bytes);
 
             if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW) {
                 if (pixel_x >= 0 && pixel_y >= 0 && pixel_x <= INT_MAX && pixel_y <= INT_MAX &&
@@ -5502,9 +5800,8 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    struct psf_font font = {0};
     char errbuf[256];
-    if (load_psf_font(font_path, &font, errbuf, sizeof(errbuf)) != 0) {
+    if (load_psf_font(font_path, &terminal_font, errbuf, sizeof(errbuf)) != 0) {
         fprintf(stderr, "Failed to load font: %s\n", errbuf);
         free(shader_args);
         return EXIT_FAILURE;
@@ -5516,7 +5813,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Failed to allocate memory for shader paths.\n");
             free(shader_paths);
             free(shader_args);
-            free_font(&font);
+            free_font(&terminal_font);
             return EXIT_FAILURE;
         }
         shader_paths = new_paths;
@@ -5524,7 +5821,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Shader path is too long.\n");
             free(shader_paths);
             free(shader_args);
-            free_font(&font);
+            free_font(&terminal_font);
             return EXIT_FAILURE;
         }
         shader_path_count++;
@@ -5533,12 +5830,12 @@ int main(int argc, char **argv) {
     free(shader_args);
     shader_args = NULL;
 
-    size_t glyph_width_size = (size_t)font.width * (size_t)TERMINAL_FONT_SCALE;
-    size_t glyph_height_size = (size_t)font.height * (size_t)TERMINAL_FONT_SCALE;
+    size_t glyph_width_size = (size_t)terminal_terminal_font.width * (size_t)TERMINAL_FONT_SCALE;
+    size_t glyph_height_size = (size_t)terminal_terminal_font.height * (size_t)TERMINAL_FONT_SCALE;
     if (glyph_width_size == 0u || glyph_height_size == 0u ||
         glyph_width_size > (size_t)INT_MAX || glyph_height_size > (size_t)INT_MAX) {
         fprintf(stderr, "Scaled font dimensions invalid.\n");
-        free_font(&font);
+        free_font(&terminal_font);
         free(shader_paths);
         return EXIT_FAILURE;
     }
@@ -5560,7 +5857,7 @@ int main(int argc, char **argv) {
     if (window_width_size == 0u || window_height_size == 0u ||
         window_width_size > (size_t)INT_MAX || window_height_size > (size_t)INT_MAX) {
         fprintf(stderr, "Computed window dimensions invalid.\n");
-        free_font(&font);
+        free_font(&terminal_font);
         free(shader_paths);
         return EXIT_FAILURE;
     }
@@ -5572,7 +5869,7 @@ int main(int argc, char **argv) {
     int master_fd = -1;
     pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
     if (child_pid < 0) {
-        free_font(&font);
+        free_font(&terminal_font);
         free(shader_paths);
         return EXIT_FAILURE;
     }
@@ -5580,7 +5877,7 @@ int main(int argc, char **argv) {
     if (fcntl(master_fd, F_SETFL, O_NONBLOCK) < 0) {
         perror("fcntl");
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
         return EXIT_FAILURE;
@@ -5589,7 +5886,7 @@ int main(int argc, char **argv) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
         return EXIT_FAILURE;
@@ -5623,7 +5920,7 @@ int main(int argc, char **argv) {
 #endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
         return EXIT_FAILURE;
@@ -5637,7 +5934,7 @@ int main(int argc, char **argv) {
 #endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
         return EXIT_FAILURE;
@@ -5652,7 +5949,7 @@ int main(int argc, char **argv) {
 #endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
         return EXIT_FAILURE;
@@ -5667,7 +5964,7 @@ int main(int argc, char **argv) {
 #endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
         return EXIT_FAILURE;
@@ -5683,7 +5980,7 @@ int main(int argc, char **argv) {
 #endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
         return EXIT_FAILURE;
@@ -5703,7 +6000,7 @@ int main(int argc, char **argv) {
 #endif
             SDL_Quit();
             kill(child_pid, SIGKILL);
-            free_font(&font);
+            free_font(&terminal_font);
             free(shader_paths);
             close(master_fd);
             return EXIT_FAILURE;
@@ -5738,7 +6035,7 @@ int main(int argc, char **argv) {
 #endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         return EXIT_FAILURE;
     }
@@ -5758,7 +6055,7 @@ int main(int argc, char **argv) {
 #endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         return EXIT_FAILURE;
     }
@@ -5775,7 +6072,7 @@ int main(int argc, char **argv) {
 #endif
         SDL_Quit();
         kill(child_pid, SIGKILL);
-        free_font(&font);
+        free_font(&terminal_font);
         close(master_fd);
         return EXIT_FAILURE;
     }
@@ -6429,11 +6726,11 @@ int main(int argc, char **argv) {
                 }
 
                 if (ch != 0u) {
-                    uint32_t glyph_index = psf_font_resolve_glyph(&font, ch);
-                    if (glyph_index >= font.glyph_count) {
+                    uint32_t glyph_index = psf_font_resolve_glyph(&terminal_font, ch);
+                    if (glyph_index >= terminal_font.glyph_count) {
                         glyph_index = 0u;
                     }
-                    const uint8_t *glyph_bitmap = font.glyphs + glyph_index * font.glyph_size;
+                    const uint8_t *glyph_bitmap = terminal_font.glyphs + glyph_index * terminal_font.glyph_size;
                     uint32_t glyph_pixel_value = terminal_rgba_from_color(glyph_color);
                     int glyph_scale = TERMINAL_FONT_SCALE;
                     if (glyph_scale <= 0) {
@@ -6441,14 +6738,14 @@ int main(int argc, char **argv) {
                     }
                     for (int py = 0; py < cell_height; py++) {
                         uint32_t src_y = (uint32_t)(py / glyph_scale);
-                        if (src_y >= font.height) {
+                        if (src_y >= terminal_font.height) {
                             break;
                         }
-                        const uint8_t *glyph_row = glyph_bitmap + (size_t)src_y * font.stride;
+                        const uint8_t *glyph_row = glyph_bitmap + (size_t)src_y * terminal_font.stride;
                         uint32_t *dst32 = (uint32_t *)(framebuffer +
                                                         (size_t)(dest_y + py) * (size_t)frame_pitch +
                                                         (size_t)dest_x * 4u);
-                        for (uint32_t src_x = 0; src_x < font.width; src_x++) {
+                        for (uint32_t src_x = 0; src_x < terminal_font.width; src_x++) {
                             uint8_t mask = (uint8_t)(0x80u >> (src_x & 7u));
                             if ((glyph_row[src_x / 8u] & mask) == 0u) {
                                 continue;
@@ -6718,7 +7015,7 @@ int main(int argc, char **argv) {
     SDL_DestroyWindow(window);
     SDL_Quit();
 
-    free_font(&font);
+    free_font(&terminal_font);
     close(master_fd);
 
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {

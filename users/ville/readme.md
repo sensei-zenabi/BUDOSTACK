@@ -4,10 +4,10 @@ BUDOSTACK is a framework built on top of Debian Linux that allows
 users to enjoy the focus provided by the simplicity of 1980s personal
 computers.
 
-Built-In Capabilities:
+### CAPABILITIes: ###
 
 - Terminal Emulator with CRT simulation.
-- Rich and powerful TASK Scripting Language for building apps.
+- Powerful TASK Scripting Language for building Apps and Games.
 - Office tools from Text Editors to Presentations and Spreadsheets.
 - File manipulation and System Utilities.
 - Math capabilities.
@@ -30,9 +30,9 @@ Tested distributions:
 - Ubuntu
 - Kubuntu
 
-### LATEST RELEASE: v0.8.5 ###
+### LATEST RELEASE: v0.8.6 ###
 
-Project Status: Hardening phase from v0.8.0 to v1.0.0
+PROJECT STATUS: Hardening phase from v0.8.0 to v1.0.0
 
 BUDOSTACK has entered "hardening" phase. This means that no major 
 new capabilities will be introduced, and the focus is making the 

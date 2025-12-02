@@ -17,18 +17,19 @@ SET $DX = 0
 SET $Y = 140
 SET $VX = 2
 SET $DT = 0.0
-SET $SPRITE = "./tasks/assets/char_1_1.png"
-SET $TILE = {"./tasks/assets/tile001.png",
-             "./tasks/assets/tile002.png"}
+# Preload sprite assets into memory to avoid repeated file I/O:
+RUN _TERM_SPRITE_LOAD -file "./tasks/assets/char_1_1.png" TO $SPRITE
+RUN _TERM_SPRITE_LOAD -file "./tasks/assets/tile001.png" TO $TILE1
+RUN _TERM_SPRITE_LOAD -file "./tasks/assets/tile002.png" TO $TILE2
             
 # Render Background:
 
 FOR ($i=0;$i<=320;$i=$i+20):
   FOR ($j=0;$j<=200;$j=$j+20):
     IF ($j<=140):
-      RUN _TERM_SPRITE -x $i -y $j -file $TILE[0] -layer 16
+      RUN _TERM_SPRITE -x $i -y $j -width $TILE1[0] -height $TILE1[1] -data $TILE1[2] -layer 16
     ELSE
-      RUN _TERM_SPRITE -x $i -y $j -file $TILE[1] -layer 16
+      RUN _TERM_SPRITE -x $i -y $j -width $TILE2[0] -height $TILE2[1] -data $TILE2[2] -layer 16
     END
   END
 END
@@ -44,7 +45,7 @@ WHILE ($X<260):
   IF ($X>40):
     RUN _TERM_CLEAN -x $X-$VX -y $Y -width 40 -height 40 -layer 8
   END
-  RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE -layer 8
+  RUN _TERM_SPRITE -x $X -y $Y -width $SPRITE[0] -height $SPRITE[1] -data $SPRITE[2] -layer 8
   RUN _TERM_RENDER -layer 8
   SET $X = $X + $VX
   RUN _WAIT 66

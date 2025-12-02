@@ -1090,6 +1090,28 @@ static ValueType detect_numeric_type(const char *token, long long *out_int, doub
     return VALUE_UNSET;
 }
 
+static bool parse_value_from_string(const char *text, Value *out, int line, int debug) {
+    if (!text || !out) {
+        return false;
+    }
+
+    const char *cursor = text;
+    if (!parse_expression(&cursor, out, "", line, debug)) {
+        return false;
+    }
+
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+
+    if (*cursor != '\0') {
+        free_value(out);
+        return false;
+    }
+
+    return true;
+}
+
 static bool parse_array_literal(const char **cursor, Value *out, int line, int debug) {
     if (!cursor || !out || !*cursor || **cursor != '{') {
         return false;
@@ -4540,26 +4562,31 @@ int main(int argc, char *argv[]) {
                     while (captured_len > 0 && (captured_output[captured_len - 1] == '\n' || captured_output[captured_len - 1] == '\r')) {
                         captured_output[--captured_len] = '\0';
                     }
-                    long long iv = 0;
-                    double fv = 0.0;
                     Value value;
                     memset(&value, 0, sizeof(value));
-                    ValueType vt = detect_numeric_type(captured_output, &iv, &fv);
-                    if (vt == VALUE_INT) {
-                        value.type = VALUE_INT;
-                        value.int_val = iv;
-                        value.float_val = (double)iv;
-                    } else if (vt == VALUE_FLOAT) {
-                        value.type = VALUE_FLOAT;
-                        value.float_val = fv;
-                        value.int_val = (long long)fv;
-                    } else {
-                        value.type = VALUE_STRING;
-                        value.str_val = captured_output;
-                        value.owns_string = true;
+                    bool parsed = parse_value_from_string(captured_output, &value, script[pc].source_line, debug);
+                    bool keep_captured_buffer = false;
+                    if (!parsed) {
+                        long long iv = 0;
+                        double fv = 0.0;
+                        ValueType vt = detect_numeric_type(captured_output, &iv, &fv);
+                        if (vt == VALUE_INT) {
+                            value.type = VALUE_INT;
+                            value.int_val = iv;
+                            value.float_val = (double)iv;
+                        } else if (vt == VALUE_FLOAT) {
+                            value.type = VALUE_FLOAT;
+                            value.float_val = fv;
+                            value.int_val = (long long)fv;
+                        } else {
+                            value.type = VALUE_STRING;
+                            value.str_val = captured_output;
+                            value.owns_string = true;
+                            keep_captured_buffer = true;
+                        }
                     }
                     assign_variable(capture_var, &value);
-                    if (value.type != VALUE_STRING) {
+                    if (!keep_captured_buffer) {
                         free(captured_output);
                     }
                     captured_output = NULL;

@@ -10,9 +10,10 @@
 #include "../lib/stb_image.h"
 
 static void print_usage(void) {
-    fprintf(stderr, "Usage: _TERM_SPRITE -x <pixels> -y <pixels> -file <path> [-layer <1-16>]\n");
+    fprintf(stderr, "Usage: _TERM_SPRITE -x <pixels> -y <pixels> (-file <path> | -data <base64> -width <px> -height <px>) [-layer <1-16>]\n");
     fprintf(stderr, "  Draws a PNG or BMP sprite onto the terminal's pixel surface.\n");
     fprintf(stderr, "  Layers are numbered 1 (top) through 16 (bottom). Defaults to 1.\n");
+    fprintf(stderr, "  Use -data with pre-loaded RGBA base64 strings (e.g. from _TERM_SPRITE_LOAD).\n");
 }
 
 static int parse_long(const char *arg, const char *name, long min_value, long max_value, long *out_value) {
@@ -104,7 +105,10 @@ int main(int argc, char **argv) {
     long origin_x = -1;
     long origin_y = -1;
     long layer = 1;
+    long width_arg = -1;
+    long height_arg = -1;
     const char *file = NULL;
+    const char *data = NULL;
 
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
@@ -138,6 +142,28 @@ int main(int argc, char **argv) {
                 return EXIT_FAILURE;
             }
             file = argv[i];
+        } else if (strcmp(arg, "-data") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_SPRITE: missing value for -data.\n");
+                return EXIT_FAILURE;
+            }
+            data = argv[i];
+        } else if (strcmp(arg, "-width") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_SPRITE: missing value for -width.\n");
+                return EXIT_FAILURE;
+            }
+            if (parse_long(argv[i], "-width", 1, INT_MAX, &width_arg) != 0) {
+                return EXIT_FAILURE;
+            }
+        } else if (strcmp(arg, "-height") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_SPRITE: missing value for -height.\n");
+                return EXIT_FAILURE;
+            }
+            if (parse_long(argv[i], "-height", 1, INT_MAX, &height_arg) != 0) {
+                return EXIT_FAILURE;
+            }
         } else {
             fprintf(stderr, "_TERM_SPRITE: unknown argument '%s'.\n", arg);
             print_usage();
@@ -145,68 +171,89 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (origin_x < 0 || origin_y < 0 || file == NULL) {
+    if (origin_x < 0 || origin_y < 0 || (file == NULL && data == NULL)) {
         fprintf(stderr, "_TERM_SPRITE: missing required arguments.\n");
         print_usage();
         return EXIT_FAILURE;
     }
 
+    if (file != NULL && data != NULL) {
+        fprintf(stderr, "_TERM_SPRITE: specify either -file or -data, not both.\n");
+        return EXIT_FAILURE;
+    }
+
     int width = 0;
     int height = 0;
-    int channels = 0;
-    stbi_uc *pixels = stbi_load(file, &width, &height, &channels, 4);
-    if (!pixels) {
-        const char *reason = stbi_failure_reason();
-        if (reason && *reason) {
-            fprintf(stderr, "_TERM_SPRITE: failed to load '%s': %s\n", file, reason);
-        } else {
-            fprintf(stderr, "_TERM_SPRITE: failed to load '%s'\n", file);
+    char *encoded = NULL;
+
+    if (data != NULL) {
+        if (width_arg <= 0 || height_arg <= 0) {
+            fprintf(stderr, "_TERM_SPRITE: -width and -height are required when using -data.\n");
+            return EXIT_FAILURE;
         }
-        return EXIT_FAILURE;
-    }
+        width = (int)width_arg;
+        height = (int)height_arg;
+        encoded = strdup(data);
+        if (!encoded) {
+            fprintf(stderr, "_TERM_SPRITE: failed to duplicate sprite data string.\n");
+            return EXIT_FAILURE;
+        }
+    } else {
+        int channels = 0;
+        stbi_uc *pixels = stbi_load(file, &width, &height, &channels, 4);
+        if (!pixels) {
+            const char *reason = stbi_failure_reason();
+            if (reason && *reason) {
+                fprintf(stderr, "_TERM_SPRITE: failed to load '%s': %s\n", file, reason);
+            } else {
+                fprintf(stderr, "_TERM_SPRITE: failed to load '%s'\n", file);
+            }
+            return EXIT_FAILURE;
+        }
 
-    if (width <= 0 || height <= 0) {
+        if (width <= 0 || height <= 0) {
+            stbi_image_free(pixels);
+            fprintf(stderr, "_TERM_SPRITE: invalid image dimensions in '%s'\n", file);
+            return EXIT_FAILURE;
+        }
+
+        size_t width_sz = (size_t)width;
+        size_t height_sz = (size_t)height;
+        if (width_sz != 0 && height_sz > SIZE_MAX / width_sz) {
+            stbi_image_free(pixels);
+            fprintf(stderr, "_TERM_SPRITE: image dimensions overflow.\n");
+            return EXIT_FAILURE;
+        }
+
+        size_t pixel_count = width_sz * height_sz;
+        if (pixel_count > SIZE_MAX / 4u) {
+            stbi_image_free(pixels);
+            fprintf(stderr, "_TERM_SPRITE: image too large to encode.\n");
+            return EXIT_FAILURE;
+        }
+
+        size_t raw_size = pixel_count * 4u;
+        size_t encoded_size = base64_encoded_size(raw_size);
+        if (encoded_size == 0 || encoded_size > SIZE_MAX - 1u) {
+            stbi_image_free(pixels);
+            fprintf(stderr, "_TERM_SPRITE: failed to compute encoded size.\n");
+            return EXIT_FAILURE;
+        }
+
+        encoded = malloc(encoded_size + 1u);
+        if (!encoded) {
+            stbi_image_free(pixels);
+            fprintf(stderr, "_TERM_SPRITE: failed to allocate %zu bytes for encoding.\n", encoded_size + 1u);
+            return EXIT_FAILURE;
+        }
+
+        int encode_status = encode_base64(pixels, raw_size, (char *)encoded, encoded_size + 1u);
         stbi_image_free(pixels);
-        fprintf(stderr, "_TERM_SPRITE: invalid image dimensions in '%s'\n", file);
-        return EXIT_FAILURE;
-    }
-
-    size_t width_sz = (size_t)width;
-    size_t height_sz = (size_t)height;
-    if (width_sz != 0 && height_sz > SIZE_MAX / width_sz) {
-        stbi_image_free(pixels);
-        fprintf(stderr, "_TERM_SPRITE: image dimensions overflow.\n");
-        return EXIT_FAILURE;
-    }
-
-    size_t pixel_count = width_sz * height_sz;
-    if (pixel_count > SIZE_MAX / 4u) {
-        stbi_image_free(pixels);
-        fprintf(stderr, "_TERM_SPRITE: image too large to encode.\n");
-        return EXIT_FAILURE;
-    }
-
-    size_t raw_size = pixel_count * 4u;
-    size_t encoded_size = base64_encoded_size(raw_size);
-    if (encoded_size == 0 || encoded_size > SIZE_MAX - 1u) {
-        stbi_image_free(pixels);
-        fprintf(stderr, "_TERM_SPRITE: failed to compute encoded size.\n");
-        return EXIT_FAILURE;
-    }
-
-    char *encoded = malloc(encoded_size + 1u);
-    if (!encoded) {
-        stbi_image_free(pixels);
-        fprintf(stderr, "_TERM_SPRITE: failed to allocate %zu bytes for encoding.\n", encoded_size + 1u);
-        return EXIT_FAILURE;
-    }
-
-    int encode_status = encode_base64(pixels, raw_size, encoded, encoded_size + 1u);
-    stbi_image_free(pixels);
-    if (encode_status != 0) {
-        free(encoded);
-        fprintf(stderr, "_TERM_SPRITE: failed to encode image data.\n");
-        return EXIT_FAILURE;
+        if (encode_status != 0) {
+            free(encoded);
+            fprintf(stderr, "_TERM_SPRITE: failed to encode image data.\n");
+            return EXIT_FAILURE;
+        }
     }
 
     int print_status = printf("\x1b]777;sprite=draw;sprite_x=%ld;sprite_y=%ld;sprite_w=%d;sprite_h=%d;sprite_layer=%ld;sprite_data=%s\a",

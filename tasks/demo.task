@@ -46,6 +46,7 @@ RUN _TERM_RENDER -layer 16
 # Draw Text:
 
 RUN _TERM_TEXT -x 70 -y 10 -text "- SPRITE ANIMATION DEMO -" -color 18 -layer 1
+RUN _TERM_RENDER -layer 1
 
 # Animate Character over Background:
 

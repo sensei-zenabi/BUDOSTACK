@@ -121,6 +121,14 @@ typedef struct {
     char condition[256];
 } WhileContext;
 
+#define MAX_REF_INDICES 4
+
+typedef struct {
+    char name[64];
+    size_t index_count;
+    size_t indices[MAX_REF_INDICES];
+} VariableRef;
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -794,6 +802,128 @@ static Value variable_to_value(const Variable *var) {
     return v;
 }
 
+static const Value *walk_indices(const Value *root, const VariableRef *ref, int line, int debug) {
+    const Value *current = root;
+    for (size_t i = 0; i < ref->index_count; ++i) {
+        size_t idx = ref->indices[i];
+        if (!current || current->type != VALUE_ARRAY || idx >= current->array_len) {
+            if (debug) {
+                fprintf(stderr, "Line %d: array access out of range or not an array\n", line);
+            }
+            return NULL;
+        }
+        current = &current->array_val[idx];
+    }
+    return current;
+}
+
+static bool ensure_value_array(Value *value) {
+    if (!value) {
+        return false;
+    }
+    if (value->type != VALUE_ARRAY) {
+        free_value(value);
+        memset(value, 0, sizeof(*value));
+        value->type = VALUE_ARRAY;
+        value->array_len = 0;
+        value->array_val = NULL;
+        value->owns_array = true;
+    }
+    return true;
+}
+
+static bool ensure_value_array_capacity(Value *value, size_t index) {
+    if (!ensure_value_array(value)) {
+        return false;
+    }
+    if (index >= value->array_len) {
+        size_t new_len = index + 1;
+        Value *resized = (Value *)realloc(value->array_val, new_len * sizeof(Value));
+        if (!resized) {
+            perror("realloc");
+            return false;
+        }
+        for (size_t i = value->array_len; i < new_len; ++i) {
+            memset(&resized[i], 0, sizeof(Value));
+            resized[i].type = VALUE_UNSET;
+        }
+        value->array_val = resized;
+        value->array_len = new_len;
+    }
+    return true;
+}
+
+static bool set_value_at_path(Value *value, const size_t *indices, size_t depth, const Value *source) {
+    if (depth == 0) {
+        free_value(value);
+        copy_value(value, source);
+        return true;
+    }
+
+    if (!ensure_value_array_capacity(value, indices[0])) {
+        return false;
+    }
+
+    return set_value_at_path(&value->array_val[indices[0]], indices + 1, depth - 1, source);
+}
+
+static bool set_variable_from_ref(Variable *var, const VariableRef *ref, const Value *value) {
+    if (!var || !ref || !value) {
+        return false;
+    }
+
+    if (ref->index_count == 0) {
+        assign_variable(var, value);
+        return true;
+    }
+
+    if (var->type != VALUE_ARRAY) {
+        Value tmp;
+        memset(&tmp, 0, sizeof(tmp));
+        tmp.type = VALUE_ARRAY;
+        tmp.array_len = 0;
+        tmp.array_val = NULL;
+        tmp.owns_array = true;
+        assign_variable(var, &tmp);
+        free_value(&tmp);
+    }
+
+    if (!set_array_element(var, ref->indices[0], &(Value){ .type = VALUE_UNSET })) {
+        return false;
+    }
+
+    if (ref->index_count == 1) {
+        return set_array_element(var, ref->indices[0], value);
+    }
+
+    Value *slot = &var->array_val[ref->indices[0]];
+    return set_value_at_path(slot, &ref->indices[1], ref->index_count - 1, value);
+}
+
+static bool resolve_variable_reference(const VariableRef *ref, Value *out, int line, int debug) {
+    if (!ref || !out) {
+        return false;
+    }
+
+    Variable *var = find_variable(ref->name, false);
+    if (!var) {
+        memset(out, 0, sizeof(*out));
+        out->type = VALUE_UNSET;
+        return false;
+    }
+
+    Value root = variable_to_value(var);
+    const Value *target = walk_indices(&root, ref, line, debug);
+    if (!target) {
+        memset(out, 0, sizeof(*out));
+        out->type = VALUE_UNSET;
+        return false;
+    }
+
+    copy_value(out, target);
+    return true;
+}
+
 static void cleanup_variables(void) {
     while (scope_depth > 0) {
         pop_scope();
@@ -938,12 +1068,6 @@ static bool parse_variable_name_token(const char *token, char *out, size_t size)
     return true;
 }
 
-typedef struct {
-    char name[64];
-    bool has_index;
-    size_t index;
-} VariableRef;
-
 static bool convert_value_to_index(const Value *value, size_t *index_out, int line, int debug) {
     if (!value || !index_out) {
         return false;
@@ -1023,39 +1147,44 @@ static bool parse_variable_reference_token(const char *token, VariableRef *ref, 
         return false;
     }
 
-    if (*token == '\0') {
-        ref->has_index = false;
-        return true;
+    while (*token == '[') {
+        if (ref->index_count >= MAX_REF_INDICES) {
+            if (debug) {
+                fprintf(stderr, "Line %d: too many array dimensions (max %d)\n", line, MAX_REF_INDICES);
+            }
+            return false;
+        }
+
+        token++;
+        const char *end = strchr(token, ']');
+        if (!end) {
+            return false;
+        }
+
+        size_t expr_len = (size_t)(end - token);
+        char *expr = (char *)malloc(expr_len + 1);
+        if (!expr) {
+            perror("malloc");
+            exit(EXIT_FAILURE);
+        }
+        memcpy(expr, token, expr_len);
+        expr[expr_len] = '\0';
+
+        size_t idx = 0;
+        bool ok = evaluate_index_expression(expr, &idx, line, debug);
+        free(expr);
+        if (!ok) {
+            return false;
+        }
+
+        ref->indices[ref->index_count++] = idx;
+        token = end + 1;
     }
 
-    if (*token != '[') {
+    if (*token != '\0') {
         return false;
     }
 
-    token++;
-    const char *end = strchr(token, ']');
-    if (!end || end[1] != '\0') {
-        return false;
-    }
-
-    size_t expr_len = (size_t)(end - token);
-    char *expr = (char *)malloc(expr_len + 1);
-    if (!expr) {
-        perror("malloc");
-        exit(EXIT_FAILURE);
-    }
-    memcpy(expr, token, expr_len);
-    expr[expr_len] = '\0';
-
-    size_t idx = 0;
-    bool ok = evaluate_index_expression(expr, &idx, line, debug);
-    free(expr);
-    if (!ok) {
-        return false;
-    }
-
-    ref->has_index = true;
-    ref->index = idx;
     return true;
 }
 
@@ -1281,26 +1410,13 @@ static bool parse_value_token(const char **p, Value *out, const char *delims, in
             return false;
         }
         free(token);
-        Variable *var = find_variable(ref.name, false);
-        if (ref.has_index) {
-            if (!var || var->type != VALUE_ARRAY || ref.index >= var->array_len) {
-                if (debug) {
-                    fprintf(stderr, "Line %d: array access out of range or not an array\n", line);
-                }
-                result.type = VALUE_UNSET;
-                result.int_val = 0;
-                result.float_val = 0.0;
-            } else {
-                copy_value(&result, &var->array_val[ref.index]);
-            }
-        } else {
-            result = variable_to_value(var);
-            if (result.type == VALUE_UNSET) {
-                result.int_val = 0;
-                result.float_val = 0.0;
-                result.str_val = NULL;
-                result.owns_string = false;
-            }
+
+        if (!resolve_variable_reference(&ref, &result, line, debug)) {
+            result.type = VALUE_UNSET;
+            result.int_val = 0;
+            result.float_val = 0.0;
+            result.str_val = NULL;
+            result.owns_string = false;
         }
     } else {
         long long iv = 0;
@@ -1996,12 +2112,8 @@ static bool process_assignment_statement(const char *statement, int line, int de
 
     Variable *var = find_variable(ref.name, true);
     if (var) {
-        if (ref.has_index) {
-            if (!set_array_element(var, ref.index, &value) && debug) {
-                fprintf(stderr, "Assignment: failed to set index at line %d\n", line);
-            }
-        } else {
-            assign_variable(var, &value);
+        if (!set_variable_from_ref(var, &ref, &value) && debug) {
+            fprintf(stderr, "Assignment: failed to set variable at line %d\n", line);
         }
     }
     free_value(&value);
@@ -2778,98 +2890,65 @@ static void expand_argv_variables(char **argv, int argc, int line, int debug) {
 
             append_chunk(&result, &res_len, &res_cap, cursor, (size_t)(dollar - cursor));
 
-            const char *name_start = dollar + 1;
-            if (*name_start == '\0') {
+            const char *scan = dollar + 1;
+            if (*scan == '\0') {
                 append_chunk(&result, &res_len, &res_cap, "$", 1);
-                cursor = name_start;
+                cursor = scan;
                 continue;
             }
 
-            size_t name_len = 0;
-            while (isalnum((unsigned char)name_start[name_len]) || name_start[name_len] == '_') {
-                name_len++;
-            }
-
-            if (name_len == 0) {
-                if (debug) {
-                    fprintf(stderr, "RUN: invalid variable reference '%s' at line %d\n", token, line);
-                }
+            if (!isalnum((unsigned char)*scan) && *scan != '_') {
                 append_chunk(&result, &res_len, &res_cap, "$", 1);
-                cursor = name_start;
+                cursor = scan;
                 continue;
             }
 
-            if (name_len >= sizeof(((Variable *)0)->name)) {
-                if (debug) {
-                    fprintf(stderr, "RUN: variable name too long in '%s' at line %d\n", token, line);
-                }
-                append_chunk(&result, &res_len, &res_cap, "$", 1);
-                cursor = name_start;
-                continue;
+            while (isalnum((unsigned char)*scan) || *scan == '_') {
+                scan++;
             }
 
-            const char *after_name = name_start + name_len;
-            bool has_index = false;
-            size_t idx_value = 0;
-            const char *after_index = after_name;
-
-            if (*after_name == '[') {
-                const char *closing = strchr(after_name + 1, ']');
+            while (*scan == '[') {
+                const char *closing = strchr(scan + 1, ']');
                 if (!closing) {
                     if (debug) {
                         fprintf(stderr, "RUN: missing closing ']' in '%s' at line %d\n", token, line);
                     }
                     append_chunk(&result, &res_len, &res_cap, "$", 1);
-                    cursor = after_name;
+                    cursor = scan + 1;
                     continue;
                 }
-
-                size_t expr_len = (size_t)(closing - (after_name + 1));
-                char *expr = (char *)malloc(expr_len + 1);
-                if (!expr) {
-                    perror("malloc");
-                    free(result);
-                    exit(EXIT_FAILURE);
-                }
-                memcpy(expr, after_name + 1, expr_len);
-                expr[expr_len] = '\0';
-
-                bool ok = evaluate_index_expression(expr, &idx_value, line, debug);
-                free(expr);
-                if (!ok) {
-                    append_chunk(&result, &res_len, &res_cap, "", 0);
-                    cursor = closing + 1;
-                    substituted = true;
-                    continue;
-                }
-
-                has_index = true;
-                after_index = closing + 1;
+                scan = closing + 1;
             }
 
-            char name[sizeof(((Variable *)0)->name)];
-            memcpy(name, name_start, name_len);
-            name[name_len] = '\0';
+            size_t ref_len = (size_t)(scan - dollar);
+            char *ref_token = (char *)malloc(ref_len + 1);
+            if (!ref_token) {
+                perror("malloc");
+                free(result);
+                exit(EXIT_FAILURE);
+            }
+            memcpy(ref_token, dollar, ref_len);
+            ref_token[ref_len] = '\0';
 
-            Variable *var = find_variable(name, false);
+            VariableRef ref;
+            if (!parse_variable_reference_token(ref_token, &ref, line, debug)) {
+                if (debug) {
+                    fprintf(stderr, "RUN: invalid variable reference '%s' at line %d\n", ref_token, line);
+                }
+                free(ref_token);
+                append_chunk(&result, &res_len, &res_cap, "$", 1);
+                cursor = dollar + 1;
+                continue;
+            }
+            free(ref_token);
+
             Value value;
             memset(&value, 0, sizeof(value));
-            if (!var) {
-                value.type = VALUE_UNSET;
+            if (!resolve_variable_reference(&ref, &value, line, debug)) {
                 if (debug) {
-                    fprintf(stderr, "RUN: undefined variable '%s' at line %d\n", name, line);
+                    fprintf(stderr, "RUN: undefined variable '%s' at line %d\n", ref.name, line);
                 }
-            } else if (has_index) {
-                if (var->type != VALUE_ARRAY || idx_value >= var->array_len) {
-                    value.type = VALUE_UNSET;
-                    if (debug) {
-                        fprintf(stderr, "RUN: array access out of range or not an array for '%s' at line %d\n", name, line);
-                    }
-                } else {
-                    value = var->array_val[idx_value];
-                }
-            } else {
-                value = variable_to_value(var);
+                value.type = VALUE_UNSET;
             }
 
             char *replacement = value_to_string(&value);
@@ -2879,7 +2958,7 @@ static void expand_argv_variables(char **argv, int argc, int line, int debug) {
             append_chunk(&result, &res_len, &res_cap, replacement, strlen(replacement));
             free(replacement);
             substituted = true;
-            cursor = after_index;
+            cursor = scan;
         }
 
         if (substituted) {
@@ -3809,14 +3888,8 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].source_line);
             }
             Variable *var = find_variable(ref.name, true);
-            if (var) {
-                if (ref.has_index) {
-                    if (!set_array_element(var, ref.index, &value) && debug) {
-                        fprintf(stderr, "SET: failed to set index at line %d\n", script[pc].source_line);
-                    }
-                } else {
-                    assign_variable(var, &value);
-                }
+            if (var && !set_variable_from_ref(var, &ref, &value) && debug) {
+                fprintf(stderr, "SET: failed to set variable at line %d\n", script[pc].source_line);
             }
             free_value(&value);
             note_branch_progress(if_stack, &if_sp);
@@ -4248,6 +4321,7 @@ int main(int argc, char *argv[]) {
             bool blocking_mode = true;
             bool capture_output = false;
             Variable *capture_var = NULL;
+            VariableRef capture_ref;
             char *captured_output = NULL;
             size_t captured_len = 0;
             size_t captured_cap = 0;
@@ -4283,13 +4357,12 @@ int main(int argc, char *argv[]) {
             }
 
             if (argcnt >= 3 && equals_ignore_case(argv_heap[argcnt - 2], "TO")) {
-                char name[64];
-                if (!parse_variable_name_token(argv_heap[argcnt - 1], name, sizeof(name))) {
+                if (!parse_variable_reference_token(argv_heap[argcnt - 1], &capture_ref, script[pc].source_line, debug)) {
                     fprintf(stderr, "RUN: invalid variable name after TO at line %d\n", script[pc].source_line);
                     free_argv(argv_heap);
                     continue;
                 }
-                capture_var = find_variable(name, true);
+                capture_var = find_variable(capture_ref.name, true);
                 if (!capture_var) {
                     free_argv(argv_heap);
                     continue;
@@ -4585,7 +4658,7 @@ int main(int argc, char *argv[]) {
                             keep_captured_buffer = true;
                         }
                     }
-                    assign_variable(capture_var, &value);
+                    set_variable_from_ref(capture_var, &capture_ref, &value);
                     if (!keep_captured_buffer) {
                         free(captured_output);
                     }

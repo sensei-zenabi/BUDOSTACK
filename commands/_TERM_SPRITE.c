@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <errno.h>
+#include <ctype.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -215,6 +216,37 @@ static uint32_t read_u32_le(const uint8_t *src) {
     return (uint32_t)src[0] | ((uint32_t)src[1] << 8) | ((uint32_t)src[2] << 16) | ((uint32_t)src[3] << 24);
 }
 
+static int sanitize_base64_input(const char *input, char **out_clean) {
+    if (!input || !out_clean) {
+        return -1;
+    }
+
+    size_t len = strlen(input);
+    char *clean = malloc(len + 1u);
+    if (!clean) {
+        return -1;
+    }
+
+    size_t out_idx = 0u;
+    for (size_t i = 0u; i < len; ++i) {
+        unsigned char c = (unsigned char)input[i];
+        if (isspace(c)) {
+            continue;
+        }
+
+        if (base64_decode_value((char)c) < -2) {
+            free(clean);
+            return -1;
+        }
+
+        clean[out_idx++] = (char)c;
+    }
+
+    clean[out_idx] = '\0';
+    *out_clean = clean;
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         print_usage();
@@ -227,6 +259,7 @@ int main(int argc, char **argv) {
     bool layer_set = false;
     const char *file = NULL;
     const char *sprite_blob = NULL;
+    char *clean_blob = NULL;
 
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
@@ -323,9 +356,15 @@ int main(int argc, char **argv) {
         raw_size = pixel_count * 4u;
         pixel_data = pixels;
     } else {
-        size_t decoded_size = 0u;
-        if (base64_decoded_size(sprite_blob, &decoded_size) != 0) {
+        if (sanitize_base64_input(sprite_blob, &clean_blob) != 0) {
             fprintf(stderr, "_TERM_SPRITE: invalid sprite blob.\n");
+            return EXIT_FAILURE;
+        }
+
+        size_t decoded_size = 0u;
+        if (base64_decoded_size(clean_blob, &decoded_size) != 0) {
+            fprintf(stderr, "_TERM_SPRITE: invalid sprite blob.\n");
+            free(clean_blob);
             return EXIT_FAILURE;
         }
 
@@ -333,15 +372,20 @@ int main(int argc, char **argv) {
         decoded_blob = malloc(decoded_size);
         if (!decoded_blob) {
             fprintf(stderr, "_TERM_SPRITE: failed to allocate %zu bytes for sprite.\n", decoded_size);
+            free(clean_blob);
             return EXIT_FAILURE;
         }
 
         size_t written = 0u;
-        if (base64_decode(sprite_blob, decoded_blob, decoded_size, &written) != 0 || written < header_size) {
+        if (base64_decode(clean_blob, decoded_blob, decoded_size, &written) != 0 || written < header_size) {
             free(decoded_blob);
+            free(clean_blob);
             fprintf(stderr, "_TERM_SPRITE: failed to decode sprite blob.\n");
             return EXIT_FAILURE;
         }
+
+        free(clean_blob);
+        clean_blob = NULL;
 
         width = (int)read_u32_le(decoded_blob);
         height = (int)read_u32_le(decoded_blob + 4u);

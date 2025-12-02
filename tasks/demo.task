@@ -17,36 +17,35 @@ SET $DX = 0
 SET $Y = 140
 SET $VX = 2
 SET $DT = 0.0
-# Preload sprite assets into indexed arrays for reuse:
-RUN _TERM_SPRITE_LOAD -file "./tasks/assets/char_1_1.png" TO $TEMP_SPRITE
-SET $SPRITES[0] = $TEMP_SPRITE
-RUN _TERM_SPRITE_LOAD -file "./tasks/assets/login_logo.png" TO $TEMP_SPRITE
-SET $SPRITES[1] = $TEMP_SPRITE
-RUN _TERM_SPRITE_LOAD -file "./tasks/assets/tile001.png" TO $TEMP_SPRITE
-SET $TILES[0] = $TEMP_SPRITE
-RUN _TERM_SPRITE_LOAD -file "./tasks/assets/tile002.png" TO $TEMP_SPRITE
-SET $TILES[1] = $TEMP_SPRITE
-            
+SET $SPRITE_PATHS = {"./tasks/assets/login_logo.png",
+                     "./tasks/assets/char_1_1.png",
+                     "./tasks/assets/tile001.png",
+                     "./tasks/assets/tile002.png"}
+SET $SPRITES = {}
+
+# Preload sprite assets into indexed array for reuse:
+
+FOR ($i=0; $i<LEN($SPRITE_PATHS); $i++):
+  RUN _TERM_SPRITE_LOAD -file $SPRITE_PATHS[$i] TO $SPRITES[$i]
+END
+
+
 # Render Background:
 
 FOR ($i=0;$i<=320;$i=$i+20):
   FOR ($j=0;$j<=200;$j=$j+20):
     IF ($j<=140):
-      RUN _TERM_SPRITE -x $i -y $j -width $TILES[0][0] -height $TILES[0][1] -data $TILES[0][2] -layer 16
+      RUN _TERM_SPRITE -x $i -y $j -width $SPRITES[2][0] -height $SPRITES[2][1] -data $SPRITES[2][2] -layer 16
     ELSE
-      RUN _TERM_SPRITE -x $i -y $j -width $TILES[1][0] -height $TILES[1][1] -data $TILES[1][2] -layer 16
+      RUN _TERM_SPRITE -x $i -y $j -width $SPRITES[3][0] -height $SPRITES[3][1] -data $SPRITES[3][2] -layer 16
     END
   END
 END
 RUN _TERM_RENDER -layer 16
 
 # Draw Text:
+
 RUN _TERM_TEXT -x 70 -y 10 -text "- SPRITE ANIMATION DEMO -" -color 18 -layer 1
-# Draw all preloaded sprites by index to demonstrate array-based reuse:
-FOR ($idx=0;$idx<LEN($SPRITES);$idx++):
-  RUN _TERM_SPRITE -x 20+$idx*120 -y 40 -width $SPRITES[$idx][0] -height $SPRITES[$idx][1] -data $SPRITES[$idx][2] -layer 1
-END
-RUN _TERM_RENDER -layer 1
 
 # Animate Character over Background:
 
@@ -54,7 +53,7 @@ WHILE ($X<260):
   IF ($X>40):
     RUN _TERM_CLEAN -x $X-$VX -y $Y -width 40 -height 40 -layer 8
   END
-  RUN _TERM_SPRITE -x $X -y $Y -width $SPRITES[0][0] -height $SPRITES[0][1] -data $SPRITES[0][2] -layer 8
+  RUN _TERM_SPRITE -x $X -y $Y -width $SPRITES[1][0] -height $SPRITES[1][1] -data $SPRITES[1][2] -layer 8
   RUN _TERM_RENDER -layer 8
   SET $X = $X + $VX
   RUN _WAIT 66

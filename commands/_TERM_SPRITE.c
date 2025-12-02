@@ -222,7 +222,7 @@ static int sanitize_base64_input(const char *input, char **out_clean) {
     }
 
     size_t len = strlen(input);
-    char *clean = malloc(len + 1u);
+    char *clean = malloc(len + 4u);
     if (!clean) {
         return -1;
     }
@@ -240,6 +240,14 @@ static int sanitize_base64_input(const char *input, char **out_clean) {
         }
 
         clean[out_idx++] = (char)c;
+    }
+
+    size_t padding = out_idx % 4u;
+    if (padding != 0u) {
+        size_t needed = 4u - padding;
+        for (size_t j = 0u; j < needed; ++j) {
+            clean[out_idx++] = '=';
+        }
     }
 
     clean[out_idx] = '\0';

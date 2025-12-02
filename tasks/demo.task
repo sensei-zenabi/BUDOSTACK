@@ -17,9 +17,15 @@ SET $DX = 0
 SET $Y = 140
 SET $VX = 2
 SET $DT = 0.0
-SET $SPRITE = "./tasks/assets/char_1_1.png"
+SET $SPRITE_PATHS = {"./tasks/assets/char_1_1.png"}
+SET $SPRITE = {}
 SET $TILE = {"./tasks/assets/tile001.png",
              "./tasks/assets/tile002.png"}
+
+# Preload sprites into reusable blobs for rendering
+FOR ($i=0;$i<LEN($SPRITE_PATHS);$i++):
+  RUN _TERM_SPRITE_LOAD -file $SPRITE_PATHS[$i] TO $SPRITE[$i]
+END
             
 # Render Background:
 
@@ -44,7 +50,7 @@ WHILE ($X<260):
   IF ($X>40):
     RUN _TERM_CLEAN -x $X-$VX -y $Y -width 40 -height 40 -layer 8
   END
-  RUN _TERM_SPRITE -x $X -y $Y -file $SPRITE -layer 8
+  RUN _TERM_SPRITE -x $X -y $Y -sprite $SPRITE[0] -layer 8
   RUN _TERM_RENDER -layer 8
   SET $X = $X + $VX
   RUN _WAIT 66

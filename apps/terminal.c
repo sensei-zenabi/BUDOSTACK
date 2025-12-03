@@ -108,6 +108,10 @@ static int terminal_cursor_position_valid = 0;
 static int terminal_cursor_x = 0;
 static int terminal_cursor_y = 0;
 static int terminal_cursor_dirty = 0;
+static int terminal_mouse_x = 0;
+static int terminal_mouse_y = 0;
+static unsigned int terminal_mouse_left_clicks = 0u;
+static unsigned int terminal_mouse_right_clicks = 0u;
 
 struct terminal_quad_vertex {
     GLfloat position[4];
@@ -3128,12 +3132,17 @@ static void terminal_destroy_cursor_sprite(void) {
 }
 
 static void terminal_cursor_update_position(int window_x, int window_y) {
+    int framebuffer_x = 0;
+    int framebuffer_y = 0;
+    if (terminal_window_point_to_framebuffer(window_x, window_y, &framebuffer_x, &framebuffer_y) == 0) {
+        terminal_mouse_x = framebuffer_x;
+        terminal_mouse_y = framebuffer_y;
+    }
+
     if (!terminal_cursor_enabled) {
         return;
     }
 
-    int framebuffer_x = 0;
-    int framebuffer_y = 0;
     if (terminal_window_point_to_framebuffer(window_x, window_y, &framebuffer_x, &framebuffer_y) == 0) {
         if (!terminal_cursor_position_valid ||
             framebuffer_x != terminal_cursor_x ||
@@ -4521,6 +4530,7 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int resolution_width_set = 0;
     int resolution_height_set = 0;
     int resolution_requested = 0;
+    int mouse_query_requested = 0;
 
     if (args && args[0] != '\0') {
         char *copy = strdup(args);
@@ -4787,6 +4797,10 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         }
                     } else if (strcmp(key, "text_data") == 0 && value) {
                         text_data_value = value;
+                    } else if (strcmp(key, "mouse") == 0 && value && *value != '\0') {
+                        if (strcmp(value, "query") == 0) {
+                            mouse_query_requested = 1;
+                        }
                     }
                 }
                 token = strtok_r(NULL, ";", &saveptr);
@@ -4907,6 +4921,22 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             }
 
             free(text_bytes);
+
+            if (mouse_query_requested) {
+                char response[128];
+                int written = snprintf(response,
+                                       sizeof(response),
+                                       "_TERM_MOUSE %d %d %u %u\n",
+                                       terminal_mouse_x,
+                                       terminal_mouse_y,
+                                       terminal_mouse_left_clicks,
+                                       terminal_mouse_right_clicks);
+                if (written > 0 && (size_t)written < sizeof(response)) {
+                    terminal_send_response(response);
+                }
+                terminal_mouse_left_clicks = 0u;
+                terminal_mouse_right_clicks = 0u;
+            }
 
             if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW) {
                 if (pixel_x >= 0 && pixel_y >= 0 && pixel_x <= INT_MAX && pixel_y <= INT_MAX &&
@@ -6333,6 +6363,7 @@ int main(int argc, char **argv) {
                 }
 #endif
             } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                terminal_cursor_update_position(event.button.x, event.button.y);
                 if (event.button.button == SDL_BUTTON_LEFT) {
                     size_t top_index = 0u;
                     terminal_visible_row_range(&buffer, &top_index, NULL);
@@ -6356,9 +6387,12 @@ int main(int argc, char **argv) {
                     } else {
                         terminal_selection_clear();
                     }
-                    terminal_cursor_update_position(event.button.x, event.button.y);
+                    terminal_mouse_left_clicks++;
                 } else {
                     terminal_selection_clear();
+                    if (event.button.button == SDL_BUTTON_RIGHT) {
+                        terminal_mouse_right_clicks++;
+                    }
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP) {
                 if (event.button.button == SDL_BUTTON_LEFT) {

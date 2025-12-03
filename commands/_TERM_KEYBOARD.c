@@ -13,6 +13,8 @@ static struct termios g_original;
 static int g_termios_saved = 0;
 static int g_original_flags = -1;
 
+#define MAX_EVENTS 20
+
 static void restore_terminal(void) {
     if (g_termios_saved) {
         tcsetattr(STDIN_FILENO, TCSANOW, &g_original);
@@ -226,52 +228,87 @@ static const char *decode_escape(const unsigned char *buf, size_t len, size_t *c
     return "ESC";
 }
 
-static void emit_event(const char *name) {
-    if (name && *name) {
-        printf("%s\n", name);
+static int append_event(const char *name, char *events[], size_t *count) {
+    if (!name || !*name || !events || !count) {
+        return 0;
     }
+
+    if (*count >= MAX_EVENTS) {
+        free(events[0]);
+        memmove(&events[0], &events[1], (MAX_EVENTS - 1) * sizeof(char *));
+        *count = MAX_EVENTS - 1;
+    }
+
+    char *dup = strdup(name);
+    if (!dup) {
+        perror("strdup");
+        return -1;
+    }
+
+    events[*count] = dup;
+    (*count)++;
+    return 0;
 }
 
-static void process_bytes(const unsigned char *data, size_t len) {
+static int process_bytes(const unsigned char *data, size_t len, char *events[], size_t *count) {
     size_t i = 0;
     while (i < len) {
         unsigned char b = data[i];
         if (b == 27) {
             size_t consumed = 0;
             const char *name = decode_escape(&data[i + 1], len - i - 1, &consumed);
-            emit_event(name);
+            if (append_event(name, events, count) != 0) {
+                return -1;
+            }
             i += 1 + consumed;
             continue;
         }
 
         if (b == '\n' || b == '\r') {
-            emit_event("ENTER");
+            if (append_event("ENTER", events, count) != 0) {
+                return -1;
+            }
         } else if (b == '\t') {
-            emit_event("TAB");
+            if (append_event("TAB", events, count) != 0) {
+                return -1;
+            }
         } else if (b == ' ') {
-            emit_event("SPACE");
+            if (append_event("SPACE", events, count) != 0) {
+                return -1;
+            }
         } else if (b == 127 || b == 8) {
-            emit_event("BACKSPACE");
+            if (append_event("BACKSPACE", events, count) != 0) {
+                return -1;
+            }
         } else if (b >= '0' && b <= '9') {
             char out[2] = { (char)b, '\0' };
-            emit_event(out);
+            if (append_event(out, events, count) != 0) {
+                return -1;
+            }
         } else if (isalpha(b)) {
             char out[2] = { (char)toupper(b), '\0' };
-            emit_event(out);
+            if (append_event(out, events, count) != 0) {
+                return -1;
+            }
         } else if (b == 3) {
-            emit_event("CTRL_C");
+            if (append_event("CTRL_C", events, count) != 0) {
+                return -1;
+            }
         } else if (isprint(b)) {
             char out[2] = { (char)b, '\0' };
-            emit_event(out);
+            if (append_event(out, events, count) != 0) {
+                return -1;
+            }
         }
         i++;
     }
+    return 0;
 }
 
 static void print_help(void) {
     printf("_TERM_KEYBOARD\n");
-    printf("Capture all key presses since the last invocation and print each name\n");
-    printf("on its own line. Intended for use from TASK scripts via\n");
+    printf("Capture up to %d key presses since the last invocation and return them\n", MAX_EVENTS);
+    printf("as a TASK array literal. Intended for use from TASK scripts via\n");
     printf("  RUN _TERM_KEYBOARD TO $EVENT_ARRAY\n\n");
     printf("Names:\n");
     printf("  Letters: A-Z  Digits: 0-9\n");
@@ -298,10 +335,31 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    char *events[MAX_EVENTS] = { 0 };
+    size_t event_count = 0;
+
     if (len > 0) {
-        process_bytes(buffer, (size_t)len);
+        if (process_bytes(buffer, (size_t)len, events, &event_count) != 0) {
+            for (size_t i = 0; i < MAX_EVENTS; ++i) {
+                free(events[i]);
+            }
+            free(buffer);
+            return 1;
+        }
     }
 
+    printf("{");
+    for (size_t i = 0; i < event_count; ++i) {
+        if (i > 0) {
+            printf(", ");
+        }
+        printf("%s", events[i]);
+    }
+    printf("}\n");
+
+    for (size_t i = 0; i < MAX_EVENTS; ++i) {
+        free(events[i]);
+    }
     free(buffer);
     return 0;
 }

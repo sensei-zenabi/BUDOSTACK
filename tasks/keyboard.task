@@ -1,0 +1,28 @@
+# keyboard.task
+
+ECHO OFF
+
+SET $RUNFLAG = 1
+SET $KEYBOARD_EVENTS = {}
+
+WHILE ($RUNFLAG):
+
+  # Read key events since last invocation
+  RUN _TERM_KEYBOARD TO $KEYBOARD_EVENTS
+  
+  # Print results
+  PRINT $KEYBOARD_EVENTS + "\n"
+
+  # Throttle execution
+  RUN _WAIT 1000
+
+  # Seek ESC key press
+  FOR ($i=0;$i<LEN($KEYBOARD_EVENTS);$i++):
+    IF ($KEYBOARD_EVENTS[$i] == "ESC"):
+      SET $RUNFLAG = 0
+    END
+  END
+  
+END
+
+ECHO ON

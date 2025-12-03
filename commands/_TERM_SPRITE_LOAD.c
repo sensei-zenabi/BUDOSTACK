@@ -12,7 +12,8 @@ static void print_usage(void) {
     fprintf(stderr, "  Loads a PNG or BMP sprite and prints a TASK array literal\n");
     fprintf(stderr, "  in the form {width,height,\"<base64 RGBA data>\"}.\n");
     fprintf(stderr, "  Capture the output with `RUN _TERM_SPRITE_LOAD ... TO $VAR`\n");
-    fprintf(stderr, "  to reuse the sprite data without re-reading the file.\n");
+    fprintf(stderr, "  to reuse the sprite data without re-reading the file. Pass the\n");
+    fprintf(stderr, "  literal back to _TERM_SPRITE with -sprite for faster calls.\n");
 }
 
 static size_t base64_encoded_size(size_t raw_size) {

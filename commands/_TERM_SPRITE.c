@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
@@ -10,10 +11,11 @@
 #include "../lib/stb_image.h"
 
 static void print_usage(void) {
-    fprintf(stderr, "Usage: _TERM_SPRITE -x <pixels> -y <pixels> (-file <path> | -data <base64> -width <px> -height <px>) [-layer <1-16>]\n");
+    fprintf(stderr,
+            "Usage: _TERM_SPRITE -x <pixels> -y <pixels> (-file <path> | -sprite {w,h,\"data\"} | -data <base64> -width <px> -height <px>) [-layer <1-16>]\n");
     fprintf(stderr, "  Draws a PNG or BMP sprite onto the terminal's pixel surface.\n");
     fprintf(stderr, "  Layers are numbered 1 (top) through 16 (bottom). Defaults to 1.\n");
-    fprintf(stderr, "  Use -data with pre-loaded RGBA base64 strings (e.g. from _TERM_SPRITE_LOAD).\n");
+    fprintf(stderr, "  Use -sprite with the literal produced by _TERM_SPRITE_LOAD to avoid passing width/height separately.\n");
 }
 
 static int parse_long(const char *arg, const char *name, long min_value, long max_value, long *out_value) {
@@ -96,6 +98,114 @@ static int encode_base64(const uint8_t *data, size_t size, char *out, size_t out
     return 0;
 }
 
+static int parse_sprite_literal(const char *literal, int *width_out, int *height_out, char **data_out) {
+    if (!literal || !width_out || !height_out || !data_out) {
+        return -1;
+    }
+
+    const char *p = literal;
+    while (*p && isspace((unsigned char)*p)) {
+        ++p;
+    }
+
+    if (*p != '{') {
+        fprintf(stderr, "_TERM_SPRITE: sprite literal must start with '{'.\n");
+        return -1;
+    }
+    ++p;
+
+    while (*p && isspace((unsigned char)*p)) {
+        ++p;
+    }
+
+    errno = 0;
+    char *endptr = NULL;
+    long width = strtol(p, &endptr, 10);
+    if (errno != 0 || endptr == p || width <= 0 || width > INT_MAX) {
+        fprintf(stderr, "_TERM_SPRITE: invalid sprite width in literal.\n");
+        return -1;
+    }
+
+    p = endptr;
+    while (*p && isspace((unsigned char)*p)) {
+        ++p;
+    }
+    if (*p != ',') {
+        fprintf(stderr, "_TERM_SPRITE: sprite literal missing comma after width.\n");
+        return -1;
+    }
+    ++p;
+
+    while (*p && isspace((unsigned char)*p)) {
+        ++p;
+    }
+
+    errno = 0;
+    long height = strtol(p, &endptr, 10);
+    if (errno != 0 || endptr == p || height <= 0 || height > INT_MAX) {
+        fprintf(stderr, "_TERM_SPRITE: invalid sprite height in literal.\n");
+        return -1;
+    }
+
+    p = endptr;
+    while (*p && isspace((unsigned char)*p)) {
+        ++p;
+    }
+    if (*p != ',') {
+        fprintf(stderr, "_TERM_SPRITE: sprite literal missing comma after height.\n");
+        return -1;
+    }
+    ++p;
+
+    while (*p && isspace((unsigned char)*p)) {
+        ++p;
+    }
+    if (*p != '"') {
+        fprintf(stderr, "_TERM_SPRITE: sprite literal must contain quoted base64 data.\n");
+        return -1;
+    }
+    ++p;
+    const char *data_start = p;
+    const char *closing_quote = strchr(data_start, '"');
+    if (!closing_quote) {
+        fprintf(stderr, "_TERM_SPRITE: sprite literal is missing the closing quote for data.\n");
+        return -1;
+    }
+
+    size_t data_len = (size_t)(closing_quote - data_start);
+    char *data_copy = malloc(data_len + 1u);
+    if (!data_copy) {
+        fprintf(stderr, "_TERM_SPRITE: failed to allocate memory for sprite data.\n");
+        return -1;
+    }
+    memcpy(data_copy, data_start, data_len);
+    data_copy[data_len] = '\0';
+
+    p = closing_quote + 1;
+    while (*p && isspace((unsigned char)*p)) {
+        ++p;
+    }
+    if (*p != '}') {
+        free(data_copy);
+        fprintf(stderr, "_TERM_SPRITE: sprite literal must end with '}'.\n");
+        return -1;
+    }
+    ++p;
+    while (*p && isspace((unsigned char)*p)) {
+        ++p;
+    }
+    if (*p != '\0') {
+        free(data_copy);
+        fprintf(stderr, "_TERM_SPRITE: unexpected characters after sprite literal.\n");
+        return -1;
+    }
+
+    *width_out = (int)width;
+    *height_out = (int)height;
+    *data_out = data_copy;
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         print_usage();
@@ -109,6 +219,7 @@ int main(int argc, char **argv) {
     long height_arg = -1;
     const char *file = NULL;
     const char *data = NULL;
+    const char *sprite_literal = NULL;
 
     for (int i = 1; i < argc; ++i) {
         const char *arg = argv[i];
@@ -142,6 +253,12 @@ int main(int argc, char **argv) {
                 return EXIT_FAILURE;
             }
             file = argv[i];
+        } else if (strcmp(arg, "-sprite") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_SPRITE: missing value for -sprite.\n");
+                return EXIT_FAILURE;
+            }
+            sprite_literal = argv[i];
         } else if (strcmp(arg, "-data") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_TERM_SPRITE: missing value for -data.\n");
@@ -171,14 +288,14 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (origin_x < 0 || origin_y < 0 || (file == NULL && data == NULL)) {
+    if (origin_x < 0 || origin_y < 0 || (file == NULL && data == NULL && sprite_literal == NULL)) {
         fprintf(stderr, "_TERM_SPRITE: missing required arguments.\n");
         print_usage();
         return EXIT_FAILURE;
     }
 
-    if (file != NULL && data != NULL) {
-        fprintf(stderr, "_TERM_SPRITE: specify either -file or -data, not both.\n");
+    if ((file != NULL) + (data != NULL) + (sprite_literal != NULL) > 1) {
+        fprintf(stderr, "_TERM_SPRITE: specify only one of -file, -sprite, or -data.\n");
         return EXIT_FAILURE;
     }
 
@@ -186,7 +303,11 @@ int main(int argc, char **argv) {
     int height = 0;
     char *encoded = NULL;
 
-    if (data != NULL) {
+    if (sprite_literal != NULL) {
+        if (parse_sprite_literal(sprite_literal, &width, &height, &encoded) != 0) {
+            return EXIT_FAILURE;
+        }
+    } else if (data != NULL) {
         if (width_arg <= 0 || height_arg <= 0) {
             fprintf(stderr, "_TERM_SPRITE: -width and -height are required when using -data.\n");
             return EXIT_FAILURE;

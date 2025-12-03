@@ -7010,6 +7010,11 @@ int main(int argc, char **argv) {
         }
 
         glClear(GL_COLOR_BUFFER_BIT);
+        GLuint source_texture = terminal_gl_texture;
+        GLfloat source_texture_width = (GLfloat)terminal_texture_width;
+        GLfloat source_texture_height = (GLfloat)terminal_texture_height;
+        GLfloat source_input_width = (GLfloat)frame_width;
+        GLfloat source_input_height = (GLfloat)frame_height;
         int cursor_composited_into_shader = 0;
         int cursor_ready_for_composition = terminal_cursor_enabled &&
                                            terminal_cursor_texture != 0 &&
@@ -7068,11 +7073,6 @@ int main(int argc, char **argv) {
             static int frame_counter = 0;
             int frame_value = frame_counter++;
 
-            GLuint source_texture = terminal_gl_texture;
-            GLfloat source_texture_width = (GLfloat)terminal_texture_width;
-            GLfloat source_texture_height = (GLfloat)terminal_texture_height;
-            GLfloat source_input_width = (GLfloat)frame_width;
-            GLfloat source_input_height = (GLfloat)frame_height;
             int multipass_failed = 0;
 
             for (size_t shader_index = 0; shader_index < terminal_gl_shader_count; shader_index++) {

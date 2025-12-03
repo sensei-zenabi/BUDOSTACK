@@ -7060,7 +7060,43 @@ int main(int argc, char **argv) {
             }
         }
         if (!need_gpu_draw) {
-            SDL_Delay(1);
+            Uint32 idle_delay_ms = 50u;
+            if (terminal_render_frame_interval_ms > 0u) {
+                Uint32 since_last_frame = now - terminal_render_last_frame_tick;
+                if (since_last_frame >= terminal_render_frame_interval_ms) {
+                    idle_delay_ms = 0u;
+                } else {
+                    Uint32 remaining = terminal_render_frame_interval_ms - since_last_frame;
+                    if (remaining < idle_delay_ms) {
+                        idle_delay_ms = remaining;
+                    }
+                }
+            }
+            if (shader_timing_enabled) {
+                Uint32 since_last_shader = now - terminal_shader_last_frame_tick;
+                if (since_last_shader < terminal_shader_frame_interval_ms) {
+                    Uint32 remaining = terminal_shader_frame_interval_ms - since_last_shader;
+                    if (remaining < idle_delay_ms) {
+                        idle_delay_ms = remaining;
+                    }
+                } else {
+                    idle_delay_ms = 0u;
+                }
+            }
+            if (cursor_blink_interval > 0u) {
+                Uint32 since_cursor_toggle = now - cursor_last_toggle;
+                if (since_cursor_toggle < cursor_blink_interval) {
+                    Uint32 remaining = cursor_blink_interval - since_cursor_toggle;
+                    if (remaining < idle_delay_ms) {
+                        idle_delay_ms = remaining;
+                    }
+                } else {
+                    idle_delay_ms = 0u;
+                }
+            }
+            if (idle_delay_ms > 0u) {
+                SDL_Delay(idle_delay_ms);
+            }
             continue;
         }
 

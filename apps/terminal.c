@@ -90,8 +90,8 @@ static size_t terminal_selection_caret_row = 0u;
 static size_t terminal_selection_caret_col = 0u;
 static int terminal_selection_active = 0;
 static int terminal_selection_dragging = 0;
-static Uint32 terminal_shader_last_frame_tick = 0u;
-static Uint32 terminal_shader_frame_interval_ms = 0u;
+static Uint32 terminal_last_frame_tick = 0u;
+static Uint32 terminal_frame_interval_ms = 0u;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -6292,14 +6292,14 @@ int main(int argc, char **argv) {
     }
 
     if (TERMINAL_SHADER_TARGET_FPS > 0u) {
-        terminal_shader_frame_interval_ms = 1000u / (Uint32)TERMINAL_SHADER_TARGET_FPS;
-        if (terminal_shader_frame_interval_ms == 0u) {
-            terminal_shader_frame_interval_ms = 1u;
+        terminal_frame_interval_ms = 1000u / (Uint32)TERMINAL_SHADER_TARGET_FPS;
+        if (terminal_frame_interval_ms == 0u) {
+            terminal_frame_interval_ms = 1u;
         }
     } else {
-        terminal_shader_frame_interval_ms = 0u;
+        terminal_frame_interval_ms = 0u;
     }
-    terminal_shader_last_frame_tick = SDL_GetTicks();
+    terminal_last_frame_tick = SDL_GetTicks();
 
     int status = 0;
     int child_exited = 0;
@@ -7025,19 +7025,31 @@ int main(int argc, char **argv) {
             terminal_custom_pixels_active = 0;
         }
 
+        Uint32 frame_elapsed = 0u;
+        int frame_timing_enabled = (terminal_frame_interval_ms > 0u);
+
         shader_timing_enabled = (terminal_gl_shader_count > 0u &&
-                                 terminal_shader_frame_interval_ms > 0u);
-        if (shader_timing_enabled) {
-            Uint32 elapsed = now - terminal_shader_last_frame_tick;
-            if (elapsed >= terminal_shader_frame_interval_ms) {
-                shader_requires_frame = 1;
-            }
+                                 terminal_frame_interval_ms > 0u);
+        if (frame_timing_enabled) {
+            frame_elapsed = now - terminal_last_frame_tick;
+        }
+        if (shader_timing_enabled && frame_elapsed >= terminal_frame_interval_ms) {
+            shader_requires_frame = 1;
         }
 
         int cursor_requires_draw = terminal_cursor_enabled && terminal_cursor_dirty;
         int need_gpu_draw = frame_dirty || shader_requires_frame || cursor_requires_draw;
         if (!need_gpu_draw) {
             SDL_Delay(1);
+            continue;
+        }
+
+        if (frame_timing_enabled && frame_elapsed < terminal_frame_interval_ms) {
+            Uint32 delay_ms = terminal_frame_interval_ms - frame_elapsed;
+            if (delay_ms == 0u) {
+                delay_ms = 1u;
+            }
+            SDL_Delay(delay_ms);
             continue;
         }
 
@@ -7278,15 +7290,14 @@ int main(int argc, char **argv) {
 
         terminal_cursor_dirty = 0;
 
-        if (shader_timing_enabled && need_gpu_draw) {
-            terminal_shader_last_frame_tick = now;
+        if (frame_timing_enabled && need_gpu_draw) {
+            terminal_last_frame_tick = SDL_GetTicks();
         }
 
         if (child_exited) {
             running = 0;
         }
 
-        SDL_Delay(16);
     }
 
     SDL_StopTextInput();

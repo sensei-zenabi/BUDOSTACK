@@ -59,6 +59,7 @@ static bool value_as_double(const Value *value, double *out);
 static char *value_to_string(const Value *value);
 static bool evaluate_expression_statement(const char *expr, int line, int debug);
 static bool parse_boolean_literal(const char *expr, bool *out, const char **end_out);
+static bool evaluate_truthy_expression(const char *expr, int line, int debug, bool *out);
 
 typedef enum {
     VALUE_UNSET = 0,
@@ -1881,6 +1882,51 @@ static bool parse_boolean_literal(const char *expr, bool *out, const char **end_
     return true;
 }
 
+static bool evaluate_truthy_expression(const char *expr, int line, int debug, bool *out) {
+    if (!expr || !out) {
+        return false;
+    }
+
+    const char *cursor = expr;
+    Value value;
+    if (!parse_expression(&cursor, &value, NULL, line, debug)) {
+        return false;
+    }
+
+    while (isspace((unsigned char)*cursor)) {
+        cursor++;
+    }
+
+    if (*cursor != '\0') {
+        free_value(&value);
+        return false;
+    }
+
+    bool truthy = false;
+    switch (value.type) {
+        case VALUE_INT:
+            truthy = (value.int_val != 0);
+            break;
+        case VALUE_FLOAT:
+            truthy = (value.float_val != 0.0);
+            break;
+        case VALUE_STRING:
+            truthy = value.str_val && value.str_val[0] != '\0';
+            break;
+        case VALUE_ARRAY:
+            truthy = value.array_len > 0;
+            break;
+        case VALUE_UNSET:
+        default:
+            truthy = false;
+            break;
+    }
+
+    free_value(&value);
+    *out = truthy;
+    return true;
+}
+
 static bool parse_comparison_condition(const char **cursor, bool *out, int line, int debug) {
     if (!cursor || !out) {
         return false;
@@ -2263,6 +2309,8 @@ static bool evaluate_condition_string(const char *expr, int line, int debug, boo
     if (parse_boolean_literal(expr, &result, &cursor)) {
         condition_parsed = true;
     } else if (parse_condition(&cursor, &result, line, debug)) {
+        condition_parsed = true;
+    } else if (evaluate_truthy_expression(expr, line, debug, &result)) {
         condition_parsed = true;
     }
 
@@ -3436,6 +3484,8 @@ int main(int argc, char *argv[]) {
             condition_parsed = true;
         } else if (parse_condition(&cursor, &cond_result, script[pc].source_line, debug)) {
             condition_parsed = true;
+        } else if (evaluate_truthy_expression(cond_buf, script[pc].source_line, debug, &cond_result)) {
+            condition_parsed = true;
         }
 
         if (condition_parsed) {
@@ -3539,6 +3589,8 @@ int main(int argc, char *argv[]) {
             if (parse_boolean_literal(cond_buf, &cond_result, &cursor)) {
                 condition_parsed = true;
             } else if (parse_condition(&cursor, &cond_result, script[pc].source_line, debug)) {
+                condition_parsed = true;
+            } else if (evaluate_truthy_expression(cond_buf, script[pc].source_line, debug, &cond_result)) {
                 condition_parsed = true;
             }
 

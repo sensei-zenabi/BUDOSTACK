@@ -40,6 +40,7 @@
 #include "../lib/dr_mp3.h"
 #define STB_VORBIS_IMPLEMENTATION
 #include "../lib/stb_vorbis.h"
+#include "../lib/stb_image.h"
 #endif
 
 #ifndef PATH_MAX
@@ -64,6 +65,8 @@
 #ifndef TERMINAL_SHADER_TARGET_FPS
 #define TERMINAL_SHADER_TARGET_FPS 30u
 #endif
+
+#define TERMINAL_CURSOR_SPRITE_PATH "./tasks/assets/cursor.png"
 
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
@@ -95,6 +98,16 @@ static int terminal_texture_width = 0;
 static int terminal_texture_height = 0;
 static int terminal_gl_ready = 0;
 static GLuint terminal_bound_texture = 0;
+static GLuint terminal_cursor_texture = 0;
+static int terminal_cursor_width = 0;
+static int terminal_cursor_height = 0;
+static int terminal_cursor_hot_x = 0;
+static int terminal_cursor_hot_y = 0;
+static int terminal_cursor_enabled = 0;
+static int terminal_cursor_position_valid = 0;
+static int terminal_cursor_x = 0;
+static int terminal_cursor_y = 0;
+static int terminal_cursor_dirty = 0;
 
 struct terminal_quad_vertex {
     GLfloat position[4];
@@ -312,6 +325,10 @@ static void terminal_bind_texture(GLuint texture);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
+static int terminal_load_cursor_sprite(const char *path);
+static void terminal_destroy_cursor_sprite(void);
+static void terminal_cursor_update_position(int window_x, int window_y);
+static void terminal_cursor_render(int framebuffer_width, int framebuffer_height, int drawable_width, int drawable_height);
 static int psf_unicode_map_compare(const void *a, const void *b);
 static int psf_font_lookup_unicode(const struct psf_font *font, uint32_t codepoint, uint32_t *out_index);
 static uint32_t psf_font_resolve_glyph(const struct psf_font *font, uint32_t codepoint);
@@ -3040,11 +3057,155 @@ static int terminal_prepare_intermediate_targets(int width, int height) {
     return 0;
 }
 
+static int terminal_load_cursor_sprite(const char *path) {
+    if (!path || !terminal_gl_ready) {
+        return -1;
+    }
+
+    terminal_destroy_cursor_sprite();
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    stbi_set_flip_vertically_on_load(0);
+    unsigned char *pixels = stbi_load(path, &width, &height, &channels, 4);
+    if (!pixels || width <= 0 || height <= 0) {
+        if (pixels) {
+            stbi_image_free(pixels);
+        }
+        fprintf(stderr, "Failed to load cursor sprite from %s: %s\n", path, stbi_failure_reason());
+        return -1;
+    }
+
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    if (texture == 0) {
+        stbi_image_free(pixels);
+        return -1;
+    }
+
+    terminal_bind_texture(texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    GLenum error = glGetError();
+    terminal_bind_texture(0);
+
+    stbi_image_free(pixels);
+
+    if (error != GL_NO_ERROR) {
+        glDeleteTextures(1, &texture);
+        fprintf(stderr, "Failed to upload cursor sprite texture (0x%x).\n", error);
+        return -1;
+    }
+
+    terminal_cursor_texture = texture;
+    terminal_cursor_width = width;
+    terminal_cursor_height = height;
+    terminal_cursor_hot_x = width / 2;
+    terminal_cursor_hot_y = height / 2;
+    terminal_cursor_enabled = 1;
+    terminal_cursor_dirty = 1;
+
+    return 0;
+}
+
+static void terminal_destroy_cursor_sprite(void) {
+    if (terminal_cursor_texture != 0) {
+        glDeleteTextures(1, &terminal_cursor_texture);
+        terminal_cursor_texture = 0;
+    }
+    terminal_cursor_width = 0;
+    terminal_cursor_height = 0;
+    terminal_cursor_hot_x = 0;
+    terminal_cursor_hot_y = 0;
+    terminal_cursor_enabled = 0;
+    terminal_cursor_position_valid = 0;
+    terminal_cursor_dirty = 0;
+}
+
+static void terminal_cursor_update_position(int window_x, int window_y) {
+    if (!terminal_cursor_enabled) {
+        return;
+    }
+
+    int framebuffer_x = 0;
+    int framebuffer_y = 0;
+    if (terminal_window_point_to_framebuffer(window_x, window_y, &framebuffer_x, &framebuffer_y) == 0) {
+        if (!terminal_cursor_position_valid ||
+            framebuffer_x != terminal_cursor_x ||
+            framebuffer_y != terminal_cursor_y) {
+            terminal_cursor_dirty = 1;
+        }
+        terminal_cursor_x = framebuffer_x;
+        terminal_cursor_y = framebuffer_y;
+        terminal_cursor_position_valid = 1;
+    } else if (terminal_cursor_position_valid) {
+        terminal_cursor_position_valid = 0;
+        terminal_cursor_dirty = 1;
+    }
+}
+
+static void terminal_cursor_render(int framebuffer_width, int framebuffer_height, int drawable_width, int drawable_height) {
+    if (!terminal_cursor_enabled || terminal_cursor_texture == 0 || !terminal_cursor_position_valid) {
+        return;
+    }
+    if (framebuffer_width <= 0 || framebuffer_height <= 0 || drawable_width <= 0 || drawable_height <= 0) {
+        return;
+    }
+
+    double scale_x = (framebuffer_width > 0) ? ((double)drawable_width / (double)framebuffer_width) : 1.0;
+    double scale_y = (framebuffer_height > 0) ? ((double)drawable_height / (double)framebuffer_height) : 1.0;
+
+    GLfloat left = (GLfloat)(((double)terminal_cursor_x - (double)terminal_cursor_hot_x) * scale_x);
+    GLfloat top = (GLfloat)(((double)terminal_cursor_y - (double)terminal_cursor_hot_y) * scale_y);
+    GLfloat right = left + (GLfloat)((double)terminal_cursor_width * scale_x);
+    GLfloat bottom = top + (GLfloat)((double)terminal_cursor_height * scale_y);
+
+    glUseProgram(0);
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, (GLdouble)drawable_width, (GLdouble)drawable_height, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glEnable(GL_TEXTURE_2D);
+    terminal_bind_texture(terminal_cursor_texture);
+
+    glBegin(GL_TRIANGLE_STRIP);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex2f(left, top);
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex2f(right, top);
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex2f(left, bottom);
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex2f(right, bottom);
+    glEnd();
+
+    glDisable(GL_TEXTURE_2D);
+    terminal_bind_texture(0);
+    glDisable(GL_BLEND);
+
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+}
+
 static void terminal_release_gl_resources(void) {
     if (terminal_gl_texture != 0) {
         glDeleteTextures(1, &terminal_gl_texture);
         terminal_gl_texture = 0;
     }
+    terminal_destroy_cursor_sprite();
     if (terminal_gl_shaders) {
         for (size_t i = 0; i < terminal_gl_shader_count; i++) {
             if (terminal_gl_shaders[i].program != 0) {
@@ -6084,6 +6245,16 @@ int main(int argc, char **argv) {
 
     SDL_StartTextInput();
 
+    if (terminal_load_cursor_sprite(TERMINAL_CURSOR_SPRITE_PATH) == 0) {
+        SDL_ShowCursor(SDL_DISABLE);
+        int mouse_x = 0;
+        int mouse_y = 0;
+        SDL_GetMouseState(&mouse_x, &mouse_y);
+        terminal_cursor_update_position(mouse_x, mouse_y);
+    } else {
+        SDL_ShowCursor(SDL_ENABLE);
+    }
+
     if (TERMINAL_SHADER_TARGET_FPS > 0u) {
         terminal_shader_frame_interval_ms = 1000u / (Uint32)TERMINAL_SHADER_TARGET_FPS;
         if (terminal_shader_frame_interval_ms == 0u) {
@@ -6120,6 +6291,25 @@ int main(int argc, char **argv) {
                 SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
                 if (drawable_width > 0 && drawable_height > 0) {
                     glViewport(0, 0, drawable_width, drawable_height);
+                }
+                if (terminal_cursor_enabled) {
+                    terminal_cursor_dirty = 1;
+                    int mouse_x = 0;
+                    int mouse_y = 0;
+                    SDL_GetMouseState(&mouse_x, &mouse_y);
+                    terminal_cursor_update_position(mouse_x, mouse_y);
+                }
+            } else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_LEAVE) {
+                if (terminal_cursor_enabled && terminal_cursor_position_valid) {
+                    terminal_cursor_position_valid = 0;
+                    terminal_cursor_dirty = 1;
+                }
+            } else if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_ENTER) {
+                if (terminal_cursor_enabled) {
+                    int mouse_x = 0;
+                    int mouse_y = 0;
+                    SDL_GetMouseState(&mouse_x, &mouse_y);
+                    terminal_cursor_update_position(mouse_x, mouse_y);
                 }
 #if SDL_MAJOR_VERSION >= 2
             } else if (event.type == SDL_MOUSEWHEEL) {
@@ -6166,6 +6356,7 @@ int main(int argc, char **argv) {
                     } else {
                         terminal_selection_clear();
                     }
+                    terminal_cursor_update_position(event.button.x, event.button.y);
                 } else {
                     terminal_selection_clear();
                 }
@@ -6174,6 +6365,7 @@ int main(int argc, char **argv) {
                     terminal_selection_dragging = 0;
                 }
             } else if (event.type == SDL_MOUSEMOTION) {
+                terminal_cursor_update_position(event.motion.x, event.motion.y);
                 if (terminal_selection_dragging) {
                     if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
                         terminal_selection_dragging = 0;
@@ -6802,7 +6994,8 @@ int main(int argc, char **argv) {
             }
         }
 
-        int need_gpu_draw = frame_dirty || shader_requires_frame;
+        int cursor_requires_draw = terminal_cursor_enabled && terminal_cursor_dirty;
+        int need_gpu_draw = frame_dirty || shader_requires_frame || cursor_requires_draw;
         if (!need_gpu_draw) {
             SDL_Delay(1);
             continue;
@@ -6983,7 +7176,11 @@ int main(int argc, char **argv) {
             terminal_bind_texture(0);
         }
 
+        terminal_cursor_render(frame_width, frame_height, drawable_width, drawable_height);
+
         SDL_GL_SwapWindow(window);
+
+        terminal_cursor_dirty = 0;
 
         if (shader_timing_enabled && need_gpu_draw) {
             terminal_shader_last_frame_tick = now;
@@ -6997,6 +7194,7 @@ int main(int argc, char **argv) {
     }
 
     SDL_StopTextInput();
+    SDL_ShowCursor(SDL_ENABLE);
 
     if (!child_exited) {
         kill(child_pid, SIGTERM);

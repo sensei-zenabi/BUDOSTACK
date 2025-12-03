@@ -4923,6 +4923,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             free(text_bytes);
 
             if (mouse_query_requested) {
+#if BUDOSTACK_HAVE_SDL2
+                int mouse_x = 0;
+                int mouse_y = 0;
+                SDL_GetMouseState(&mouse_x, &mouse_y);
+                terminal_cursor_update_position(mouse_x, mouse_y);
+#endif
                 char response[128];
                 int written = snprintf(response,
                                        sizeof(response),

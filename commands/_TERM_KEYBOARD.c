@@ -13,6 +13,9 @@ static struct termios g_original;
 static int g_termios_saved = 0;
 static int g_original_flags = -1;
 
+static char g_last_event[32];
+static int g_has_last_event = 0;
+
 #define MAX_EVENTS 20
 
 static void restore_terminal(void) {
@@ -233,6 +236,10 @@ static int append_event(const char *name, char *events[], size_t *count) {
         return 0;
     }
 
+    if (g_has_last_event && strcmp(name, g_last_event) == 0) {
+        return 0;
+    }
+
     if (*count >= MAX_EVENTS) {
         free(events[0]);
         memmove(&events[0], &events[1], (MAX_EVENTS - 1) * sizeof(char *));
@@ -247,6 +254,10 @@ static int append_event(const char *name, char *events[], size_t *count) {
 
     events[*count] = dup;
     (*count)++;
+
+    strncpy(g_last_event, name, sizeof(g_last_event) - 1);
+    g_last_event[sizeof(g_last_event) - 1] = '\0';
+    g_has_last_event = 1;
     return 0;
 }
 
@@ -312,7 +323,8 @@ static void print_help(void) {
     printf("  RUN _TERM_KEYBOARD TO $EVENT_ARRAY\n\n");
     printf("If no keys were pressed, an empty array is returned. When more than\n");
     printf("%d keys arrive between calls, the oldest entries are dropped so the\n", MAX_EVENTS);
-    printf("array keeps the most recent ones (FIFO).\n\n");
+    printf("array keeps the most recent ones (FIFO). Holding a key down generates\n");
+    printf("only a single event until it is released.\n\n");
     printf("Names:\n");
     printf("  Letters: A-Z  Digits: 0-9\n");
     printf("  ENTER, SPACE, TAB, BACKSPACE, ESC, CTRL_C\n");
@@ -349,6 +361,9 @@ int main(int argc, char **argv) {
             free(buffer);
             return 1;
         }
+    } else {
+        g_has_last_event = 0;
+        g_last_event[0] = '\0';
     }
 
     printf("{");

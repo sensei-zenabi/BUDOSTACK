@@ -16,6 +16,7 @@ static void print_usage(void) {
     fprintf(stderr, "  Draws a PNG or BMP sprite onto the terminal's pixel surface.\n");
     fprintf(stderr, "  Layers are numbered 1 (top) through 16 (bottom). Defaults to 1.\n");
     fprintf(stderr, "  Use -sprite with the literal produced by _TERM_SPRITE_LOAD to avoid passing width/height separately.\n");
+    fprintf(stderr, "  The base64 payload may be quoted ({w,h,\"data\"}) or unquoted ({w,h,data}).\n");
 }
 
 static int parse_long(const char *arg, const char *name, long min_value, long max_value, long *out_value) {
@@ -160,19 +161,32 @@ static int parse_sprite_literal(const char *literal, int *width_out, int *height
     while (*p && isspace((unsigned char)*p)) {
         ++p;
     }
-    if (*p != '"') {
-        fprintf(stderr, "_TERM_SPRITE: sprite literal must contain quoted base64 data.\n");
-        return -1;
+    const char *data_start = NULL;
+    const char *data_end = NULL;
+    if (*p == '"') {
+        ++p;
+        data_start = p;
+        const char *closing_quote = strchr(data_start, '"');
+        if (!closing_quote) {
+            fprintf(stderr, "_TERM_SPRITE: sprite literal is missing the closing quote for data.\n");
+            return -1;
+        }
+        data_end = closing_quote;
+        p = closing_quote + 1;
+    } else {
+        data_start = p;
+        while (*p && !isspace((unsigned char)*p) && *p != '}') {
+            ++p;
+        }
+        data_end = p;
     }
-    ++p;
-    const char *data_start = p;
-    const char *closing_quote = strchr(data_start, '"');
-    if (!closing_quote) {
-        fprintf(stderr, "_TERM_SPRITE: sprite literal is missing the closing quote for data.\n");
+
+    if (data_end == NULL || data_end <= data_start) {
+        fprintf(stderr, "_TERM_SPRITE: sprite literal must contain base64 data.\n");
         return -1;
     }
 
-    size_t data_len = (size_t)(closing_quote - data_start);
+    size_t data_len = (size_t)(data_end - data_start);
     char *data_copy = malloc(data_len + 1u);
     if (!data_copy) {
         fprintf(stderr, "_TERM_SPRITE: failed to allocate memory for sprite data.\n");
@@ -181,7 +195,6 @@ static int parse_sprite_literal(const char *literal, int *width_out, int *height
     memcpy(data_copy, data_start, data_len);
     data_copy[data_len] = '\0';
 
-    p = closing_quote + 1;
     while (*p && isspace((unsigned char)*p)) {
         ++p;
     }

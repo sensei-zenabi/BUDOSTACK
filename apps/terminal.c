@@ -40,6 +40,8 @@
 #include "../lib/dr_mp3.h"
 #define STB_VORBIS_IMPLEMENTATION
 #include "../lib/stb_vorbis.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include "../lib/stb_image.h"
 #endif
 
 #ifndef PATH_MAX
@@ -175,6 +177,21 @@ struct terminal_custom_clear_request {
 static struct terminal_custom_clear_request *terminal_custom_pending_clears = NULL;
 static size_t terminal_custom_pending_clear_count = 0u;
 static size_t terminal_custom_pending_clear_capacity = 0u;
+
+struct terminal_mouse_cursor_sprite {
+    uint8_t *pixels;
+    int width;
+    int height;
+};
+
+static struct terminal_mouse_cursor_sprite terminal_mouse_cursor_sprite = { NULL, 0, 0 };
+static int terminal_mouse_cursor_x = -1;
+static int terminal_mouse_cursor_y = -1;
+static int terminal_mouse_cursor_hotspot_x = 0;
+static int terminal_mouse_cursor_hotspot_y = 0;
+static int terminal_mouse_cursor_visible = 0;
+static int terminal_mouse_cursor_enabled = 0;
+static const uint8_t TERMINAL_MOUSE_CURSOR_LAYER = 16u;
 
 struct terminal_gl_shader {
     GLuint program;
@@ -330,6 +347,10 @@ static void terminal_custom_pixels_mark_pending(uint8_t layer);
 static int terminal_custom_pixels_apply_pending_clears(uint8_t layer);
 static void terminal_custom_pixels_clear_pending_requests(void);
 static void terminal_custom_pixels_shutdown(void);
+static int terminal_load_cursor_sprite(const char *root_dir);
+static void terminal_mouse_cursor_update_position(int window_x, int window_y);
+static void terminal_mouse_cursor_clear(void);
+static void terminal_mouse_cursor_shutdown(void);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
@@ -1840,6 +1861,153 @@ static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int he
             *dst32 = terminal_rgba_from_components(entry->r, entry->g, entry->b);
         }
     }
+}
+
+static int terminal_load_cursor_sprite(const char *root_dir) {
+    if (!root_dir) {
+        return -1;
+    }
+
+    terminal_mouse_cursor_shutdown();
+
+    char cursor_path[PATH_MAX];
+    if (build_path(cursor_path, sizeof(cursor_path), root_dir, "tasks/assets/cursor.png") != 0) {
+        fprintf(stderr, "terminal: Failed to resolve cursor sprite path.\n");
+        return -1;
+    }
+
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    stbi_uc *pixels = stbi_load(cursor_path, &width, &height, &channels, STBI_rgb_alpha);
+    (void)channels;
+    if (!pixels) {
+        fprintf(stderr, "terminal: Failed to load cursor sprite from '%s'.\n", cursor_path);
+        return -1;
+    }
+
+    if (width <= 0 || height <= 0) {
+        stbi_image_free(pixels);
+        fprintf(stderr, "terminal: Cursor sprite dimensions are invalid.\n");
+        return -1;
+    }
+
+    terminal_mouse_cursor_sprite.pixels = pixels;
+    terminal_mouse_cursor_sprite.width = width;
+    terminal_mouse_cursor_sprite.height = height;
+    terminal_mouse_cursor_hotspot_x = width / 2;
+    terminal_mouse_cursor_hotspot_y = height / 2;
+    terminal_mouse_cursor_enabled = 1;
+    return 0;
+}
+
+static void terminal_mouse_cursor_clear(void) {
+    if (!terminal_mouse_cursor_visible) {
+        return;
+    }
+
+    uint16_t cursor_mask = terminal_custom_layer_mask(TERMINAL_MOUSE_CURSOR_LAYER);
+    if (terminal_mouse_cursor_sprite.width > 0 && terminal_mouse_cursor_sprite.height > 0) {
+        if (terminal_custom_pixels_clear_rect(terminal_mouse_cursor_x,
+                                              terminal_mouse_cursor_y,
+                                              terminal_mouse_cursor_sprite.width,
+                                              terminal_mouse_cursor_sprite.height,
+                                              TERMINAL_MOUSE_CURSOR_LAYER) == 0) {
+            terminal_custom_pixels_apply_pending_clears(TERMINAL_MOUSE_CURSOR_LAYER);
+            terminal_custom_pixels_pending_layers &= (uint16_t)(~cursor_mask);
+            terminal_custom_pixels_dirty = 1;
+        }
+    }
+
+    terminal_mouse_cursor_visible = 0;
+}
+
+static void terminal_mouse_cursor_update_position(int window_x, int window_y) {
+    if (!terminal_mouse_cursor_enabled ||
+        !terminal_mouse_cursor_sprite.pixels ||
+        terminal_mouse_cursor_sprite.width <= 0 ||
+        terminal_mouse_cursor_sprite.height <= 0) {
+        return;
+    }
+
+    uint16_t cursor_mask = terminal_custom_layer_mask(TERMINAL_MOUSE_CURSOR_LAYER);
+
+    int fb_x = 0;
+    int fb_y = 0;
+    if (terminal_window_point_to_framebuffer(window_x, window_y, &fb_x, &fb_y) != 0) {
+        terminal_mouse_cursor_clear();
+        return;
+    }
+
+    fb_x -= terminal_mouse_cursor_hotspot_x;
+    fb_y -= terminal_mouse_cursor_hotspot_y;
+
+    if (fb_x < 0) {
+        fb_x = 0;
+    }
+    if (fb_y < 0) {
+        fb_y = 0;
+    }
+
+    if (fb_x > INT_MAX - terminal_mouse_cursor_sprite.width) {
+        fb_x = INT_MAX - terminal_mouse_cursor_sprite.width;
+    }
+    if (fb_y > INT_MAX - terminal_mouse_cursor_sprite.height) {
+        fb_y = INT_MAX - terminal_mouse_cursor_sprite.height;
+    }
+
+    if (terminal_framebuffer_width > 0 && terminal_mouse_cursor_sprite.width > terminal_framebuffer_width) {
+        fb_x = 0;
+    } else if (terminal_framebuffer_width > 0) {
+        int max_x = terminal_framebuffer_width - terminal_mouse_cursor_sprite.width;
+        if (fb_x > max_x) {
+            fb_x = max_x;
+        }
+    }
+
+    if (terminal_framebuffer_height > 0 && terminal_mouse_cursor_sprite.height > terminal_framebuffer_height) {
+        fb_y = 0;
+    } else if (terminal_framebuffer_height > 0) {
+        int max_y = terminal_framebuffer_height - terminal_mouse_cursor_sprite.height;
+        if (fb_y > max_y) {
+            fb_y = max_y;
+        }
+    }
+
+    terminal_mouse_cursor_clear();
+
+    if (terminal_custom_pixels_draw_sprite(fb_x,
+                                           fb_y,
+                                           terminal_mouse_cursor_sprite.pixels,
+                                           terminal_mouse_cursor_sprite.width,
+                                           terminal_mouse_cursor_sprite.height,
+                                           TERMINAL_MOUSE_CURSOR_LAYER) != 0) {
+        terminal_mouse_cursor_visible = 0;
+        terminal_custom_pixels_pending_layers &= (uint16_t)(~cursor_mask);
+        return;
+    }
+
+    terminal_mouse_cursor_x = fb_x;
+    terminal_mouse_cursor_y = fb_y;
+    terminal_mouse_cursor_visible = 1;
+    terminal_custom_pixels_pending_layers &= (uint16_t)(~cursor_mask);
+    terminal_custom_pixels_dirty = 1;
+}
+
+static void terminal_mouse_cursor_shutdown(void) {
+    terminal_mouse_cursor_clear();
+    if (terminal_mouse_cursor_sprite.pixels) {
+        stbi_image_free(terminal_mouse_cursor_sprite.pixels);
+    }
+    terminal_mouse_cursor_sprite.pixels = NULL;
+    terminal_mouse_cursor_sprite.width = 0;
+    terminal_mouse_cursor_sprite.height = 0;
+    terminal_mouse_cursor_hotspot_x = 0;
+    terminal_mouse_cursor_hotspot_y = 0;
+    terminal_mouse_cursor_x = -1;
+    terminal_mouse_cursor_y = -1;
+    terminal_mouse_cursor_visible = 0;
+    terminal_mouse_cursor_enabled = 0;
 }
 
 static int terminal_ensure_render_cache(size_t columns, size_t rows) {
@@ -6084,6 +6252,14 @@ int main(int argc, char **argv) {
 
     SDL_StartTextInput();
 
+    if (terminal_load_cursor_sprite(root_dir) == 0) {
+        SDL_ShowCursor(SDL_DISABLE);
+        int mouse_x = 0;
+        int mouse_y = 0;
+        SDL_GetMouseState(&mouse_x, &mouse_y);
+        terminal_mouse_cursor_update_position(mouse_x, mouse_y);
+    }
+
     if (TERMINAL_SHADER_TARGET_FPS > 0u) {
         terminal_shader_frame_interval_ms = 1000u / (Uint32)TERMINAL_SHADER_TARGET_FPS;
         if (terminal_shader_frame_interval_ms == 0u) {
@@ -6143,6 +6319,7 @@ int main(int argc, char **argv) {
                 }
 #endif
             } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                terminal_mouse_cursor_update_position(event.button.x, event.button.y);
                 if (event.button.button == SDL_BUTTON_LEFT) {
                     size_t top_index = 0u;
                     terminal_visible_row_range(&buffer, &top_index, NULL);
@@ -6170,10 +6347,12 @@ int main(int argc, char **argv) {
                     terminal_selection_clear();
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP) {
+                terminal_mouse_cursor_update_position(event.button.x, event.button.y);
                 if (event.button.button == SDL_BUTTON_LEFT) {
                     terminal_selection_dragging = 0;
                 }
             } else if (event.type == SDL_MOUSEMOTION) {
+                terminal_mouse_cursor_update_position(event.motion.x, event.motion.y);
                 if (terminal_selection_dragging) {
                     if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
                         terminal_selection_dragging = 0;
@@ -6997,6 +7176,8 @@ int main(int argc, char **argv) {
     }
 
     SDL_StopTextInput();
+    SDL_ShowCursor(SDL_ENABLE);
+    terminal_mouse_cursor_shutdown();
 
     if (!child_exited) {
         kill(child_pid, SIGTERM);

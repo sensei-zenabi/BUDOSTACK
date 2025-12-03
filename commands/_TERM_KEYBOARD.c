@@ -310,6 +310,9 @@ static void print_help(void) {
     printf("Capture up to %d key presses since the last invocation and return them\n", MAX_EVENTS);
     printf("as a TASK array literal. Intended for use from TASK scripts via\n");
     printf("  RUN _TERM_KEYBOARD TO $EVENT_ARRAY\n\n");
+    printf("If no keys were pressed, an empty array is returned. When more than\n");
+    printf("%d keys arrive between calls, the oldest entries are dropped so the\n", MAX_EVENTS);
+    printf("array keeps the most recent ones (FIFO).\n\n");
     printf("Names:\n");
     printf("  Letters: A-Z  Digits: 0-9\n");
     printf("  ENTER, SPACE, TAB, BACKSPACE, ESC, CTRL_C\n");

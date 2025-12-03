@@ -60,6 +60,8 @@ static char *value_to_string(const Value *value);
 static bool evaluate_expression_statement(const char *expr, int line, int debug);
 static bool parse_boolean_literal(const char *expr, bool *out, const char **end_out);
 static bool evaluate_truthy_expression(const char *expr, int line, int debug, bool *out);
+static bool set_echo_enabled(bool enabled);
+static void restore_terminal_settings(void);
 
 typedef enum {
     VALUE_UNSET = 0,
@@ -141,6 +143,9 @@ volatile sig_atomic_t stop = 0;
 static char initial_argv0[PATH_MAX];
 static FILE *log_file = NULL;
 static char log_file_path[PATH_MAX];
+static struct termios saved_termios;
+static bool saved_termios_valid = false;
+static bool echo_disabled = false;
 
 static void set_initial_argv0(const char *argv0) {
     if (!argv0) {
@@ -161,6 +166,54 @@ static void stop_logging(void) {
         log_file = NULL;
     }
     log_file_path[0] = '\0';
+}
+
+static bool ensure_saved_termios(void) {
+    if (saved_termios_valid) {
+        return true;
+    }
+    if (tcgetattr(STDIN_FILENO, &saved_termios) == -1) {
+        perror("ECHO: tcgetattr");
+        return false;
+    }
+    saved_termios_valid = true;
+    return true;
+}
+
+static bool set_echo_enabled(bool enabled) {
+    if (!ensure_saved_termios()) {
+        return false;
+    }
+
+    struct termios current;
+    if (tcgetattr(STDIN_FILENO, &current) == -1) {
+        perror("ECHO: tcgetattr");
+        return false;
+    }
+
+    if (enabled) {
+        current.c_lflag |= ECHO;
+    } else {
+        current.c_lflag &= (tcflag_t)~ECHO;
+    }
+
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &current) == -1) {
+        perror("ECHO: tcsetattr");
+        return false;
+    }
+
+    echo_disabled = !enabled;
+    return true;
+}
+
+static void restore_terminal_settings(void) {
+    if (!saved_termios_valid) {
+        return;
+    }
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &saved_termios) == -1) {
+        perror("ECHO: tcsetattr restore");
+    }
+    echo_disabled = false;
 }
 
 static int start_logging(const char *path) {
@@ -2360,6 +2413,8 @@ static void print_help(void) {
     printf("    Exit the current FUNCTION with an optional return value.\n");
     printf("  WAIT milliseconds\n");
     printf("    Wait for <milliseconds>.\n");
+    printf("  ECHO ON|OFF\n");
+    printf("    Toggle terminal echo so key presses are hidden or shown.\n");
     printf("  GOTO label\n");
     printf("    Jump to the line marked with @label (literal or in $VAR).\n");
     printf("  RUN [BLOCKING|NONBLOCKING] <cmd [args...]>\n");
@@ -3100,6 +3155,8 @@ static int resolve_exec_path(const char *argv0, char *resolved, size_t size) {
 
 int main(int argc, char *argv[]) {
     signal(SIGINT, sigint_handler);
+
+    atexit(restore_terminal_settings);
 
     set_initial_argv0((argc > 0) ? argv[0] : NULL);
     init_scopes();
@@ -4259,6 +4316,44 @@ int main(int argc, char *argv[]) {
             note_branch_progress(if_stack, &if_sp);
             continue;
         }
+        else if (strncmp(command, "ECHO", 4) == 0 && (command[4] == '\0' || isspace((unsigned char)command[4]))) {
+            const char *cursor = command + 4;
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+
+            char *mode_token = NULL;
+            bool quoted = false;
+            if (!parse_token(&cursor, &mode_token, &quoted, NULL) || quoted) {
+                if (debug) fprintf(stderr, "ECHO: expected ON or OFF at line %d\n", script[pc].source_line);
+                free(mode_token);
+                continue;
+            }
+
+            bool enable = true;
+            if (equals_ignore_case(mode_token, "ON")) {
+                enable = true;
+            } else if (equals_ignore_case(mode_token, "OFF")) {
+                enable = false;
+            } else {
+                if (debug) fprintf(stderr, "ECHO: expected ON or OFF at line %d\n", script[pc].source_line);
+                free(mode_token);
+                continue;
+            }
+            free(mode_token);
+
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0' && debug) {
+                fprintf(stderr, "ECHO: unexpected characters at %d\n", script[pc].source_line);
+            }
+
+            if (!set_echo_enabled(enable) && debug) {
+                fprintf(stderr, "ECHO: failed to update terminal state at line %d\n", script[pc].source_line);
+            }
+            note_branch_progress(if_stack, &if_sp);
+        }
         else if (strncmp(command, "WAIT", 4) == 0) {
             int ms;
             if (sscanf(command, "WAIT %d", &ms) == 1) {
@@ -4874,6 +4969,10 @@ int main(int argc, char *argv[]) {
         skip_context_index = -1;
         skip_progress_pending = false;
         skip_consumed_first = false;
+    }
+
+    if (echo_disabled) {
+        restore_terminal_settings();
     }
 
     stop_logging();

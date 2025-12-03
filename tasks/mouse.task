@@ -1,0 +1,46 @@
+# mouse.task
+
+ECHO OFF
+
+SET $RUNFLAG = 1
+SET $MOUSE_EVENTS = {}
+
+# DRAW RECTANGLE
+RUN _CLEAR
+RUN _TEXT -x 30 -y 16 -text "CLICK INSIDE THE BOX"
+RUN _RECT -x 30 -y 18 -width 20 -height 10
+
+WHILE ($RUNFLAG):
+
+  # Read mouse events since last invocation
+  # Returns array {XPOS, YPOS, LEFT_PRESSED, RIGHT_PRESSED}
+  RUN _TERM_MOUSE TO $MOUSE_EVENTS
+  
+  # Print mouse X position
+  RUN _TEXT -x 1 -y 1 -text "X: " + $MOUSE_EVENTS[0] + " Y: " + $MOUSE_EVENTS[1]
+  RUN _TEXT -x 1 -y 2 -text "L.CLICKS: " + $MOUSE_EVENTS[2] + " R.CLICKS:" + $MOUSE_EVENTS[3]  
+            
+  # Throttle execution
+  RUN _WAIT 500
+
+  # Exit if user left clicks inside the box
+  # (to be done when above works)
+  IF ($MOUSE_EVENTS[0] > 250 AND $MOUSE_EVENTS[0] < 400):
+  
+    IF ($MOUSE_EVENTS[1] > 155 AND $MOUSE_EVENTS[1] < 225):
+
+      IF ($MOUSE_EVENTS[2] > 0):
+      
+        SET $RUNFLAG = 0
+      
+      END
+            
+    END  
+  
+  END
+    
+END
+
+RUN cls
+
+ECHO ON

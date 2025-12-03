@@ -32,7 +32,7 @@ Tested distributions:
 
 ### LATEST RELEASE: v0.8.6 ###
 
-PROJECT STATUS: Hardening phase from v0.8.0 to v1.0.0
+PROJECT STATUS: EARLY ACCESS from v0.8.0 to v1.0.0
 
 BUDOSTACK has entered "hardening" phase. This means that no major 
 new capabilities will be introduced, and the focus is making the 

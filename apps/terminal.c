@@ -7010,6 +7010,60 @@ int main(int argc, char **argv) {
         }
 
         glClear(GL_COLOR_BUFFER_BIT);
+        int cursor_composited_into_shader = 0;
+        int cursor_ready_for_composition = terminal_cursor_enabled &&
+                                           terminal_cursor_texture != 0 &&
+                                           terminal_cursor_position_valid;
+        if (terminal_gl_shader_count > 0u && cursor_ready_for_composition) {
+            if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) == 0) {
+                glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                       terminal_gl_intermediate_textures[1], 0);
+                GLenum composition_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+                if (composition_status == GL_FRAMEBUFFER_COMPLETE) {
+                    glViewport(0, 0, drawable_width, drawable_height);
+                    glClear(GL_COLOR_BUFFER_BIT);
+
+                    glUseProgram(0);
+                    glMatrixMode(GL_PROJECTION);
+                    glLoadIdentity();
+                    glMatrixMode(GL_MODELVIEW);
+                    glLoadIdentity();
+
+                    glActiveTexture(GL_TEXTURE0);
+                    terminal_bind_texture(terminal_gl_texture);
+                    glEnable(GL_TEXTURE_2D);
+
+                    glBegin(GL_TRIANGLE_STRIP);
+                    glTexCoord2f(0.0f, 1.0f);
+                    glVertex2f(-1.0f, -1.0f);
+                    glTexCoord2f(1.0f, 1.0f);
+                    glVertex2f(1.0f, -1.0f);
+                    glTexCoord2f(0.0f, 0.0f);
+                    glVertex2f(-1.0f, 1.0f);
+                    glTexCoord2f(1.0f, 0.0f);
+                    glVertex2f(1.0f, 1.0f);
+                    glEnd();
+
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    terminal_cursor_render(frame_width, frame_height, drawable_width, drawable_height);
+                    glDisable(GL_BLEND);
+
+                    glDisable(GL_TEXTURE_2D);
+                    terminal_bind_texture(0);
+
+                    cursor_composited_into_shader = 1;
+                    source_texture = terminal_gl_intermediate_textures[1];
+                    source_texture_width = (GLfloat)drawable_width;
+                    source_texture_height = (GLfloat)drawable_height;
+                    source_input_width = (GLfloat)drawable_width;
+                    source_input_height = (GLfloat)drawable_height;
+                }
+
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
+        }
         if (terminal_gl_shader_count > 0u) {
             static int frame_counter = 0;
             int frame_value = frame_counter++;
@@ -7176,7 +7230,9 @@ int main(int argc, char **argv) {
             terminal_bind_texture(0);
         }
 
-        terminal_cursor_render(frame_width, frame_height, drawable_width, drawable_height);
+        if (!cursor_composited_into_shader) {
+            terminal_cursor_render(frame_width, frame_height, drawable_width, drawable_height);
+        }
 
         SDL_GL_SwapWindow(window);
 

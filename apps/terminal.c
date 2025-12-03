@@ -62,6 +62,9 @@
 #define TERMINAL_FONT_SCALE 1
 #endif
 #define TERMINAL_CURSOR_BLINK_INTERVAL 500u
+#ifndef TERMINAL_TARGET_FPS
+#define TERMINAL_TARGET_FPS 30u
+#endif
 #ifndef TERMINAL_SHADER_TARGET_FPS
 #define TERMINAL_SHADER_TARGET_FPS 30u
 #endif
@@ -71,6 +74,7 @@
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
 _Static_assert(TERMINAL_ROWS > 0u, "TERMINAL_ROWS must be positive");
+_Static_assert(TERMINAL_TARGET_FPS > 0u, "TERMINAL_TARGET_FPS must be positive");
 
 static SDL_Window *terminal_window_handle = NULL;
 static SDL_GLContext terminal_gl_context_handle = NULL;
@@ -92,6 +96,8 @@ static int terminal_selection_active = 0;
 static int terminal_selection_dragging = 0;
 static Uint32 terminal_shader_last_frame_tick = 0u;
 static Uint32 terminal_shader_frame_interval_ms = 0u;
+static Uint32 terminal_render_last_frame_tick = 0u;
+static Uint32 terminal_render_frame_interval_ms = 0u;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -6301,6 +6307,16 @@ int main(int argc, char **argv) {
     }
     terminal_shader_last_frame_tick = SDL_GetTicks();
 
+    if (TERMINAL_TARGET_FPS > 0u) {
+        terminal_render_frame_interval_ms = 1000u / (Uint32)TERMINAL_TARGET_FPS;
+        if (terminal_render_frame_interval_ms == 0u) {
+            terminal_render_frame_interval_ms = 1u;
+        }
+    } else {
+        terminal_render_frame_interval_ms = 0u;
+    }
+    terminal_render_last_frame_tick = SDL_GetTicks();
+
     int status = 0;
     int child_exited = 0;
     unsigned char input_buffer[512];
@@ -7036,6 +7052,13 @@ int main(int argc, char **argv) {
 
         int cursor_requires_draw = terminal_cursor_enabled && terminal_cursor_dirty;
         int need_gpu_draw = frame_dirty || shader_requires_frame || cursor_requires_draw;
+        if (need_gpu_draw && terminal_render_frame_interval_ms > 0u) {
+            Uint32 since_last_frame = now - terminal_render_last_frame_tick;
+            if (since_last_frame < terminal_render_frame_interval_ms) {
+                SDL_Delay(terminal_render_frame_interval_ms - since_last_frame);
+                now = SDL_GetTicks();
+            }
+        }
         if (!need_gpu_draw) {
             SDL_Delay(1);
             continue;
@@ -7278,6 +7301,8 @@ int main(int argc, char **argv) {
 
         terminal_cursor_dirty = 0;
 
+        terminal_render_last_frame_tick = SDL_GetTicks();
+
         if (shader_timing_enabled && need_gpu_draw) {
             terminal_shader_last_frame_tick = now;
         }
@@ -7285,8 +7310,6 @@ int main(int argc, char **argv) {
         if (child_exited) {
             running = 0;
         }
-
-        SDL_Delay(16);
     }
 
     SDL_StopTextInput();

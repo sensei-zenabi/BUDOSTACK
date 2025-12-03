@@ -1895,8 +1895,9 @@ static int terminal_load_cursor_sprite(const char *root_dir) {
     terminal_mouse_cursor_sprite.pixels = pixels;
     terminal_mouse_cursor_sprite.width = width;
     terminal_mouse_cursor_sprite.height = height;
-    terminal_mouse_cursor_hotspot_x = width / 2;
-    terminal_mouse_cursor_hotspot_y = height / 2;
+    /* Align the hotspot to the center pixel using zero-based coordinates. */
+    terminal_mouse_cursor_hotspot_x = (width - 1) / 2;
+    terminal_mouse_cursor_hotspot_y = (height - 1) / 2;
     terminal_mouse_cursor_enabled = 1;
     return 0;
 }

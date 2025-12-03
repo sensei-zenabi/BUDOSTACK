@@ -1,12 +1,23 @@
 Folder to store BUDOSTACK TASK language commands.
 
-For help > type the COMMAND > e.g. '_IMAGE'
+Commands with prefix _TERM*:
 
-Requirements for Commands:
-- Written with plain C with no separate header files
-- #define _POSIX_C_SOURCE 200112L  // Enable POSIX.1-2001 features
-- Have -[x] and -[y] arguments to define output position from top-left
-  corner of terminal, where x is columns and y rows
-- Have -[color] argument, where colors are defined using standard 256
-  color VGA / IBM PC color palette
-- Output their results to stdout
+- Intended to be used only in TASK scripts that are ran inside 
+  apps/terminal terminal emulator.
+- Are optimized for SDL2 using a resolution of 640x360.
+  
+Commands without prefix _TERM*: 
+
+- Can be used in all TASK scripts without dependency to apps/terminal 
+  terminal emulator.
+- Are optimized for 78 columns and 42 rows.
+
+General Guidelines for Commands:
+
+- Written with plain C with no separate header files.
+- #define _POSIX_C_SOURCE 200112L  // Enable POSIX.1-2001 features.
+- Follow the active BUDOSTACK color scheme if not otherwise defined.
+- Measure X and Y positions from top-left corner as glyphs or pixels.
+- Write their output to stdout excluding _TERM* commands.
+- Print help when command is written to command line without any arguments.
+- 

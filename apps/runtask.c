@@ -90,6 +90,7 @@ typedef struct {
     char *str_val;
     Value *array_val;
     size_t array_len;
+    bool is_static;
 } Variable;
 
 typedef struct {
@@ -98,6 +99,7 @@ typedef struct {
 } VariableScope;
 
 static VariableScope scopes[MAX_SCOPES];
+static VariableScope static_scope;
 static size_t scope_depth = 0; // includes global scope
 
 typedef struct {
@@ -108,6 +110,9 @@ typedef struct {
     bool expects_end;
     int indent;
     int line_number;
+    size_t scope_depth_on_entry;
+    bool true_scope_active;
+    bool else_scope_active;
 } IfContext;
 
 typedef struct {
@@ -116,6 +121,8 @@ typedef struct {
     int indent;
     char condition[256];
     char step[128];
+    bool scope_active;
+    size_t scope_depth_on_entry;
 } ForContext;
 
 typedef struct {
@@ -123,6 +130,8 @@ typedef struct {
     int body_start_pc;
     int indent;
     char condition[256];
+    bool scope_active;
+    size_t scope_depth_on_entry;
 } WhileContext;
 
 #define MAX_REF_INDICES 4
@@ -605,10 +614,34 @@ static VariableScope *current_scope(void) {
     return &scopes[scope_depth - 1];
 }
 
+static void clear_scope(VariableScope *scope) {
+    if (!scope) {
+        return;
+    }
+    for (size_t i = 0; i < scope->count; ++i) {
+        if (scope->vars[i].type == VALUE_STRING && scope->vars[i].str_val) {
+            free(scope->vars[i].str_val);
+            scope->vars[i].str_val = NULL;
+        }
+        if (scope->vars[i].type == VALUE_ARRAY && scope->vars[i].array_val) {
+            for (size_t j = 0; j < scope->vars[i].array_len; ++j) {
+                free_value(&scope->vars[i].array_val[j]);
+            }
+            free(scope->vars[i].array_val);
+            scope->vars[i].array_val = NULL;
+            scope->vars[i].array_len = 0;
+        }
+        scope->vars[i].type = VALUE_UNSET;
+        scope->vars[i].is_static = false;
+    }
+    scope->count = 0;
+}
+
 static void init_scopes(void) {
     for (size_t i = 0; i < MAX_SCOPES; ++i) {
         scopes[i].count = 0;
     }
+    clear_scope(&static_scope);
     scope_depth = 1; // global scope
 }
 
@@ -627,28 +660,43 @@ static void pop_scope(void) {
         return;
     }
     VariableScope *scope = &scopes[scope_depth - 1];
-    for (size_t i = 0; i < scope->count; ++i) {
-        if (scope->vars[i].type == VALUE_STRING && scope->vars[i].str_val) {
-            free(scope->vars[i].str_val);
-            scope->vars[i].str_val = NULL;
-        }
-        if (scope->vars[i].type == VALUE_ARRAY && scope->vars[i].array_val) {
-            for (size_t j = 0; j < scope->vars[i].array_len; ++j) {
-                free_value(&scope->vars[i].array_val[j]);
-            }
-            free(scope->vars[i].array_val);
-            scope->vars[i].array_val = NULL;
-            scope->vars[i].array_len = 0;
-        }
-        scope->vars[i].type = VALUE_UNSET;
-    }
-    scope->count = 0;
+    clear_scope(scope);
     scope_depth--;
 }
 
-static Variable *find_variable(const char *name, bool create) {
+static void pop_to_depth(size_t depth) {
+    while (scope_depth > depth && scope_depth > 0) {
+        pop_scope();
+    }
+}
+
+static Variable *find_variable(const char *name, bool create, bool as_static) {
     if (!name || !*name) {
         return NULL;
+    }
+
+    if (as_static) {
+        for (size_t i = 0; i < static_scope.count; ++i) {
+            if (strcmp(static_scope.vars[i].name, name) == 0) {
+                return &static_scope.vars[i];
+            }
+        }
+        if (!create) {
+            return NULL;
+        }
+        if (static_scope.count >= MAX_VARIABLES) {
+            fprintf(stderr, "Variable limit reached in static scope (%d)\n", MAX_VARIABLES);
+            return NULL;
+        }
+        Variable *var = &static_scope.vars[static_scope.count++];
+        memset(var, 0, sizeof(*var));
+        strncpy(var->name, name, sizeof(var->name) - 1);
+        var->name[sizeof(var->name) - 1] = '\0';
+        var->type = VALUE_UNSET;
+        var->array_val = NULL;
+        var->array_len = 0;
+        var->is_static = true;
+        return var;
     }
 
     for (size_t depth = scope_depth; depth > 0; --depth) {
@@ -660,27 +708,44 @@ static Variable *find_variable(const char *name, bool create) {
         }
     }
 
+    for (size_t i = 0; i < static_scope.count; ++i) {
+        if (strcmp(static_scope.vars[i].name, name) == 0) {
+            return &static_scope.vars[i];
+        }
+    }
+
     if (!create) {
         return NULL;
     }
 
-    VariableScope *scope = current_scope();
-    if (!scope) {
+    VariableScope *target_scope = NULL;
+    if (as_static) {
+        if (static_scope.count >= MAX_VARIABLES) {
+            fprintf(stderr, "Variable limit reached in static scope (%d)\n", MAX_VARIABLES);
+            return NULL;
+        }
+        target_scope = &static_scope;
+    } else {
+        target_scope = current_scope();
+    }
+
+    if (!target_scope) {
         return NULL;
     }
 
-    if (scope->count >= MAX_VARIABLES) {
+    if (target_scope->count >= MAX_VARIABLES) {
         fprintf(stderr, "Variable limit reached in scope (%d)\n", MAX_VARIABLES);
         return NULL;
     }
 
-    Variable *var = &scope->vars[scope->count++];
+    Variable *var = &target_scope->vars[target_scope->count++];
     memset(var, 0, sizeof(*var));
     strncpy(var->name, name, sizeof(var->name) - 1);
     var->name[sizeof(var->name) - 1] = '\0';
     var->type = VALUE_UNSET;
     var->array_val = NULL;
     var->array_len = 0;
+    var->is_static = as_static;
     return var;
 }
 
@@ -960,7 +1025,7 @@ static bool resolve_variable_reference(const VariableRef *ref, Value *out, int l
         return false;
     }
 
-    Variable *var = find_variable(ref->name, false);
+    Variable *var = find_variable(ref->name, false, false);
     if (!var) {
         memset(out, 0, sizeof(*out));
         out->type = VALUE_UNSET;
@@ -2243,7 +2308,7 @@ static bool process_assignment_statement(const char *statement, int line, int de
         fprintf(stderr, "Assignment: unexpected characters at %d\n", line);
     }
 
-    Variable *var = find_variable(ref.name, true);
+    Variable *var = find_variable(ref.name, true, false);
     if (var) {
         if (!set_variable_from_ref(var, &ref, &value) && debug) {
             fprintf(stderr, "Assignment: failed to set variable at line %d\n", line);
@@ -2321,7 +2386,7 @@ static bool apply_increment_step(const char *expr, int line, int debug) {
         return false;
     }
 
-    Variable *var = find_variable(name, true);
+    Variable *var = find_variable(name, true, false);
     if (!var) {
         return false;
     }
@@ -2531,6 +2596,7 @@ typedef struct {
     bool saved_skip_for_true_branch;
     bool saved_skip_progress_pending;
     bool saved_skip_consumed_first;
+    size_t saved_scope_depth;
 } CallFrame;
 
 static void normalize_label_name(const char *input, char *output, size_t size) {
@@ -2678,7 +2744,7 @@ static void apply_return_value(const CallFrame *frame) {
     } else {
         tmp.type = VALUE_UNSET;
     }
-    Variable *dest = find_variable(frame->return_target, true);
+    Variable *dest = find_variable(frame->return_target, true, false);
     if (dest) {
         assign_variable(dest, &tmp);
     }
@@ -3392,7 +3458,7 @@ int main(int argc, char *argv[]) {
         if (call_sp > 0) {
             CallFrame *frame = &call_stack[call_sp - 1];
             if (pc >= frame->function_end_pc) {
-                pop_scope();
+                pop_to_depth(frame->saved_scope_depth);
                 apply_return_value(frame);
                 if (frame->has_return_value) {
                     free_value(&frame->return_value);
@@ -3565,8 +3631,9 @@ int main(int argc, char *argv[]) {
                 if (debug) fprintf(stderr, "IF: nesting limit reached at line %d\n", script[pc].source_line);
                 continue;
             }
-            IfContext ctx = { .result = cond_result, .true_branch_done = false, .else_encountered = false, .else_branch_done = false, .expects_end = true, .indent = script[pc].indent, .line_number = script[pc].source_line };
+            IfContext ctx = { .result = cond_result, .true_branch_done = false, .else_encountered = false, .else_branch_done = false, .expects_end = true, .indent = script[pc].indent, .line_number = script[pc].source_line, .scope_depth_on_entry = scope_depth, .true_scope_active = false, .else_scope_active = false };
             if_stack[if_sp++] = ctx;
+            IfContext *ctx_ptr = &if_stack[if_sp - 1];
             if (!cond_result) {
                 skipping_block = true;
                 skip_indent = script[pc].indent;
@@ -3574,6 +3641,18 @@ int main(int argc, char *argv[]) {
                 skip_for_true_branch = true;
                 skip_progress_pending = true;
                 skip_consumed_first = false;
+            } else {
+                if (!push_scope()) {
+                    ctx_ptr->result = false;
+                    skipping_block = true;
+                    skip_indent = script[pc].indent;
+                    skip_context_index = if_sp - 1;
+                    skip_for_true_branch = true;
+                    skip_progress_pending = true;
+                    skip_consumed_first = false;
+                } else {
+                    ctx_ptr->true_scope_active = true;
+                }
             }
             continue;
         }
@@ -3679,11 +3758,25 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
+            size_t loop_scope_base = scope_depth;
+            if (!push_scope()) {
+                skipping_block = true;
+                skip_indent = script[pc].indent;
+                skip_context_index = -1;
+                skip_for_true_branch = false;
+                skip_progress_pending = false;
+                skip_consumed_first = false;
+                note_branch_progress(if_stack, &if_sp);
+                continue;
+            }
+
             WhileContext wctx;
             wctx.while_line_pc = pc;
             wctx.body_start_pc = pc + 1;
             wctx.indent = script[pc].indent;
             snprintf(wctx.condition, sizeof(wctx.condition), "%s", cond_buf);
+            wctx.scope_active = true;
+            wctx.scope_depth_on_entry = loop_scope_base;
             while_stack[while_sp++] = wctx;
             note_branch_progress(if_stack, &if_sp);
         }
@@ -3764,9 +3857,17 @@ int main(int argc, char *argv[]) {
             copy_trimmed_segment(first_semi + 1, second_semi, cond_buf, sizeof(cond_buf));
             copy_trimmed_segment(second_semi + 1, step_end, step_buf, sizeof(step_buf));
 
+            size_t loop_scope_base = scope_depth;
+            bool loop_scope_active = false;
+            if (!push_scope()) {
+                continue;
+            }
+            loop_scope_active = true;
+
             if (init_buf[0] != '\0') {
                 if (!process_assignment_statement(init_buf, script[pc].source_line, debug) &&
                     !evaluate_expression_statement(init_buf, script[pc].source_line, debug)) {
+                    pop_to_depth(loop_scope_base);
                     continue;
                 }
             }
@@ -3775,11 +3876,13 @@ int main(int argc, char *argv[]) {
             if (cond_buf[0] != '\0') {
                 cond_ok = false;
                 if (!evaluate_condition_string(cond_buf, script[pc].source_line, debug, &cond_ok)) {
+                    pop_to_depth(loop_scope_base);
                     continue;
                 }
             }
 
             if (!cond_ok) {
+                pop_to_depth(loop_scope_base);
                 skipping_block = true;
                 skip_indent = script[pc].indent;
                 skip_context_index = -1;
@@ -3792,6 +3895,7 @@ int main(int argc, char *argv[]) {
 
             if (step_buf[0] == '\0') {
                 if (debug) fprintf(stderr, "FOR: missing step at line %d\n", script[pc].source_line);
+                pop_to_depth(loop_scope_base);
                 continue;
             }
 
@@ -3801,6 +3905,8 @@ int main(int argc, char *argv[]) {
             fctx.indent = script[pc].indent;
             snprintf(fctx.condition, sizeof(fctx.condition), "%s", cond_buf);
             snprintf(fctx.step, sizeof(fctx.step), "%s", step_buf);
+            fctx.scope_active = loop_scope_active;
+            fctx.scope_depth_on_entry = loop_scope_base;
             for_stack[for_sp++] = fctx;
             note_branch_progress(if_stack, &if_sp);
         }
@@ -3827,6 +3933,10 @@ int main(int argc, char *argv[]) {
                 if (debug) fprintf(stderr, "ELSE already processed for IF at line %d\n", ctx->line_number);
                 continue;
             }
+            if (ctx->true_scope_active) {
+                pop_to_depth(ctx->scope_depth_on_entry);
+                ctx->true_scope_active = false;
+            }
             ctx->else_encountered = true;
             ctx->true_branch_done = true;
             if (ctx->result) {
@@ -3836,6 +3946,17 @@ int main(int argc, char *argv[]) {
                 skip_for_true_branch = false;
                 skip_progress_pending = true;
                 skip_consumed_first = false;
+            } else {
+                if (!push_scope()) {
+                    skipping_block = true;
+                    skip_indent = script[pc].indent;
+                    skip_context_index = if_sp - 1;
+                    skip_for_true_branch = false;
+                    skip_progress_pending = true;
+                    skip_consumed_first = false;
+                } else {
+                    ctx->else_scope_active = true;
+                }
             }
         }
         else if (strncmp(command, "END", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {
@@ -3863,6 +3984,10 @@ int main(int argc, char *argv[]) {
                         pc = ctx->body_start_pc - 1;
                         pc_changed = true;
                     } else {
+                        if (ctx->scope_active) {
+                            pop_to_depth(ctx->scope_depth_on_entry);
+                            ctx->scope_active = false;
+                        }
                         while_sp--;
                     }
                     note_branch_progress(if_stack, &if_sp);
@@ -3874,6 +3999,10 @@ int main(int argc, char *argv[]) {
                 if (script[pc].indent == ctx->indent) {
                     matched = true;
                     if (!apply_increment_step(ctx->step, script[ctx->for_line_pc].source_line, debug)) {
+                        if (ctx->scope_active) {
+                            pop_to_depth(ctx->scope_depth_on_entry);
+                            ctx->scope_active = false;
+                        }
                         for_sp--;
                         continue;
                     }
@@ -3881,7 +4010,11 @@ int main(int argc, char *argv[]) {
                     bool cond_result = true;
                     if (ctx->condition[0] != '\0') {
                         cond_result = false;
-                        if (!evaluate_condition_string(ctx->condition, script[ctx->for_line_pc].source_line, debug, &cond_result)) {
+                    if (!evaluate_condition_string(ctx->condition, script[ctx->for_line_pc].source_line, debug, &cond_result)) {
+                            if (ctx->scope_active) {
+                                pop_to_depth(ctx->scope_depth_on_entry);
+                                ctx->scope_active = false;
+                            }
                             for_sp--;
                             continue;
                         }
@@ -3891,6 +4024,10 @@ int main(int argc, char *argv[]) {
                         pc = ctx->body_start_pc - 1;
                         pc_changed = true;
                     } else {
+                        if (ctx->scope_active) {
+                            pop_to_depth(ctx->scope_depth_on_entry);
+                            ctx->scope_active = false;
+                        }
                         for_sp--;
                     }
                     note_branch_progress(if_stack, &if_sp);
@@ -3905,6 +4042,11 @@ int main(int argc, char *argv[]) {
                         ctx->else_branch_done = true;
                     } else {
                         ctx->true_branch_done = true;
+                    }
+                    if (ctx->else_scope_active || ctx->true_scope_active) {
+                        pop_to_depth(ctx->scope_depth_on_entry);
+                        ctx->else_scope_active = false;
+                        ctx->true_scope_active = false;
                     }
                     if_sp--;
                 }
@@ -3972,7 +4114,7 @@ int main(int argc, char *argv[]) {
             if (*cursor != '\0' && debug) {
                 fprintf(stderr, "INPUT: unexpected characters at %d\n", script[pc].source_line);
             }
-            Variable *var = find_variable(name, true);
+            Variable *var = find_variable(name, true, false);
             if (!var) {
                 continue;
             }
@@ -4016,12 +4158,24 @@ int main(int argc, char *argv[]) {
         }
         else if (strncmp(command, "SET", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {
             const char *cursor = command + 3;
+            bool is_static = false;
             char *var_token = NULL;
             bool quoted = false;
             if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
                 if (debug) fprintf(stderr, "SET: expected variable at line %d\n", script[pc].source_line);
                 free(var_token);
                 continue;
+            }
+            if (equals_ignore_case(var_token, "STATIC")) {
+                is_static = true;
+                free(var_token);
+                var_token = NULL;
+                quoted = false;
+                if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
+                    if (debug) fprintf(stderr, "SET: expected variable name after STATIC at line %d\n", script[pc].source_line);
+                    free(var_token);
+                    continue;
+                }
             }
             VariableRef ref;
             if (!parse_variable_reference_token(var_token, &ref, script[pc].source_line, debug)) {
@@ -4051,7 +4205,7 @@ int main(int argc, char *argv[]) {
             if (*cursor != '\0' && debug) {
                 fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].source_line);
             }
-            Variable *var = find_variable(ref.name, true);
+            Variable *var = find_variable(ref.name, true, is_static);
             if (var && !set_variable_from_ref(var, &ref, &value) && debug) {
                 fprintf(stderr, "SET: failed to set variable at line %d\n", script[pc].source_line);
             }
@@ -4267,6 +4421,7 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
+            size_t parent_scope_depth = scope_depth;
             if (!push_scope()) {
                 for (int i = 0; i < arg_count; ++i) {
                     free_value(&args[i]);
@@ -4275,7 +4430,7 @@ int main(int argc, char *argv[]) {
             }
 
             for (int i = 0; i < arg_count; ++i) {
-                Variable *param = find_variable(fn->params[i], true);
+                Variable *param = find_variable(fn->params[i], true, false);
                 if (param) {
                     assign_variable(param, &args[i]);
                 }
@@ -4300,6 +4455,7 @@ int main(int argc, char *argv[]) {
             frame->saved_skip_for_true_branch = skip_for_true_branch;
             frame->saved_skip_progress_pending = skip_progress_pending;
             frame->saved_skip_consumed_first = skip_consumed_first;
+            frame->saved_scope_depth = parent_scope_depth;
 
             if_sp = 0;
             for_sp = 0;
@@ -4400,7 +4556,7 @@ int main(int argc, char *argv[]) {
                     label_ok = false;
                 } else {
                     var_name[name_len] = '\0';
-                    Variable *var = find_variable(var_name, false);
+                    Variable *var = find_variable(var_name, false, false);
                     Value value = variable_to_value(var);
                     char *resolved = value_to_string(&value);
                     free_value(&value);
@@ -4564,7 +4720,7 @@ int main(int argc, char *argv[]) {
                     free_argv(argv_heap);
                     continue;
                 }
-                capture_var = find_variable(capture_ref.name, true);
+                capture_var = find_variable(capture_ref.name, true, false);
                 if (!capture_var) {
                     free_argv(argv_heap);
                     continue;
@@ -4909,7 +5065,7 @@ int main(int argc, char *argv[]) {
             }
             free_value(&ret);
 
-            pop_scope();
+            pop_to_depth(frame->saved_scope_depth);
             apply_return_value(frame);
             if (frame->has_return_value) {
                 free_value(&frame->return_value);
@@ -4942,6 +5098,10 @@ int main(int argc, char *argv[]) {
             int next_pc = pc + 1;
             if (next_pc >= count || script[next_pc].indent <= ctx->indent) {
                 if (!apply_increment_step(ctx->step, script[ctx->for_line_pc].source_line, debug)) {
+                    if (ctx->scope_active) {
+                        pop_to_depth(ctx->scope_depth_on_entry);
+                        ctx->scope_active = false;
+                    }
                     for_sp--;
                     continue;
                 }
@@ -4950,6 +5110,10 @@ int main(int argc, char *argv[]) {
                 if (ctx->condition[0] != '\0') {
                     cond_result = false;
                     if (!evaluate_condition_string(ctx->condition, script[ctx->for_line_pc].source_line, debug, &cond_result)) {
+                        if (ctx->scope_active) {
+                            pop_to_depth(ctx->scope_depth_on_entry);
+                            ctx->scope_active = false;
+                        }
                         for_sp--;
                         continue;
                     }
@@ -4958,6 +5122,10 @@ int main(int argc, char *argv[]) {
                 if (cond_result) {
                     pc = ctx->body_start_pc - 1;
                 } else {
+                    if (ctx->scope_active) {
+                        pop_to_depth(ctx->scope_depth_on_entry);
+                        ctx->scope_active = false;
+                    }
                     for_sp--;
                 }
             }

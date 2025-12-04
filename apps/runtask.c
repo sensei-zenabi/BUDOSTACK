@@ -685,12 +685,14 @@ static Variable *find_variable(const char *name, bool create) {
         return NULL;
     }
 
-    for (size_t depth = scope_depth; depth > 0; --depth) {
-        VariableScope *scope = &scopes[depth - 1];
-        Variable *found = find_variable_in_scope(scope, name);
-        if (found) {
-            return found;
-        }
+    VariableScope *scope = current_scope();
+    if (!scope) {
+        return NULL;
+    }
+
+    Variable *found = find_variable_in_scope(scope, name);
+    if (found) {
+        return found;
     }
 
     Variable *static_var = find_variable_in_scope(current_static_scope(), name);
@@ -698,12 +700,22 @@ static Variable *find_variable(const char *name, bool create) {
         return static_var;
     }
 
-    if (!create) {
-        return NULL;
+    for (size_t depth = scope_depth; depth > 1; --depth) {
+        VariableScope *parent = &scopes[depth - 2];
+        found = find_variable_in_scope(parent, name);
+        if (found) {
+            return found;
+        }
     }
 
-    VariableScope *scope = current_scope();
-    if (!scope) {
+    if (!found && scope_depth > 0) {
+        found = find_variable_in_scope(&scopes[0], name);
+        if (found) {
+            return found;
+        }
+    }
+
+    if (!create) {
         return NULL;
     }
 
@@ -5020,6 +5032,7 @@ int main(int argc, char *argv[]) {
             }
             if_sp = frame->saved_if_sp;
             for_sp = frame->saved_for_sp;
+            while_sp = frame->saved_while_sp;
             skipping_block = frame->saved_skipping_block;
             skip_indent = frame->saved_skip_indent;
             skip_context_index = frame->saved_skip_context_index;

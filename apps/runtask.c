@@ -99,6 +99,8 @@ typedef struct {
 
 static VariableScope scopes[MAX_SCOPES];
 static size_t scope_depth = 0; // includes global scope
+static VariableScope static_scopes[MAX_FUNCTIONS];
+static int current_function_index = -1;
 
 typedef struct {
     bool result;
@@ -605,6 +607,53 @@ static VariableScope *current_scope(void) {
     return &scopes[scope_depth - 1];
 }
 
+static VariableScope *current_static_scope(void) {
+    if (current_function_index < 0 || current_function_index >= (int)(sizeof(static_scopes) / sizeof(static_scopes[0]))) {
+        return NULL;
+    }
+    return &static_scopes[current_function_index];
+}
+
+static Variable *find_variable_in_scope(VariableScope *scope, const char *name) {
+    if (!scope || !name) {
+        return NULL;
+    }
+    for (size_t i = 0; i < scope->count; ++i) {
+        if (strcmp(scope->vars[i].name, name) == 0) {
+            return &scope->vars[i];
+        }
+    }
+    return NULL;
+}
+
+static void clear_scope(VariableScope *scope) {
+    if (!scope) {
+        return;
+    }
+    for (size_t i = 0; i < scope->count; ++i) {
+        if (scope->vars[i].type == VALUE_STRING && scope->vars[i].str_val) {
+            free(scope->vars[i].str_val);
+            scope->vars[i].str_val = NULL;
+        }
+        if (scope->vars[i].type == VALUE_ARRAY && scope->vars[i].array_val) {
+            for (size_t j = 0; j < scope->vars[i].array_len; ++j) {
+                free_value(&scope->vars[i].array_val[j]);
+            }
+            free(scope->vars[i].array_val);
+            scope->vars[i].array_val = NULL;
+            scope->vars[i].array_len = 0;
+        }
+        scope->vars[i].type = VALUE_UNSET;
+    }
+    scope->count = 0;
+}
+
+static void init_static_scopes(void) {
+    for (size_t i = 0; i < MAX_FUNCTIONS; ++i) {
+        clear_scope(&static_scopes[i]);
+    }
+}
+
 static void init_scopes(void) {
     for (size_t i = 0; i < MAX_SCOPES; ++i) {
         scopes[i].count = 0;
@@ -627,22 +676,7 @@ static void pop_scope(void) {
         return;
     }
     VariableScope *scope = &scopes[scope_depth - 1];
-    for (size_t i = 0; i < scope->count; ++i) {
-        if (scope->vars[i].type == VALUE_STRING && scope->vars[i].str_val) {
-            free(scope->vars[i].str_val);
-            scope->vars[i].str_val = NULL;
-        }
-        if (scope->vars[i].type == VALUE_ARRAY && scope->vars[i].array_val) {
-            for (size_t j = 0; j < scope->vars[i].array_len; ++j) {
-                free_value(&scope->vars[i].array_val[j]);
-            }
-            free(scope->vars[i].array_val);
-            scope->vars[i].array_val = NULL;
-            scope->vars[i].array_len = 0;
-        }
-        scope->vars[i].type = VALUE_UNSET;
-    }
-    scope->count = 0;
+    clear_scope(scope);
     scope_depth--;
 }
 
@@ -653,11 +687,15 @@ static Variable *find_variable(const char *name, bool create) {
 
     for (size_t depth = scope_depth; depth > 0; --depth) {
         VariableScope *scope = &scopes[depth - 1];
-        for (size_t i = 0; i < scope->count; ++i) {
-            if (strcmp(scope->vars[i].name, name) == 0) {
-                return &scope->vars[i];
-            }
+        Variable *found = find_variable_in_scope(scope, name);
+        if (found) {
+            return found;
         }
+    }
+
+    Variable *static_var = find_variable_in_scope(current_static_scope(), name);
+    if (static_var) {
+        return static_var;
     }
 
     if (!create) {
@@ -671,6 +709,36 @@ static Variable *find_variable(const char *name, bool create) {
 
     if (scope->count >= MAX_VARIABLES) {
         fprintf(stderr, "Variable limit reached in scope (%d)\n", MAX_VARIABLES);
+        return NULL;
+    }
+
+    Variable *var = &scope->vars[scope->count++];
+    memset(var, 0, sizeof(*var));
+    strncpy(var->name, name, sizeof(var->name) - 1);
+    var->name[sizeof(var->name) - 1] = '\0';
+    var->type = VALUE_UNSET;
+    var->array_val = NULL;
+    var->array_len = 0;
+    return var;
+}
+
+static Variable *find_static_variable(const char *name, bool create) {
+    if (!name || !*name) {
+        return NULL;
+    }
+
+    VariableScope *scope = current_static_scope();
+    if (!scope) {
+        return NULL;
+    }
+
+    Variable *existing = find_variable_in_scope(scope, name);
+    if (existing || !create) {
+        return existing;
+    }
+
+    if (scope->count >= MAX_VARIABLES) {
+        fprintf(stderr, "Variable limit reached in static scope (%d)\n", MAX_VARIABLES);
         return NULL;
     }
 
@@ -984,6 +1052,8 @@ static void cleanup_variables(void) {
         pop_scope();
     }
     init_scopes();
+    init_static_scopes();
+    current_function_index = -1;
 }
 
 static bool is_token_delim(char c, const char *delims) {
@@ -2531,6 +2601,8 @@ typedef struct {
     bool saved_skip_for_true_branch;
     bool saved_skip_progress_pending;
     bool saved_skip_consumed_first;
+    int function_index;
+    int previous_function_index;
 } CallFrame;
 
 static void normalize_label_name(const char *input, char *output, size_t size) {
@@ -3160,6 +3232,8 @@ int main(int argc, char *argv[]) {
 
     set_initial_argv0((argc > 0) ? argv[0] : NULL);
     init_scopes();
+    init_static_scopes();
+    current_function_index = -1;
 
     const char *base_dir = get_base_dir();
     if (base_dir && base_dir[0] != '\0') {
@@ -3392,6 +3466,7 @@ int main(int argc, char *argv[]) {
         if (call_sp > 0) {
             CallFrame *frame = &call_stack[call_sp - 1];
             if (pc >= frame->function_end_pc) {
+                current_function_index = frame->previous_function_index;
                 pop_scope();
                 apply_return_value(frame);
                 if (frame->has_return_value) {
@@ -4018,10 +4093,24 @@ int main(int argc, char *argv[]) {
             const char *cursor = command + 3;
             char *var_token = NULL;
             bool quoted = false;
+            bool static_target = false;
             if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
                 if (debug) fprintf(stderr, "SET: expected variable at line %d\n", script[pc].source_line);
                 free(var_token);
                 continue;
+            }
+            if (equals_ignore_case(var_token, "STATIC")) {
+                static_target = true;
+                free(var_token);
+                var_token = NULL;
+                while (isspace((unsigned char)*cursor)) {
+                    cursor++;
+                }
+                if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
+                    if (debug) fprintf(stderr, "SET: expected variable after STATIC at line %d\n", script[pc].source_line);
+                    free(var_token);
+                    continue;
+                }
             }
             VariableRef ref;
             if (!parse_variable_reference_token(var_token, &ref, script[pc].source_line, debug)) {
@@ -4051,7 +4140,16 @@ int main(int argc, char *argv[]) {
             if (*cursor != '\0' && debug) {
                 fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].source_line);
             }
-            Variable *var = find_variable(ref.name, true);
+            Variable *var = NULL;
+            if (static_target) {
+                var = find_static_variable(ref.name, true);
+                if (!var && debug) {
+                    fprintf(stderr, "SET: STATIC not allowed outside of a function at line %d\n", script[pc].source_line);
+                }
+            }
+            if (!var) {
+                var = find_variable(ref.name, true);
+            }
             if (var && !set_variable_from_ref(var, &ref, &value) && debug) {
                 fprintf(stderr, "SET: failed to set variable at line %d\n", script[pc].source_line);
             }
@@ -4300,6 +4398,10 @@ int main(int argc, char *argv[]) {
             frame->saved_skip_for_true_branch = skip_for_true_branch;
             frame->saved_skip_progress_pending = skip_progress_pending;
             frame->saved_skip_consumed_first = skip_consumed_first;
+            frame->previous_function_index = current_function_index;
+            frame->function_index = fn_index;
+
+            current_function_index = fn_index;
 
             if_sp = 0;
             for_sp = 0;
@@ -4909,6 +5011,7 @@ int main(int argc, char *argv[]) {
             }
             free_value(&ret);
 
+            current_function_index = frame->previous_function_index;
             pop_scope();
             apply_return_value(frame);
             if (frame->has_return_value) {

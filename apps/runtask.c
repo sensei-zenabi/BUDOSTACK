@@ -690,6 +690,7 @@ static Variable *find_variable(const char *name, bool create) {
         return NULL;
     }
 
+    bool in_function_scope = scope_depth > 1;
     Variable *found = find_variable_in_scope(scope, name);
     if (found) {
         return found;
@@ -700,18 +701,20 @@ static Variable *find_variable(const char *name, bool create) {
         return static_var;
     }
 
-    for (size_t depth = scope_depth; depth > 1; --depth) {
-        VariableScope *parent = &scopes[depth - 2];
-        found = find_variable_in_scope(parent, name);
-        if (found) {
-            return found;
+    if (!in_function_scope || !create) {
+        for (size_t depth = scope_depth; depth > 1; --depth) {
+            VariableScope *parent = &scopes[depth - 2];
+            found = find_variable_in_scope(parent, name);
+            if (found) {
+                return found;
+            }
         }
-    }
 
-    if (!found && scope_depth > 0) {
-        found = find_variable_in_scope(&scopes[0], name);
-        if (found) {
-            return found;
+        if (scope_depth > 0) {
+            found = find_variable_in_scope(&scopes[0], name);
+            if (found) {
+                return found;
+            }
         }
     }
 
@@ -4377,7 +4380,11 @@ int main(int argc, char *argv[]) {
                 continue;
             }
 
+            int previous_function_index = current_function_index;
+            current_function_index = fn_index;
+
             if (!push_scope()) {
+                current_function_index = previous_function_index;
                 for (int i = 0; i < arg_count; ++i) {
                     free_value(&args[i]);
                 }
@@ -4410,7 +4417,7 @@ int main(int argc, char *argv[]) {
             frame->saved_skip_for_true_branch = skip_for_true_branch;
             frame->saved_skip_progress_pending = skip_progress_pending;
             frame->saved_skip_consumed_first = skip_consumed_first;
-            frame->previous_function_index = current_function_index;
+            frame->previous_function_index = previous_function_index;
             frame->function_index = fn_index;
 
             current_function_index = fn_index;

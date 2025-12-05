@@ -12,13 +12,15 @@ RUN _CLEAR
 RUN _TERM_RESOLUTION 320 200
 
 
-# Global Variables:
+# Global Game Variables:
 
 SET $X = 40
-SET $DX = 0
 SET $Y = 140
-SET $VX = 2
-SET $DT = 0.0
+SET $dV = 0
+SET $VX = 0
+SET $TIME = 0
+SET $STRING = "none"
+SET $TIMER_STATE = 0
 SET $SPRITE_PATHS = {"./tasks/assets/char_1_1.png",
                      "./tasks/assets/char_1_2.png"}
                      
@@ -28,6 +30,7 @@ SET $SPRITES = {}
 SET $TILES = {}
 SET $MOUSE_EVENTS = {}
 SET $SPRITE_OFFSET = 20
+SET $SPRITE_FRAME = 0
 
 # ====================== FUNCTIONS ========================
 
@@ -69,10 +72,12 @@ RUN _TERM_RENDER -layer 16
 
 # Draw Text:
 
-RUN _TERM_TEXT -x 100 -y 10 -text " --- GAME DEMO --- " -color 18 -layer 10
+RUN _TERM_TEXT -x 60 -y 10 -text " --- Run Engineer, Run! --- " -color 18 -layer 10
+RUN _TERM_TEXT -x 60 -y 20 -text "  Tap the left mouse click  " -color 18 -layer 10
 RUN _TERM_TEXT -x 60 -y 160 -text "|" -color 18 -layer 10 
 RUN _TERM_TEXT -x 60 -y 170 -text "|" -color 18 -layer 10 
 RUN _TERM_TEXT -x 60 -y 180 -text "|" -color 18 -layer 10
+RUN _TERM_TEXT -x 20 -y 180 -text "START" -color 18 -layer 10
 RUN _TERM_TEXT -x 280 -y 160 -text "|" -color 18 -layer 10 
 RUN _TERM_TEXT -x 280 -y 170 -text "|" -color 18 -layer 10 
 RUN _TERM_TEXT -x 280 -y 180 -text "|FINISH" -color 18 -layer 10
@@ -80,20 +85,22 @@ RUN _TERM_RENDER -layer 10
 
 
 # GAME LOOP:
+RUN _TIMER --stop
+RUN _TIMER --reset
+RUN _TERM_MOUSE
 
 WHILE ($X<290):
-
+  
   # Clean the character old position:
     
   IF ($X>40):
-    RUN _TERM_CLEAN -x $X-$SPRITE_OFFSET-$VX -y $Y -width 40 -height 40 -layer 8
+    RUN _TERM_CLEAN -x $X-$SPRITE_OFFSET -y $Y -width 40 -height 40 -layer 8
   END
   
-  
-  # Draw the character new position:
-  
-  RUN _TERM_SPRITE -x $X-$SPRITE_OFFSET -y $Y -sprite $SPRITES[0] -layer 8
-  RUN _TERM_RENDER -layer 8
+  IF ($X>60 AND $TIMER_STATE==0):
+    RUN _TIMER --start
+    SET $TIMER_STATE = 1
+  END
   
  
   # Get mouse events
@@ -106,15 +113,34 @@ WHILE ($X<290):
   SET $ERROR = 0
   RUN _CALC ($MOUSE_EVENTS[0] - $X) TO $ERROR
   IF ($ERROR >= 0):
-    RUN _CALC fmin($MOUSE_EVENTS[0]-$X, 1) TO $VX
+    RUN _CALC fmin($MOUSE_EVENTS[0]-$X, 1) TO $dV
   ELSE
-    RUN _CALC fmax($MOUSE_EVENTS[0]-$X, -1) TO $VX
+    RUN _CALC fmax($MOUSE_EVENTS[0]-$X, -1) TO $dV
   END
   
-  RUN _CALC ($VX * $MOUSE_EVENTS[2]) TO $VX
+  RUN _CALC (15 * $dV * $MOUSE_EVENTS[2]) TO $dV
+  RUN _CALC floor(0.9*$VX + 0.1*$dV, 0) TO $VX
   
   SET $X = $X + $VX
   
+  
+  # Determine the active frame:
+
+  SET $FRAME_CHANGE = 0  
+  IF ($MOUSE_EVENTS[2] > 0 AND $SPRITE_FRAME == 0):
+    SET $SPRITE_FRAME = 1
+    SET $FRAME_CHANGE = 1
+  END
+  
+  IF ($MOUSE_EVENTS[2] > 0 AND $SPRITE_FRAME == 1 AND $FRAME_CHANGE == 0):
+    SET $SPRITE_FRAME = 0
+  EN
+  
+  # Draw the character new position:
+  
+  RUN _TERM_SPRITE -x $X-$SPRITE_OFFSET -y $Y -sprite $SPRITES[$SPRITE_FRAME] -layer 8
+  RUN _TERM_RENDER -layer 8
+
   
   # Cap framerate:
   
@@ -123,7 +149,14 @@ WHILE ($X<290):
 END
 
 
-# Wait
+# Display results
+RUN _TIMER --stop
+RUN _TIMER --get TO $TIME
+RUN _CALC round($TIME / 1000, 2) TO $TIME
+SET $STRING = "Timer: " + $TIME + " sec"
+
+RUN _TERM_TEXT -x 105 -y 30 -text $STRING -color 18 -layer 9
+RUN _TERM_RENDER -layer 9
 
 RUN _WAIT 4000
 
@@ -145,5 +178,6 @@ END
 SET $KEY
 INPUT $KEY
 RUN _TERM_RESOLUTION 640 360
+RUN _CLEAR
 ECHO ON
 

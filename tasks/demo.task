@@ -1,7 +1,7 @@
 # demo.task
 
 
-# ======================= SCENE 1 =========================
+# =============================== =========================
 # Render sprites and demonstrate movement in 640x360.
 # =========================================================  
 
@@ -15,7 +15,7 @@ RUN _TERM_RESOLUTION 320 200
 # Global Game Variables:
 
 SET $X = 40
-SET $Y = 140
+SET $Y = 137
 SET $dV = 0
 SET $VX = 0
 SET $TIME = 0
@@ -28,7 +28,8 @@ SET $SPRITE_PATHS = {"./tasks/assets/char_1_1.png",
 SET $TILE_PATHS = {"./tasks/assets/tile001.png",
                    "./tasks/assets/tile002.png",
                    "./tasks/assets/tile003.png",
-                   "./tasks/assets/tile004.png"}
+                   "./tasks/assets/tile004.png",
+                   "./tasks/assets/tile005.png"}
 SET $SPRITES = {}
 SET $TILES = {}
 SET $MOUSE_EVENTS = {}
@@ -43,7 +44,7 @@ SET $SPRITE_FRAME = 0
 # ======================== MAIN ===========================
 
 
-# LOAD SPRITES INTO MEMORY:
+### LOAD SPRITES INTO MEMORY ###
 
 FOR ($i=0; $i<LEN($SPRITE_PATHS); $i++):
   RUN _TERM_SPRITE_LOAD -file $SPRITE_PATHS[$i] TO $SPRITES[$i]
@@ -54,12 +55,12 @@ FOR ($i=0; $i<LEN($TILE_PATHS); $i++):
 END
 
 
-# CLEAN BACKGROUND LAYER:
+### CLEAN BACKGROUND LAYER ###
 
 RUN _TERM_CLEAN -x 0 -y 0 -width 320 -height 200 -layer 16
  
 
-# RENDER BACKGROUND:
+### RENDER BACKGROUND ###
 
 FOR ($i=0;$i<=320;$i=$i+20):
   FOR ($j=0;$j<=200;$j=$j+20):
@@ -75,12 +76,17 @@ FOR ($i=0;$i<=320;$i=$i+20):
       # Draw fence
       RUN _TERM_SPRITE -x $i -y $j -sprite $TILES[2] -layer 16
     END
-    IF ($j>=160):
+    IF ($j>=160 AND $j<200):
+      # Draw track
+      RUN _TERM_SPRITE -x $i -y $j -sprite $TILES[4] -layer 16
+    END
+    IF ($j>=200):
       # Draw ground
       RUN _TERM_SPRITE -x $i -y $j -sprite $TILES[1] -layer 16
     END
   END
 END
+
 
 # Draw Clouds
 
@@ -97,14 +103,17 @@ RUN _TERM_TEXT -x 60 -y 20 -text "  Tap the left mouse click  " -color 18 -layer
 RUN _TERM_TEXT -x 60 -y 160 -text "|" -color 18 -layer 10 
 RUN _TERM_TEXT -x 60 -y 170 -text "|" -color 18 -layer 10 
 RUN _TERM_TEXT -x 60 -y 180 -text "|" -color 18 -layer 10
-RUN _TERM_TEXT -x 20 -y 180 -text "START" -color 18 -layer 10
+RUN _TERM_TEXT -x 60 -y 190 -text "|" -color 18 -layer 10
+RUN _TERM_TEXT -x 20 -y 200 -text "START" -color 18 -layer 10
 RUN _TERM_TEXT -x 280 -y 160 -text "|" -color 18 -layer 10 
 RUN _TERM_TEXT -x 280 -y 170 -text "|" -color 18 -layer 10 
-RUN _TERM_TEXT -x 280 -y 180 -text "|FINISH" -color 18 -layer 10
+RUN _TERM_TEXT -x 280 -y 180 -text "|" -color 18 -layer 10 
+RUN _TERM_TEXT -x 280 -y 190 -text "|" -color 18 -layer 10 
+RUN _TERM_TEXT -x 280 -y 200 -text "|FINISH" -color 18 -layer 10
 RUN _TERM_RENDER -layer 10
 
 
-# GAME LOOP:
+### GAME LOOP ###
 
 RUN _TIMER --stop
 RUN _TIMER --reset

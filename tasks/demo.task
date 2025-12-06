@@ -22,10 +22,13 @@ SET $TIME = 0
 SET $STRING = "none"
 SET $TIMER_STATE = 0
 SET $SPRITE_PATHS = {"./tasks/assets/char_1_1.png",
-                     "./tasks/assets/char_1_2.png"}
+                     "./tasks/assets/char_1_2.png",
+                     "./tasks/assets/cloud.png"}
                      
 SET $TILE_PATHS = {"./tasks/assets/tile001.png",
-                   "./tasks/assets/tile002.png"}
+                   "./tasks/assets/tile002.png",
+                   "./tasks/assets/tile003.png",
+                   "./tasks/assets/tile004.png"}
 SET $SPRITES = {}
 SET $TILES = {}
 SET $MOUSE_EVENTS = {}
@@ -56,17 +59,38 @@ FOR ($i=0; $i<LEN($TILE_PATHS); $i++):
 END
 
 
-# Render Background:
+# CLEAN BACKGROUND LAYER::
+
+RUN _TERM_CLEAN -x 0 -y 0 -width 320 -height 200 -layer 16
+ 
+
+# RENDER BACKGROUND:
 
 FOR ($i=0;$i<=320;$i=$i+20):
   FOR ($j=0;$j<=200;$j=$j+20):
-    IF ($j<=140):
+    IF ($j<80):
+      # Draw sky
       RUN _TERM_SPRITE -x $i -y $j -sprite $TILES[0] -layer 16
-    ELSE
+    END
+    IF ($j>=80 AND $j<140):
+      # Draw crowd
+      RUN _TERM_SPRITE -x $i -y $j -sprite $TILES[3] -layer 16
+    END
+    IF ($j>=140 AND $j<160):
+      # Draw fence
+      RUN _TERM_SPRITE -x $i -y $j -sprite $TILES[2] -layer 16
+    END
+    IF ($j>=160):
+      # Draw ground
       RUN _TERM_SPRITE -x $i -y $j -sprite $TILES[1] -layer 16
     END
   END
 END
+
+# Draw Clouds
+RUN _TERM_SPRITE -x 10 -y 10 -sprite $SPRITES[2] -layer 16
+RUN _TERM_SPRITE -x 180 -y 20 -sprite $SPRITES[2] -layer 16
+
 RUN _TERM_RENDER -layer 16
 
 

@@ -255,11 +255,11 @@ int main(int argc, char *argv[]) {
     printf("  codedemo.task        : Coding basics: for, while, arrays, functions, etc.\n");
     printf("  csvdemo.task         : Dynamic .csv file manipulation demo\n");
     printf("  demo.task            : Demonstration of _TERM* command set.\n");    
+    printf("  keyboard.task        : Keyboard input reading and processing.\n");
+    printf("  mouse.task           : Mouse input reading and processing.\n");
     printf("  release.task         : Used to generate release notes\n");    
     printf("  screen.task          : Screen calibration TASK\n");
     printf("  waves.task           : Demonstration how to plot basic math\n");
-    printf("\n");
-    printf("\n");
     printf("\n");
     printf("\n");
     printf("\n");

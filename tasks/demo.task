@@ -37,18 +37,13 @@ SET $SPRITE_FRAME = 0
 
 # ====================== FUNCTIONS ========================
 
-FUNCTION FCNMOVE($X, $Y, $POSARRAY):
-  
-  SET $POSARRAY[0] = $POSARRAY[0] + $X
-  SET $POSARRAY[1] = $POSARRAY[1] + $Y
-  
-  RETURN $POSARRAY
-END
+# None
+
 
 # ======================== MAIN ===========================
 
 
-# Preload sprite assets into indexed array for reuse:
+# LOAD SPRITES INTO MEMORY:
 
 FOR ($i=0; $i<LEN($SPRITE_PATHS); $i++):
   RUN _TERM_SPRITE_LOAD -file $SPRITE_PATHS[$i] TO $SPRITES[$i]
@@ -59,7 +54,7 @@ FOR ($i=0; $i<LEN($TILE_PATHS); $i++):
 END
 
 
-# CLEAN BACKGROUND LAYER::
+# CLEAN BACKGROUND LAYER:
 
 RUN _TERM_CLEAN -x 0 -y 0 -width 320 -height 200 -layer 16
  
@@ -88,13 +83,14 @@ FOR ($i=0;$i<=320;$i=$i+20):
 END
 
 # Draw Clouds
+
 RUN _TERM_SPRITE -x 10 -y 10 -sprite $SPRITES[2] -layer 16
 RUN _TERM_SPRITE -x 180 -y 20 -sprite $SPRITES[2] -layer 16
 
 RUN _TERM_RENDER -layer 16
 
 
-# Draw Text:
+# Draw Text
 
 RUN _TERM_TEXT -x 60 -y 10 -text " --- Run Engineer, Run! --- " -color 18 -layer 10
 RUN _TERM_TEXT -x 60 -y 20 -text "  Tap the left mouse click  " -color 18 -layer 10
@@ -109,13 +105,14 @@ RUN _TERM_RENDER -layer 10
 
 
 # GAME LOOP:
+
 RUN _TIMER --stop
 RUN _TIMER --reset
 RUN _TERM_MOUSE
 
 WHILE ($X<290):
   
-  # Clean the character old position:
+  # Clean the character old position
     
   IF ($X>40):
     RUN _TERM_CLEAN -x $X-$SPRITE_OFFSET -y $Y -width 40 -height 40 -layer 8
@@ -132,7 +129,7 @@ WHILE ($X<290):
   RUN _TERM_MOUSE TO $MOUSE_EVENTS
  
   
-  # Update character position:
+  # Update character position
   
   SET $ERROR = 0
   RUN _CALC ($MOUSE_EVENTS[0] - $X) TO $ERROR
@@ -148,8 +145,8 @@ WHILE ($X<290):
   SET $X = $X + $VX
   
   
-  # Determine the active frame:
-
+  # Determine the active frame
+  
   SET $FRAME_CHANGE = 0  
   IF ($MOUSE_EVENTS[2] > 0 AND $SPRITE_FRAME == 0):
     SET $SPRITE_FRAME = 1
@@ -160,13 +157,13 @@ WHILE ($X<290):
     SET $SPRITE_FRAME = 0
   EN
   
-  # Draw the character new position:
+  # Draw the character new position
   
   RUN _TERM_SPRITE -x $X-$SPRITE_OFFSET -y $Y -sprite $SPRITES[$SPRITE_FRAME] -layer 8
   RUN _TERM_RENDER -layer 8
 
   
-  # Cap framerate:
+  # Cap framerate
   
   RUN _WAIT 66
 
@@ -189,7 +186,7 @@ RUN _WAIT 4000
 # ==================== EXIT CLEANUP =======================
 
 
-# Clear All Layers:
+# Clear All Layers
 
 FOR ($i=1;$i<17;$i++):
   RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360 -layer $i
@@ -197,7 +194,7 @@ FOR ($i=1;$i<17;$i++):
 END
 
 
-# Press ENTER to exit:
+# Press ENTER to exit
 
 SET $KEY
 INPUT $KEY

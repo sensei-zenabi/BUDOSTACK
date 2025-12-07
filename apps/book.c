@@ -347,6 +347,8 @@ static char *editorPlainText(size_t *out_len) {
         if (i + 1 < E.doc.numrows) {
             if (E.doc.softbreak[i + 1]) {
                 size_t gap = E.doc.softbreak_gap[i + 1];
+                if (gap == 0)
+                    gap = 1;
                 for (size_t g = 0; g < gap; g++)
                     buf[p++] = ' ';
             } else {

@@ -20,8 +20,6 @@ computers.
 
 Operating System: Debian Linux
 
-Internet connection is required.
-
 Hardware Requirements:
 
 - Minimum CPU Intel CORE i5
@@ -31,6 +29,8 @@ Tested distributions:
 
 - Ubuntu
 - Kubuntu
+
+Note! Internet connection is required.
 
 ### LATEST RELEASE: v0.9.06 ###
 

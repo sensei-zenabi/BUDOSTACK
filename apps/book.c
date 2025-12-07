@@ -34,9 +34,29 @@
 #define BOOK_PROMPT_MAX 256
 
 static struct termios orig_termios;
+static int alternate_screen_active = 0;
 
 static void disable_raw_mode(void) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+}
+
+static void exit_alternate_screen(void) {
+    if (!alternate_screen_active) {
+        return;
+    }
+    printf("\x1b[?1049l\x1b[?25h");
+    fflush(stdout);
+    alternate_screen_active = 0;
+}
+
+static void enter_alternate_screen(void) {
+    if (!isatty(STDOUT_FILENO)) {
+        return;
+    }
+    printf("\x1b[?1049h\x1b[2J\x1b[H");
+    fflush(stdout);
+    alternate_screen_active = 1;
+    atexit(exit_alternate_screen);
 }
 
 static void enable_raw_mode(void) {
@@ -991,6 +1011,7 @@ static void page_jump(struct BookState *state, int direction) {
 
 int main(void) {
     budostack_apply_terminal_layout();
+    enter_alternate_screen();
     enable_raw_mode();
     struct BookState state = {0};
     state.text = calloc(1, 1);

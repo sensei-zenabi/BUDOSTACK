@@ -204,10 +204,10 @@ static void editorSetStatus(const char *fmt, ...) {
 static void editorUpdateLayout(void) {
     if (E.screencols < 10)
         E.screencols = 10;
-    if (E.screenrows < 5)
-        E.screenrows = 5;
+    if (E.screenrows < 6)
+        E.screenrows = 6;
 
-    E.textrows = E.screenrows - 2;
+    E.textrows = E.screenrows - 3;
     int target_width = E.screencols - 6;
     int target_height = E.textrows - 2;
 
@@ -382,23 +382,35 @@ static void editorScroll(void) {
 static void editorRefreshScreen(void) {
     editorScroll();
 
+    const char *bar_bg = "\x1b[48;5;236m";
+    const char *bar_reset = "\x1b[0m";
+
     struct abuf ab = ABUF_INIT;
     abAppend(&ab, "\x1b[?25l", 6);
     abAppend(&ab, "\x1b[H", 3);
 
-    /* Top bar */
-    char top[256];
-    snprintf(top, sizeof(top), "Book|C-N New C-O Open C-S Save C-G SaveAs C-F Find/Rpl C-C Copy C-V Paste|Pg %s",
+    /* Top bar (two rows) */
+    char top1[256];
+    char top2[256];
+    snprintf(top1, sizeof(top1), " Book  C-N New  C-O Open  C-S Save  C-G SaveAs  C-Q Quit ");
+    snprintf(top2, sizeof(top2), " C-F Find/Rpl  C-R Replace  C-C Copy  C-V Paste  C-] Page %s ",
              (E.page_size == PAGE_A4 ? "A4" : (E.page_size == PAGE_A5 ? "A5" : "A6")));
-    int top_len = (int)strlen(top);
-    if (top_len > E.screencols)
-        top_len = E.screencols;
-    abAppend(&ab, top, (size_t)top_len);
-    if (top_len < E.screencols) {
-        for (int i = top_len; i < E.screencols; i++)
-            abAppend(&ab, " ", 1);
+
+    const char *tops[2] = {top1, top2};
+    for (int i = 0; i < 2; i++) {
+        int top_len = (int)strlen(tops[i]);
+        if (top_len > E.screencols)
+            top_len = E.screencols;
+
+        abAppend(&ab, bar_bg, strlen(bar_bg));
+        abAppend(&ab, tops[i], (size_t)top_len);
+        if (top_len < E.screencols) {
+            for (int j = top_len; j < E.screencols; j++)
+                abAppend(&ab, " ", 1);
+        }
+        abAppend(&ab, bar_reset, strlen(bar_reset));
+        abAppend(&ab, "\r\n", 2);
     }
-    abAppend(&ab, "\r\n", 2);
 
     for (int y = 0; y < E.textrows; y++) {
         int file_row = E.rowoff + y;
@@ -473,14 +485,16 @@ static void editorRefreshScreen(void) {
     int bottom_len = (int)strlen(bottom);
     if (bottom_len > E.screencols)
         bottom_len = E.screencols;
+    abAppend(&ab, bar_bg, strlen(bar_bg));
     abAppend(&ab, bottom, (size_t)bottom_len);
     if (bottom_len < E.screencols) {
         for (int i = bottom_len; i < E.screencols; i++)
             abAppend(&ab, " ", 1);
     }
+    abAppend(&ab, bar_reset, strlen(bar_reset));
 
     int cursor_x = E.margin_left + (E.cx - E.coloff) + 1;
-    int cursor_y = (E.cy - E.rowoff) + 2;
+    int cursor_y = (E.cy - E.rowoff) + 3;
     abAppend(&ab, "\x1b[H", 3);
     char buf[32];
     snprintf(buf, sizeof(buf), "\x1b[%d;%dH", cursor_y, cursor_x);

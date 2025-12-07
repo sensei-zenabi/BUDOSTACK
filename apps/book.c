@@ -73,8 +73,23 @@ static size_t page_text_width = 60;
 static PageSize current_page = PAGE_A4;
 static char status_msg[128] = "";
 static char filename[256] = "untitled.bk";
-static int screen_rows = 44;
-static int screen_cols = 79;
+/*
+ * The book layout is tuned for a slightly smaller surface than the global
+ * terminal defaults so the centered page fits cleanly when running inside the
+ * SDL-based apps/terminal emulator (which targets BUDOSTACK_TARGET_COLS x
+ * BUDOSTACK_TARGET_ROWS). Derive the writer's target from those values to stay
+ * aligned when the terminal grid changes.
+ */
+#ifndef BOOK_TARGET_COLS
+#define BOOK_TARGET_COLS (BUDOSTACK_TARGET_COLS - 1)
+#endif
+
+#ifndef BOOK_TARGET_ROWS
+#define BOOK_TARGET_ROWS (BUDOSTACK_TARGET_ROWS - 1)
+#endif
+
+static int screen_rows = BOOK_TARGET_ROWS;
+static int screen_cols = BOOK_TARGET_COLS;
 static int text_rows = 40;
 static int top_rows = 2;
 static int bottom_rows = 1;
@@ -110,17 +125,17 @@ static void enable_raw_mode(void) {
 static void clamp_layout(void) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        screen_cols = 79;
-        screen_rows = 44;
+        screen_cols = BOOK_TARGET_COLS;
+        screen_rows = BOOK_TARGET_ROWS;
     } else {
         screen_cols = ws.ws_col;
         screen_rows = ws.ws_row;
     }
     budostack_clamp_terminal_size(&screen_rows, &screen_cols);
-    if (screen_cols > 79)
-        screen_cols = 79;
-    if (screen_rows > 44)
-        screen_rows = 44;
+    if (screen_cols > BOOK_TARGET_COLS)
+        screen_cols = BOOK_TARGET_COLS;
+    if (screen_rows > BOOK_TARGET_ROWS)
+        screen_rows = BOOK_TARGET_ROWS;
     text_rows = screen_rows - top_rows - bottom_rows - prompt_rows;
     if (text_rows < 5)
         text_rows = 5;

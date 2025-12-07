@@ -98,6 +98,10 @@ static struct EditorState E;
 static char *clipboard;
 static size_t clipboard_len;
 
+static void editorInsertRow(int at, const char *s, size_t len);
+static size_t editorCursorOffset(void);
+static void editorRestoreCursor(size_t offset);
+
 static int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
@@ -232,6 +236,68 @@ static void editorUpdateLayout(void) {
         E.margin_left = 0;
 }
 
+static void editorWrapLine(int row) {
+    while (row < E.doc.numrows) {
+        size_t len = E.doc.rowlen[row];
+        if ((int)len <= E.page_width || len == 0)
+            return;
+
+        int wrap = E.page_width;
+        for (int i = wrap; i > 0; i--) {
+            if (E.doc.rows[row][(size_t)i - 1] == ' ') {
+                wrap = i;
+                break;
+            }
+        }
+
+        int split = wrap;
+        while (split > 0 && E.doc.rows[row][(size_t)split - 1] == ' ')
+            split--;
+
+        size_t new_start = (size_t)wrap;
+        while (new_start < len && E.doc.rows[row][new_start] == ' ')
+            new_start++;
+
+        size_t tail_len = len - new_start;
+        char *tail = malloc(tail_len + 1);
+        if (tail == NULL)
+            return;
+        memcpy(tail, &E.doc.rows[row][new_start], tail_len);
+        tail[tail_len] = '\0';
+
+        E.doc.rowlen[row] = (size_t)split;
+        E.doc.rows[row][split] = '\0';
+
+        editorInsertRow(row + 1, tail, tail_len);
+        free(tail);
+        E.dirty = true;
+
+        if (E.cy == row) {
+            if (E.cx > split) {
+                int shift = (int)new_start;
+                E.cy = row + 1;
+                E.cx = E.cx - shift;
+                if (E.cx < 0)
+                    E.cx = 0;
+                if (E.cx > (int)E.doc.rowlen[E.cy])
+                    E.cx = (int)E.doc.rowlen[E.cy];
+            }
+        } else if (E.cy > row) {
+            E.cy++;
+        }
+
+        row++;
+    }
+}
+
+static void editorWrapDocument(void) {
+    size_t offset = editorCursorOffset();
+    for (int i = 0; i < E.doc.numrows; i++)
+        editorWrapLine(i);
+    editorRestoreCursor(offset);
+    E.coloff = 0;
+}
+
 static void systemClipboardWrite(const char *s) {
     if (s == NULL)
         return;
@@ -276,6 +342,32 @@ static char *systemClipboardRead(void) {
     return buf;
 }
 
+static size_t editorCursorOffset(void) {
+    size_t offset = 0;
+    for (int i = 0; i < E.cy && i < E.doc.numrows; i++)
+        offset += E.doc.rowlen[i] + 1;
+    offset += (size_t)E.cx;
+    return offset;
+}
+
+static void editorRestoreCursor(size_t offset) {
+    int row = 0;
+    while (row < E.doc.numrows) {
+        size_t row_span = E.doc.rowlen[row] + 1;
+        if (offset < row_span) {
+            E.cy = row;
+            if (offset > E.doc.rowlen[row])
+                offset = E.doc.rowlen[row];
+            E.cx = (int)offset;
+            return;
+        }
+        offset -= row_span;
+        row++;
+    }
+    E.cy = E.doc.numrows ? E.doc.numrows - 1 : 0;
+    E.cx = (E.cy < E.doc.numrows) ? (int)E.doc.rowlen[E.cy] : 0;
+}
+
 static void editorScroll(void) {
     if (E.cy < E.rowoff) {
         E.rowoff = E.cy;
@@ -284,14 +376,7 @@ static void editorScroll(void) {
         E.rowoff = E.cy - E.textrows + 1;
     }
 
-    int visible_width = E.page_width;
-    int cursor_screen_x = E.cx - E.coloff;
-    if (cursor_screen_x < 0) {
-        E.coloff = E.cx;
-    }
-    if (cursor_screen_x >= visible_width) {
-        E.coloff = E.cx - visible_width + 1;
-    }
+    E.coloff = 0;
 }
 
 static void editorRefreshScreen(void) {
@@ -303,7 +388,7 @@ static void editorRefreshScreen(void) {
 
     /* Top bar */
     char top[256];
-    snprintf(top, sizeof(top), " Book (Typewriter) | Ctrl-N New | Ctrl-O Open | Ctrl-S Save | Ctrl-G Save As | Ctrl-F Find | Ctrl-R Replace | Ctrl-C Copy line | Ctrl-V Paste | Ctrl-] Page %s \xE2\x80\xA2 Arrows move",
+    snprintf(top, sizeof(top), "Book|C-N New C-O Open C-S Save C-G SaveAs C-F Find/Rpl C-C Copy C-V Paste|Pg %s",
              (E.page_size == PAGE_A4 ? "A4" : (E.page_size == PAGE_A5 ? "A5" : "A6")));
     int top_len = (int)strlen(top);
     if (top_len > E.screencols)
@@ -494,6 +579,7 @@ static void editorInsertChar(int c) {
         editorInsertRow(E.doc.numrows, "", 0);
     editorRowInsertChar(E.cy, c, E.cx);
     E.cx++;
+    editorWrapLine(E.cy);
 }
 
 static void editorInsertNewline(void) {
@@ -524,6 +610,7 @@ static void editorDelChar(void) {
         editorDelRow(E.cy);
         E.cy--;
     }
+    editorWrapLine(E.cy);
 }
 
 static void editorInsertString(const char *s) {
@@ -621,6 +708,7 @@ static void editorOpen(const char *filename) {
     }
     free(line);
     fclose(fp);
+    editorWrapDocument();
     E.dirty = false;
     E.cx = 0;
     E.cy = 0;
@@ -822,6 +910,7 @@ static void editorReplace(void) {
 
     if (hits > 0) {
         E.dirty = true;
+        editorWrapDocument();
         editorSetStatus("Replaced %d line(s)", hits);
     } else {
         editorSetStatus("No matches for '%s'", find);
@@ -870,6 +959,7 @@ static void editorCyclePageSize(void) {
     else
         E.page_size = (enum PageSize)(E.page_size + 1);
     editorUpdateLayout();
+    editorWrapDocument();
     editorSetStatus("Page set to %s", E.page_size == PAGE_A4 ? "A4" : (E.page_size == PAGE_A5 ? "A5" : "A6"));
 }
 

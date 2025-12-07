@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <time.h>
@@ -67,6 +68,8 @@ enum PageSize {
 struct Document {
     char **rows;
     size_t *rowlen;
+    bool *softbreak;
+    unsigned char *softbreak_gap;
     int numrows;
 };
 
@@ -119,9 +122,13 @@ static size_t redo_cap;
 
 #define HISTORY_LIMIT 200
 
+static void editorInsertRowInternal(struct Document *doc, int at, const char *s, size_t len, bool soft, unsigned char gap);
 static void editorInsertRow(int at, const char *s, size_t len);
 static size_t editorCursorOffset(void);
 static void editorRestoreCursor(size_t offset);
+static char *editorPlainText(size_t *out_len);
+static void freeDocument(struct Document *doc);
+static int editorPrompt(const char *message, char *buf, size_t buflen);
 
 static int getWindowSize(int *rows, int *cols) {
     struct winsize ws;
@@ -289,7 +296,13 @@ static void editorWrapLine(int row) {
         E.doc.rowlen[row] = (size_t)split;
         E.doc.rows[row][split] = '\0';
 
-        editorInsertRow(row + 1, tail, tail_len);
+        unsigned char gap = 0;
+        if (new_start > (size_t)split) {
+            size_t diff = new_start - (size_t)split;
+            gap = diff > 255 ? 255 : (unsigned char)diff;
+        }
+
+        editorInsertRowInternal(&E.doc, row + 1, tail, tail_len, true, gap);
         free(tail);
         E.dirty = true;
 
@@ -311,10 +324,104 @@ static void editorWrapLine(int row) {
     }
 }
 
+static char *editorPlainText(size_t *out_len) {
+    size_t total = 0;
+    for (int i = 0; i < E.doc.numrows; i++) {
+        total += E.doc.rowlen[i];
+        if (i + 1 < E.doc.numrows) {
+            if (E.doc.softbreak[i + 1])
+                total += E.doc.softbreak_gap[i + 1];
+            else
+                total++;
+        }
+    }
+
+    char *buf = malloc(total + 1);
+    if (buf == NULL)
+        return NULL;
+
+    size_t p = 0;
+    for (int i = 0; i < E.doc.numrows; i++) {
+        memcpy(&buf[p], E.doc.rows[i], E.doc.rowlen[i]);
+        p += E.doc.rowlen[i];
+        if (i + 1 < E.doc.numrows) {
+            if (E.doc.softbreak[i + 1]) {
+                size_t gap = E.doc.softbreak_gap[i + 1];
+                for (size_t g = 0; g < gap; g++)
+                    buf[p++] = ' ';
+            } else {
+                buf[p++] = '\n';
+            }
+        }
+    }
+    buf[p] = '\0';
+    if (out_len != NULL)
+        *out_len = p;
+    return buf;
+}
+
+static void appendWrappedLines(struct Document *doc, const char *text, size_t len) {
+    size_t start = 0;
+    bool first_line = true;
+    while (start < len) {
+        size_t remaining = len - start;
+        if ((int)remaining <= E.page_width) {
+            editorInsertRowInternal(doc, doc->numrows, &text[start], remaining, !first_line, 0);
+            break;
+        }
+
+        size_t wrap_at = start + (size_t)E.page_width;
+        size_t candidate = wrap_at;
+        while (candidate > start && text[candidate - 1] != ' ')
+            candidate--;
+        if (candidate == start)
+            candidate = wrap_at;
+
+        size_t split = candidate;
+        while (split > start && text[split - 1] == ' ')
+            split--;
+
+        size_t new_start = candidate;
+        while (new_start < len && text[new_start] == ' ')
+            new_start++;
+
+        unsigned char gap = 0;
+        if (new_start > split) {
+            size_t diff = new_start - split;
+            gap = diff > 255 ? 255 : (unsigned char)diff;
+        }
+
+        editorInsertRowInternal(doc, doc->numrows, &text[start], split - start, !first_line, gap);
+        start = new_start;
+        first_line = false;
+    }
+}
+
 static void editorWrapDocument(void) {
+    size_t plain_len = 0;
+    char *plain = editorPlainText(&plain_len);
+    if (plain == NULL)
+        return;
+
     size_t offset = editorCursorOffset();
-    for (int i = 0; i < E.doc.numrows; i++)
-        editorWrapLine(i);
+
+    struct Document newdoc = {0};
+    int row_start = 0;
+    for (size_t i = 0; i <= plain_len; i++) {
+        if (i == plain_len || plain[i] == '\n') {
+            size_t seg_len = i - (size_t)row_start;
+            if (seg_len == 0)
+                editorInsertRowInternal(&newdoc, newdoc.numrows, "", 0, false, 0);
+            else
+                appendWrappedLines(&newdoc, &plain[row_start], seg_len);
+            row_start = (int)i + 1;
+        }
+    }
+
+    free(plain);
+    freeDocument(&E.doc);
+    E.doc = newdoc;
+
     editorRestoreCursor(offset);
     E.coloff = 0;
 }
@@ -365,8 +472,15 @@ static char *systemClipboardRead(void) {
 
 static size_t editorCursorOffset(void) {
     size_t offset = 0;
-    for (int i = 0; i < E.cy && i < E.doc.numrows; i++)
-        offset += E.doc.rowlen[i] + 1;
+    for (int i = 0; i < E.cy && i < E.doc.numrows; i++) {
+        offset += E.doc.rowlen[i];
+        if (i + 1 < E.doc.numrows) {
+            if (E.doc.softbreak[i + 1])
+                offset += E.doc.softbreak_gap[i + 1];
+            else
+                offset++;
+        }
+    }
     offset += (size_t)E.cx;
     return offset;
 }
@@ -374,8 +488,14 @@ static size_t editorCursorOffset(void) {
 static void editorRestoreCursor(size_t offset) {
     int row = 0;
     while (row < E.doc.numrows) {
-        size_t row_span = E.doc.rowlen[row] + 1;
-        if (offset < row_span) {
+        size_t row_span = E.doc.rowlen[row];
+        if (row + 1 < E.doc.numrows) {
+            if (E.doc.softbreak[row + 1])
+                row_span += E.doc.softbreak_gap[row + 1];
+            else
+                row_span += 1u;
+        }
+        if (offset <= row_span) {
             E.cy = row;
             if (offset > E.doc.rowlen[row])
                 offset = E.doc.rowlen[row];
@@ -396,8 +516,12 @@ static void freeDocument(struct Document *doc) {
         free(doc->rows[i]);
     free(doc->rows);
     free(doc->rowlen);
+    free(doc->softbreak);
+    free(doc->softbreak_gap);
     doc->rows = NULL;
     doc->rowlen = NULL;
+    doc->softbreak = NULL;
+    doc->softbreak_gap = NULL;
     doc->numrows = 0;
 }
 
@@ -405,30 +529,44 @@ static int copyDocument(const struct Document *src, struct Document *dest) {
     dest->numrows = src->numrows;
     dest->rows = NULL;
     dest->rowlen = NULL;
+    dest->softbreak = NULL;
+    dest->softbreak_gap = NULL;
     if (src->numrows == 0)
         return 0;
 
     dest->rows = malloc(sizeof(char *) * (size_t)src->numrows);
     dest->rowlen = malloc(sizeof(size_t) * (size_t)src->numrows);
-    if (dest->rows == NULL || dest->rowlen == NULL) {
+    dest->softbreak = malloc(sizeof(bool) * (size_t)src->numrows);
+    dest->softbreak_gap = malloc(sizeof(unsigned char) * (size_t)src->numrows);
+    if (dest->rows == NULL || dest->rowlen == NULL || dest->softbreak == NULL || dest->softbreak_gap == NULL) {
         free(dest->rows);
         free(dest->rowlen);
+        free(dest->softbreak);
+        free(dest->softbreak_gap);
         dest->rows = NULL;
         dest->rowlen = NULL;
+        dest->softbreak = NULL;
+        dest->softbreak_gap = NULL;
         dest->numrows = 0;
         return -1;
     }
 
     for (int i = 0; i < src->numrows; i++) {
         dest->rowlen[i] = src->rowlen[i];
+        dest->softbreak[i] = src->softbreak[i];
+        dest->softbreak_gap[i] = src->softbreak_gap[i];
         dest->rows[i] = malloc(dest->rowlen[i] + 1);
         if (dest->rows[i] == NULL) {
             for (int j = 0; j < i; j++)
                 free(dest->rows[j]);
             free(dest->rows);
             free(dest->rowlen);
+            free(dest->softbreak);
+            free(dest->softbreak_gap);
             dest->rows = NULL;
             dest->rowlen = NULL;
+            dest->softbreak = NULL;
+            dest->softbreak_gap = NULL;
             dest->numrows = 0;
             return -1;
         }
@@ -499,6 +637,8 @@ static void editorApplySnapshot(struct HistoryEntry *entry) {
     E.doc = entry->doc;
     entry->doc.rows = NULL;
     entry->doc.rowlen = NULL;
+    entry->doc.softbreak = NULL;
+    entry->doc.softbreak_gap = NULL;
     entry->doc.numrows = 0;
     E.cx = entry->cx;
     E.cy = entry->cy;
@@ -574,7 +714,7 @@ static void editorScroll(void) {
 static void editorRefreshScreen(void) {
     editorScroll();
 
-    const char *bar_bg = "\x1b[48;5;17m";
+    const char *bar_bg = "\x1b[0;48;5;17m";
     const char *bar_reset = "\x1b[0m";
 
     struct abuf ab = ABUF_INIT;
@@ -584,7 +724,7 @@ static void editorRefreshScreen(void) {
     /* Top bar (two rows) */
     char top1[256];
     char top2[256];
-    snprintf(top1, sizeof(top1), " Book  C-N New  C-O Open  C-S Save  C-G SaveAs  C-Q Quit ");
+    snprintf(top1, sizeof(top1), " Book  C-N New  C-O Open  C-S Save  C-G SaveAs  C-E Export  C-Q Quit ");
     snprintf(top2, sizeof(top2), " C-F Find  C-R Rplc  C-C Copy  C-V Paste  C-P Page %s  C-Z Undo  C-Y Redo ",
              (E.page_size == PAGE_A4 ? "A4" : (E.page_size == PAGE_A5 ? "A5" : "A6")));
 
@@ -658,6 +798,11 @@ static void editorRefreshScreen(void) {
                 in_word = true;
             }
         }
+        if (i + 1 < E.doc.numrows && E.doc.softbreak[i + 1] && E.doc.softbreak_gap[i + 1] > 0) {
+            if (in_word)
+                words++;
+            in_word = false;
+        }
         if (in_word)
             words++;
     }
@@ -701,29 +846,42 @@ static void editorRefreshScreen(void) {
     abFree(&ab);
 }
 
+static void editorInsertRowInternal(struct Document *doc, int at, const char *s, size_t len, bool soft, unsigned char gap) {
+    if (at < 0 || at > doc->numrows)
+        return;
+
+    char **new_rows = realloc(doc->rows, sizeof(char *) * (size_t)(doc->numrows + 1));
+    size_t *new_rowlen = realloc(doc->rowlen, sizeof(size_t) * (size_t)(doc->numrows + 1));
+    bool *new_soft = realloc(doc->softbreak, sizeof(bool) * (size_t)(doc->numrows + 1));
+    unsigned char *new_gap = realloc(doc->softbreak_gap, sizeof(unsigned char) * (size_t)(doc->numrows + 1));
+    if (new_rows == NULL || new_rowlen == NULL || new_soft == NULL || new_gap == NULL)
+        return;
+
+    doc->rows = new_rows;
+    doc->rowlen = new_rowlen;
+    doc->softbreak = new_soft;
+    doc->softbreak_gap = new_gap;
+
+    memmove(&doc->rows[at + 1], &doc->rows[at], sizeof(char *) * (size_t)(doc->numrows - at));
+    memmove(&doc->rowlen[at + 1], &doc->rowlen[at], sizeof(size_t) * (size_t)(doc->numrows - at));
+    memmove(&doc->softbreak[at + 1], &doc->softbreak[at], sizeof(bool) * (size_t)(doc->numrows - at));
+    memmove(&doc->softbreak_gap[at + 1], &doc->softbreak_gap[at], sizeof(unsigned char) * (size_t)(doc->numrows - at));
+
+    doc->rows[at] = malloc(len + 1);
+    if (doc->rows[at] == NULL)
+        return;
+    memcpy(doc->rows[at], s, len);
+    doc->rows[at][len] = '\0';
+    doc->rowlen[at] = len;
+    doc->softbreak[at] = soft;
+    doc->softbreak_gap[at] = gap;
+    doc->numrows++;
+    if (doc == &E.doc)
+        E.dirty = true;
+}
+
 static void editorInsertRow(int at, const char *s, size_t len) {
-    if (at < 0 || at > E.doc.numrows)
-        return;
-
-    char **new_rows = realloc(E.doc.rows, sizeof(char *) * (size_t)(E.doc.numrows + 1));
-    size_t *new_rowlen = realloc(E.doc.rowlen, sizeof(size_t) * (size_t)(E.doc.numrows + 1));
-    if (new_rows == NULL || new_rowlen == NULL)
-        return;
-
-    E.doc.rows = new_rows;
-    E.doc.rowlen = new_rowlen;
-
-    memmove(&E.doc.rows[at + 1], &E.doc.rows[at], sizeof(char *) * (size_t)(E.doc.numrows - at));
-    memmove(&E.doc.rowlen[at + 1], &E.doc.rowlen[at], sizeof(size_t) * (size_t)(E.doc.numrows - at));
-
-    E.doc.rows[at] = malloc(len + 1);
-    if (E.doc.rows[at] == NULL)
-        return;
-    memcpy(E.doc.rows[at], s, len);
-    E.doc.rows[at][len] = '\0';
-    E.doc.rowlen[at] = len;
-    E.doc.numrows++;
-    E.dirty = true;
+    editorInsertRowInternal(&E.doc, at, s, len, false, 0);
 }
 
 static void editorFreeRow(int at) {
@@ -738,6 +896,8 @@ static void editorDelRow(int at) {
     editorFreeRow(at);
     memmove(&E.doc.rows[at], &E.doc.rows[at + 1], sizeof(char *) * (size_t)(E.doc.numrows - at - 1));
     memmove(&E.doc.rowlen[at], &E.doc.rowlen[at + 1], sizeof(size_t) * (size_t)(E.doc.numrows - at - 1));
+    memmove(&E.doc.softbreak[at], &E.doc.softbreak[at + 1], sizeof(bool) * (size_t)(E.doc.numrows - at - 1));
+    memmove(&E.doc.softbreak_gap[at], &E.doc.softbreak_gap[at + 1], sizeof(unsigned char) * (size_t)(E.doc.numrows - at - 1));
     E.doc.numrows--;
     E.dirty = true;
 }
@@ -872,7 +1032,7 @@ static void editorPasteClipboard(void) {
     editorSetStatus("Pasted clipboard (%zu byte%s)", clipboard_len, clipboard_len == 1 ? "" : "s");
 }
 
-static char *editorRowsToString(int *buflen) {
+static char *editorWrappedRowsToString(int *buflen) {
     size_t totlen = 0;
     for (int i = 0; i < E.doc.numrows; i++)
         totlen += E.doc.rowlen[i] + 1;
@@ -891,6 +1051,33 @@ static char *editorRowsToString(int *buflen) {
     return buf;
 }
 
+static enum PageSize editorParsePage(const char *v) {
+    if (strcasecmp(v, "A4") == 0)
+        return PAGE_A4;
+    if (strcasecmp(v, "A5") == 0)
+        return PAGE_A5;
+    return PAGE_A6;
+}
+
+static void editorLoadPlainText(const char *text, size_t len) {
+    freeDocument(&E.doc);
+    size_t start = 0;
+    for (size_t i = 0; i <= len; i++) {
+        if (i == len || text[i] == '\n') {
+            size_t seg = i - start;
+            editorInsertRow(E.doc.numrows, &text[start], seg);
+            start = i + 1;
+        }
+    }
+    if (E.doc.numrows == 0)
+        editorInsertRow(0, "", 0);
+    editorWrapDocument();
+    E.dirty = false;
+    E.cx = 0;
+    E.cy = 0;
+    E.rowoff = 0;
+}
+
 static void editorOpen(const char *filename) {
     FILE *fp = fopen(filename, "r");
     if (!fp) {
@@ -904,22 +1091,50 @@ static void editorOpen(const char *filename) {
     free(E.filename);
     E.filename = strdup(filename);
 
-    freeDocument(&E.doc);
-
-    char *line = NULL;
-    size_t cap = 0;
-    ssize_t len;
-    while ((len = getline(&line, &cap, fp)) != -1) {
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
-            len--;
-        editorInsertRow(E.doc.numrows, line, (size_t)len);
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        editorSetStatus("Open failed");
+        return;
     }
-    free(line);
+    long sz = ftell(fp);
+    if (sz < 0) {
+        fclose(fp);
+        editorSetStatus("Open failed");
+        return;
+    }
+    rewind(fp);
+
+    char *buf = malloc((size_t)sz + 1u);
+    if (buf == NULL) {
+        fclose(fp);
+        editorSetStatus("Open failed");
+        return;
+    }
+    size_t read_len = fread(buf, 1, (size_t)sz, fp);
     fclose(fp);
-    editorWrapDocument();
-    E.dirty = false;
-    E.cx = 0;
-    E.cy = 0;
+    buf[read_len] = '\0';
+
+    if (read_len >= 4 && strncmp(buf, "BK1\n", 4) == 0) {
+        char *page_line = strchr(buf + 4, '\n');
+        if (page_line != NULL && page_line - buf > 4 && strncmp(buf + 4, "page:", 5) == 0) {
+            *page_line = '\0';
+            E.page_size = editorParsePage(buf + 9);
+            editorUpdateLayout();
+            char *content = page_line + 1;
+            if (*content == '\n')
+                content++;
+            size_t content_len = read_len - (size_t)(content - buf);
+            editorLoadPlainText(content, content_len);
+        } else {
+            editorUpdateLayout();
+            editorLoadPlainText(buf + 4, read_len - 4);
+        }
+    } else {
+        editorUpdateLayout();
+        editorLoadPlainText(buf, read_len);
+    }
+
+    free(buf);
     editorSetStatus("Loaded %s", filename);
     if (snapshot_ok) {
         editorClearRedo();
@@ -928,71 +1143,152 @@ static void editorOpen(const char *filename) {
     }
 }
 
+static bool has_bk_extension(const char *name) {
+    size_t len = strlen(name);
+    return len >= 3 && strcasecmp(&name[len - 3], ".bk") == 0;
+}
+
+static char *ensure_bk_extension(const char *name) {
+    if (has_bk_extension(name))
+        return strdup(name);
+    size_t len = strlen(name);
+    char *out = malloc(len + 4);
+    if (out == NULL)
+        return NULL;
+    memcpy(out, name, len);
+    memcpy(out + len, ".bk", 4);
+    return out;
+}
+
 static void editorSave(void) {
     if (E.filename == NULL) {
         editorSetStatus("Save: enter filename with Ctrl-G");
         return;
     }
 
-    int len = 0;
-    char *buf = editorRowsToString(&len);
-    if (buf == NULL) {
+    char *target = ensure_bk_extension(E.filename);
+    if (target == NULL) {
         editorSetStatus("Save failed");
         return;
     }
 
-    int fd = open(E.filename, O_RDWR | O_CREAT, 0644);
+    size_t plain_len = 0;
+    char *plain = editorPlainText(&plain_len);
+    if (plain == NULL) {
+        free(target);
+        editorSetStatus("Save failed");
+        return;
+    }
+
+    const char *page = (E.page_size == PAGE_A4 ? "A4" : (E.page_size == PAGE_A5 ? "A5" : "A6"));
+    char header[64];
+    int header_len = snprintf(header, sizeof(header), "BK1\npage:%s\n\n", page);
+    if (header_len < 0 || header_len >= (int)sizeof(header)) {
+        free(target);
+        free(plain);
+        editorSetStatus("Save failed");
+        return;
+    }
+
+    size_t total_len = (size_t)header_len + plain_len;
+    char *buf = malloc(total_len);
+    if (buf == NULL) {
+        free(target);
+        free(plain);
+        editorSetStatus("Save failed");
+        return;
+    }
+    memcpy(buf, header, (size_t)header_len);
+    memcpy(buf + header_len, plain, plain_len);
+    free(plain);
+
+    int fd = open(target, O_RDWR | O_CREAT, 0644);
     if (fd != -1) {
         if (ftruncate(fd, 0) != -1) {
-            if (write(fd, buf, (size_t)len) == len) {
+            if (write(fd, buf, total_len) == (ssize_t)total_len) {
                 close(fd);
                 free(buf);
+                free(E.filename);
+                E.filename = target;
                 E.dirty = false;
-                editorSetStatus("Saved %s (%d bytes)", E.filename, len);
+                editorSetStatus("Saved %s (%zu bytes)", E.filename, total_len);
                 return;
             }
         }
         close(fd);
     }
+    free(target);
     free(buf);
     editorSetStatus("Save failed: %s", strerror(errno));
 }
 
 static void editorSaveAs(void) {
-    char prompt[64] = "Save as: ";
     char name[128] = "";
-
-    while (true) {
-        editorRefreshScreen();
-        write(STDOUT_FILENO, "\x1b[s", 4);
-        write(STDOUT_FILENO, "\x1b[H", 3);
-        write(STDOUT_FILENO, prompt, strlen(prompt));
-        write(STDOUT_FILENO, name, strlen(name));
-        write(STDOUT_FILENO, "\x1b[u", 4);
-
-        int c = editorReadKey();
-        if (c == '\r') {
-            if (strlen(name) > 0)
-                break;
-        } else if (c == '\x1b') {
-            editorSetStatus("Save as canceled");
-            return;
-        } else if (c == BACKSPACE || c == CTRL_KEY('h')) {
-            size_t len = strlen(name);
-            if (len > 0)
-                name[len - 1] = '\0';
-        } else if (!iscntrl(c) && c < 128) {
-            size_t len = strlen(name);
-            if (len + 1 < sizeof(name)) {
-                name[len] = (char)c;
-                name[len + 1] = '\0';
-            }
-        }
+    if (editorPrompt("Save as: ", name, sizeof(name)) == -1) {
+        editorSetStatus("Save as canceled");
+        return;
     }
 
     free(E.filename);
-    E.filename = strdup(name);
-    editorSave();
+    E.filename = ensure_bk_extension(name);
+    if (E.filename != NULL)
+        editorSave();
+    else
+        editorSetStatus("Save failed");
+}
+
+static char *editorExportName(void) {
+    if (E.filename == NULL)
+        return NULL;
+    size_t len = strlen(E.filename);
+    if (has_bk_extension(E.filename))
+        len -= 3;
+    char *out = malloc(len + 5);
+    if (out == NULL)
+        return NULL;
+    memcpy(out, E.filename, len);
+    memcpy(out + len, ".txt", 5);
+    return out;
+}
+
+static void editorExportText(void) {
+    if (E.filename == NULL) {
+        editorSetStatus("Name the book before export");
+        return;
+    }
+
+    editorWrapDocument();
+    int len = 0;
+    char *buf = editorWrappedRowsToString(&len);
+    if (buf == NULL) {
+        editorSetStatus("Export failed");
+        return;
+    }
+
+    char *txtname = editorExportName();
+    if (txtname == NULL) {
+        free(buf);
+        editorSetStatus("Export failed");
+        return;
+    }
+
+    int fd = open(txtname, O_RDWR | O_CREAT, 0644);
+    if (fd != -1) {
+        ssize_t written = -1;
+        if (ftruncate(fd, 0) != -1)
+            written = write(fd, buf, (size_t)len);
+        if (written == (ssize_t)len) {
+            close(fd);
+            free(buf);
+            editorSetStatus("Exported %s", txtname);
+            free(txtname);
+            return;
+        }
+        close(fd);
+    }
+    free(txtname);
+    free(buf);
+    editorSetStatus("Export failed: %s", strerror(errno));
 }
 
 static void editorNewFile(void) {
@@ -1014,6 +1310,13 @@ static int editorPrompt(const char *message, char *buf, size_t buflen) {
     snprintf(E.prompt_line, sizeof(E.prompt_line), "%s", message);
     while (true) {
         editorRefreshScreen();
+        char prompt_pos[32];
+        int line = E.screenrows - 1;
+        snprintf(prompt_pos, sizeof(prompt_pos), "\x1b[%d;1H", line);
+        write(STDOUT_FILENO, prompt_pos, strlen(prompt_pos));
+        write(STDOUT_FILENO, "\x1b[2K", 4);
+        write(STDOUT_FILENO, message, strlen(message));
+        write(STDOUT_FILENO, buf, strlen(buf));
         int c = editorReadKey();
         if (c == '\r') {
             if (len > 0) {
@@ -1231,7 +1534,6 @@ static void initEditor(void) {
     E.screencols = cols;
     editorUpdateLayout();
     editorInsertRow(0, "", 0);
-    editorSetStatus("Ctrl-P cycles page sizes; Ctrl-Q quits");
 }
 
 static void editorProcessKeypress(void) {
@@ -1246,6 +1548,9 @@ static void editorProcessKeypress(void) {
             break;
         case CTRL_KEY('s'):
             editorSave();
+            break;
+        case CTRL_KEY('e'):
+            editorExportText();
             break;
         case CTRL_KEY('g'):
             editorSaveAs();

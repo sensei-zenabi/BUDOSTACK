@@ -92,11 +92,32 @@ struct EditorState {
     struct termios orig_termios;
     struct Document doc;
     bool running;
+
+    bool prompt_active;
+    char prompt_line[128];
 };
 
 static struct EditorState E;
 static char *clipboard;
 static size_t clipboard_len;
+
+struct HistoryEntry {
+    struct Document doc;
+    int cx;
+    int cy;
+    int rowoff;
+    enum PageSize page_size;
+    bool dirty;
+};
+
+static struct HistoryEntry *undo_stack;
+static size_t undo_len;
+static size_t undo_cap;
+static struct HistoryEntry *redo_stack;
+static size_t redo_len;
+static size_t redo_cap;
+
+#define HISTORY_LIMIT 200
 
 static void editorInsertRow(int at, const char *s, size_t len);
 static size_t editorCursorOffset(void);
@@ -368,6 +389,177 @@ static void editorRestoreCursor(size_t offset) {
     E.cx = (E.cy < E.doc.numrows) ? (int)E.doc.rowlen[E.cy] : 0;
 }
 
+static void freeDocument(struct Document *doc) {
+    if (doc == NULL)
+        return;
+    for (int i = 0; i < doc->numrows; i++)
+        free(doc->rows[i]);
+    free(doc->rows);
+    free(doc->rowlen);
+    doc->rows = NULL;
+    doc->rowlen = NULL;
+    doc->numrows = 0;
+}
+
+static int copyDocument(const struct Document *src, struct Document *dest) {
+    dest->numrows = src->numrows;
+    dest->rows = NULL;
+    dest->rowlen = NULL;
+    if (src->numrows == 0)
+        return 0;
+
+    dest->rows = malloc(sizeof(char *) * (size_t)src->numrows);
+    dest->rowlen = malloc(sizeof(size_t) * (size_t)src->numrows);
+    if (dest->rows == NULL || dest->rowlen == NULL) {
+        free(dest->rows);
+        free(dest->rowlen);
+        dest->rows = NULL;
+        dest->rowlen = NULL;
+        dest->numrows = 0;
+        return -1;
+    }
+
+    for (int i = 0; i < src->numrows; i++) {
+        dest->rowlen[i] = src->rowlen[i];
+        dest->rows[i] = malloc(dest->rowlen[i] + 1);
+        if (dest->rows[i] == NULL) {
+            for (int j = 0; j < i; j++)
+                free(dest->rows[j]);
+            free(dest->rows);
+            free(dest->rowlen);
+            dest->rows = NULL;
+            dest->rowlen = NULL;
+            dest->numrows = 0;
+            return -1;
+        }
+        memcpy(dest->rows[i], src->rows[i], dest->rowlen[i]);
+        dest->rows[i][dest->rowlen[i]] = '\0';
+    }
+    return 0;
+}
+
+static void clearHistory(struct HistoryEntry **stack, size_t *len, size_t *cap) {
+    if (*stack != NULL) {
+        for (size_t i = 0; i < *len; i++)
+            freeDocument(&(*stack)[i].doc);
+        free(*stack);
+    }
+    *stack = NULL;
+    *len = 0;
+    *cap = 0;
+}
+
+static int pushHistory(struct HistoryEntry **stack, size_t *len, size_t *cap, const struct HistoryEntry *entry) {
+    if (*len >= HISTORY_LIMIT && *len > 0) {
+        freeDocument(&(*stack)[0].doc);
+        memmove(&(*stack)[0], &(*stack)[1], sizeof(struct HistoryEntry) * (*len - 1));
+        (*len)--;
+    }
+
+    if (*len >= *cap) {
+        size_t new_cap = *cap == 0 ? 16 : *cap * 2;
+        struct HistoryEntry *new_stack = realloc(*stack, new_cap * sizeof(struct HistoryEntry));
+        if (new_stack == NULL)
+            return -1;
+        *stack = new_stack;
+        *cap = new_cap;
+    }
+
+    (*stack)[*len] = *entry;
+    (*len)++;
+    return 0;
+}
+
+static int snapshotCurrent(struct HistoryEntry *entry) {
+    if (copyDocument(&E.doc, &entry->doc) == -1)
+        return -1;
+    entry->cx = E.cx;
+    entry->cy = E.cy;
+    entry->rowoff = E.rowoff;
+    entry->page_size = E.page_size;
+    entry->dirty = E.dirty;
+    return 0;
+}
+
+static void editorClearRedo(void) {
+    clearHistory(&redo_stack, &redo_len, &redo_cap);
+}
+
+static void editorPushUndo(void) {
+    struct HistoryEntry entry;
+    if (snapshotCurrent(&entry) == -1)
+        return;
+    editorClearRedo();
+    if (pushHistory(&undo_stack, &undo_len, &undo_cap, &entry) == -1)
+        freeDocument(&entry.doc);
+}
+
+static void editorApplySnapshot(struct HistoryEntry *entry) {
+    freeDocument(&E.doc);
+    E.doc = entry->doc;
+    entry->doc.rows = NULL;
+    entry->doc.rowlen = NULL;
+    entry->doc.numrows = 0;
+    E.cx = entry->cx;
+    E.cy = entry->cy;
+    E.rowoff = entry->rowoff;
+    E.page_size = entry->page_size;
+    E.dirty = entry->dirty;
+    editorUpdateLayout();
+    editorWrapDocument();
+    if (E.cy >= E.doc.numrows)
+        E.cy = E.doc.numrows > 0 ? E.doc.numrows - 1 : 0;
+    size_t rowlen = (E.cy < E.doc.numrows) ? E.doc.rowlen[E.cy] : 0;
+    if (E.cx > (int)rowlen)
+        E.cx = (int)rowlen;
+}
+
+static void editorUndo(void) {
+    if (undo_len == 0) {
+        editorSetStatus("Nothing to undo");
+        return;
+    }
+
+    struct HistoryEntry redo_entry;
+    if (snapshotCurrent(&redo_entry) == -1)
+        return;
+    if (pushHistory(&redo_stack, &redo_len, &redo_cap, &redo_entry) == -1) {
+        freeDocument(&redo_entry.doc);
+        return;
+    }
+
+    undo_len--;
+    struct HistoryEntry *entry = &undo_stack[undo_len];
+    editorApplySnapshot(entry);
+    entry->doc.rows = NULL;
+    entry->doc.rowlen = NULL;
+    entry->doc.numrows = 0;
+    editorSetStatus("Undo");
+}
+
+static void editorRedo(void) {
+    if (redo_len == 0) {
+        editorSetStatus("Nothing to redo");
+        return;
+    }
+
+    struct HistoryEntry undo_entry;
+    if (snapshotCurrent(&undo_entry) == -1)
+        return;
+    if (pushHistory(&undo_stack, &undo_len, &undo_cap, &undo_entry) == -1) {
+        freeDocument(&undo_entry.doc);
+        return;
+    }
+
+    redo_len--;
+    struct HistoryEntry *entry = &redo_stack[redo_len];
+    editorApplySnapshot(entry);
+    entry->doc.rows = NULL;
+    entry->doc.rowlen = NULL;
+    entry->doc.numrows = 0;
+    editorSetStatus("Redo");
+}
+
 static void editorScroll(void) {
     if (E.cy < E.rowoff) {
         E.rowoff = E.cy;
@@ -382,7 +574,7 @@ static void editorScroll(void) {
 static void editorRefreshScreen(void) {
     editorScroll();
 
-    const char *bar_bg = "\x1b[48;5;236m";
+    const char *bar_bg = "\x1b[48;5;17m";
     const char *bar_reset = "\x1b[0m";
 
     struct abuf ab = ABUF_INIT;
@@ -393,7 +585,7 @@ static void editorRefreshScreen(void) {
     char top1[256];
     char top2[256];
     snprintf(top1, sizeof(top1), " Book  C-N New  C-O Open  C-S Save  C-G SaveAs  C-Q Quit ");
-    snprintf(top2, sizeof(top2), " C-F Find/Rpl  C-R Replace  C-C Copy  C-V Paste  C-] Page %s ",
+    snprintf(top2, sizeof(top2), " C-F Find  C-R Rplc  C-C Copy  C-V Paste  C-P Page %s  C-Z Undo  C-Y Redo ",
              (E.page_size == PAGE_A4 ? "A4" : (E.page_size == PAGE_A5 ? "A5" : "A6")));
 
     const char *tops[2] = {top1, top2};
@@ -471,15 +663,19 @@ static void editorRefreshScreen(void) {
     }
 
     char bottom[256];
-    const char *name = E.filename ? E.filename : "[new book]";
-    char status_info[64];
-    snprintf(status_info, sizeof(status_info), "%s | %s | %ld words",
-             name, timestr, words);
-
-    if (E.status_message[0] != '\0' && time(NULL) - E.status_time < 5) {
-        snprintf(bottom, sizeof(bottom), "%s | %s", status_info, E.status_message);
+    if (E.prompt_active) {
+        snprintf(bottom, sizeof(bottom), " %s", E.prompt_line);
     } else {
-        snprintf(bottom, sizeof(bottom), "%s", status_info);
+        const char *name = E.filename ? E.filename : "[new book]";
+        char status_info[64];
+        snprintf(status_info, sizeof(status_info), "%s | %s | %ld words",
+                 name, timestr, words);
+
+        if (E.status_message[0] != '\0' && time(NULL) - E.status_time < 5) {
+            snprintf(bottom, sizeof(bottom), "%s | %s", status_info, E.status_message);
+        } else {
+            snprintf(bottom, sizeof(bottom), "%s", status_info);
+        }
     }
 
     int bottom_len = (int)strlen(bottom);
@@ -671,6 +867,7 @@ static void editorPasteClipboard(void) {
         return;
     }
 
+    editorPushUndo();
     editorInsertString(clipboard);
     editorSetStatus("Pasted clipboard (%zu byte%s)", clipboard_len, clipboard_len == 1 ? "" : "s");
 }
@@ -701,16 +898,13 @@ static void editorOpen(const char *filename) {
         return;
     }
 
+    struct HistoryEntry snap;
+    bool snapshot_ok = snapshotCurrent(&snap) == 0;
+
     free(E.filename);
     E.filename = strdup(filename);
 
-    for (int i = 0; i < E.doc.numrows; i++)
-        editorFreeRow(i);
-    free(E.doc.rows);
-    free(E.doc.rowlen);
-    E.doc.rows = NULL;
-    E.doc.rowlen = NULL;
-    E.doc.numrows = 0;
+    freeDocument(&E.doc);
 
     char *line = NULL;
     size_t cap = 0;
@@ -727,6 +921,11 @@ static void editorOpen(const char *filename) {
     E.cx = 0;
     E.cy = 0;
     editorSetStatus("Loaded %s", filename);
+    if (snapshot_ok) {
+        editorClearRedo();
+        if (pushHistory(&undo_stack, &undo_len, &undo_cap, &snap) == -1)
+            freeDocument(&snap.doc);
+    }
 }
 
 static void editorSave(void) {
@@ -797,13 +996,8 @@ static void editorSaveAs(void) {
 }
 
 static void editorNewFile(void) {
-    for (int i = 0; i < E.doc.numrows; i++)
-        editorFreeRow(i);
-    free(E.doc.rows);
-    free(E.doc.rowlen);
-    E.doc.rows = NULL;
-    E.doc.rowlen = NULL;
-    E.doc.numrows = 0;
+    editorPushUndo();
+    freeDocument(&E.doc);
     E.cx = 0;
     E.cy = 0;
     free(E.filename);
@@ -816,16 +1010,21 @@ static void editorNewFile(void) {
 static int editorPrompt(const char *message, char *buf, size_t buflen) {
     buf[0] = '\0';
     size_t len = 0;
+    E.prompt_active = true;
+    snprintf(E.prompt_line, sizeof(E.prompt_line), "%s", message);
     while (true) {
-        editorSetStatus("%s%s", message, buf);
         editorRefreshScreen();
         int c = editorReadKey();
         if (c == '\r') {
             if (len > 0) {
+                E.prompt_active = false;
+                E.prompt_line[0] = '\0';
                 editorSetStatus("");
                 return 0;
             }
         } else if (c == '\x1b') {
+            E.prompt_active = false;
+            E.prompt_line[0] = '\0';
             editorSetStatus("Canceled");
             return -1;
         } else if (c == BACKSPACE || c == CTRL_KEY('h')) {
@@ -838,6 +1037,8 @@ static int editorPrompt(const char *message, char *buf, size_t buflen) {
                 buf[len] = '\0';
             }
         }
+
+        snprintf(E.prompt_line, sizeof(E.prompt_line), "%s%s", message, buf);
     }
 }
 
@@ -906,7 +1107,25 @@ static void editorReplace(void) {
     if (editorPrompt("Replace with: ", replace, sizeof(replace)) == -1)
         return;
 
+    size_t find_len = strlen(find);
     int hits = 0;
+    for (int i = 0; i < E.doc.numrows; i++) {
+        const char *row = E.doc.rows[i];
+        const char *p = row;
+        while ((p = strstr(p, find)) != NULL) {
+            hits++;
+            p += find_len;
+        }
+    }
+
+    if (hits == 0) {
+        editorSetStatus("No matches for '%s'", find);
+        return;
+    }
+
+    editorPushUndo();
+
+    int replaced_lines = 0;
     for (int i = 0; i < E.doc.numrows; i++) {
         size_t new_len = 0;
         char *updated = replaceAll(E.doc.rows[i], E.doc.rowlen[i], find, replace, &new_len);
@@ -916,16 +1135,16 @@ static void editorReplace(void) {
             free(E.doc.rows[i]);
             E.doc.rows[i] = updated;
             E.doc.rowlen[i] = new_len;
-            hits++;
+            replaced_lines++;
         } else {
             free(updated);
         }
     }
 
-    if (hits > 0) {
+    if (replaced_lines > 0) {
         E.dirty = true;
         editorWrapDocument();
-        editorSetStatus("Replaced %d line(s)", hits);
+        editorSetStatus("Replaced %d line(s)", replaced_lines);
     } else {
         editorSetStatus("No matches for '%s'", find);
     }
@@ -992,6 +1211,14 @@ static void initEditor(void) {
     E.running = true;
     clipboard = NULL;
     clipboard_len = 0;
+    E.prompt_active = false;
+    E.prompt_line[0] = '\0';
+    undo_stack = NULL;
+    undo_len = 0;
+    undo_cap = 0;
+    redo_stack = NULL;
+    redo_len = 0;
+    redo_cap = 0;
 
     int rows = BOOK_TARGET_ROWS;
     int cols = BOOK_TARGET_COLS;
@@ -1004,13 +1231,14 @@ static void initEditor(void) {
     E.screencols = cols;
     editorUpdateLayout();
     editorInsertRow(0, "", 0);
-    editorSetStatus("Ctrl-] cycles page sizes; Ctrl-Q quits");
+    editorSetStatus("Ctrl-P cycles page sizes; Ctrl-Q quits");
 }
 
 static void editorProcessKeypress(void) {
     int c = editorReadKey();
     switch (c) {
         case '\r':
+            editorPushUndo();
             editorInsertNewline();
             break;
         case CTRL_KEY('q'):
@@ -1045,12 +1273,19 @@ static void editorProcessKeypress(void) {
         case CTRL_KEY('v'):
             editorPasteClipboard();
             break;
-        case CTRL_KEY(']'):
+        case CTRL_KEY('p'):
             editorCyclePageSize();
+            break;
+        case CTRL_KEY('z'):
+            editorUndo();
+            break;
+        case CTRL_KEY('y'):
+            editorRedo();
             break;
         case BACKSPACE:
         case CTRL_KEY('h'):
         case DEL_KEY:
+            editorPushUndo();
             if (c == DEL_KEY)
                 editorMoveCursor(ARROW_RIGHT);
             editorDelChar();
@@ -1082,8 +1317,10 @@ static void editorProcessKeypress(void) {
         case '\x1b':
             break;
         default:
-            if (!iscntrl(c) && c < 128)
+            if (!iscntrl(c) && c < 128) {
+                editorPushUndo();
                 editorInsertChar(c);
+            }
             break;
     }
 }

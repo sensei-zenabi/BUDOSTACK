@@ -19,6 +19,7 @@ computers.
 ### SYSTEM REQUIREMENTS: ###
 
 Operating System: Debian Linux
+
 Internet connection is required.
 
 Hardware Requirements:

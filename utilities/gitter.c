@@ -22,6 +22,7 @@ int main() {
     printf("  git merge <branch_name>     : merge selected branch into current branch\n\n");
     printf("  git tag --sort=-v:refname   : list tags from newest to oldest\n\n");
     printf("  git revert <commit_hash>    : reverts a bad commit, do 'git push' afterwards\n\n");
-        
+    printf("  git ls-files --others       : display non tracked files\n\n");
+                
     return 0;
 }

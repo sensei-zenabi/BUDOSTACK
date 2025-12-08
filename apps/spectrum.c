@@ -54,6 +54,7 @@ static char *line_buffer = NULL;
 static size_t line_capacity = 0;
 
 static void ensure_line_capacity(int columns);
+static void move_cursor_to_row(int row);
 
 static void disable_raw_mode(void)
 {
@@ -523,6 +524,14 @@ static void ensure_line_capacity(int columns)
     line_capacity = needed;
 }
 
+static void move_cursor_to_row(int row)
+{
+    if (row < 1) {
+        row = 1;
+    }
+    printf("\x1b[%d;1H", row);
+}
+
 static void write_padded_line(const char *text, int columns, int newline)
 {
     printf("\r\x1b[0m");
@@ -561,12 +570,50 @@ static void draw_ui(const struct analyzer_state *state,
     const char *status,
     unsigned int sample_rate)
 {
+    static int last_rows = -1;
+    static int last_cols = -1;
+    static size_t last_waterfall_rows = 0;
+    static size_t last_history_head = SIZE_MAX;
+    static size_t last_history_count = 0;
+    static int last_use_log_frequency = -1;
+    static int last_use_log_amplitude = -1;
+    static int last_recording = -1;
+    static unsigned int last_sample_rate = 0;
+    static char last_status[256] = "";
+
     if (columns < 0) {
         columns = 0;
     }
     ensure_line_capacity(columns);
 
-    printf("\x1b[H\x1b[0m");
+    size_t waterfall_rows = rows > 4 ? (size_t)(rows - 4) : 0;
+    size_t max_slices = waterfall_rows;
+    size_t slices_available = state->history_count < max_slices ? state->history_count : max_slices;
+    size_t padding_rows = waterfall_rows > slices_available ? waterfall_rows - slices_available : 0;
+
+    int waterfall_start_row = 2;
+    int baseline_row = waterfall_start_row + (int)waterfall_rows;
+    int labels_row = baseline_row + 1;
+    int footer_row = labels_row + 1;
+
+    int size_changed = rows != last_rows || columns != last_cols;
+    int waterfall_changed = waterfall_rows != last_waterfall_rows;
+    int settings_changed = use_log_frequency != last_use_log_frequency || use_log_amplitude != last_use_log_amplitude
+        || recording != last_recording || sample_rate != last_sample_rate;
+
+    int status_changed = 0;
+    if (status && *status) {
+        status_changed = strncmp(last_status, status, sizeof(last_status)) != 0;
+    } else if (last_status[0] != '\0') {
+        status_changed = 1;
+    }
+
+    int full_redraw = size_changed || last_rows == -1 || waterfall_changed;
+
+    if (full_redraw) {
+        printf("\x1b[H\x1b[0m\x1b[2J");
+    }
+
     char header_line[512];
     int header_len = snprintf(header_line,
         sizeof(header_line),
@@ -588,31 +635,43 @@ static void draw_ui(const struct analyzer_state *state,
                 status);
         }
     }
-    write_padded_line(header_line, columns, 1);
 
-    size_t waterfall_rows = rows > 4 ? (size_t)(rows - 4) : 0;
-    size_t max_slices = waterfall_rows;
-    size_t slices_available = state->history_count < max_slices ? state->history_count : max_slices;
-    size_t padding_rows = waterfall_rows > slices_available ? waterfall_rows - slices_available : 0;
-
-    for (size_t i = 0; i < padding_rows; ++i) {
-        write_padded_line("", columns, 1);
+    if (full_redraw || settings_changed || status_changed) {
+        move_cursor_to_row(1);
+        write_padded_line(header_line, columns, 1);
     }
 
-    if (slices_available > 0 && state->history_capacity > 0) {
-        size_t start_index = (state->history_head + state->history_capacity + 1 - slices_available)
-            % state->history_capacity;
-        size_t remaining = slices_available;
+    if (waterfall_rows > 0) {
+        if (full_redraw || last_history_head == SIZE_MAX || last_history_count == 0 || last_waterfall_rows != waterfall_rows) {
+            move_cursor_to_row(waterfall_start_row);
+            for (size_t i = 0; i < padding_rows; ++i) {
+                write_padded_line("", columns, 1);
+            }
 
-        while (remaining > 0) {
-            const double *magnitudes = state->history + (start_index * state->bin_count);
-            draw_waterfall_row(state, magnitudes, columns, use_log_frequency, use_log_amplitude);
-            start_index = (start_index + 1) % state->history_capacity;
-            remaining--;
+            if (slices_available > 0 && state->history_capacity > 0) {
+                size_t start_index = (state->history_head + state->history_capacity + 1 - slices_available)
+                    % state->history_capacity;
+                size_t remaining = slices_available;
+
+                while (remaining > 0) {
+                    const double *magnitudes = state->history + (start_index * state->bin_count);
+                    draw_waterfall_row(state, magnitudes, columns, use_log_frequency, use_log_amplitude);
+                    start_index = (start_index + 1) % state->history_capacity;
+                    remaining--;
+                }
+            }
+        } else if (state->history_count > 0 && state->history_capacity > 0 && state->history_head != last_history_head) {
+            printf("\x1b[%d;%dr", waterfall_start_row, waterfall_start_row + (int)waterfall_rows - 1);
+            move_cursor_to_row(waterfall_start_row + (int)waterfall_rows - 1);
+            const double *latest = state->history + (state->history_head * state->bin_count);
+            draw_waterfall_row(state, latest, columns, use_log_frequency, use_log_amplitude);
+            printf("\x1b[r");
         }
     }
 
+    move_cursor_to_row(baseline_row);
     draw_frequency_axis_baseline(state, columns, use_log_frequency, sample_rate);
+    move_cursor_to_row(labels_row);
     draw_frequency_axis_labels(state, columns, use_log_frequency, sample_rate);
 
     char footer_line[512];
@@ -626,8 +685,24 @@ static void draw_ui(const struct analyzer_state *state,
     if (footer_len < 0) {
         footer_line[0] = '\0';
     }
+    move_cursor_to_row(footer_row);
     write_padded_line(footer_line, columns, 0);
     fflush(stdout);
+
+    last_rows = rows;
+    last_cols = columns;
+    last_waterfall_rows = waterfall_rows;
+    last_history_head = state->history_head;
+    last_history_count = state->history_count;
+    last_use_log_frequency = use_log_frequency;
+    last_use_log_amplitude = use_log_amplitude;
+    last_recording = recording;
+    last_sample_rate = sample_rate;
+    if (status && *status) {
+        snprintf(last_status, sizeof(last_status), "%s", status);
+    } else {
+        last_status[0] = '\0';
+    }
 }
 
 static void set_status(char *status_buffer, size_t status_capacity, int *timeout, const char *message)
@@ -685,6 +760,13 @@ static void compute_magnitudes(struct analyzer_state *state)
         double im = state->fft_buffer[i].im;
         state->magnitudes[i] = sqrt((re * re) + (im * im));
     }
+}
+
+static long long timespec_diff_ns(const struct timespec *start, const struct timespec *end)
+{
+    long long sec_diff = (long long)end->tv_sec - (long long)start->tv_sec;
+    long long nsec_diff = (long long)end->tv_nsec - (long long)start->tv_nsec;
+    return (sec_diff * 1000000000LL) + nsec_diff;
 }
 
 int main(void)
@@ -760,9 +842,13 @@ int main(void)
     input_fd.fd = STDIN_FILENO;
     input_fd.events = POLLIN;
 
+    const long long frame_duration_ns = 1000000000LL / 30;
     int running = 1;
 
     while (running) {
+        struct timespec frame_start;
+        clock_gettime(CLOCK_MONOTONIC, &frame_start);
+
         if (read_audio_block(pcm_handle, &state, status_buffer, sizeof(status_buffer), &status_timeout) == 0) {
             compute_magnitudes(&state);
             push_history(&state, state.magnitudes);
@@ -815,7 +901,20 @@ int main(void)
             }
         }
 
-        int poll_result = poll(&input_fd, 1, 0);
+        struct timespec before_poll;
+        clock_gettime(CLOCK_MONOTONIC, &before_poll);
+        long long elapsed_ns = timespec_diff_ns(&frame_start, &before_poll);
+        long long remaining_ns = frame_duration_ns - elapsed_ns;
+        if (remaining_ns < 0) {
+            remaining_ns = 0;
+        }
+
+        int poll_timeout = (int)(remaining_ns / 1000000LL);
+        if (poll_timeout < 0) {
+            poll_timeout = 0;
+        }
+
+        int poll_result = poll(&input_fd, 1, poll_timeout);
         if (poll_result > 0 && (input_fd.revents & POLLIN)) {
             unsigned char ch;
             ssize_t read_bytes = read(STDIN_FILENO, &ch, 1);
@@ -892,6 +991,16 @@ int main(void)
                     break;
                 }
             }
+        }
+
+        struct timespec after_poll;
+        clock_gettime(CLOCK_MONOTONIC, &after_poll);
+        long long remaining_after_poll = frame_duration_ns - timespec_diff_ns(&frame_start, &after_poll);
+        if (remaining_after_poll > 0) {
+            struct timespec sleep_ts;
+            sleep_ts.tv_sec = (time_t)(remaining_after_poll / 1000000000LL);
+            sleep_ts.tv_nsec = (long)(remaining_after_poll % 1000000000LL);
+            nanosleep(&sleep_ts, NULL);
         }
     }
 

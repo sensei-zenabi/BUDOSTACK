@@ -24,6 +24,9 @@
 
 #define MIN_FFT_SIZE 256
 #define MAX_FFT_SIZE 8192
+#ifndef SPECTRUM_WATERFALL_FPS
+#define SPECTRUM_WATERFALL_FPS 30
+#endif
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -196,6 +199,16 @@ static size_t compute_history_capacity(int rows)
         return SIZE_MAX;
     }
     return visible_rows * 2;
+}
+
+static int64_t timespec_diff_ns(const struct timespec *start, const struct timespec *end)
+{
+    if (!start || !end) {
+        return 0;
+    }
+    int64_t sec_diff = (int64_t)end->tv_sec - (int64_t)start->tv_sec;
+    int64_t nsec_diff = (int64_t)end->tv_nsec - (int64_t)start->tv_nsec;
+    return (sec_diff * 1000000000LL) + nsec_diff;
 }
 
 static void fft_transform(struct complex_sample *buffer, size_t n)
@@ -761,6 +774,12 @@ int main(void)
     input_fd.events = POLLIN;
 
     int running = 1;
+    const long frame_interval_ns = SPECTRUM_WATERFALL_FPS > 0
+        ? 1000000000L / SPECTRUM_WATERFALL_FPS
+        : 0;
+    struct timespec last_draw_time;
+    last_draw_time.tv_sec = 0;
+    last_draw_time.tv_nsec = 0;
 
     while (running) {
         if (read_audio_block(pcm_handle, &state, status_buffer, sizeof(status_buffer), &status_timeout) == 0) {
@@ -780,32 +799,49 @@ int main(void)
             }
         }
 
-        get_terminal_size(&rows, &cols);
-        if (cols < BUDOSTACK_TARGET_COLS) {
-            printf("\x1b[H\x1b[0m");
-            write_padded_line("Spectrum Analyzer requires at least 80 columns.", cols, 1);
-            char width_line[64];
-            snprintf(width_line, sizeof(width_line), "Current width: %d", cols);
-            write_padded_line(width_line, cols, 1);
-            write_padded_line("", cols, 1);
-            write_padded_line("Please resize the terminal.", cols, 1);
-            write_padded_line("", cols, 0);
-            fflush(stdout);
-        } else {
-            size_t new_history = compute_history_capacity(rows);
-            if (new_history != state.history_capacity) {
-                if (reallocate_history(&state, new_history) != 0) {
-                    disable_raw_mode();
-                    snd_pcm_close(pcm_handle);
-                    free_analyzer(&state);
-                    fprintf(stderr, "spectrum: unable to adjust history buffer\n");
-                    if (record_file) {
-                        fclose(record_file);
-                    }
-                    return EXIT_FAILURE;
-                }
+        struct timespec now;
+        int have_time = clock_gettime(CLOCK_MONOTONIC, &now) == 0;
+        int should_draw = have_time ? 0 : 1;
+        if (have_time) {
+            if (last_draw_time.tv_sec == 0 && last_draw_time.tv_nsec == 0) {
+                should_draw = 1;
+            } else if (frame_interval_ns == 0
+                || timespec_diff_ns(&last_draw_time, &now) >= (int64_t)frame_interval_ns) {
+                should_draw = 1;
             }
-            draw_ui(&state, rows, cols, use_log_frequency, use_log_amplitude, recording, status_buffer, sample_rate);
+        }
+
+        if (should_draw) {
+            get_terminal_size(&rows, &cols);
+            if (cols < BUDOSTACK_TARGET_COLS) {
+                printf("\x1b[H\x1b[0m");
+                write_padded_line("Spectrum Analyzer requires at least 80 columns.", cols, 1);
+                char width_line[64];
+                snprintf(width_line, sizeof(width_line), "Current width: %d", cols);
+                write_padded_line(width_line, cols, 1);
+                write_padded_line("", cols, 1);
+                write_padded_line("Please resize the terminal.", cols, 1);
+                write_padded_line("", cols, 0);
+                fflush(stdout);
+            } else {
+                size_t new_history = compute_history_capacity(rows);
+                if (new_history != state.history_capacity) {
+                    if (reallocate_history(&state, new_history) != 0) {
+                        disable_raw_mode();
+                        snd_pcm_close(pcm_handle);
+                        free_analyzer(&state);
+                        fprintf(stderr, "spectrum: unable to adjust history buffer\n");
+                        if (record_file) {
+                            fclose(record_file);
+                        }
+                        return EXIT_FAILURE;
+                    }
+                }
+                draw_ui(&state, rows, cols, use_log_frequency, use_log_amplitude, recording, status_buffer, sample_rate);
+            }
+            if (have_time) {
+                last_draw_time = now;
+            }
         }
 
         if (status_timeout > 0) {

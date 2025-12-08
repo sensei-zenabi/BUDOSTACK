@@ -336,11 +336,14 @@ static void draw_waterfall_row(const struct analyzer_state *state,
     const double *magnitudes,
     int columns,
     int use_log_frequency,
-    int use_log_amplitude)
+    int use_log_amplitude,
+    int append_newline)
 {
     printf("\r\x1b[0m");
     if (columns <= 0 || state->bin_count == 0) {
-        printf("\r\n");
+        if (append_newline) {
+            printf("\r\n");
+        }
         return;
     }
 
@@ -365,7 +368,9 @@ static void draw_waterfall_row(const struct analyzer_state *state,
     if (prev_color != -1) {
         printf("\x1b[0m");
     }
-    printf("\r\n");
+    if (append_newline) {
+        printf("\r\n");
+    }
 }
 
 static void format_frequency_label(double frequency, char *buffer, size_t capacity)
@@ -655,16 +660,17 @@ static void draw_ui(const struct analyzer_state *state,
 
                 while (remaining > 0) {
                     const double *magnitudes = state->history + (start_index * state->bin_count);
-                    draw_waterfall_row(state, magnitudes, columns, use_log_frequency, use_log_amplitude);
+                    draw_waterfall_row(state, magnitudes, columns, use_log_frequency, use_log_amplitude, 1);
                     start_index = (start_index + 1) % state->history_capacity;
                     remaining--;
                 }
             }
         } else if (state->history_count > 0 && state->history_capacity > 0 && state->history_head != last_history_head) {
             printf("\x1b[%d;%dr", waterfall_start_row, waterfall_start_row + (int)waterfall_rows - 1);
+            printf("\x1b[1S");
             move_cursor_to_row(waterfall_start_row + (int)waterfall_rows - 1);
             const double *latest = state->history + (state->history_head * state->bin_count);
-            draw_waterfall_row(state, latest, columns, use_log_frequency, use_log_amplitude);
+            draw_waterfall_row(state, latest, columns, use_log_frequency, use_log_amplitude, 0);
             printf("\x1b[r");
         }
     }

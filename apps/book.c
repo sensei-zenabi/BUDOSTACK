@@ -908,12 +908,30 @@ static void draw_content(const struct BookState *state) {
             continue;
         }
         if (page_line_counter >= state->page_height) {
-            printf("\x1b[%dC", state->page_left);
-            for (int i = 0; i < state->page_width; i++) {
-                putchar('-');
+            static const char label[] = " page break ";
+            int left_pad = state->page_left;
+            if (left_pad < 0) left_pad = 0;
+            printf("\x1b[2K\r");
+            if (left_pad > 0) {
+                printf("\x1b[%dC", left_pad);
             }
-            putchar('\r');
-            putchar('\n');
+            printf("\x1b[2m");
+            int label_len = (int)strlen(label);
+            if (state->page_width > label_len + 2) {
+                int start = (state->page_width - label_len) / 2;
+                for (int i = 0; i < start; i++) {
+                    putchar('-');
+                }
+                fputs(label, stdout);
+                for (int i = start + label_len; i < state->page_width; i++) {
+                    putchar('-');
+                }
+            } else {
+                for (int i = 0; i < state->page_width; i++) {
+                    putchar('-');
+                }
+            }
+            printf("\x1b[0m\r\n");
             current_row++;
             page_line_counter = 0;
             continue;

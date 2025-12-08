@@ -966,7 +966,17 @@ static void render(struct BookState *state) {
 
     int col = 0;
     size_t line = line_for_cursor(state, &col);
-    int cursor_row = BOOK_HEADER_ROWS + 1 + (int)(line - state->row_offset);
+    int page_breaks = 0;
+    if (state->page_height > 0) {
+        int start_page = state->row_offset / state->page_height;
+        int cursor_page = (int)(line / (size_t)state->page_height);
+        page_breaks = cursor_page - start_page;
+        if (page_breaks < 0) {
+            page_breaks = 0;
+        }
+    }
+
+    int cursor_row = BOOK_HEADER_ROWS + 1 + (int)(line - state->row_offset) + page_breaks;
     int cursor_col = state->page_left + col + 1;
     if (cursor_row < 1) cursor_row = 1;
     printf("\x1b[%d;%dH", cursor_row, cursor_col);

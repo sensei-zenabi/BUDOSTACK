@@ -944,7 +944,7 @@ static void draw_bottom_bar(const struct BookState *state) {
     char line2[256];
     snprintf(line2, sizeof(line2), " %s | Words: %zu | %s", datebuf, state->word_count, state->status);
     printf("%-*s", state->cols, line2);
-    printf("\x1b[0m\r\n");
+    printf("\x1b[0m\r");
 }
 
 static void render(struct BookState *state) {

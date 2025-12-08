@@ -37,9 +37,6 @@
 #define BOOK_HEADER_ROWS 3
 #define BOOK_BOTTOM_ROWS 2
 
-#define PAGE_BASE_WIDTH_MM 210.0
-#define PAGE_BASE_HEIGHT_MM 297.0
-
 static struct termios orig_termios;
 
 static void disable_raw_mode(void) {
@@ -122,7 +119,8 @@ static int read_key(void) {
 
 struct PageSize {
     const char *name;
-    double scale;
+    int target_cols;
+    int target_rows;
     int margin_cols;
     int margin_rows;
 };
@@ -173,10 +171,11 @@ struct BookState {
     int redo_len;
 };
 
+// A-series sizes at 60 DPI with 8x8 font (values rounded up)
 static const struct PageSize PAGE_SIZES[] = {
-    {"A4", 1.0, 7, 1},
-    {"A5", 1.0 / 1.4142135623730951, 7, 1},
-    {"A6", 0.5, 7, 1}
+    {"A4", 62, 88, 7, 1},
+    {"A5", 44, 62, 7, 1},
+    {"A6", 31, 44, 7, 1}
 };
 
 static void render(struct BookState *state);
@@ -450,24 +449,26 @@ static void update_dimensions(struct BookState *state) {
 
     int max_page_width = state->cols - ps->margin_cols * 2;
     int max_page_height = available_rows - ps->margin_rows * 2;
-    if (max_page_width < 10) max_page_width = 10;
-    if (max_page_height < 5) max_page_height = 5;
+    if (max_page_width < 4) max_page_width = 4;
+    if (max_page_height < 4) max_page_height = 4;
 
-    double scale_width = max_page_width / PAGE_BASE_WIDTH_MM;
-    double scale_height = max_page_height / PAGE_BASE_HEIGHT_MM;
-    double base_scale = scale_width < scale_height ? scale_width : scale_height;
-    if (base_scale <= 0.0) {
-        base_scale = 1.0;
+    double scale_width = (double)max_page_width / (double)ps->target_cols;
+    double scale_height = (double)max_page_height / (double)ps->target_rows;
+    double scale = scale_width < scale_height ? scale_width : scale_height;
+    if (scale > 1.0) {
+        scale = 1.0; // Do not enlarge beyond 60 DPI target
+    }
+    if (scale <= 0.0) {
+        scale = 1.0;
     }
 
-    double target_scale = base_scale * ps->scale;
-    int page_width = (int)(PAGE_BASE_WIDTH_MM * target_scale + 0.5);
-    int page_height = (int)(PAGE_BASE_HEIGHT_MM * target_scale + 0.5);
+    int page_width = (int)((double)ps->target_cols * scale + 0.5);
+    int page_height = (int)((double)ps->target_rows * scale + 0.5);
 
     if (page_width > max_page_width) page_width = max_page_width;
     if (page_height > max_page_height) page_height = max_page_height;
-    if (page_width < 10) page_width = 10;
-    if (page_height < 5) page_height = 5;
+    if (page_width < 4) page_width = 4;
+    if (page_height < 4) page_height = 4;
 
     state->page_width = page_width;
     state->page_left = (state->cols - state->page_width) / 2;

@@ -37,6 +37,9 @@
 #define BOOK_HEADER_ROWS 3
 #define BOOK_BOTTOM_ROWS 2
 
+#define PAGE_BASE_WIDTH_MM 210.0
+#define PAGE_BASE_HEIGHT_MM 297.0
+
 static struct termios orig_termios;
 
 static void disable_raw_mode(void) {
@@ -119,8 +122,7 @@ static int read_key(void) {
 
 struct PageSize {
     const char *name;
-    int cols;
-    int rows;
+    double scale;
     int margin_cols;
     int margin_rows;
 };
@@ -172,9 +174,9 @@ struct BookState {
 };
 
 static const struct PageSize PAGE_SIZES[] = {
-    {"A4", 64, 34, 7, 1},
-    {"A5", 52, 28, 7, 1},
-    {"A6", 40, 22, 7, 1}
+    {"A4", 1.0, 7, 1},
+    {"A5", 1.0 / 1.4142135623730951, 7, 1},
+    {"A6", 0.5, 7, 1}
 };
 
 static void render(struct BookState *state);
@@ -445,21 +447,31 @@ static void update_dimensions(struct BookState *state) {
     int available_rows = state->rows - BOOK_HEADER_ROWS - BOOK_BOTTOM_ROWS;
     if (available_rows < 1) available_rows = 1;
     const struct PageSize *ps = &PAGE_SIZES[state->page_index];
-    state->page_width = ps->cols;
-    if (state->page_width > state->cols - ps->margin_cols * 2) {
-        state->page_width = state->cols - ps->margin_cols * 2;
+
+    int max_page_width = state->cols - ps->margin_cols * 2;
+    int max_page_height = available_rows - ps->margin_rows * 2;
+    if (max_page_width < 10) max_page_width = 10;
+    if (max_page_height < 5) max_page_height = 5;
+
+    double scale_width = max_page_width / PAGE_BASE_WIDTH_MM;
+    double scale_height = max_page_height / PAGE_BASE_HEIGHT_MM;
+    double base_scale = scale_width < scale_height ? scale_width : scale_height;
+    if (base_scale <= 0.0) {
+        base_scale = 1.0;
     }
-    if (state->page_width < 10) {
-        state->page_width = 10;
-    }
+
+    double target_scale = base_scale * ps->scale;
+    int page_width = (int)(PAGE_BASE_WIDTH_MM * target_scale + 0.5);
+    int page_height = (int)(PAGE_BASE_HEIGHT_MM * target_scale + 0.5);
+
+    if (page_width > max_page_width) page_width = max_page_width;
+    if (page_height > max_page_height) page_height = max_page_height;
+    if (page_width < 10) page_width = 10;
+    if (page_height < 5) page_height = 5;
+
+    state->page_width = page_width;
     state->page_left = (state->cols - state->page_width) / 2;
-    state->page_height = ps->rows;
-    if (state->page_height > available_rows - ps->margin_rows * 2) {
-        state->page_height = available_rows - ps->margin_rows * 2;
-    }
-    if (state->page_height < 5) {
-        state->page_height = 5;
-    }
+    state->page_height = page_height;
     state->content_rows = available_rows;
     wrap_text(state);
 }
@@ -865,14 +877,14 @@ static void draw_bars(const struct BookState *state) {
 
     // Top bar line 1
     printf("\x1b[7m");
-    printf("%-*s", state->cols, " Ctrl+N New | Ctrl+O Open | Ctrl+S Save | Ctrl+G Save As | Ctrl+E Export | Ctrl+Q Quit ");
+    printf("%-*.*s", state->cols, state->cols, " Ctrl+N New | Ctrl+O Open | Ctrl+S Save | Ctrl+G Save As | Ctrl+E Export | Ctrl+Q Quit ");
     printf("\x1b[0m\r\n");
 
     // Top bar line 2
     printf("\x1b[7m");
     char top_line[256];
     snprintf(top_line, sizeof(top_line), " Ctrl+F Find | Ctrl+R Replace | Ctrl+Z Undo | Ctrl+Y Redo | Ctrl+P Page %s ", PAGE_SIZES[state->page_index].name);
-    printf("%-*s", state->cols, top_line);
+    printf("%-*.*s", state->cols, state->cols, top_line);
     printf("\x1b[0m\r\n");
 
     // Text area rendering handled separately
@@ -881,9 +893,9 @@ static void draw_bars(const struct BookState *state) {
     if (state->prompt_active) {
         char prompt_line[BOOK_PROMPT_MAX + 32];
         snprintf(prompt_line, sizeof(prompt_line), " %s", state->status);
-        printf("%-*s", state->cols, prompt_line);
+        printf("%-*.*s", state->cols, state->cols, prompt_line);
     } else {
-        printf("%-*s", state->cols, "");
+        printf("%-*.*s", state->cols, state->cols, "");
     }
     printf("\x1b[0m\r\n");
 
@@ -941,13 +953,13 @@ static void draw_bottom_bar(const struct BookState *state) {
     snprintf(namebuf, sizeof(namebuf), "%.*s", (int)sizeof(namebuf) - 1, raw_name);
     snprintf(line1, sizeof(line1), " File: %s | Page: %s (%dx%d)", namebuf,
              PAGE_SIZES[state->page_index].name, state->page_width, state->page_height);
-    printf("%-*s", state->cols, line1);
+    printf("%-*.*s", state->cols, state->cols, line1);
     printf("\x1b[0m\r\n");
 
     printf("\x1b[7m");
     char line2[256];
     snprintf(line2, sizeof(line2), " %s | Words: %zu | %s", datebuf, state->word_count, state->status);
-    printf("%-*s", state->cols, line2);
+    printf("%-*.*s", state->cols, state->cols, line2);
     printf("\x1b[0m\r");
 }
 

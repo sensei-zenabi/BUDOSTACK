@@ -448,27 +448,20 @@ static void update_dimensions(struct BookState *state) {
     const struct PageSize *ps = &PAGE_SIZES[state->page_index];
 
     int max_page_width = state->cols - ps->margin_cols * 2;
-    int max_page_height = available_rows - ps->margin_rows * 2;
     if (max_page_width < 4) max_page_width = 4;
-    if (max_page_height < 4) max_page_height = 4;
 
-    double scale_width = (double)max_page_width / (double)ps->target_cols;
-    double scale_height = (double)max_page_height / (double)ps->target_rows;
-    double scale = scale_width < scale_height ? scale_width : scale_height;
-    if (scale > 1.0) {
-        scale = 1.0; // Do not enlarge beyond 60 DPI target
+    int page_width = ps->target_cols;
+    if (page_width > max_page_width) {
+        page_width = max_page_width;
     }
-    if (scale <= 0.0) {
-        scale = 1.0;
+    if (page_width < 4) {
+        page_width = 4;
     }
 
-    int page_width = (int)((double)ps->target_cols * scale + 0.5);
-    int page_height = (int)((double)ps->target_rows * scale + 0.5);
-
-    if (page_width > max_page_width) page_width = max_page_width;
-    if (page_height > max_page_height) page_height = max_page_height;
-    if (page_width < 4) page_width = 4;
-    if (page_height < 4) page_height = 4;
+    int page_height = ps->target_rows;
+    if (page_height < 4) {
+        page_height = 4;
+    }
 
     state->page_width = page_width;
     state->page_left = (state->cols - state->page_width) / 2;

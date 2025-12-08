@@ -937,6 +937,27 @@ static void draw_bottom_bar(const struct BookState *state) {
     struct tm *tm = localtime(&now);
     strftime(datebuf, sizeof(datebuf), "%Y-%m-%d %H:%M:%S", tm);
 
+    int col = 0;
+    size_t line = line_for_cursor(state, &col);
+
+    int total_pages = 1;
+    int current_page = 1;
+    int page_breaks_before_cursor = 0;
+    if (state->page_height > 0) {
+        total_pages = (int)((state->line_count + (size_t)state->page_height - 1) / (size_t)state->page_height);
+        if (total_pages < 1) total_pages = 1;
+        if (state->line_count > 0) {
+            current_page = (int)(line / (size_t)state->page_height) + 1;
+            page_breaks_before_cursor = (int)(line / (size_t)state->page_height);
+        }
+    }
+
+    int row_number = state->line_count > 0 ? (int)line + page_breaks_before_cursor + 1 : 1;
+    int col_number = col + 1;
+
+    char right_info[128];
+    snprintf(right_info, sizeof(right_info), "Ln %d, Col %d | %d/%d", row_number, col_number, current_page, total_pages);
+
     printf("\x1b[7m");
     char line1[256];
     const char *raw_name = state->filename[0] ? state->filename : "(untitled)";
@@ -948,8 +969,31 @@ static void draw_bottom_bar(const struct BookState *state) {
     printf("\x1b[0m\r\n");
 
     printf("\x1b[7m");
-    char line2[256];
-    snprintf(line2, sizeof(line2), " %s | Words: %zu | %s", datebuf, state->word_count, state->status);
+    char line2_left[256];
+    snprintf(line2_left, sizeof(line2_left), " %s | Words: %zu | %s", datebuf, state->word_count, state->status);
+
+    int cols = state->cols;
+    if (cols < 1) cols = 1;
+    char line2[512];
+    if (cols >= (int)sizeof(line2)) {
+        cols = (int)sizeof(line2) - 1;
+    }
+
+    memset(line2, ' ', (size_t)cols);
+    line2[cols] = '\0';
+
+    int left_len = (int)strlen(line2_left);
+    if (left_len > cols) left_len = cols;
+    memcpy(line2, line2_left, (size_t)left_len);
+
+    int right_len = (int)strlen(right_info);
+    if (right_len > cols) right_len = cols;
+    int right_start = cols - right_len;
+    if (right_start < 0) right_start = 0;
+    int right_copy = cols - right_start;
+    if (right_copy > right_len) right_copy = right_len;
+    memcpy(&line2[right_start], right_info, (size_t)right_copy);
+
     printf("%-*.*s", state->cols, state->cols, line2);
     printf("\x1b[0m\r");
 }

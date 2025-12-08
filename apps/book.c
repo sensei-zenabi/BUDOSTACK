@@ -1,9 +1,9 @@
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
-// Target a compact 79x44 layout for the typewriter interface
-#define BUDOSTACK_TARGET_COLS 79
-#define BUDOSTACK_TARGET_ROWS 44
+// Target the shared 80x45 layout so the app aligns with the SDL terminal
+#define BUDOSTACK_TARGET_COLS 80
+#define BUDOSTACK_TARGET_ROWS 45
 
 #include "../lib/terminal_layout.h"
 

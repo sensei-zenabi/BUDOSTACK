@@ -150,7 +150,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf(" Note! All csv related commands assume ; as delimiter!\n");
     printf("\n");
-    printf("  book     : (WIP!) Focus writer for all who want to write.\n");
+    printf("  book     : Focus writer for all who want to write.\n");
     printf("  cmath    : Math interpreter that has interactive mode and macro execution.\n");
     printf("             To run existing macro, type 'cmath mymacro.m'.\n");
     printf("  csvplot  : ASCII x-y plotter for .csv files.\n");

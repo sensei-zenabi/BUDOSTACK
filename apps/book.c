@@ -752,10 +752,7 @@ static void export_text(const struct BookState *state) {
         lines_written++;
         lines_in_page++;
         if (lines_in_page >= state->page_height) {
-            for (int i = 0; i < state->page_width; i++) {
-                fputc('-', fp);
-            }
-            fputc('\n', fp);
+            fputc('\f', fp);
             lines_in_page = 0;
         }
         line_index++;

@@ -871,13 +871,13 @@ static void draw_bars(const struct BookState *state) {
 
     // Top bar line 1
     printf("\x1b[7m");
-    printf("%-*.*s", state->cols, state->cols, " Ctrl+N New | Ctrl+O Open | Ctrl+S Save | Ctrl+G Save As | Ctrl+E Export | Ctrl+Q Quit ");
+    printf("%-*.*s", state->cols, state->cols, " Ctrl+N New  | ^+O Open  | ^+S Save | ^+G Save As | ^+E Export  | ^+Q Quit |");
     printf("\x1b[0m\r\n");
 
     // Top bar line 2
     printf("\x1b[7m");
     char top_line[256];
-    snprintf(top_line, sizeof(top_line), " Ctrl+F Find | Ctrl+R Replace | Ctrl+Z Undo | Ctrl+Y Redo | Ctrl+P Page %s ", PAGE_SIZES[state->page_index].name);
+    snprintf(top_line, sizeof(top_line), " Ctrl+F Find | ^+R Repl. | ^+Z Undo | ^+Y Redo    | ^+P Page %s |", PAGE_SIZES[state->page_index].name);
     printf("%-*.*s", state->cols, state->cols, top_line);
     printf("\x1b[0m\r\n");
 

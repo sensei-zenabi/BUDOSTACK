@@ -282,9 +282,9 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  Unable to copy-paste content between the app and clipboard.\n");
     printf("\n");
-    printf(" apps/spectrum:\n");
     printf("\n");
-    printf("  Performance issues displaying the waterfall spectrum.\n");
+    printf("\n");
+    printf("\n");
     printf("\n");
     printf("\n");
     printf("\n");

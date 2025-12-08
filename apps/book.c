@@ -33,6 +33,10 @@
 #define BOOK_STATUS_MAX 128
 #define BOOK_PROMPT_MAX 256
 
+// Layout constants: two top bar lines + one prompt line, and a two-line bottom bar
+#define BOOK_HEADER_ROWS 3
+#define BOOK_BOTTOM_ROWS 2
+
 static struct termios orig_termios;
 
 static void disable_raw_mode(void) {
@@ -438,7 +442,7 @@ static void update_dimensions(struct BookState *state) {
     }
     budostack_clamp_terminal_size(&state->rows, &state->cols);
 
-    int available_rows = state->rows - 2 - 2 - 1; // top bar(2) + bottom bar(2) + prompt line(1)
+    int available_rows = state->rows - BOOK_HEADER_ROWS - BOOK_BOTTOM_ROWS;
     if (available_rows < 1) available_rows = 1;
     const struct PageSize *ps = &PAGE_SIZES[state->page_index];
     state->page_width = ps->cols;
@@ -953,12 +957,13 @@ static void render(struct BookState *state) {
     printf("\x1b[?25l");
     printf("\x1b[H");
     draw_bars(state);
+    printf("\x1b[%d;1H", BOOK_HEADER_ROWS + 1);
     draw_content(state);
     draw_bottom_bar(state);
 
     int col = 0;
     size_t line = line_for_cursor(state, &col);
-    int cursor_row = 2 + 1 + (int)(line - state->row_offset); // top bars + prompt
+    int cursor_row = BOOK_HEADER_ROWS + 1 + (int)(line - state->row_offset);
     int cursor_col = state->page_left + col + 1;
     if (cursor_row < 1) cursor_row = 1;
     printf("\x1b[%d;%dH", cursor_row, cursor_col);

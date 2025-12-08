@@ -10,11 +10,14 @@
 #include <time.h>
 #include <errno.h>
 #include <fnmatch.h>
+#include <sys/wait.h>
 
-#define NAME_DISPLAY_WIDTH 36
+#define NAME_DISPLAY_WIDTH 31
 
 // Global base path used in filter and comparator
 static const char *base_path;
+static int git_ready = -1;
+static int git_available = 0;
 
 // Global flag to indicate if all files should be shown (if "-a" is provided)
 static int show_all = 0;
@@ -32,6 +35,74 @@ static const char *excluded_extensions[] = {
 static char **matches = NULL;
 static size_t matches_count = 0;
 static size_t matches_capacity = 0;
+
+static void initialize_git_status(void) {
+    if (git_ready != -1) {
+        return;
+    }
+
+    FILE *fp = popen("git rev-parse --is-inside-work-tree 2>/dev/null", "r");
+    if (!fp) {
+        git_ready = 0;
+        return;
+    }
+
+    char buffer[8];
+    if (fgets(buffer, sizeof(buffer), fp) != NULL && strncmp(buffer, "true", 4) == 0) {
+        git_available = 1;
+    }
+
+    pclose(fp);
+    git_ready = git_available;
+}
+
+static int file_is_tracked(const char *filepath) {
+    initialize_git_status();
+    if (!git_available) {
+        return 0;
+    }
+
+    char dir_path[1024];
+    char file_name[1024];
+
+    const char *separator = strrchr(filepath, '/');
+    if (separator) {
+        size_t dir_len = (size_t)(separator - filepath);
+        if (dir_len >= sizeof(dir_path)) {
+            dir_len = sizeof(dir_path) - 1;
+        }
+        memcpy(dir_path, filepath, dir_len);
+        dir_path[dir_len] = '\0';
+        snprintf(file_name, sizeof(file_name), "%s", separator + 1);
+    } else {
+        snprintf(dir_path, sizeof(dir_path), ".");
+        snprintf(file_name, sizeof(file_name), "%s", filepath);
+    }
+
+    char command[4096];
+    int written = snprintf(
+        command,
+        sizeof(command),
+        "git -C \"%s\" ls-files --error-unmatch -- \"%s\" > /dev/null 2>&1",
+        dir_path,
+        file_name);
+    if (written < 0 || (size_t)written >= sizeof(command)) {
+        return 0;
+    }
+
+    int status = system(command);
+    if (status == 0) {
+        return 1;
+    }
+    if (status == -1) {
+        return 0;
+    }
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+        return 1;
+    }
+
+    return 0;
+}
 
 static void format_display_name(const char *input, char *output, size_t width) {
     if (width == 0) {
@@ -82,6 +153,13 @@ static int entry_is_directory(const struct dirent *entry) {
         return 1;
     }
     return 0;
+}
+
+static void print_separator(void) {
+    for (int i = 0; i < 79; i++) {
+        putchar('-');
+    }
+    putchar('\n');
 }
 
 // Filter function for scandir
@@ -150,7 +228,14 @@ void print_file_info(const char *filepath, const char *display_name) {
     char truncated_name[NAME_DISPLAY_WIDTH + 1];
     format_display_name(formatted_name_buffer, truncated_name, NAME_DISPLAY_WIDTH);
 
-    printf("%-*s %-11s %-10ld %-20s\n", NAME_DISPLAY_WIDTH, truncated_name, perms, (long)st.st_size, timebuf);
+    printf(
+        "%-*s %-11s %-10ld %-3s %-20s\n",
+        NAME_DISPLAY_WIDTH,
+        truncated_name,
+        perms,
+        (long)st.st_size,
+        file_is_tracked(filepath) ? "x" : "",
+        timebuf);
 }
 
 // List a single directory (non-recursive)
@@ -164,8 +249,15 @@ void list_directory(const char *dir_path) {
     }
 
     printf("\n");
-    printf("%-*s %-11s %-10s %-20s\n", NAME_DISPLAY_WIDTH, "Filename", "Permissions", "Size", "Last Modified");
-    printf("------------------------------------------------------------------------------\n");
+    printf(
+        "%-*s %-11s %-10s %-3s %-20s\n",
+        NAME_DISPLAY_WIDTH,
+        "Filename",
+        "Permissions",
+        "Size",
+        "Git",
+        "Last Modified");
+    print_separator();
 
     for (int i = 0; i < n; i++) {
         char fullpath[1024];
@@ -258,8 +350,15 @@ void list_recursive_search(const char *pattern) {
     qsort(matches, matches_count, sizeof(char*), cmp_str);
 
     printf("Recursive search for files matching pattern '%s':\n", pattern);
-    printf("%-*s %-11s %-10s %-20s\n", NAME_DISPLAY_WIDTH, "Filename", "Permissions", "Size", "Last Modified");
-    printf("------------------------------------------------------------------------------\n");
+    printf(
+        "%-*s %-11s %-10s %-3s %-20s\n",
+        NAME_DISPLAY_WIDTH,
+        "Filename",
+        "Permissions",
+        "Size",
+        "Git",
+        "Last Modified");
+    print_separator();
 
     for (size_t i = 0; i < matches_count; i++) {
         print_file_info(matches[i], matches[i]);
@@ -338,8 +437,15 @@ int main(int argc, char *argv[]) {
 
     if (file_count > 0) {
         printf("Files:\n");
-        printf("%-*s %-11s %-10s %-20s\n", NAME_DISPLAY_WIDTH, "Filename", "Permissions", "Size", "Last Modified");
-        printf("------------------------------------------------------------------------------\n");
+        printf(
+            "%-*s %-11s %-10s %-3s %-20s\n",
+            NAME_DISPLAY_WIDTH,
+            "Filename",
+            "Permissions",
+            "Size",
+            "Git",
+            "Last Modified");
+        print_separator();
         for (int i = 0; i < file_count; i++) {
             print_file_info(file_paths[i], file_paths[i]);
             free(file_paths[i]);

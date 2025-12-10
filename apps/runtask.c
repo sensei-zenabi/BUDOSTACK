@@ -2513,6 +2513,7 @@ static void print_help(void) {
     printf("  ./runtask taskfile [-d]\n\n");
     printf("Notes:\n");
     printf("- Task files are loaded from 'tasks/' automatically (e.g., tasks/demo.task).\n");
+    printf("- Paths inside TASK scripts are resolved relative to the script's directory.\n");
     printf("- Place executables in ./apps, ./commands, or ./utilities and make them\n");
     printf("  executable.\n");
     printf("- External commands available in PATH are also accepted.\n\n");
@@ -3221,7 +3222,11 @@ static int resolve_exec_path(const char *argv0, char *resolved, size_t size) {
 
     if (strchr(argv0, '/')) {
         // explicit relative/absolute path
-        if (build_from_base(argv0, resolved, size) != 0) return -1;
+        if (realpath(argv0, resolved) == NULL) {
+            if (snprintf(resolved, size, "%s", argv0) >= (int)size) {
+                return -1;
+            }
+        }
         if (access(resolved, X_OK) != 0) return -1;
         return 0;
     }
@@ -3250,13 +3255,6 @@ int main(int argc, char *argv[]) {
     init_static_scopes();
     current_function_index = -1;
 
-    const char *base_dir = get_base_dir();
-    if (base_dir && base_dir[0] != '\0') {
-        if (chdir(base_dir) != 0) {
-            fprintf(stderr, "Warning: failed to change directory to '%s': %s\n", base_dir, strerror(errno));
-        }
-    }
-
     if (argc >= 2 && strcmp(argv[1], "-help") == 0) {
         print_help();
         return 0;
@@ -3270,30 +3268,68 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-d") == 0) { debug = 1; break; }
     }
 
-    // Prepend tasks/ like before but resolve relative to Budostack base when available
-    char suffix[PATH_MAX];
-    if (argv[1][0] == '/' || argv[1][0] == '.') {
-        if (snprintf(suffix, sizeof(suffix), "%s", argv[1]) >= (int)sizeof(suffix)) {
-            fprintf(stderr, "Error: task path too long: %s\n", argv[1]);
-            return 1;
+    // Resolve task path. Names without slashes are looked up under tasks/ relative to
+    // the Budostack base; paths containing slashes are respected as-is relative to the
+    // caller's working directory.
+    char task_path[PATH_MAX];
+    bool explicit_path = (argv[1][0] == '/') || (strchr(argv[1], '/') != NULL);
+
+    if (explicit_path) {
+        if (argv[1][0] == '/') {
+            if (snprintf(task_path, sizeof(task_path), "%s", argv[1]) >= (int)sizeof(task_path)) {
+                fprintf(stderr, "Error: task path too long: %s\n", argv[1]);
+                return 1;
+            }
+        } else {
+            char cwd[PATH_MAX];
+            if (!getcwd(cwd, sizeof(cwd))) {
+                perror("getcwd");
+                return 1;
+            }
+            if (snprintf(task_path, sizeof(task_path), "%s/%s", cwd, argv[1]) >= (int)sizeof(task_path)) {
+                fprintf(stderr, "Error: task path too long: %s/%s\n", cwd, argv[1]);
+                return 1;
+            }
         }
     } else {
+        char suffix[PATH_MAX];
         if (snprintf(suffix, sizeof(suffix), "tasks/%s", argv[1]) >= (int)sizeof(suffix)) {
             fprintf(stderr, "Error: task name too long: %s\n", argv[1]);
             return 1;
         }
+        if (build_from_base(suffix, task_path, sizeof(task_path)) != 0) {
+            fprintf(stderr, "Error: could not resolve task path for '%s'\n", argv[1]);
+            return 1;
+        }
     }
 
-    char task_path[PATH_MAX];
-    if (build_from_base(suffix, task_path, sizeof(task_path)) != 0) {
-        fprintf(stderr, "Error: could not resolve task path for '%s'\n", argv[1]);
-        return 1;
+    char canonical_task_path[PATH_MAX];
+    const char *open_path = task_path;
+    if (realpath(task_path, canonical_task_path)) {
+        open_path = canonical_task_path;
     }
 
-    FILE *fp = fopen(task_path, "r");
+    FILE *fp = fopen(open_path, "r");
     if (!fp) {
-        fprintf(stderr, "Error: Could not open task file '%s'\n", task_path);
+        fprintf(stderr, "Error: Could not open task file '%s'\n", open_path);
         return 1;
+    }
+
+    char task_dir[PATH_MAX];
+    snprintf(task_dir, sizeof(task_dir), "%s", open_path);
+    char *last_slash = strrchr(task_dir, '/');
+    if (last_slash) {
+        if (last_slash == task_dir) {
+            last_slash[1] = '\0';
+        } else {
+            *last_slash = '\0';
+        }
+    } else {
+        snprintf(task_dir, sizeof(task_dir), ".");
+    }
+
+    if (chdir(task_dir) != 0) {
+        fprintf(stderr, "Warning: failed to change directory to task folder '%s': %s\n", task_dir, strerror(errno));
     }
 
     // Load script

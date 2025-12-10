@@ -17,7 +17,6 @@
 #pragma GCC diagnostic ignored "-Wunused-function"
 #endif
 #define STB_IMAGE_IMPLEMENTATION
-#define STBI_ONLY_PNG
 #define STBI_NO_THREAD_LOCALS
 #include "stb_image.h"
 #if defined(__GNUC__)

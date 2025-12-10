@@ -669,6 +669,8 @@ int main(int argc, char *argv[]) {
     char *input;
     CommandStruct cmd;
 
+    init_command_struct(&cmd);
+
     if (!setlocale(LC_ALL, "")) {
         fprintf(stderr, "Warning: failed to configure locale; Unicode I/O may be limited.\n");
     }
@@ -741,6 +743,7 @@ int main(int argc, char *argv[]) {
     /* Run autoexec before announcing readiness */
     {
         CommandStruct aut;
+        init_command_struct(&aut);
         char *autoexec_cmd = strdup("runtask autoexec.task");
         if (!autoexec_cmd) {
             perror("strdup");

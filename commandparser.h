@@ -13,18 +13,21 @@
 #ifndef COMMANDPARSER_H
 #define COMMANDPARSER_H
 
+#include <stddef.h>
+
 #define INPUT_SIZE 1024
-#define MAX_PARAMETERS 10
-#define MAX_OPTIONS 10
 
 typedef struct {
     char command[INPUT_SIZE];
-    char *parameters[MAX_PARAMETERS];
-    char *options[MAX_OPTIONS];
+    char **parameters;
+    char **options;
     int param_count;
     int opt_count;
+    size_t param_capacity;
+    size_t opt_capacity;
 } CommandStruct;
 
+void init_command_struct(CommandStruct *cmd);
 void parse_input(const char *input, CommandStruct *cmd);
 int execute_command(const CommandStruct *cmd);
 void free_command_struct(CommandStruct *cmd);

@@ -30,6 +30,38 @@ static char *my_strdup(const char *s) {
 #define strdup(s) my_strdup(s)
 #endif
 
+static int ensure_capacity(char ***array, size_t *capacity, size_t required) {
+    if (required <= *capacity)
+        return 1;
+
+    size_t new_capacity = *capacity == 0 ? 8 : *capacity;
+    while (new_capacity < required)
+        new_capacity *= 2;
+
+    char **new_arr = realloc(*array, new_capacity * sizeof(*new_arr));
+    if (!new_arr) {
+        perror("realloc failed");
+        return 0;
+    }
+
+    *array = new_arr;
+    *capacity = new_capacity;
+    return 1;
+}
+
+void init_command_struct(CommandStruct *cmd) {
+    if (!cmd)
+        return;
+
+    cmd->command[0] = '\0';
+    cmd->parameters = NULL;
+    cmd->options = NULL;
+    cmd->param_count = 0;
+    cmd->opt_count = 0;
+    cmd->param_capacity = 0;
+    cmd->opt_capacity = 0;
+}
+
 /* Base path for locating commands */
 static char base_path[PATH_MAX] = "";
 
@@ -68,23 +100,20 @@ static int contains_wildcard(const char *str) {
  * with optional globbing.
  */
 void parse_input(const char *input, CommandStruct *cmd) {
-    enum { MAX_TOKENS = 1 + MAX_PARAMETERS + MAX_OPTIONS };
-    char *tokens[MAX_TOKENS];
+    char **tokens = NULL;
+    size_t token_capacity = 0;
     size_t token_count = 0;
     char token_buffer[INPUT_SIZE];
     size_t token_len = 0;
     int in_quotes = 0;
     char quote_char = '\0';
 
+    if (!cmd)
+        return;
+
     cmd->command[0] = '\0';
     cmd->param_count = 0;
     cmd->opt_count = 0;
-    for (int i = 0; i < MAX_PARAMETERS; i++) {
-        cmd->parameters[i] = NULL;
-    }
-    for (int i = 0; i < MAX_OPTIONS; i++) {
-        cmd->options[i] = NULL;
-    }
 
     const char *p = input;
     while (*p != '\0') {
@@ -127,11 +156,13 @@ void parse_input(const char *input, CommandStruct *cmd) {
         if (isspace(c)) {
             if (token_len > 0) {
                 token_buffer[token_len] = '\0';
-                if (token_count < MAX_TOKENS) {
-                    char *dup = strdup(token_buffer);
-                    if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
-                    tokens[token_count++] = dup;
+                if (!ensure_capacity(&tokens, &token_capacity, token_count + 1)) {
+                    free(tokens);
+                    return;
                 }
+                char *dup = strdup(token_buffer);
+                if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
+                tokens[token_count++] = dup;
                 token_len = 0;
             }
             p++;
@@ -146,14 +177,17 @@ void parse_input(const char *input, CommandStruct *cmd) {
 
     if (token_len > 0) {
         token_buffer[token_len] = '\0';
-        if (token_count < MAX_TOKENS) {
-            char *dup = strdup(token_buffer);
-            if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
-            tokens[token_count++] = dup;
+        if (!ensure_capacity(&tokens, &token_capacity, token_count + 1)) {
+            free(tokens);
+            return;
         }
+        char *dup = strdup(token_buffer);
+        if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
+        tokens[token_count++] = dup;
     }
 
     if (token_count == 0) {
+        free(tokens);
         return;
     }
 
@@ -166,54 +200,59 @@ void parse_input(const char *input, CommandStruct *cmd) {
         char *token = tokens[i];
 
         if (token[0] == '-' && token[1] != '\0') {
-            if (cmd->opt_count < MAX_OPTIONS) {
-                cmd->options[cmd->opt_count++] = token;
-            } else {
+            if (!ensure_capacity(&cmd->options, &cmd->opt_capacity, cmd->opt_count + 1)) {
                 free(token);
+                break;
             }
+            cmd->options[cmd->opt_count++] = token;
 
             if (i + 1 < token_count) {
                 char *value = tokens[i + 1];
-                if (cmd->opt_count < MAX_OPTIONS) {
-                    cmd->options[cmd->opt_count++] = value;
-                } else {
+                if (!ensure_capacity(&cmd->options, &cmd->opt_capacity, cmd->opt_count + 1)) {
                     free(value);
+                    i++;
+                    break;
                 }
+                cmd->options[cmd->opt_count++] = value;
                 i++;
             }
         } else {
             if (should_bypass_expansion(cmd->command)) {
-                if (cmd->param_count < MAX_PARAMETERS) {
-                    cmd->parameters[cmd->param_count++] = token;
-                } else {
+                if (!ensure_capacity(&cmd->parameters, &cmd->param_capacity, cmd->param_count + 1)) {
                     free(token);
+                    break;
                 }
+                cmd->parameters[cmd->param_count++] = token;
             } else if (contains_wildcard(token)) {
                 glob_t glob_result;
                 int ret = glob(token, GLOB_NOCHECK, NULL, &glob_result);
                 if (ret == 0 || ret == GLOB_NOMATCH) {
                     for (size_t j = 0; j < glob_result.gl_pathc; j++) {
-                        if (cmd->param_count < MAX_PARAMETERS) {
-                            char *dup = strdup(glob_result.gl_pathv[j]);
-                            if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
-                            cmd->parameters[cmd->param_count++] = dup;
+                        if (!ensure_capacity(&cmd->parameters, &cmd->param_capacity, cmd->param_count + 1)) {
+                            break;
                         }
-                    }
-                } else {
-                    if (cmd->param_count < MAX_PARAMETERS) {
-                        char *dup = strdup(token);
+                        char *dup = strdup(glob_result.gl_pathv[j]);
                         if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
                         cmd->parameters[cmd->param_count++] = dup;
                     }
+                } else {
+                    if (!ensure_capacity(&cmd->parameters, &cmd->param_capacity, cmd->param_count + 1)) {
+                        globfree(&glob_result);
+                        free(token);
+                        break;
+                    }
+                    char *dup = strdup(token);
+                    if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
+                    cmd->parameters[cmd->param_count++] = dup;
                 }
                 globfree(&glob_result);
                 free(token);
             } else {
-                if (cmd->param_count < MAX_PARAMETERS) {
-                    cmd->parameters[cmd->param_count++] = token;
-                } else {
+                if (!ensure_capacity(&cmd->parameters, &cmd->param_capacity, cmd->param_count + 1)) {
                     free(token);
+                    break;
                 }
+                cmd->parameters[cmd->param_count++] = token;
             }
         }
         i++;
@@ -222,6 +261,8 @@ void parse_input(const char *input, CommandStruct *cmd) {
     for (; i < token_count; i++) {
         free(tokens[i]);
     }
+
+    free(tokens);
 }
 
 /*
@@ -314,8 +355,22 @@ int execute_command(const CommandStruct *cmd) {
 
 /* Free all strdup’d memory in a CommandStruct */
 void free_command_struct(CommandStruct *cmd) {
+    if (!cmd)
+        return;
+
     for (int i = 0; i < cmd->param_count; i++)
         free(cmd->parameters[i]);
     for (int i = 0; i < cmd->opt_count; i++)
         free(cmd->options[i]);
+
+    free(cmd->parameters);
+    free(cmd->options);
+
+    cmd->parameters = NULL;
+    cmd->options = NULL;
+    cmd->param_count = 0;
+    cmd->opt_count = 0;
+    cmd->param_capacity = 0;
+    cmd->opt_capacity = 0;
+    cmd->command[0] = '\0';
 }

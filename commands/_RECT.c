@@ -70,57 +70,65 @@ int main(int argc, char *argv[]) {
     int color = default_color_index();
     int fill = 0;
 
-    for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "-x") == 0) {
-            if (++i >= argc) {
+    for (int i = 1; i < argc;) {
+        const char *arg = argv[i];
+
+        if (strcmp(arg, "-x") == 0) {
+            if (i + 1 >= argc) {
                 fprintf(stderr, "_RECT: missing value for -x\n");
                 return EXIT_FAILURE;
             }
-            if (parse_int(argv[i], "-x", &x) != 0)
+            if (parse_int(argv[i + 1], "-x", &x) != 0)
                 return EXIT_FAILURE;
-        } else if (strcmp(argv[i], "-y") == 0) {
-            if (++i >= argc) {
+            i += 2;
+        } else if (strcmp(arg, "-y") == 0) {
+            if (i + 1 >= argc) {
                 fprintf(stderr, "_RECT: missing value for -y\n");
                 return EXIT_FAILURE;
             }
-            if (parse_int(argv[i], "-y", &y) != 0)
+            if (parse_int(argv[i + 1], "-y", &y) != 0)
                 return EXIT_FAILURE;
-        } else if (strcmp(argv[i], "-width") == 0) {
-            if (++i >= argc) {
+            i += 2;
+        } else if (strcmp(arg, "-width") == 0) {
+            if (i + 1 >= argc) {
                 fprintf(stderr, "_RECT: missing value for -width\n");
                 return EXIT_FAILURE;
             }
-            if (parse_int(argv[i], "-width", &width) != 0)
+            if (parse_int(argv[i + 1], "-width", &width) != 0)
                 return EXIT_FAILURE;
-        } else if (strcmp(argv[i], "-height") == 0) {
-            if (++i >= argc) {
+            i += 2;
+        } else if (strcmp(arg, "-height") == 0) {
+            if (i + 1 >= argc) {
                 fprintf(stderr, "_RECT: missing value for -height\n");
                 return EXIT_FAILURE;
             }
-            if (parse_int(argv[i], "-height", &height) != 0)
+            if (parse_int(argv[i + 1], "-height", &height) != 0)
                 return EXIT_FAILURE;
-        } else if (strcmp(argv[i], "-color") == 0) {
-            if (++i >= argc) {
+            i += 2;
+        } else if (strcmp(arg, "-color") == 0) {
+            if (i + 1 >= argc) {
                 fprintf(stderr, "_RECT: missing value for -color\n");
                 return EXIT_FAILURE;
             }
-            if (parse_int(argv[i], "-color", &color) != 0)
+            if (parse_int(argv[i + 1], "-color", &color) != 0)
                 return EXIT_FAILURE;
-        } else if (strcmp(argv[i], "-fill") == 0) {
-            if (++i >= argc) {
+            i += 2;
+        } else if (strcmp(arg, "-fill") == 0) {
+            if (i + 1 >= argc) {
                 fprintf(stderr, "_RECT: missing value for -fill\n");
                 return EXIT_FAILURE;
             }
-            if (strcmp(argv[i], "on") == 0) {
+            if (strcmp(argv[i + 1], "on") == 0) {
                 fill = 1;
-            } else if (strcmp(argv[i], "off") == 0) {
+            } else if (strcmp(argv[i + 1], "off") == 0) {
                 fill = 0;
             } else {
-                fprintf(stderr, "_RECT: invalid value for -fill (expected 'on' or 'off'): '%s'\n", argv[i]);
+                fprintf(stderr, "_RECT: invalid value for -fill (expected 'on' or 'off'): '%s'\n", argv[i + 1]);
                 return EXIT_FAILURE;
             }
+            i += 2;
         } else {
-            fprintf(stderr, "_RECT: unknown argument '%s'\n", argv[i]);
+            fprintf(stderr, "_RECT: unknown argument '%s'\n", arg);
             return EXIT_FAILURE;
         }
     }

@@ -35,17 +35,17 @@ static const size_t PIXEL_PALETTE_SIZE = sizeof(PIXEL_PALETTE) / sizeof(PIXEL_PA
 
 static void print_help(void) {
     printf("pixart - convert an image into pixel art with palette quantization.\n\n");
-    printf("Usage: pixart -dithering_mode <integer> -size_in_percentage <integer> ");
-    printf("-file <path_to_file> -output <path_to_file>\n\n");
+    printf("Usage:\n");
+    printf("  pixart -mode <integer> -size <integer> -file <input> -output <output>\n\n");
     printf("Options:\n");
-    printf("  -dithering_mode <mode>     Dithering algorithm to use (default: 1)\n");
-    printf("                              0 = None\n");
-    printf("                              1 = Floyd-Steinberg error diffusion\n");
-    printf("                              2 = Ordered 4x4 Bayer matrix\n");
-    printf("  -size_in_percentage <pct>  Output size as percentage of the source (default: 50)\n");
-    printf("  -file <path>               Input image file (PNG/JPG/TGA/BMP and more)\n");
-    printf("  -output <path>             Output PNG file path\n");
-    printf("  -help                      Show this help message\n");
+    printf("  -mode <mode>        Dithering algorithm to use (default: 1)\n");
+    printf("                        0 = None\n");
+    printf("                        1 = Floyd-Steinberg error diffusion\n");
+    printf("                        2 = Ordered 4x4 Bayer matrix\n");
+    printf("  -size <percent>     Output size as percent of the source (default: 50)\n");
+    printf("  -file <path>        Input image file (PNG/JPG/TGA/BMP and more)\n");
+    printf("  -output <path>      Output PNG file path\n");
+    printf("  -help               Show this help message\n");
 }
 
 static int parse_int(const char *text, int *out) {
@@ -239,14 +239,14 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-help") == 0 || strcmp(argv[i], "--help") == 0) {
             print_help();
             return 0;
-        } else if (strcmp(argv[i], "-dithering_mode") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "-mode") == 0 && i + 1 < argc) {
             if (!parse_int(argv[++i], &dithering)) {
                 fprintf(stderr, "pixart: invalid dithering mode value.\n");
                 return 1;
             }
-        } else if (strcmp(argv[i], "-size_in_percentage") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "-size") == 0 && i + 1 < argc) {
             if (!parse_int(argv[++i], &size_pct)) {
-                fprintf(stderr, "pixart: invalid size percentage.\n");
+                fprintf(stderr, "pixart: invalid size value.\n");
                 return 1;
             }
         } else if (strcmp(argv[i], "-file") == 0 && i + 1 < argc) {
@@ -265,7 +265,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (size_pct <= 0 || size_pct > 800) {
-        fprintf(stderr, "pixart: size_in_percentage must be between 1 and 800.\n");
+        fprintf(stderr, "pixart: size must be between 1 and 800.\n");
         return 1;
     }
 

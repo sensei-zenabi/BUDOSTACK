@@ -3536,13 +3536,6 @@ int main(int argc, char *argv[]) {
     init_static_scopes();
     current_function_index = -1;
 
-    const char *base_dir = get_base_dir();
-    if (base_dir && base_dir[0] != '\0') {
-        if (chdir(base_dir) != 0) {
-            fprintf(stderr, "Warning: failed to change directory to '%s': %s\n", base_dir, strerror(errno));
-        }
-    }
-
     if (argc >= 2 && strcmp(argv[1], "-help") == 0) {
         print_help();
         return 0;

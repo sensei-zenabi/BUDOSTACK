@@ -3549,6 +3549,12 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-d") == 0) { debug = 1; break; }
     }
 
+    char original_cwd[PATH_MAX];
+    if (!getcwd(original_cwd, sizeof(original_cwd))) {
+        perror("getcwd");
+        return 1;
+    }
+
     char task_path[PATH_MAX];
     if (snprintf(task_path, sizeof(task_path), "%s", argv[1]) >= (int)sizeof(task_path)) {
         fprintf(stderr, "Error: task path too long: %s\n", argv[1]);
@@ -3561,6 +3567,18 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Error: task path too long after resolution: %s\n", canonical_task_path);
             return 1;
         }
+    }
+
+    char script_dir[PATH_MAX];
+    directory_of(task_path, script_dir, sizeof(script_dir));
+    char resolved_script_dir[PATH_MAX];
+    if (realpath(script_dir, resolved_script_dir) != NULL) {
+        snprintf(script_dir, sizeof(script_dir), "%s", resolved_script_dir);
+    }
+
+    if (chdir(script_dir) != 0) {
+        fprintf(stderr, "Error: could not change directory to task location '%s': %s\n", script_dir, strerror(errno));
+        return 1;
     }
 
     ScriptLine script[1024];
@@ -3586,6 +3604,9 @@ int main(int argc, char *argv[]) {
     memset(include_stack, 0, sizeof(include_stack));
 
     if (!load_script_recursive(task_path, task_path, 0, &ctx, include_stack, 0)) {
+        if (chdir(original_cwd) != 0) {
+            perror("restore working directory");
+        }
         return 1;
     }
 
@@ -5256,6 +5277,9 @@ int main(int argc, char *argv[]) {
 
     stop_logging();
     cleanup_variables();
+    if (chdir(original_cwd) != 0) {
+        perror("restore working directory");
+    }
     return 0;
 }
 

@@ -47,6 +47,8 @@
 #define MAX_FUNCTIONS 64
 #define MAX_FUNCTION_PARAMS 8
 #define MAX_SCOPES 16
+#define MAX_INCLUDE_DEPTH 16
+#define MAX_INCLUDES_PER_FILE 32
 
 typedef struct Value Value;
 
@@ -62,6 +64,7 @@ static bool parse_boolean_literal(const char *expr, bool *out, const char **end_
 static bool evaluate_truthy_expression(const char *expr, int line, int debug, bool *out);
 static bool set_echo_enabled(bool enabled);
 static void restore_terminal_settings(void);
+static bool parse_label_definition(const char *line, char *out_name, size_t name_size);
 static int resolve_task_path(const char *arg, const char *cwd, char *out, size_t out_size);
 static int task_dirname(const char *path, char *out, size_t out_size);
 
@@ -2843,6 +2846,83 @@ static FunctionDef *find_function_by_definition(FunctionDef *functions, int func
     return NULL;
 }
 
+static bool record_script_line(const char *line, int indent, int source_line, ScriptLine *script, int script_cap, int *count, Label *labels, int *label_count, FunctionDef *functions, int *function_count) {
+    if (!line || !script || !count || !labels || !label_count || !functions || !function_count) {
+        return false;
+    }
+
+    if (*count >= script_cap) {
+        fprintf(stderr, "Error: script too long (max %d lines)\n", script_cap);
+        return false;
+    }
+
+    FunctionDef def_tmp;
+    bool is_function = parse_function_definition(line, &def_tmp);
+    if (is_function) {
+        script[*count].source_line = source_line;
+        script[*count].type = LINE_FUNCTION;
+        script[*count].indent = indent;
+        strncpy(script[*count].text, line, sizeof(script[*count].text) - 1);
+        script[*count].text[sizeof(script[*count].text) - 1] = '\0';
+
+        def_tmp.definition_pc = *count;
+        def_tmp.start_pc = *count + 1;
+        def_tmp.end_pc = -1;
+        def_tmp.indent = indent;
+
+        int existing = find_function_index(functions, *function_count, def_tmp.name);
+        if (existing >= 0) {
+            functions[existing] = def_tmp;
+        } else if (*function_count < MAX_FUNCTIONS) {
+            functions[*function_count] = def_tmp;
+            (*function_count)++;
+        } else {
+            fprintf(stderr, "Error: too many functions (max %d)\n", MAX_FUNCTIONS);
+        }
+
+        (*count)++;
+        return true;
+    }
+
+    if (*line == '@') {
+        char label_name[64];
+        if (!parse_label_definition(line, label_name, sizeof(label_name))) {
+            fprintf(stderr, "Error: invalid label definition at line %d: %s\n", source_line, line);
+            return false;
+        }
+        script[*count].source_line = source_line;
+        script[*count].type = LINE_LABEL;
+        script[*count].indent = indent;
+        strncpy(script[*count].text, line, sizeof(script[*count].text) - 1);
+        script[*count].text[sizeof(script[*count].text) - 1] = '\0';
+
+        char normalized[64];
+        normalize_label_name(label_name, normalized, sizeof(normalized));
+        int existing = find_label_index(labels, *label_count, normalized);
+        if (existing >= 0) {
+            labels[existing].index = *count;
+        } else {
+            if (*label_count >= MAX_LABELS) {
+                fprintf(stderr, "Error: too many labels (max %d)\n", MAX_LABELS);
+            } else {
+                snprintf(labels[*label_count].name, sizeof(labels[*label_count].name), "%s", normalized);
+                labels[*label_count].index = *count;
+                (*label_count)++;
+            }
+        }
+        (*count)++;
+        return true;
+    }
+
+    script[*count].source_line = source_line;
+    script[*count].type = LINE_COMMAND;
+    script[*count].indent = indent;
+    strncpy(script[*count].text, line, sizeof(script[*count].text) - 1);
+    script[*count].text[sizeof(script[*count].text) - 1] = '\0';
+    (*count)++;
+    return true;
+}
+
 static void apply_return_value(const CallFrame *frame) {
     if (!frame || !frame->has_return_target) {
         return;
@@ -2893,6 +2973,189 @@ static bool parse_label_definition(const char *line, char *out_name, size_t name
     if (*cursor != '\0') {
         return false;
     }
+    return true;
+}
+
+static bool load_task_file(const char *task_path, const char *task_dir, ScriptLine *script, int script_cap, int *script_count, Label *labels, int *label_count, FunctionDef *functions, int *function_count, int depth, int debug) {
+    typedef struct {
+        char text[SCRIPT_TEXT_MAX];
+        int indent;
+        int source_line;
+    } PendingLine;
+
+    typedef struct {
+        char path[PATH_MAX];
+        int source_line;
+    } IncludeRequest;
+
+    if (!task_path || !script || !script_count || !labels || !label_count || !functions || !function_count) {
+        return false;
+    }
+
+    (void)debug;
+
+    if (depth >= MAX_INCLUDE_DEPTH) {
+        fprintf(stderr, "Error: include nesting too deep at '%s'\n", task_path);
+        return false;
+    }
+
+    FILE *fp = fopen(task_path, "r");
+    if (!fp) {
+        fprintf(stderr, "Error: Could not open task file '%s'\n", task_path);
+        return false;
+    }
+
+    char dirbuf[PATH_MAX];
+    const char *base_dir = task_dir;
+    if (!base_dir || !*base_dir) {
+        if (task_dirname(task_path, dirbuf, sizeof(dirbuf)) == 0) {
+            base_dir = dirbuf;
+        } else {
+            base_dir = ".";
+        }
+    }
+
+    PendingLine *pending_lines = (PendingLine *)calloc((size_t)script_cap, sizeof(PendingLine));
+    if (!pending_lines) {
+        perror("calloc");
+        fclose(fp);
+        return false;
+    }
+
+    IncludeRequest includes[MAX_INCLUDES_PER_FILE];
+    int include_count = 0;
+    int pending_count = 0;
+
+    char linebuf[256];
+    char combined[SCRIPT_TEXT_MAX];
+    int brace_balance = 0;
+    bool combining = false;
+    int pending_indent = 0;
+    int pending_source_line = 0;
+    int file_line = 0;
+
+    while (fgets(linebuf, sizeof(linebuf), fp)) {
+        file_line++;
+        char *line = trim(linebuf);
+        int indent = (int)(line - linebuf);
+        if (indent < 0) {
+            indent = 0;
+        }
+        if (!*line) {
+            continue;
+        }
+
+        if (!combining) {
+            snprintf(combined, sizeof(combined), "%s", line);
+            brace_balance = brace_balance_delta(combined);
+            combining = (brace_balance > 0);
+            pending_indent = indent;
+            pending_source_line = file_line;
+            if (combining) {
+                continue;
+            }
+        } else {
+            size_t cur_len = strlen(combined);
+            size_t add_len = strlen(line);
+            if (cur_len + 1 + add_len >= sizeof(combined)) {
+                fprintf(stderr, "Error: combined line too long near source line %d\n", pending_source_line);
+                continue;
+            }
+            combined[cur_len] = ' ';
+            memcpy(combined + cur_len + 1, line, add_len + 1);
+            brace_balance += brace_balance_delta(line);
+            if (brace_balance > 0) {
+                continue;
+            }
+            combining = false;
+            indent = pending_indent;
+            line = combined;
+        }
+
+        int effective_line = pending_source_line ? pending_source_line : file_line;
+
+        if (brace_balance < 0) {
+            fprintf(stderr, "Error: unmatched closing brace at line %d\n", file_line);
+            brace_balance = 0;
+            combining = false;
+            continue;
+        }
+
+        if (strncmp(line, "INCLUDE", 7) == 0 && (line[7] == '\0' || isspace((unsigned char)line[7]))) {
+            const char *after = line + 7;
+            while (isspace((unsigned char)*after)) {
+                after++;
+            }
+            char *include_target = NULL;
+            const char *cursor = after;
+            if (!parse_string_literal(&cursor, &include_target)) {
+                fprintf(stderr, "Error: invalid INCLUDE path at line %d\n", effective_line);
+                continue;
+            }
+            while (isspace((unsigned char)*cursor)) {
+                cursor++;
+            }
+            if (*cursor != '\0') {
+                fprintf(stderr, "Error: unexpected characters after INCLUDE path at line %d\n", effective_line);
+                free(include_target);
+                continue;
+            }
+
+            char resolved[PATH_MAX];
+            if (resolve_task_path(include_target, base_dir, resolved, sizeof(resolved)) != 0) {
+                fprintf(stderr, "Error: could not resolve INCLUDE '%s' at line %d\n", include_target, effective_line);
+                free(include_target);
+                continue;
+            }
+            free(include_target);
+
+            if (include_count >= MAX_INCLUDES_PER_FILE) {
+                fprintf(stderr, "Error: too many INCLUDE directives in '%s' (max %d)\n", task_path, MAX_INCLUDES_PER_FILE);
+                continue;
+            }
+
+            snprintf(includes[include_count].path, sizeof(includes[include_count].path), "%s", resolved);
+            includes[include_count].source_line = effective_line;
+            include_count++;
+            continue;
+        }
+
+        if (pending_count >= script_cap) {
+            fprintf(stderr, "Error: script too long (max %d lines)\n", script_cap);
+            free(pending_lines);
+            fclose(fp);
+            return false;
+        }
+
+        pending_lines[pending_count].source_line = effective_line;
+        pending_lines[pending_count].indent = indent;
+        strncpy(pending_lines[pending_count].text, line, sizeof(pending_lines[pending_count].text) - 1);
+        pending_lines[pending_count].text[sizeof(pending_lines[pending_count].text) - 1] = '\0';
+        pending_count++;
+    }
+
+    fclose(fp);
+
+    for (int i = 0; i < include_count; ++i) {
+        char include_dir[PATH_MAX];
+        const char *include_base = base_dir;
+        if (task_dirname(includes[i].path, include_dir, sizeof(include_dir)) == 0) {
+            include_base = include_dir;
+        }
+        if (!load_task_file(includes[i].path, include_base, script, script_cap, script_count, labels, label_count, functions, function_count, depth + 1, debug)) {
+            free(pending_lines);
+            return false;
+        }
+    }
+
+    for (int i = 0; i < pending_count; ++i) {
+        if (!record_script_line(pending_lines[i].text, pending_lines[i].indent, pending_lines[i].source_line, script, script_cap, script_count, labels, label_count, functions, function_count)) {
+            free(pending_lines);
+            return false;
+        }
+    }
+
+    free(pending_lines);
     return true;
 }
 
@@ -3368,6 +3631,7 @@ int main(int argc, char *argv[]) {
     }
 
     char task_directory[PATH_MAX];
+    task_directory[0] = '\0';
     if (task_dirname(task_path, task_directory, sizeof(task_directory)) == 0) {
         if (chdir(task_directory) != 0) {
             fprintf(stderr, "Warning: failed to change directory to '%s': %s\n", task_directory, strerror(errno));
@@ -3381,13 +3645,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    FILE *fp = fopen(task_path, "r");
-    if (!fp) {
-        fprintf(stderr, "Error: Could not open task file '%s'\n", task_path);
-        return 1;
-    }
-
-    // Load script
     ScriptLine script[1024];
     Label labels[MAX_LABELS];
     FunctionDef functions[MAX_FUNCTIONS];
@@ -3396,133 +3653,10 @@ int main(int argc, char *argv[]) {
     int label_count = 0;
     int function_count = 0;
     int count = 0;
-    char linebuf[256];
-    char combined[SCRIPT_TEXT_MAX];
-    int brace_balance = 0;
-    bool combining = false;
-    int pending_indent = 0;
-    int pending_source_line = 0;
-    int file_line = 0;
-    while (fgets(linebuf, sizeof(linebuf), fp)) {
-        file_line++;
-        char *line = trim(linebuf);
-        int indent = (int)(line - linebuf);
-        if (indent < 0) {
-            indent = 0;
-        }
-        if (!*line) {
-            continue;
-        }
-
-        if (!combining) {
-            snprintf(combined, sizeof(combined), "%s", line);
-            brace_balance = brace_balance_delta(combined);
-            combining = (brace_balance > 0);
-            pending_indent = indent;
-            pending_source_line = file_line;
-            if (combining) {
-                continue;
-            }
-        } else {
-            size_t cur_len = strlen(combined);
-            size_t add_len = strlen(line);
-            if (cur_len + 1 + add_len >= sizeof(combined)) {
-                fprintf(stderr, "Error: combined line too long near source line %d\n", pending_source_line);
-                continue;
-            }
-            combined[cur_len] = ' ';
-            memcpy(combined + cur_len + 1, line, add_len + 1);
-            brace_balance += brace_balance_delta(line);
-            if (brace_balance > 0) {
-                continue;
-            }
-            combining = false;
-            indent = pending_indent;
-            line = combined;
-        }
-
-        int effective_line = pending_source_line;
-        if (!combining) {
-            effective_line = pending_source_line ? pending_source_line : file_line;
-        }
-
-        if (brace_balance < 0) {
-            fprintf(stderr, "Error: unmatched closing brace at line %d\n", file_line);
-            brace_balance = 0;
-            combining = false;
-            continue;
-        }
-
-        if (count >= (int)(sizeof(script) / sizeof(script[0]))) {
-            fprintf(stderr, "Error: script too long (max %zu lines)\n", sizeof(script) / sizeof(script[0]));
-            break;
-        }
-
-        FunctionDef def_tmp;
-        bool is_function = parse_function_definition(line, &def_tmp);
-        if (is_function) {
-            script[count].source_line = effective_line;
-            script[count].type = LINE_FUNCTION;
-            script[count].indent = indent;
-            strncpy(script[count].text, line, sizeof(script[count].text) - 1);
-            script[count].text[sizeof(script[count].text) - 1] = '\0';
-
-            def_tmp.definition_pc = count;
-            def_tmp.start_pc = count + 1;
-            def_tmp.end_pc = -1;
-            def_tmp.indent = indent;
-
-            int existing = find_function_index(functions, function_count, def_tmp.name);
-            if (existing >= 0) {
-                functions[existing] = def_tmp;
-            } else if (function_count < MAX_FUNCTIONS) {
-                functions[function_count++] = def_tmp;
-            } else {
-                fprintf(stderr, "Error: too many functions (max %d)\n", MAX_FUNCTIONS);
-            }
-
-            count++;
-            continue;
-        }
-
-        if (*line == '@') {
-            char label_name[64];
-            if (!parse_label_definition(line, label_name, sizeof(label_name))) {
-                fprintf(stderr, "Error: invalid label definition at line %d: %s\n", effective_line, line);
-                continue;
-            }
-            script[count].source_line = effective_line;
-            script[count].type = LINE_LABEL;
-            script[count].indent = indent;
-            strncpy(script[count].text, line, sizeof(script[count].text) - 1);
-            script[count].text[sizeof(script[count].text) - 1] = '\0';
-
-            char normalized[64];
-            normalize_label_name(label_name, normalized, sizeof(normalized));
-            int existing = find_label_index(labels, label_count, normalized);
-            if (existing >= 0) {
-                labels[existing].index = count;
-            } else {
-                if (label_count >= MAX_LABELS) {
-                    fprintf(stderr, "Error: too many labels (max %d)\n", MAX_LABELS);
-                } else {
-                    snprintf(labels[label_count].name, sizeof(labels[label_count].name), "%s", normalized);
-                    labels[label_count].index = count;
-                    label_count++;
-                }
-            }
-            count++;
-            continue;
-        }
-
-        script[count].source_line = effective_line;
-        script[count].type = LINE_COMMAND;
-        script[count].indent = indent;
-        strncpy(script[count].text, line, sizeof(script[count].text) - 1);
-        script[count].text[sizeof(script[count].text) - 1] = '\0';
-        count++;
+    int script_cap = (int)(sizeof(script) / sizeof(script[0]));
+    if (!load_task_file(task_path, task_directory, script, script_cap, &count, labels, &label_count, functions, &function_count, 0, debug)) {
+        return 1;
     }
-    fclose(fp);
 
     for (int i = 0; i < function_count; ++i) {
         int end_pc = count;

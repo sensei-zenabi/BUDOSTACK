@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 
 #include <errno.h>
 #include <limits.h>
@@ -44,7 +45,13 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (access(path, R_OK) != 0) {
+    char resolved[PATH_MAX];
+    if (!realpath(path, resolved)) {
+        perror("_TERM_SOUND_PLAY: realpath");
+        return EXIT_FAILURE;
+    }
+
+    if (access(resolved, R_OK) != 0) {
         perror("_TERM_SOUND_PLAY: access");
         return EXIT_FAILURE;
     }
@@ -63,7 +70,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
 
-    if (printf("\x1b]777;sound=play;channel=%ld;path=%s;volume=%ld\a", channel, path, volume) < 0) {
+    if (printf("\x1b]777;sound=play;channel=%ld;path=%s;volume=%ld\a", channel, resolved, volume) < 0) {
         perror("_TERM_SOUND_PLAY: printf");
         return EXIT_FAILURE;
     }

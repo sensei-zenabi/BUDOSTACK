@@ -62,6 +62,8 @@ static bool parse_boolean_literal(const char *expr, bool *out, const char **end_
 static bool evaluate_truthy_expression(const char *expr, int line, int debug, bool *out);
 static bool set_echo_enabled(bool enabled);
 static void restore_terminal_settings(void);
+static int resolve_task_path(const char *arg, const char *cwd, char *out, size_t out_size);
+static int task_dirname(const char *path, char *out, size_t out_size);
 
 typedef enum {
     VALUE_UNSET = 0,
@@ -384,6 +386,66 @@ static int build_from_base(const char *suffix, char *buffer, size_t size) {
             return -1;
     }
     return 0;
+}
+
+static int task_dirname(const char *path, char *out, size_t out_size) {
+    if (!path || !out || out_size == 0) {
+        return -1;
+    }
+
+    const char *last_slash = strrchr(path, '/');
+    size_t len;
+
+    if (last_slash) {
+        len = (size_t)(last_slash - path);
+        if (len == 0) {
+            len = 1; // Root directory
+        }
+    } else {
+        len = 1;
+        path = ".";
+    }
+
+    if (len >= out_size) {
+        return -1;
+    }
+
+    memcpy(out, path, len);
+    out[len] = '\0';
+    return 0;
+}
+
+static int resolve_task_path(const char *arg, const char *cwd, char *out, size_t out_size) {
+    if (!arg || !cwd || !out || out_size == 0) {
+        return -1;
+    }
+
+    if (arg[0] == '/') {
+        return realpath(arg, out) ? 0 : -1;
+    }
+
+    char candidate[PATH_MAX];
+
+    if (snprintf(candidate, sizeof(candidate), "%s/%s", cwd, arg) < (int)sizeof(candidate)) {
+        if (realpath(candidate, out)) {
+            return 0;
+        }
+    }
+
+    if (strchr(arg, '/') || arg[0] == '.') {
+        return -1;
+    }
+
+    if (snprintf(candidate, sizeof(candidate), "tasks/%s", arg) >= (int)sizeof(candidate)) {
+        return -1;
+    }
+
+    char built[PATH_MAX];
+    if (build_from_base(candidate, built, sizeof(built)) == 0 && realpath(built, out)) {
+        return 0;
+    }
+
+    return -1;
 }
 
 static bool equals_ignore_case(const char *a, const char *b) {
@@ -3250,12 +3312,8 @@ int main(int argc, char *argv[]) {
     init_static_scopes();
     current_function_index = -1;
 
-    const char *base_dir = get_base_dir();
-    if (base_dir && base_dir[0] != '\0') {
-        if (chdir(base_dir) != 0) {
-            fprintf(stderr, "Warning: failed to change directory to '%s': %s\n", base_dir, strerror(errno));
-        }
-    }
+    // Initialize base directory cache for resolving bundled executables.
+    (void)get_base_dir();
 
     if (argc >= 2 && strcmp(argv[1], "-help") == 0) {
         print_help();
@@ -3270,24 +3328,23 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-d") == 0) { debug = 1; break; }
     }
 
-    // Prepend tasks/ like before but resolve relative to Budostack base when available
-    char suffix[PATH_MAX];
-    if (argv[1][0] == '/' || argv[1][0] == '.') {
-        if (snprintf(suffix, sizeof(suffix), "%s", argv[1]) >= (int)sizeof(suffix)) {
-            fprintf(stderr, "Error: task path too long: %s\n", argv[1]);
-            return 1;
-        }
-    } else {
-        if (snprintf(suffix, sizeof(suffix), "tasks/%s", argv[1]) >= (int)sizeof(suffix)) {
-            fprintf(stderr, "Error: task name too long: %s\n", argv[1]);
-            return 1;
-        }
+    char cwd[PATH_MAX];
+    if (!getcwd(cwd, sizeof(cwd))) {
+        perror("getcwd");
+        return 1;
     }
 
     char task_path[PATH_MAX];
-    if (build_from_base(suffix, task_path, sizeof(task_path)) != 0) {
+    if (resolve_task_path(argv[1], cwd, task_path, sizeof(task_path)) != 0) {
         fprintf(stderr, "Error: could not resolve task path for '%s'\n", argv[1]);
         return 1;
+    }
+
+    char task_directory[PATH_MAX];
+    if (task_dirname(task_path, task_directory, sizeof(task_directory)) == 0) {
+        if (chdir(task_directory) != 0) {
+            fprintf(stderr, "Warning: failed to change directory to '%s': %s\n", task_directory, strerror(errno));
+        }
     }
 
     FILE *fp = fopen(task_path, "r");

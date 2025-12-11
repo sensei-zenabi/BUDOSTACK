@@ -298,6 +298,39 @@ static void log_output(const char *data, size_t len) {
     fflush(log_file);
 }
 
+static void normalize_existing_base(const char *anchor_dir) {
+    const char *env = getenv("BUDOSTACK_BASE");
+    if (!env || env[0] == '\0') {
+        return;
+    }
+
+    char resolved[PATH_MAX];
+
+    if (realpath(env, resolved)) {
+        if (strcmp(env, resolved) != 0) {
+            if (setenv("BUDOSTACK_BASE", resolved, 1) != 0) {
+                perror("setenv BUDOSTACK_BASE");
+            }
+        }
+        return;
+    }
+
+    if (env[0] == '/' || !anchor_dir || anchor_dir[0] == '\0') {
+        return;
+    }
+
+    char combined[PATH_MAX];
+    if (snprintf(combined, sizeof(combined), "%s/%s", anchor_dir, env) >= (int)sizeof(combined)) {
+        return;
+    }
+
+    if (realpath(combined, resolved)) {
+        if (setenv("BUDOSTACK_BASE", resolved, 1) != 0) {
+            perror("setenv BUDOSTACK_BASE");
+        }
+    }
+}
+
 static const char *get_base_dir(void) {
     static char cached[PATH_MAX];
     static int initialized = 0;
@@ -3601,6 +3634,8 @@ int main(int argc, char *argv[]) {
         perror("getcwd");
         return 1;
     }
+
+    normalize_existing_base(original_cwd);
 
     char task_path[PATH_MAX];
     if (snprintf(task_path, sizeof(task_path), "%s", argv[1]) >= (int)sizeof(task_path)) {

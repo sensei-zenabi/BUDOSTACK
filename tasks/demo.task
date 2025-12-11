@@ -21,15 +21,15 @@ SET $VX = 0
 SET $TIME = 0
 SET $STRING = "none"
 SET $TIMER_STATE = 0
-SET $SPRITE_PATHS = {"./tasks/assets/char_1_1.png",
-                     "./tasks/assets/char_1_2.png",
-                     "./tasks/assets/cloud.png"}
+SET $SPRITE_PATHS = {"./assets/char_1_1.png",
+                     "./assets/char_1_2.png",
+                     "./assets/cloud.png"}
                      
-SET $TILE_PATHS = {"./tasks/assets/tile001.png",
-                   "./tasks/assets/tile002.png",
-                   "./tasks/assets/tile003.png",
-                   "./tasks/assets/tile004.png",
-                   "./tasks/assets/tile005.png"}
+SET $TILE_PATHS = {"./assets/tile001.png",
+                   "./assets/tile002.png",
+                   "./assets/tile003.png",
+                   "./assets/tile004.png",
+                   "./assets/tile005.png"}
 SET $SPRITES = {}
 SET $TILES = {}
 SET $MOUSE_EVENTS = {}

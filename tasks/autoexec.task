@@ -58,11 +58,11 @@ RUN cls
 
 # Display "simulated" loading screen and play related sound effects
 
-RUN _TERM_SOUND_PLAY 1 sounds/628246__asiekierka__floppy_access6.ogg 100
+RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 @LOADING
 RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
 IF ($LOAD == 50):
-  RUN _TERM_SOUND_PLAY 2 sounds/628246__asiekierka__floppy_access6.ogg 100
+  RUN _TERM_SOUND_PLAY 2 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 END
 IF ($LOAD < 100):
   SET $LOAD = $LOAD + 10
@@ -75,8 +75,8 @@ END
 @INTRO
 RUN clear
 RUN _WAIT 200
-RUN _DISPLAY -x 0 -y 15 -file tasks/assets/login_logo.png
-RUN _TERM_SOUND_PLAY 2 sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
+RUN _DISPLAY -x 0 -y 15 -file assets/login_logo.png
+RUN _TERM_SOUND_PLAY 2 ../sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
 RUN _WAIT 1500
 RUN _TEXT -x 27 -y 31 -text "...WELCOME BACK TO 1980s..."
 RUN _WAIT 1000

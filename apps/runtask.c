@@ -2568,6 +2568,53 @@ static void directory_of(const char *path, char *buffer, size_t size) {
     *slash = '\0';
 }
 
+static bool dir_has_core_layout(const char *dir) {
+    const char *required[] = { "apps", "commands", "utilities" };
+
+    for (size_t i = 0; i < sizeof(required) / sizeof(required[0]); ++i) {
+        char candidate[PATH_MAX];
+        if (snprintf(candidate, sizeof(candidate), "%s/%s", dir, required[i]) >= (int)sizeof(candidate)) {
+            return false;
+        }
+        if (access(candidate, F_OK) != 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool find_repo_base_from_path(const char *start_dir, char *out, size_t out_size) {
+    if (!start_dir || !*start_dir || !out || out_size == 0) {
+        return false;
+    }
+
+    char current[PATH_MAX];
+    if (snprintf(current, sizeof(current), "%s", start_dir) >= (int)sizeof(current)) {
+        return false;
+    }
+
+    while (true) {
+        if (dir_has_core_layout(current)) {
+            snprintf(out, out_size, "%s", current);
+            return true;
+        }
+
+        char *slash = strrchr(current, '/');
+        if (!slash) {
+            break;
+        }
+
+        if (slash == current) {
+            break;
+        }
+
+        *slash = '\0';
+    }
+
+    return false;
+}
+
 static int brace_balance_delta(const char *s) {
     bool in_string = false;
     bool escape = false;
@@ -3574,6 +3621,16 @@ int main(int argc, char *argv[]) {
     char resolved_script_dir[PATH_MAX];
     if (realpath(script_dir, resolved_script_dir) != NULL) {
         snprintf(script_dir, sizeof(script_dir), "%s", resolved_script_dir);
+    }
+
+    const char *existing_base = getenv("BUDOSTACK_BASE");
+    if (!existing_base || existing_base[0] == '\0') {
+        char inferred_base[PATH_MAX];
+        if (find_repo_base_from_path(script_dir, inferred_base, sizeof(inferred_base))) {
+            if (setenv("BUDOSTACK_BASE", inferred_base, 1) != 0) {
+                perror("setenv BUDOSTACK_BASE");
+            }
+        }
     }
 
     if (chdir(script_dir) != 0) {

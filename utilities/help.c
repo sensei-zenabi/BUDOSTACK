@@ -179,11 +179,11 @@ int main(int argc, char *argv[]) {
     printf("  dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.\n");
     printf("  editprof.: Full name 'editprofile'. App for editing color scheme presets.\n");
     printf("  paint    : ASCII paint application to edit bitmaps.\n");    
+    printf("  pixart   : Turn images into pixel art and assets to your apps.\n");
     printf("  psfedit  : Font editor for .psf fonts.\n");
     printf("  signal   : Signal generator. Type 'signal' for help.\n");
     printf("  time     : Display time with IP-based timezone lookup and NTP clocks.\n");
     printf("             Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).\n");
-    printf("\n");
     printf("\n");
     printf("-----------------------------------------------------------------------------\n");
     // PAGE 5

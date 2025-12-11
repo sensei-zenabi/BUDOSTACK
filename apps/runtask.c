@@ -150,6 +150,7 @@ static char log_file_path[PATH_MAX];
 static struct termios saved_termios;
 static bool saved_termios_valid = false;
 static bool echo_disabled = false;
+static char task_workdir[PATH_MAX];
 
 static void set_initial_argv0(const char *argv0) {
     if (!argv0) {
@@ -218,6 +219,32 @@ static void restore_terminal_settings(void) {
         perror("ECHO: tcsetattr restore");
     }
     echo_disabled = false;
+}
+
+static void cache_task_workdir(const char *dir) {
+    if (!dir || !*dir) {
+        task_workdir[0] = '\0';
+        return;
+    }
+
+    if (snprintf(task_workdir, sizeof(task_workdir), "%s", dir) >= (int)sizeof(task_workdir)) {
+        task_workdir[sizeof(task_workdir) - 1] = '\0';
+    }
+}
+
+static void ensure_task_workdir(void) {
+    if (task_workdir[0] == '\0') {
+        return;
+    }
+
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) && strcmp(cwd, task_workdir) == 0) {
+        return;
+    }
+
+    if (chdir(task_workdir) != 0) {
+        fprintf(stderr, "Warning: failed to restore task working directory '%s': %s\n", task_workdir, strerror(errno));
+    }
 }
 
 static int start_logging(const char *path) {
@@ -3344,6 +3371,13 @@ int main(int argc, char *argv[]) {
     if (task_dirname(task_path, task_directory, sizeof(task_directory)) == 0) {
         if (chdir(task_directory) != 0) {
             fprintf(stderr, "Warning: failed to change directory to '%s': %s\n", task_directory, strerror(errno));
+        } else {
+            char resolved_task_dir[PATH_MAX];
+            if (getcwd(resolved_task_dir, sizeof(resolved_task_dir))) {
+                cache_task_workdir(resolved_task_dir);
+            } else {
+                cache_task_workdir(task_directory);
+            }
         }
     }
 
@@ -4688,6 +4722,8 @@ int main(int argc, char *argv[]) {
                 if (debug) fprintf(stderr, "RUN: missing command at line %d\n", script[pc].source_line);
                 continue;
             }
+
+            ensure_task_workdir();
 
             // Tokenize to argv[] (heap-based)
             int argcnt = 0;

@@ -2510,13 +2510,15 @@ static void print_help(void) {
     printf("    Append 'TO $VAR' to capture stdout into $VAR (blocking mode only).\n");
     printf("  INCLUDE path\n");
     printf("    Insert another script at this point. Relative paths resolve against the\n");
-    printf("    current script's directory, with a fallback to tasks/<name>.\n");
+    printf("    current script's directory.\n");
     printf("  CLEAR\n");
     printf("    Clear the screen.\n\n");
     printf("Usage:\n");
-    printf("  ./runtask taskfile [-d]\n\n");
+    printf("  ./runtask /path/to/taskfile [-d]\n\n");
     printf("Notes:\n");
-    printf("- Task files are loaded from 'tasks/' automatically (e.g., tasks/demo.task).\n");
+    printf("- Provide the full task path relative to your current directory.\n");
+    printf("- Script paths (e.g., INCLUDE targets, asset references) resolve relative to\n");
+    printf("  the task file's directory.\n");
     printf("- Place executables in ./apps, ./commands, or ./utilities and make them\n");
     printf("  executable.\n");
     printf("- External commands available in PATH are also accepted.\n\n");
@@ -3425,17 +3427,21 @@ static bool load_script_recursive(const char *path, const char *origin_file, int
             char resolved[PATH_MAX];
             bool resolved_ok = false;
             if (include_target[0] == '/') {
-                resolved_ok = (build_from_base(include_target, resolved, sizeof(resolved)) == 0);
+                if (realpath(include_target, resolved) != NULL) {
+                    resolved_ok = true;
+                } else if (file_exists_readable(include_target) &&
+                           snprintf(resolved, sizeof(resolved), "%s", include_target) < (int)sizeof(resolved)) {
+                    resolved_ok = true;
+                }
             } else {
                 char dir[PATH_MAX];
                 directory_of(path, dir, sizeof(dir));
-                if (snprintf(resolved, sizeof(resolved), "%s/%s", dir, include_target) < (int)sizeof(resolved) &&
-                    file_exists_readable(resolved)) {
-                    resolved_ok = true;
-                } else {
-                    char fallback_suffix[PATH_MAX];
-                    if (snprintf(fallback_suffix, sizeof(fallback_suffix), "tasks/%s", include_target) < (int)sizeof(fallback_suffix) &&
-                        build_from_base(fallback_suffix, resolved, sizeof(resolved)) == 0) {
+                char candidate[PATH_MAX];
+                if (snprintf(candidate, sizeof(candidate), "%s/%s", dir, include_target) < (int)sizeof(candidate)) {
+                    if (realpath(candidate, resolved) != NULL) {
+                        resolved_ok = true;
+                    } else if (file_exists_readable(candidate) &&
+                               snprintf(resolved, sizeof(resolved), "%s", candidate) < (int)sizeof(resolved)) {
                         resolved_ok = true;
                     }
                 }
@@ -3550,24 +3556,18 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "-d") == 0) { debug = 1; break; }
     }
 
-    // Prepend tasks/ like before but resolve relative to Budostack base when available
-    char suffix[PATH_MAX];
-    if (argv[1][0] == '/' || argv[1][0] == '.') {
-        if (snprintf(suffix, sizeof(suffix), "%s", argv[1]) >= (int)sizeof(suffix)) {
-            fprintf(stderr, "Error: task path too long: %s\n", argv[1]);
-            return 1;
-        }
-    } else {
-        if (snprintf(suffix, sizeof(suffix), "tasks/%s", argv[1]) >= (int)sizeof(suffix)) {
-            fprintf(stderr, "Error: task name too long: %s\n", argv[1]);
-            return 1;
-        }
+    char task_path[PATH_MAX];
+    if (snprintf(task_path, sizeof(task_path), "%s", argv[1]) >= (int)sizeof(task_path)) {
+        fprintf(stderr, "Error: task path too long: %s\n", argv[1]);
+        return 1;
     }
 
-    char task_path[PATH_MAX];
-    if (build_from_base(suffix, task_path, sizeof(task_path)) != 0) {
-        fprintf(stderr, "Error: could not resolve task path for '%s'\n", argv[1]);
-        return 1;
+    char canonical_task_path[PATH_MAX];
+    if (realpath(task_path, canonical_task_path) != NULL) {
+        if (snprintf(task_path, sizeof(task_path), "%s", canonical_task_path) >= (int)sizeof(task_path)) {
+            fprintf(stderr, "Error: task path too long after resolution: %s\n", canonical_task_path);
+            return 1;
+        }
     }
 
     ScriptLine script[1024];

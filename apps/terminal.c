@@ -7211,9 +7211,10 @@ int main(int argc, char **argv) {
                     idle_delay_ms = 0u;
                 }
             }
-            if (idle_delay_ms > 0u) {
-                SDL_Delay(idle_delay_ms);
+            if (idle_delay_ms == 0u) {
+                idle_delay_ms = 1u;
             }
+            SDL_Delay(idle_delay_ms);
             continue;
         }
 

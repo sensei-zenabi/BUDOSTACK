@@ -7177,12 +7177,12 @@ int main(int argc, char **argv) {
             }
         }
         if (!need_gpu_draw) {
-            Uint32 idle_delay_ms = 50u;
+            Uint32 idle_delay_ms = terminal_render_frame_interval_ms > 0u
+                ? terminal_render_frame_interval_ms
+                : 50u;
             if (terminal_render_frame_interval_ms > 0u) {
                 Uint32 since_last_frame = now - terminal_render_last_frame_tick;
-                if (since_last_frame >= terminal_render_frame_interval_ms) {
-                    idle_delay_ms = 0u;
-                } else {
+                if (since_last_frame < terminal_render_frame_interval_ms) {
                     Uint32 remaining = terminal_render_frame_interval_ms - since_last_frame;
                     if (remaining < idle_delay_ms) {
                         idle_delay_ms = remaining;

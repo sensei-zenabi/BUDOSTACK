@@ -13,6 +13,7 @@
 
 SET $SELECTION = 0
 SET $SCHEME = "c64"
+SET $SHADERS = "enable"
 SET $LOAD = 0
 
 # Set resolution to ~80x45, i.e. wide screen VGA
@@ -53,7 +54,22 @@ END
 IF ($SELECTION == 3):
   $SCHEME = "vt220-green"
 END
+RUN _CLEAR
 RUN _RETROPROFILE apply $SCHEME
+RUN _WAIT 1000
+
+# Select whether shaders are used
+
+PRINT "\n"
+PRINT "\nEnable CRT Simulation?"
+PRINT "\n[1] Yes"
+PRINT "\n[0] No"
+PRINT "\nEnter Selection: "
+INPUT $SELECTION
+IF ($SELECTION == 0):
+  $SHADERS = "disable"
+END
+RUN _TERM_SHADER $SHADERS
 RUN cls
 
 # Display "simulated" loading screen and play related sound effects

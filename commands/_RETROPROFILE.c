@@ -106,7 +106,7 @@ static void emit_palette_sequence(const RetroProfile *profile) {
              profile->defaults.cursor.b);
     fflush(stdout);
     fprintf(stderr,
-            "Applied '%s' palette to terminal (OSC 4/10/11/12). Use 'reset' to restore defaults.\n",
+            "Applied '%s' palette to terminal (OSC 4/10/11/12). \nUse 'reset' to restore defaults.\n",
             profile->display_name);
 }
 

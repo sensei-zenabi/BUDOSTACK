@@ -128,6 +128,7 @@ struct PageSize {
 struct WrappedLine {
     size_t start;
     size_t len;
+    int indent;
 };
 
 struct HistoryEntry {
@@ -356,6 +357,58 @@ static void set_status(struct BookState *state, const char *fmt, ...) {
     va_end(ap);
 }
 
+static int count_line_indent(const char *text, size_t len, size_t start) {
+    size_t pos = start;
+    int indent = 0;
+    while (pos < len) {
+        char c = text[pos];
+        if (c == ' ' || c == '\t') {
+            indent++;
+            pos++;
+            continue;
+        }
+        break;
+    }
+    return indent;
+}
+
+static int line_has_content(const char *text, size_t start, size_t end) {
+    for (size_t i = start; i < end; i++) {
+        if (text[i] != ' ' && text[i] != '\t') {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void insert_newline_with_indent(struct BookState *state) {
+    size_t line_start = state->cursor;
+    while (line_start > 0 && state->text[line_start - 1] != '\n') {
+        line_start--;
+    }
+    size_t line_end = state->cursor;
+    int has_content = line_has_content(state->text, line_start, line_end);
+    size_t indent_len = has_content ? (size_t)count_line_indent(state->text, state->len, line_start) : 0u;
+    size_t insert_len = 1u + (has_content ? indent_len : 0u);
+
+    push_undo(state);
+    ensure_capacity(state, state->len + insert_len + 1u);
+    if (state->text == NULL) {
+        return;
+    }
+
+    memmove(&state->text[state->cursor + insert_len], &state->text[state->cursor], state->len - state->cursor);
+    state->text[state->cursor] = '\n';
+    if (has_content && indent_len > 0u) {
+        memcpy(&state->text[state->cursor + 1], &state->text[line_start], indent_len);
+    }
+
+    state->len += insert_len;
+    state->cursor += insert_len;
+    state->text[state->len] = '\0';
+    update_word_count(state);
+}
+
 static void wrap_text(struct BookState *state) {
     free(state->lines);
     state->lines = NULL;
@@ -376,6 +429,9 @@ static void wrap_text(struct BookState *state) {
     int col = 0;
     size_t count = 0u;
     size_t last_space = (size_t)(-1);
+    int base_indent = count_line_indent(state->text, state->len, start);
+    int line_indent = 0;
+    col = line_indent;
 
     while (i < state->len) {
         char c = state->text[i];
@@ -387,11 +443,14 @@ static void wrap_text(struct BookState *state) {
             }
             state->lines[count].start = start;
             state->lines[count].len = i - start;
+            state->lines[count].indent = line_indent;
             count++;
             i++;
             start = i;
             col = 0;
             last_space = (size_t)(-1);
+            base_indent = count_line_indent(state->text, state->len, start);
+            line_indent = 0;
             continue;
         }
         if (c == ' ') {
@@ -408,10 +467,12 @@ static void wrap_text(struct BookState *state) {
             }
             state->lines[count].start = start;
             state->lines[count].len = line_len;
+            state->lines[count].indent = line_indent;
             count++;
             start = break_pos;
             i = break_pos;
-            col = 0;
+            line_indent = (line_len == 0) ? 0 : base_indent;
+            col = line_indent;
             last_space = (size_t)(-1);
             continue;
         }
@@ -426,6 +487,7 @@ static void wrap_text(struct BookState *state) {
         }
         state->lines[count].start = start;
         state->lines[count].len = state->len - start;
+        state->lines[count].indent = line_indent;
         count++;
     }
 
@@ -480,14 +542,14 @@ static size_t line_for_cursor(const struct BookState *state, int *out_col) {
         size_t end = start + state->lines[i].len;
         if (state->cursor < end || (state->cursor == end && state->cursor == state->len)) {
             if (out_col) {
-                int col = (int)(state->cursor - start);
+                int col = (int)(state->cursor - start) + state->lines[i].indent;
                 if (col < 0) col = 0;
                 *out_col = col;
             }
             return i;
         }
         if (state->cursor == end && (i + 1 == state->line_count || state->lines[i + 1].start > end)) {
-            if (out_col) *out_col = (int)(state->lines[i].len);
+            if (out_col) *out_col = (int)(state->lines[i].len) + state->lines[i].indent;
             return i;
         }
     }
@@ -516,7 +578,8 @@ static void move_cursor_up(struct BookState *state) {
     size_t target_line = line - 1;
     size_t start = state->lines[target_line].start;
     size_t len = state->lines[target_line].len;
-    size_t offset = (size_t)col;
+    int indent = state->lines[target_line].indent;
+    size_t offset = col <= indent ? 0u : (size_t)(col - indent);
     if (offset > len) offset = len;
     state->cursor = start + offset;
 }
@@ -531,7 +594,8 @@ static void move_cursor_down(struct BookState *state) {
     size_t target_line = line + 1;
     size_t start = state->lines[target_line].start;
     size_t len = state->lines[target_line].len;
-    size_t offset = (size_t)col;
+    int indent = state->lines[target_line].indent;
+    size_t offset = col <= indent ? 0u : (size_t)(col - indent);
     if (offset > len) offset = len;
     state->cursor = start + offset;
 }
@@ -922,6 +986,9 @@ static void draw_content(const struct BookState *state) {
         if (left_pad > 0) {
             printf("\x1b[%dC", left_pad);
         }
+        for (int j = 0; j < line->indent; j++) {
+            putchar(' ');
+        }
         fwrite(&state->text[line->start], 1, line->len, stdout);
         putchar('\r');
         putchar('\n');
@@ -1046,7 +1113,8 @@ static void page_jump(struct BookState *state, int direction) {
     if (target >= (int)state->line_count) target = (int)state->line_count - 1;
     size_t start = state->lines[target].start;
     size_t len = state->lines[target].len;
-    size_t offset = (size_t)col;
+    int indent = state->lines[target].indent;
+    size_t offset = col <= indent ? 0u : (size_t)(col - indent);
     if (offset > len) offset = len;
     state->cursor = start + offset;
 }
@@ -1154,7 +1222,7 @@ int main(void) {
                 backspace_char(&state);
                 break;
             case '\r':
-                insert_char(&state, '\n');
+                insert_newline_with_indent(&state);
                 break;
             default:
                 if (isprint(c)) {

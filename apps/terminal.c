@@ -98,6 +98,7 @@ static Uint32 terminal_shader_last_frame_tick = 0u;
 static Uint32 terminal_shader_frame_interval_ms = 0u;
 static Uint32 terminal_render_last_frame_tick = 0u;
 static Uint32 terminal_render_frame_interval_ms = 0u;
+static int terminal_shaders_enabled = 1;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -242,6 +243,11 @@ struct terminal_gl_shader {
 
 static struct terminal_gl_shader *terminal_gl_shaders = NULL;
 static size_t terminal_gl_shader_count = 0u;
+struct shader_path_entry {
+    char path[PATH_MAX];
+};
+static struct shader_path_entry *terminal_requested_shaders = NULL;
+static size_t terminal_requested_shader_count = 0u;
 
 struct psf_unicode_map;
 
@@ -324,6 +330,12 @@ static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *bu
 static size_t terminal_encode_utf8(uint32_t codepoint, char *dst);
 static int terminal_initialize_gl_program(const char *shader_path);
 static void terminal_release_gl_resources(void);
+static void terminal_clear_gl_shaders(void);
+static void terminal_free_requested_shaders(void);
+static int terminal_reload_requested_shaders(void);
+static int terminal_enable_shaders(void);
+static void terminal_disable_shaders(void);
+static int terminal_shaders_active(void);
 static int terminal_initialize_quad_geometry(void);
 static void terminal_destroy_quad_geometry(void);
 static int terminal_shader_configure_vaos(struct terminal_gl_shader *shader);
@@ -3215,12 +3227,7 @@ static void terminal_cursor_render(int framebuffer_width, int framebuffer_height
     glMatrixMode(GL_MODELVIEW);
 }
 
-static void terminal_release_gl_resources(void) {
-    if (terminal_gl_texture != 0) {
-        glDeleteTextures(1, &terminal_gl_texture);
-        terminal_gl_texture = 0;
-    }
-    terminal_destroy_cursor_sprite();
+static void terminal_clear_gl_shaders(void) {
     if (terminal_gl_shaders) {
         for (size_t i = 0; i < terminal_gl_shader_count; i++) {
             if (terminal_gl_shaders[i].program != 0) {
@@ -3230,8 +3237,18 @@ static void terminal_release_gl_resources(void) {
         }
         free(terminal_gl_shaders);
         terminal_gl_shaders = NULL;
-        terminal_gl_shader_count = 0u;
     }
+    terminal_gl_shader_count = 0u;
+    terminal_shader_last_frame_tick = SDL_GetTicks();
+}
+
+static void terminal_release_gl_resources(void) {
+    if (terminal_gl_texture != 0) {
+        glDeleteTextures(1, &terminal_gl_texture);
+        terminal_gl_texture = 0;
+    }
+    terminal_destroy_cursor_sprite();
+    terminal_clear_gl_shaders();
     if (terminal_gl_intermediate_textures[0] != 0) {
         glDeleteTextures(1, &terminal_gl_intermediate_textures[0]);
         terminal_gl_intermediate_textures[0] = 0;
@@ -3262,9 +3279,62 @@ static void terminal_release_gl_resources(void) {
     terminal_gl_ready = 0;
 }
 
+static void terminal_free_requested_shaders(void) {
+    free(terminal_requested_shaders);
+    terminal_requested_shaders = NULL;
+    terminal_requested_shader_count = 0u;
+}
+
+static int terminal_reload_requested_shaders(void) {
+    if (!terminal_shaders_enabled || !terminal_gl_ready) {
+        return 0;
+    }
+    if (terminal_requested_shader_count == 0u) {
+        terminal_clear_gl_shaders();
+        return 0;
+    }
+
+    terminal_clear_gl_shaders();
+    for (size_t i = 0; i < terminal_requested_shader_count; i++) {
+        if (terminal_initialize_gl_program(terminal_requested_shaders[i].path) != 0) {
+            fprintf(stderr, "terminal: Failed to load shader '%s'.\n", terminal_requested_shaders[i].path);
+            terminal_clear_gl_shaders();
+            return -1;
+        }
+    }
+
+    terminal_shader_last_frame_tick = SDL_GetTicks();
+    return 0;
+}
+
+static void terminal_disable_shaders(void) {
+    terminal_shaders_enabled = 0;
+    terminal_clear_gl_shaders();
+}
+
+static int terminal_enable_shaders(void) {
+    if (terminal_shaders_enabled) {
+        return 0;
+    }
+
+    terminal_shaders_enabled = 1;
+    if (terminal_reload_requested_shaders() != 0) {
+        terminal_shaders_enabled = 0;
+        return -1;
+    }
+
+    terminal_shader_last_frame_tick = SDL_GetTicks();
+    return 0;
+}
+
+static int terminal_shaders_active(void) {
+    return terminal_shaders_enabled && terminal_gl_shader_count > 0u;
+}
+
 static void terminal_print_usage(const char *progname) {
     const char *name = (progname && progname[0] != '\0') ? progname : "terminal";
     fprintf(stderr, "Usage: %s [-s shader_path]...\n", name);
+    fprintf(stderr, "  Send OSC 777 'shader=enable|disable' via _TERM_SHADER to toggle shaders at runtime.\n");
 }
 
 static int psf_unicode_map_compare(const void *a, const void *b) {
@@ -4537,6 +4607,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int resolution_height_set = 0;
     int resolution_requested = 0;
     int mouse_query_requested = 0;
+    int shader_toggle_requested = 0;
+    int shader_enable_requested = 0;
 
     if (args && args[0] != '\0') {
         char *copy = strdup(args);
@@ -4654,6 +4726,14 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             resolution_height = (int)parsed;
                             resolution_height_set = 1;
                             resolution_requested = 1;
+                        }
+                    } else if (strcmp(key, "shader") == 0 && value && *value != '\0') {
+                        if (strcmp(value, "enable") == 0) {
+                            shader_toggle_requested = 1;
+                            shader_enable_requested = 1;
+                        } else if (strcmp(value, "disable") == 0) {
+                            shader_toggle_requested = 1;
+                            shader_enable_requested = 0;
                         }
 #if BUDOSTACK_HAVE_SDL2
                     } else if (strcmp(key, "sound") == 0 && value && *value != '\0') {
@@ -4990,6 +5070,17 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         terminal_custom_pixels_dirty = 1;
                     }
                 }
+            }
+
+            if (shader_toggle_requested) {
+                if (shader_enable_requested) {
+                    if (terminal_enable_shaders() != 0) {
+                        fprintf(stderr, "terminal: Failed to enable shaders; remaining disabled.\n");
+                    }
+                } else {
+                    terminal_disable_shaders();
+                }
+                terminal_mark_full_redraw();
             }
 
             free(copy);
@@ -5940,9 +6031,6 @@ int main(int argc, char **argv) {
     const char *progname = (argc > 0 && argv && argv[0]) ? argv[0] : "terminal";
     const char **shader_args = NULL;
     size_t shader_arg_count = 0u;
-    struct shader_path_entry {
-        char path[PATH_MAX];
-    };
     struct shader_path_entry *shader_paths = NULL;
     size_t shader_path_count = 0u;
 
@@ -6033,6 +6121,21 @@ int main(int argc, char **argv) {
     free(shader_args);
     shader_args = NULL;
 
+    terminal_free_requested_shaders();
+    if (shader_path_count > 0u) {
+        terminal_requested_shaders = malloc(shader_path_count * sizeof(*terminal_requested_shaders));
+        if (!terminal_requested_shaders) {
+            fprintf(stderr, "Failed to store requested shader paths.\n");
+            free_font(&terminal_font);
+            free(shader_paths);
+            return EXIT_FAILURE;
+        }
+        for (size_t i = 0; i < shader_path_count; i++) {
+            memcpy(terminal_requested_shaders[i].path, shader_paths[i].path, sizeof(terminal_requested_shaders[i].path));
+        }
+        terminal_requested_shader_count = shader_path_count;
+    }
+
     size_t glyph_width_size = (size_t)terminal_font.width * (size_t)TERMINAL_FONT_SCALE;
     size_t glyph_height_size = (size_t)terminal_font.height * (size_t)TERMINAL_FONT_SCALE;
     if (glyph_width_size == 0u || glyph_height_size == 0u ||
@@ -6040,6 +6143,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Scaled font dimensions invalid.\n");
         free_font(&terminal_font);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
     int glyph_width = (int)glyph_width_size;
@@ -6062,6 +6166,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Computed window dimensions invalid.\n");
         free_font(&terminal_font);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
     int window_width = (int)window_width_size;
@@ -6074,6 +6179,7 @@ int main(int argc, char **argv) {
     if (child_pid < 0) {
         free_font(&terminal_font);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -6083,6 +6189,7 @@ int main(int argc, char **argv) {
         free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -6092,6 +6199,7 @@ int main(int argc, char **argv) {
         free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -6126,6 +6234,7 @@ int main(int argc, char **argv) {
         free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -6140,6 +6249,7 @@ int main(int argc, char **argv) {
         free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -6155,6 +6265,7 @@ int main(int argc, char **argv) {
         free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -6170,6 +6281,7 @@ int main(int argc, char **argv) {
         free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -6186,6 +6298,7 @@ int main(int argc, char **argv) {
         free_font(&terminal_font);
         close(master_fd);
         free(shader_paths);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -6206,6 +6319,7 @@ int main(int argc, char **argv) {
             free_font(&terminal_font);
             free(shader_paths);
             close(master_fd);
+            terminal_free_requested_shaders();
             return EXIT_FAILURE;
         }
     }
@@ -6240,6 +6354,7 @@ int main(int argc, char **argv) {
         kill(child_pid, SIGKILL);
         free_font(&terminal_font);
         close(master_fd);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
     glViewport(0, 0, drawable_width, drawable_height);
@@ -6260,6 +6375,7 @@ int main(int argc, char **argv) {
         kill(child_pid, SIGKILL);
         free_font(&terminal_font);
         close(master_fd);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -6277,6 +6393,7 @@ int main(int argc, char **argv) {
         kill(child_pid, SIGKILL);
         free_font(&terminal_font);
         close(master_fd);
+        terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
@@ -7041,7 +7158,7 @@ int main(int argc, char **argv) {
             terminal_custom_pixels_active = 0;
         }
 
-        shader_timing_enabled = (terminal_gl_shader_count > 0u &&
+        shader_timing_enabled = (terminal_shaders_active() &&
                                  terminal_shader_frame_interval_ms > 0u);
         if (shader_timing_enabled) {
             Uint32 elapsed = now - terminal_shader_last_frame_tick;
@@ -7118,7 +7235,7 @@ int main(int argc, char **argv) {
         int cursor_ready_for_composition = terminal_cursor_enabled &&
                                            terminal_cursor_texture != 0 &&
                                            terminal_cursor_position_valid;
-        if (terminal_gl_shader_count > 0u && cursor_ready_for_composition) {
+        if (terminal_shaders_active() && cursor_ready_for_composition) {
             if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) == 0) {
                 glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
@@ -7168,7 +7285,7 @@ int main(int argc, char **argv) {
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
         }
-        if (terminal_gl_shader_count > 0u) {
+        if (terminal_shaders_active()) {
             static int frame_counter = 0;
             int frame_value = frame_counter++;
 
@@ -7368,6 +7485,7 @@ int main(int argc, char **argv) {
     SDL_DestroyWindow(window);
     SDL_Quit();
 
+    terminal_free_requested_shaders();
     free_font(&terminal_font);
     close(master_fd);
 

@@ -32,7 +32,7 @@ Tested distributions:
 
 Note! Internet connection is required.
 
-### LATEST RELEASE: v0.9.2 ###
+### LATEST RELEASE: v0.9.25 ###
 
 PROJECT STATUS: EARLY ACCESS from v0.8.0 to v1.0.0
 

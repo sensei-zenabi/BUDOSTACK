@@ -2668,7 +2668,8 @@ typedef enum {
     LINE_FUNCTION
 } LineType;
 
-#define SCRIPT_TEXT_MAX 1024
+#define SCRIPT_TEXT_MAX 8192
+#define SCRIPT_MAX_LINES 1024
 
 typedef struct {
     int source_line;   // original file line number for diagnostics
@@ -3645,7 +3646,11 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    ScriptLine script[1024];
+    ScriptLine *script = (ScriptLine *)calloc(SCRIPT_MAX_LINES, sizeof(ScriptLine));
+    if (!script) {
+        perror("calloc");
+        return 1;
+    }
     Label labels[MAX_LABELS];
     FunctionDef functions[MAX_FUNCTIONS];
     memset(labels, 0, sizeof(labels));
@@ -3653,8 +3658,9 @@ int main(int argc, char *argv[]) {
     int label_count = 0;
     int function_count = 0;
     int count = 0;
-    int script_cap = (int)(sizeof(script) / sizeof(script[0]));
+    int script_cap = SCRIPT_MAX_LINES;
     if (!load_task_file(task_path, task_directory, script, script_cap, &count, labels, &label_count, functions, &function_count, 0, debug)) {
+        free(script);
         return 1;
     }
 
@@ -5327,6 +5333,7 @@ int main(int argc, char *argv[]) {
 
     stop_logging();
     cleanup_variables();
+    free(script);
     return 0;
 }
 

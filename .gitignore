@@ -15,6 +15,7 @@ commands/*
 games/*
 !games/*.c
 !games/*.h
+!games/*.task
 lib/*
 !lib/*.c
 !lib/*.h

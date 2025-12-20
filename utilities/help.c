@@ -73,6 +73,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  ./apps/        - System applications that do not use paging.\n");
     printf("  ./commands/    - BUDOSTACK (BS) programming commands for developers.\n");
+    printf("  ./documents/   - Documents provided by BUDOSTACK.\n");
     printf("  ./fonts/       - Folder for built-in .ttf and .psf fonts\n");
     printf("  ./games/       - Built-in games.\n");
     printf("  ./lib/         - System libraries used by applications and utilities.\n");
@@ -82,7 +83,6 @@ int main(int argc, char *argv[]) {
     printf("  ./tasks/       - Reserved for tasks. Few built-in examples provided.\n");
     printf("  ./users/       - User folders for those who like them.\n");
     printf("  ./utilities/   - System utilities that use paging.\n");
-    printf("\n");
     printf("\n");
     printf("\n");
     printf("\n");

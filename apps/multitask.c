@@ -365,6 +365,52 @@ static void multitask_send_to_active(const struct multitask_session *sessions, i
     }
 }
 
+static int multitask_close_session(struct multitask_session *sessions, int active_index) {
+    int slot = multitask_find_slot_by_index(sessions, active_index);
+    if (slot < 0) {
+        return -1;
+    }
+
+    kill(sessions[slot].pid, SIGTERM);
+    waitpid(sessions[slot].pid, NULL, 0);
+    close(sessions[slot].master_fd);
+    sessions[slot].in_use = 0;
+    return 0;
+}
+
+static size_t multitask_read_escape_sequence(unsigned char *buffer, size_t buf_size) {
+    if (!buffer || buf_size == 0) {
+        return 0u;
+    }
+
+    buffer[0] = 0x1b;
+    size_t len = 1u;
+
+    struct pollfd pfd = {0};
+    pfd.fd = STDIN_FILENO;
+    pfd.events = POLLIN;
+
+    while (len < buf_size) {
+        int ready = poll(&pfd, 1u, 15);
+        if (ready <= 0 || !(pfd.revents & POLLIN)) {
+            break;
+        }
+
+        unsigned char byte = 0;
+        ssize_t nread = read(STDIN_FILENO, &byte, 1u);
+        if (nread == 1) {
+            buffer[len++] = byte;
+            continue;
+        }
+        if (nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            break;
+        }
+        break;
+    }
+
+    return len;
+}
+
 int main(int argc, char **argv) {
     (void)argc;
     struct multitask_session sessions[MULTITASK_MAX_SESSIONS] = {0};
@@ -515,23 +561,7 @@ int main(int argc, char **argv) {
                     unsigned char ch = input_buffer[i++];
                     if (ch == 0x1b) {
                         unsigned char sequence[64];
-                        size_t seq_len = 0u;
-                        sequence[seq_len++] = ch;
-
-                        while (seq_len < sizeof(sequence)) {
-                            unsigned char next = 0;
-                            ssize_t nread = read(STDIN_FILENO, &next, 1);
-                            if (nread == 1) {
-                                sequence[seq_len++] = next;
-                                continue;
-                            }
-                            if (nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                                break;
-                            }
-                            if (nread <= 0) {
-                                break;
-                            }
-                        }
+                        size_t seq_len = multitask_read_escape_sequence(sequence, sizeof(sequence));
 
                         if (seq_len == 2 && (sequence[1] == 'n' || sequence[1] == 'N')) {
                             int new_index = multitask_spawn_session(sessions, budostack_path, session_rows, session_cols);
@@ -544,12 +574,7 @@ int main(int argc, char **argv) {
                                 active_index = desired;
                             }
                         } else if (seq_len == 2 && (sequence[1] == 'd' || sequence[1] == 'D')) {
-                            int slot = multitask_find_slot_by_index(sessions, active_index);
-                            if (slot >= 0) {
-                                kill(sessions[slot].pid, SIGTERM);
-                                waitpid(sessions[slot].pid, NULL, 0);
-                                close(sessions[slot].master_fd);
-                                sessions[slot].in_use = 0;
+                            if (multitask_close_session(sessions, active_index) == 0) {
                                 active_index = -1;
                             }
                         } else if (seq_len == 2 && (sequence[1] == 'q' || sequence[1] == 'Q')) {

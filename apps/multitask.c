@@ -358,6 +358,13 @@ static int multitask_find_slot_by_index(const struct multitask_session *sessions
     return -1;
 }
 
+static void multitask_send_to_active(const struct multitask_session *sessions, int active_index, const unsigned char *data, size_t len) {
+    int slot = multitask_find_slot_by_index(sessions, active_index);
+    if (slot >= 0 && data && len > 0) {
+        multitask_safe_write(sessions[slot].master_fd, data, len);
+    }
+}
+
 int main(int argc, char **argv) {
     (void)argc;
     struct multitask_session sessions[MULTITASK_MAX_SESSIONS] = {0};
@@ -503,52 +510,56 @@ int main(int argc, char **argv) {
             unsigned char input_buffer[32];
             ssize_t read_bytes = read(STDIN_FILENO, input_buffer, sizeof(input_buffer));
             if (read_bytes > 0) {
-                for (ssize_t i = 0; i < read_bytes; i++) {
-                    unsigned char ch = input_buffer[i];
+                ssize_t i = 0;
+                while (i < read_bytes) {
+                    unsigned char ch = input_buffer[i++];
                     if (ch == 0x1b) {
-                        unsigned char next = 0;
-                        ssize_t nread = read(STDIN_FILENO, &next, 1);
-                        if (nread == 1) {
-                            if (next == 'n' || next == 'N') {
-                                int new_index = multitask_spawn_session(sessions, budostack_path, session_rows, session_cols);
-                                if (new_index > 0) {
-                                    active_index = new_index;
-                                }
-                            } else if (next >= '1' && next <= '9') {
-                                int desired = next - '0';
-                                if (multitask_find_slot_by_index(sessions, desired) >= 0) {
-                                    active_index = desired;
-                                }
-                            } else if (next == 'd' || next == 'D') {
-                                int slot = multitask_find_slot_by_index(sessions, active_index);
-                                if (slot >= 0) {
-                                    kill(sessions[slot].pid, SIGTERM);
-                                    waitpid(sessions[slot].pid, NULL, 0);
-                                    close(sessions[slot].master_fd);
-                                    sessions[slot].in_use = 0;
-                                    active_index = -1;
-                                }
-                            } else if (next == 'q' || next == 'Q') {
-                                running = 0;
-                                break;
-                            } else {
-                                unsigned char seq[2] = {0x1b, next};
-                                int slot = multitask_find_slot_by_index(sessions, active_index);
-                                if (slot >= 0) {
-                                    multitask_safe_write(sessions[slot].master_fd, seq, sizeof(seq));
-                                }
+                        unsigned char sequence[64];
+                        size_t seq_len = 0u;
+                        sequence[seq_len++] = ch;
+
+                        while (seq_len < sizeof(sequence)) {
+                            unsigned char next = 0;
+                            ssize_t nread = read(STDIN_FILENO, &next, 1);
+                            if (nread == 1) {
+                                sequence[seq_len++] = next;
+                                continue;
                             }
-                        } else {
+                            if (nread < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                                break;
+                            }
+                            if (nread <= 0) {
+                                break;
+                            }
+                        }
+
+                        if (seq_len == 2 && (sequence[1] == 'n' || sequence[1] == 'N')) {
+                            int new_index = multitask_spawn_session(sessions, budostack_path, session_rows, session_cols);
+                            if (new_index > 0) {
+                                active_index = new_index;
+                            }
+                        } else if (seq_len == 2 && sequence[1] >= '1' && sequence[1] <= '9') {
+                            int desired = sequence[1] - '0';
+                            if (multitask_find_slot_by_index(sessions, desired) >= 0) {
+                                active_index = desired;
+                            }
+                        } else if (seq_len == 2 && (sequence[1] == 'd' || sequence[1] == 'D')) {
                             int slot = multitask_find_slot_by_index(sessions, active_index);
                             if (slot >= 0) {
-                                multitask_safe_write(sessions[slot].master_fd, &ch, 1u);
+                                kill(sessions[slot].pid, SIGTERM);
+                                waitpid(sessions[slot].pid, NULL, 0);
+                                close(sessions[slot].master_fd);
+                                sessions[slot].in_use = 0;
+                                active_index = -1;
                             }
+                        } else if (seq_len == 2 && (sequence[1] == 'q' || sequence[1] == 'Q')) {
+                            running = 0;
+                            break;
+                        } else {
+                            multitask_send_to_active(sessions, active_index, sequence, seq_len);
                         }
                     } else {
-                        int slot = multitask_find_slot_by_index(sessions, active_index);
-                        if (slot >= 0) {
-                            multitask_safe_write(sessions[slot].master_fd, &ch, 1u);
-                        }
+                        multitask_send_to_active(sessions, active_index, &ch, 1u);
                     }
                 }
             }

@@ -3893,6 +3893,8 @@ static void terminal_buffer_reset_scroll_region(struct terminal_buffer *buffer) 
     buffer->scroll_region_bottom = buffer->rows - 1u;
 }
 
+static void terminal_buffer_scroll(struct terminal_buffer *buffer);
+
 static size_t terminal_buffer_scroll_bottom(const struct terminal_buffer *buffer) {
     if (!buffer || buffer->rows == 0u) {
         return 0u;

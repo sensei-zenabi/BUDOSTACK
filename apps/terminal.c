@@ -932,6 +932,11 @@ struct terminal_attributes {
 #define TERMINAL_STYLE_UNDERLINE 0x02u
 #define TERMINAL_STYLE_REVERSE 0x04u
 
+enum terminal_charset {
+    TERMINAL_CHARSET_US_ASCII = 0,
+    TERMINAL_CHARSET_DEC_SPECIAL
+};
+
 struct terminal_buffer {
     size_t columns;
     size_t rows;
@@ -980,6 +985,10 @@ struct ansi_parser {
     size_t param_count;
     int collecting_param;
     int private_marker;
+    int charset_designate_target;
+    enum terminal_charset g0_charset;
+    enum terminal_charset g1_charset;
+    int use_g1_charset;
     char osc_buffer[131072];
     size_t osc_length;
     uint32_t utf8_codepoint;
@@ -4194,6 +4203,16 @@ static void ansi_parser_reset_parameters(struct ansi_parser *parser) {
     }
 }
 
+static void ansi_parser_reset_charsets(struct ansi_parser *parser) {
+    if (!parser) {
+        return;
+    }
+    parser->g0_charset = TERMINAL_CHARSET_US_ASCII;
+    parser->g1_charset = TERMINAL_CHARSET_US_ASCII;
+    parser->use_g1_charset = 0;
+    parser->charset_designate_target = 0;
+}
+
 static void ansi_parser_reset_utf8(struct ansi_parser *parser) {
     if (!parser) {
         return;
@@ -4204,11 +4223,73 @@ static void ansi_parser_reset_utf8(struct ansi_parser *parser) {
     parser->utf8_bytes_seen = 0u;
 }
 
+static void ansi_parser_designate_charset(struct ansi_parser *parser, int target, char designator) {
+    if (!parser) {
+        return;
+    }
+
+    enum terminal_charset charset = TERMINAL_CHARSET_US_ASCII;
+    if (designator == '0') {
+        charset = TERMINAL_CHARSET_DEC_SPECIAL;
+    } else if (designator == 'B' || designator == '1') {
+        charset = TERMINAL_CHARSET_US_ASCII;
+    }
+
+    if (target == 0) {
+        parser->g0_charset = charset;
+    } else if (target == 1) {
+        parser->g1_charset = charset;
+    }
+}
+
 static void ansi_parser_emit_codepoint(struct ansi_parser *parser, struct terminal_buffer *buffer, uint32_t codepoint) {
-    (void)parser;
     if (!buffer) {
         return;
     }
+
+    enum terminal_charset active_charset = TERMINAL_CHARSET_US_ASCII;
+    if (parser) {
+        active_charset = parser->use_g1_charset ? parser->g1_charset : parser->g0_charset;
+    }
+
+    if (active_charset == TERMINAL_CHARSET_DEC_SPECIAL && codepoint >= 0x20u && codepoint <= 0x7Eu) {
+        switch (codepoint) {
+        case '`': codepoint = 0x25C6u; break; /* diamond */
+        case 'a': codepoint = 0x2592u; break; /* checkerboard */
+        case 'b': codepoint = 0x2409u; break; /* HT */
+        case 'c': codepoint = 0x240Cu; break; /* FF */
+        case 'd': codepoint = 0x240Du; break; /* CR */
+        case 'e': codepoint = 0x240Au; break; /* LF */
+        case 'f': codepoint = 0x00B0u; break; /* degree */
+        case 'g': codepoint = 0x00B1u; break; /* plusminus */
+        case 'h': codepoint = 0x2424u; break; /* NL */
+        case 'i': codepoint = 0x240Bu; break; /* VT */
+        case 'j': codepoint = 0x2518u; break; /* ┘ */
+        case 'k': codepoint = 0x2510u; break; /* ┐ */
+        case 'l': codepoint = 0x250Cu; break; /* ┌ */
+        case 'm': codepoint = 0x2514u; break; /* └ */
+        case 'n': codepoint = 0x253Cu; break; /* ┼ */
+        case 'o': codepoint = 0x23BAu; break; /* ⎺ */
+        case 'p': codepoint = 0x23BBu; break; /* ⎻ */
+        case 'q': codepoint = 0x2500u; break; /* ─ */
+        case 'r': codepoint = 0x23BCu; break; /* ⎼ */
+        case 's': codepoint = 0x23BDu; break; /* ⎽ */
+        case 't': codepoint = 0x251Cu; break; /* ├ */
+        case 'u': codepoint = 0x2524u; break; /* ┤ */
+        case 'v': codepoint = 0x2534u; break; /* ┴ */
+        case 'w': codepoint = 0x252Cu; break; /* ┬ */
+        case 'x': codepoint = 0x2502u; break; /* │ */
+        case 'y': codepoint = 0x2264u; break; /* ≤ */
+        case 'z': codepoint = 0x2265u; break; /* ≥ */
+        case '{': codepoint = 0x03C0u; break; /* π */
+        case '|': codepoint = 0x2260u; break; /* ≠ */
+        case '}': codepoint = 0x00A3u; break; /* £ */
+        case '~': codepoint = 0x00B7u; break; /* · */
+        default:
+            break;
+        }
+    }
+
     terminal_put_char(buffer, codepoint);
 }
 
@@ -4248,6 +4329,18 @@ static void ansi_parser_feed_utf8(struct ansi_parser *parser, struct terminal_bu
         if (byte == 0x1b) {
             ansi_parser_reset_utf8(parser);
             parser->state = ANSI_STATE_ESCAPE;
+            return;
+        }
+
+        if (byte == 0x0Eu) {
+            ansi_parser_reset_utf8(parser);
+            parser->use_g1_charset = 1;
+            return;
+        }
+
+        if (byte == 0x0Fu) {
+            ansi_parser_reset_utf8(parser);
+            parser->use_g1_charset = 0;
             return;
         }
 
@@ -4308,6 +4401,7 @@ static void ansi_parser_init(struct ansi_parser *parser) {
     if (sizeof(parser->osc_buffer) > 0u) {
         parser->osc_buffer[0] = '\0';
     }
+    ansi_parser_reset_charsets(parser);
     ansi_parser_reset_utf8(parser);
 }
 
@@ -5450,17 +5544,14 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
                 parser->osc_buffer[0] = '\0';
             }
         } else if (ch == '(' || ch == ')' || ch == '*' || ch == '+' || ch == '-' || ch == '.') {
-            /*
-             * Consume ISO-2022 character set designation sequences like ESC ( B
-             * or ESC ) 0. We don't implement alternate charsets, but we should
-             * still swallow the final designator byte instead of rendering it
-             * as a literal character.
-             */
+            /* ISO-2022 character set designation (G0-G3) */
+            parser->charset_designate_target = (int)ch;
             parser->state = ANSI_STATE_ESCAPE_CHARSET;
         } else if (ch == 'c') {
             terminal_buffer_clear_display(buffer);
             parser->state = ANSI_STATE_GROUND;
             ansi_parser_reset_utf8(parser);
+            ansi_parser_reset_charsets(parser);
         } else if (ch == '7') {
             terminal_buffer_save_cursor(buffer);
             parser->state = ANSI_STATE_GROUND;
@@ -5475,6 +5566,14 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
         }
         break;
     case ANSI_STATE_ESCAPE_CHARSET:
+        if (parser && parser->charset_designate_target != 0) {
+            int target = 0;
+            if (parser->charset_designate_target == ')') {
+                target = 1;
+            }
+            ansi_parser_designate_charset(parser, target, (char)ch);
+            parser->charset_designate_target = 0;
+        }
         parser->state = ANSI_STATE_GROUND;
         ansi_parser_reset_utf8(parser);
         break;

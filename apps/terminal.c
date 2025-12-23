@@ -961,6 +961,8 @@ struct terminal_buffer {
     size_t history_start;
     size_t scroll_offset;
     uint32_t palette[256];
+    uint8_t *row_dirty;
+    size_t row_dirty_count;
 };
 
 static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
@@ -1190,6 +1192,25 @@ static void terminal_selection_update(size_t global_row, size_t column) {
     }
     terminal_selection_caret_row = global_row;
     terminal_selection_caret_col = column;
+}
+
+static void terminal_buffer_mark_row_dirty(struct terminal_buffer *buffer, size_t row) {
+    if (!buffer || !buffer->row_dirty) {
+        return;
+    }
+    if (row >= buffer->row_dirty_count) {
+        return;
+    }
+    buffer->row_dirty[row] = 1u;
+}
+
+static void terminal_buffer_mark_all_dirty(struct terminal_buffer *buffer) {
+    if (!buffer || !buffer->row_dirty) {
+        return;
+    }
+    for (size_t row = 0u; row < buffer->row_dirty_count; row++) {
+        buffer->row_dirty[row] = 1u;
+    }
 }
 
 static void terminal_selection_validate(const struct terminal_buffer *buffer) {
@@ -3717,6 +3738,8 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->history_rows = 0u;
     buffer->history_start = 0u;
     buffer->scroll_offset = 0u;
+    buffer->row_dirty = NULL;
+    buffer->row_dirty_count = 0u;
 
     if (columns == 0u || rows == 0u) {
         buffer->cells = NULL;
@@ -3761,6 +3784,17 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
         buffer->history = NULL;
     }
 
+    buffer->row_dirty = calloc(rows, sizeof(uint8_t));
+    if (!buffer->row_dirty) {
+        free(buffer->history);
+        buffer->history = NULL;
+        free(buffer->cells);
+        buffer->cells = NULL;
+        return -1;
+    }
+    buffer->row_dirty_count = rows;
+    terminal_buffer_mark_all_dirty(buffer);
+
     terminal_buffer_reset_attributes(buffer);
     return 0;
 }
@@ -3804,6 +3838,7 @@ static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_col
     }
 
     struct terminal_cell *new_history = NULL;
+    uint8_t *new_row_dirty = NULL;
     if (buffer->history_limit > 0u) {
         if (new_columns > SIZE_MAX / buffer->history_limit) {
             free(new_cells);
@@ -3820,12 +3855,23 @@ static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_col
         }
     }
 
+    new_row_dirty = calloc(new_rows, sizeof(uint8_t));
+    if (!new_row_dirty) {
+        free(new_history);
+        free(new_cells);
+        return -1;
+    }
+
     free(buffer->cells);
     free(buffer->history);
+    free(buffer->row_dirty);
     buffer->cells = new_cells;
     buffer->history = new_history;
     buffer->columns = new_columns;
     buffer->rows = new_rows;
+    buffer->row_dirty = new_row_dirty;
+    buffer->row_dirty_count = new_rows;
+    terminal_buffer_mark_all_dirty(buffer);
 
     if (buffer->cursor_column >= new_columns) {
         buffer->cursor_column = new_columns - 1u;
@@ -3857,6 +3903,8 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     buffer->cells = NULL;
     free(buffer->history);
     buffer->history = NULL;
+    free(buffer->row_dirty);
+    buffer->row_dirty = NULL;
     buffer->columns = 0u;
     buffer->rows = 0u;
     buffer->cursor_column = 0u;
@@ -3869,6 +3917,7 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     buffer->history_rows = 0u;
     buffer->history_start = 0u;
     buffer->scroll_offset = 0u;
+    buffer->row_dirty_count = 0u;
 }
 
 static void terminal_buffer_clamp_scroll(struct terminal_buffer *buffer) {
@@ -3925,6 +3974,7 @@ static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
         buffer->scroll_offset++;
         terminal_buffer_clamp_scroll(buffer);
     }
+    terminal_buffer_mark_all_dirty(buffer);
 }
 
 static const struct terminal_cell *terminal_buffer_row_at(const struct terminal_buffer *buffer, size_t index) {
@@ -4001,6 +4051,7 @@ static void terminal_buffer_clear_line_segment(struct terminal_buffer *buffer,
     for (size_t col = start_column; col < end_column; col++) {
         terminal_cell_apply_defaults(buffer, &line[col]);
     }
+    terminal_buffer_mark_row_dirty(buffer, row);
 }
 
 static void terminal_buffer_clear_entire_line(struct terminal_buffer *buffer, size_t row) {
@@ -4014,6 +4065,7 @@ static void terminal_buffer_clear_entire_line(struct terminal_buffer *buffer, si
     for (size_t col = 0u; col < buffer->columns; col++) {
         terminal_cell_apply_defaults(buffer, &line[col]);
     }
+    terminal_buffer_mark_row_dirty(buffer, row);
 }
 
 static void terminal_buffer_clear_to_end_of_display(struct terminal_buffer *buffer) {
@@ -4049,6 +4101,7 @@ static void terminal_buffer_clear_display(struct terminal_buffer *buffer) {
     }
     buffer->cursor_column = 0u;
     buffer->cursor_row = 0u;
+    terminal_buffer_mark_all_dirty(buffer);
 }
 
 static void terminal_buffer_clear_line_from_cursor(struct terminal_buffer *buffer) {
@@ -4335,12 +4388,18 @@ static void ansi_parser_feed_utf8(struct ansi_parser *parser, struct terminal_bu
         if (byte == 0x0Eu) {
             ansi_parser_reset_utf8(parser);
             parser->use_g1_charset = 1;
+            if (buffer) {
+                terminal_buffer_mark_row_dirty(buffer, buffer->cursor_row);
+            }
             return;
         }
 
         if (byte == 0x0Fu) {
             ansi_parser_reset_utf8(parser);
             parser->use_g1_charset = 0;
+            if (buffer) {
+                terminal_buffer_mark_row_dirty(buffer, buffer->cursor_row);
+            }
             return;
         }
 
@@ -5573,6 +5632,9 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             }
             ansi_parser_designate_charset(parser, target, (char)ch);
             parser->charset_designate_target = 0;
+            if (buffer) {
+                terminal_buffer_mark_row_dirty(buffer, buffer->cursor_row);
+            }
         }
         parser->state = ANSI_STATE_GROUND;
         ansi_parser_reset_utf8(parser);
@@ -7097,6 +7159,10 @@ int main(int argc, char **argv) {
             if (!row_cells) {
                 continue;
             }
+            int row_dirty = full_redraw;
+            if (!row_dirty && buffer.row_dirty && row < buffer.row_dirty_count) {
+                row_dirty = buffer.row_dirty[row] != 0u;
+            }
             for (size_t col = 0u; col < buffer.columns; col++) {
                 const struct terminal_cell *cell = &row_cells[col];
                 uint32_t ch = cell->ch;
@@ -7154,7 +7220,7 @@ int main(int argc, char **argv) {
                     continue;
                 }
                 struct terminal_render_cache_entry *cache_entry = &terminal_render_cache[cache_index];
-                int needs_redraw = full_redraw;
+                int needs_redraw = row_dirty;
                 if (!needs_redraw) {
                     if (cache_entry->ch != ch ||
                         cache_entry->fg != glyph_color ||
@@ -7240,6 +7306,9 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
+            }
+            if (row_dirty && buffer.row_dirty && row < buffer.row_dirty_count) {
+                buffer.row_dirty[row] = 0u;
             }
         }
 

@@ -3906,8 +3906,23 @@ static size_t terminal_buffer_scroll_bottom(const struct terminal_buffer *buffer
     return bottom;
 }
 
-static void terminal_buffer_maybe_scroll(struct terminal_buffer *buffer) {
+static int terminal_buffer_row_in_scroll_region(const struct terminal_buffer *buffer, size_t row) {
+    if (!buffer || buffer->rows == 0u) {
+        return 0;
+    }
+    size_t top = buffer->scroll_region_top;
+    size_t bottom = terminal_buffer_scroll_bottom(buffer);
+    if (top >= buffer->rows) {
+        top = 0u;
+    }
+    return row >= top && row <= bottom;
+}
+
+static void terminal_buffer_maybe_scroll(struct terminal_buffer *buffer, size_t origin_row) {
     if (!buffer) {
+        return;
+    }
+    if (!terminal_buffer_row_in_scroll_region(buffer, origin_row)) {
         return;
     }
     size_t bottom = terminal_buffer_scroll_bottom(buffer);
@@ -4151,10 +4166,13 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
     case '\r':
         buffer->cursor_column = 0u;
         return;
-    case '\n':
+    case '\n': {
+        size_t origin_row = buffer->cursor_row;
         buffer->cursor_column = 0u;
         buffer->cursor_row++;
-        break;
+        terminal_buffer_maybe_scroll(buffer, origin_row);
+        return;
+    }
     case '\t': {
         size_t next_tab = ((buffer->cursor_column / 8u) + 1u) * 8u;
         size_t spaces = 0u;
@@ -4207,14 +4225,15 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         if (ch < 32u && ch != '\t') {
             return;
         }
-        terminal_buffer_maybe_scroll(buffer);
+        terminal_buffer_maybe_scroll(buffer, buffer->cursor_row);
         if (buffer->cursor_row >= buffer->rows) {
             return;
         }
         if (buffer->cursor_column >= buffer->columns) {
+            size_t origin_row = buffer->cursor_row;
             buffer->cursor_column = 0u;
             buffer->cursor_row++;
-            terminal_buffer_maybe_scroll(buffer);
+            terminal_buffer_maybe_scroll(buffer, origin_row);
         }
         if (buffer->cursor_row >= buffer->rows || buffer->cursor_column >= buffer->columns) {
             return;
@@ -4225,7 +4244,7 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         return;
     }
 
-    terminal_buffer_maybe_scroll(buffer);
+    terminal_buffer_maybe_scroll(buffer, buffer->cursor_row);
 }
 
 static void ansi_parser_reset_parameters(struct ansi_parser *parser) {

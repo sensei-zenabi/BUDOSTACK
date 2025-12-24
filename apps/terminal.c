@@ -3957,12 +3957,6 @@ static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
     for (size_t col = 0u; col < buffer->columns; col++) {
         terminal_cell_apply_defaults(buffer, &last_row[col]);
     }
-    if (buffer->cursor_row > 0u) {
-        buffer->cursor_row--;
-    }
-    if (buffer->cursor_saved && buffer->saved_cursor_row > 0u) {
-        buffer->saved_cursor_row--;
-    }
     if (buffer->scroll_offset > 0u) {
         buffer->scroll_offset++;
         terminal_buffer_clamp_scroll(buffer);

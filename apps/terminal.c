@@ -4058,6 +4058,32 @@ static void terminal_buffer_clear_line(struct terminal_buffer *buffer) {
     terminal_buffer_clear_entire_line(buffer, buffer->cursor_row);
 }
 
+static void terminal_buffer_erase_chars(struct terminal_buffer *buffer, size_t count) {
+    if (!buffer || !buffer->cells) {
+        return;
+    }
+    if (buffer->rows == 0u || buffer->columns == 0u) {
+        return;
+    }
+    if (buffer->cursor_row >= buffer->rows) {
+        return;
+    }
+    if (buffer->cursor_column >= buffer->columns) {
+        return;
+    }
+    if (count == 0u) {
+        return;
+    }
+    size_t end_column = buffer->cursor_column + count;
+    if (end_column > buffer->columns) {
+        end_column = buffer->columns;
+    }
+    terminal_buffer_clear_line_segment(buffer,
+                                       buffer->cursor_row,
+                                       buffer->cursor_column,
+                                       end_column);
+}
+
 static void terminal_buffer_save_cursor(struct terminal_buffer *buffer) {
     if (!buffer) {
         return;
@@ -5281,6 +5307,14 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
         terminal_buffer_move_relative(buffer, -amount, 0);
         break;
     }
+    case 'G': { /* Cursor Horizontal Absolute */
+        int column = ansi_parser_get_param(parser, 0u, 1);
+        if (column < 1) {
+            column = 1;
+        }
+        terminal_buffer_set_cursor(buffer, (size_t)(column - 1), buffer->cursor_row);
+        break;
+    }
     case 'H':
     case 'f': { /* Cursor Position */
         int row = ansi_parser_get_param(parser, 0u, 1);
@@ -5310,6 +5344,14 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
         default:
             break;
         }
+        break;
+    }
+    case 'X': { /* Erase Character */
+        int count = ansi_parser_get_param(parser, 0u, 1);
+        if (count < 1) {
+            count = 1;
+        }
+        terminal_buffer_erase_chars(buffer, (size_t)count);
         break;
     }
     case 'K': { /* Erase in Line */

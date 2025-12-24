@@ -5804,6 +5804,39 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
 
     switch (parser->state) {
     case ANSI_STATE_GROUND:
+        if (ch == 0x9b) {
+            parser->state = ANSI_STATE_CSI;
+            ansi_parser_reset_parameters(parser);
+            ansi_parser_reset_utf8(parser);
+            break;
+        }
+        if (ch == 0x9d) {
+            parser->state = ANSI_STATE_OSC;
+            parser->osc_length = 0u;
+            if (sizeof(parser->osc_buffer) > 0u) {
+                parser->osc_buffer[0] = '\0';
+            }
+            ansi_parser_reset_utf8(parser);
+            break;
+        }
+        if (ch == 0x84) {
+            terminal_buffer_linefeed(buffer);
+            ansi_parser_reset_utf8(parser);
+            break;
+        }
+        if (ch == 0x85) {
+            if (buffer) {
+                buffer->cursor_column = 0u;
+            }
+            terminal_buffer_linefeed(buffer);
+            ansi_parser_reset_utf8(parser);
+            break;
+        }
+        if (ch == 0x8d) {
+            terminal_buffer_reverse_linefeed(buffer);
+            ansi_parser_reset_utf8(parser);
+            break;
+        }
         ansi_parser_feed_utf8(parser, buffer, ch);
         break;
     case ANSI_STATE_ESCAPE:
@@ -5898,7 +5931,7 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
         }
         break;
     case ANSI_STATE_OSC:
-        if (ch == 0x07) {
+        if (ch == 0x07 || ch == 0x9c) {
             ansi_handle_osc(parser, buffer);
             parser->state = ANSI_STATE_GROUND;
             ansi_parser_reset_utf8(parser);

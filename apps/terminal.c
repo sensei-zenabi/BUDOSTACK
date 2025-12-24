@@ -964,6 +964,8 @@ static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
 static void terminal_apply_margin(struct terminal_buffer *buffer, int margin);
 static void terminal_apply_resolution(struct terminal_buffer *buffer, int width, int height);
 static int terminal_resize_buffer(struct terminal_buffer *buffer, size_t columns, size_t rows);
+static void terminal_buffer_push_history(struct terminal_buffer *buffer, const struct terminal_cell *row);
+static void terminal_buffer_clear_entire_line(struct terminal_buffer *buffer, size_t row);
 
 enum ansi_parser_state {
     ANSI_STATE_GROUND = 0,

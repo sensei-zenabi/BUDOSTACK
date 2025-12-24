@@ -939,6 +939,8 @@ struct terminal_buffer {
     size_t cursor_row;
     size_t saved_cursor_column;
     size_t saved_cursor_row;
+    size_t scroll_top;
+    size_t scroll_bottom;
     int cursor_saved;
     int attr_saved;
     struct terminal_cell *cells;
@@ -3712,6 +3714,8 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->cursor_row = 0u;
     buffer->saved_cursor_column = 0u;
     buffer->saved_cursor_row = 0u;
+    buffer->scroll_top = 0u;
+    buffer->scroll_bottom = rows > 0u ? rows - 1u : 0u;
     buffer->cursor_saved = 0;
     buffer->attr_saved = 0;
     buffer->cursor_visible = 1;
@@ -3851,6 +3855,8 @@ static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_col
     buffer->history_rows = 0u;
     buffer->history_start = 0u;
     buffer->scroll_offset = 0u;
+    buffer->scroll_top = 0u;
+    buffer->scroll_bottom = new_rows > 0u ? new_rows - 1u : 0u;
 
     return 0;
 }
@@ -3869,6 +3875,8 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     buffer->cursor_row = 0u;
     buffer->saved_cursor_column = 0u;
     buffer->saved_cursor_row = 0u;
+    buffer->scroll_top = 0u;
+    buffer->scroll_bottom = 0u;
     buffer->cursor_saved = 0;
     buffer->cursor_visible = 1;
     buffer->saved_cursor_visible = 1;
@@ -3883,6 +3891,33 @@ static void terminal_buffer_clamp_scroll(struct terminal_buffer *buffer) {
     }
     if (buffer->scroll_offset > buffer->history_rows) {
         buffer->scroll_offset = buffer->history_rows;
+    }
+}
+
+static void terminal_buffer_resolve_scroll_region(const struct terminal_buffer *buffer,
+                                                  size_t *out_top,
+                                                  size_t *out_bottom) {
+    size_t top = 0u;
+    size_t bottom = 0u;
+    if (buffer && buffer->rows > 0u) {
+        top = buffer->scroll_top;
+        bottom = buffer->scroll_bottom;
+        if (top >= buffer->rows) {
+            top = 0u;
+        }
+        if (bottom >= buffer->rows) {
+            bottom = buffer->rows - 1u;
+        }
+        if (top > bottom) {
+            top = 0u;
+            bottom = buffer->rows - 1u;
+        }
+    }
+    if (out_top) {
+        *out_top = top;
+    }
+    if (out_bottom) {
+        *out_bottom = bottom;
     }
 }
 
@@ -3930,6 +3965,113 @@ static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
     if (buffer->scroll_offset > 0u) {
         buffer->scroll_offset++;
         terminal_buffer_clamp_scroll(buffer);
+    }
+}
+
+static void terminal_buffer_scroll_region_up(struct terminal_buffer *buffer) {
+    if (!buffer || buffer->rows == 0u || buffer->columns == 0u) {
+        return;
+    }
+
+    size_t top = 0u;
+    size_t bottom = 0u;
+    terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
+    if (top == 0u && bottom == buffer->rows - 1u) {
+        terminal_buffer_scroll(buffer);
+        return;
+    }
+    if (bottom <= top) {
+        return;
+    }
+
+    size_t row_size = buffer->columns * sizeof(struct terminal_cell);
+    memmove(buffer->cells + top * buffer->columns,
+            buffer->cells + (top + 1u) * buffer->columns,
+            row_size * (bottom - top));
+
+    struct terminal_cell *last_row = buffer->cells + bottom * buffer->columns;
+    for (size_t col = 0u; col < buffer->columns; col++) {
+        terminal_cell_apply_defaults(buffer, &last_row[col]);
+    }
+}
+
+static void terminal_buffer_scroll_region_down(struct terminal_buffer *buffer) {
+    if (!buffer || buffer->rows == 0u || buffer->columns == 0u) {
+        return;
+    }
+
+    size_t top = 0u;
+    size_t bottom = 0u;
+    terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
+    if (top == 0u && bottom == buffer->rows - 1u) {
+        size_t row_size = buffer->columns * sizeof(struct terminal_cell);
+        memmove(buffer->cells + buffer->columns,
+                buffer->cells,
+                row_size * (buffer->rows - 1u));
+        struct terminal_cell *first_row = buffer->cells;
+        for (size_t col = 0u; col < buffer->columns; col++) {
+            terminal_cell_apply_defaults(buffer, &first_row[col]);
+        }
+        return;
+    }
+    if (bottom <= top) {
+        return;
+    }
+
+    size_t row_size = buffer->columns * sizeof(struct terminal_cell);
+    memmove(buffer->cells + (top + 1u) * buffer->columns,
+            buffer->cells + top * buffer->columns,
+            row_size * (bottom - top));
+
+    struct terminal_cell *first_row = buffer->cells + top * buffer->columns;
+    for (size_t col = 0u; col < buffer->columns; col++) {
+        terminal_cell_apply_defaults(buffer, &first_row[col]);
+    }
+}
+
+static void terminal_buffer_index(struct terminal_buffer *buffer) {
+    if (!buffer || buffer->rows == 0u) {
+        return;
+    }
+
+    if (buffer->cursor_row >= buffer->rows) {
+        buffer->cursor_row = buffer->rows - 1u;
+    }
+
+    size_t top = 0u;
+    size_t bottom = 0u;
+    terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
+    if (buffer->cursor_row >= top && buffer->cursor_row <= bottom) {
+        if (buffer->cursor_row == bottom) {
+            terminal_buffer_scroll_region_up(buffer);
+        } else {
+            buffer->cursor_row++;
+        }
+    } else if (buffer->cursor_row + 1u < buffer->rows) {
+        buffer->cursor_row++;
+    }
+}
+
+static void terminal_buffer_reverse_index(struct terminal_buffer *buffer) {
+    if (!buffer || buffer->rows == 0u) {
+        return;
+    }
+
+    if (buffer->cursor_row >= buffer->rows) {
+        buffer->cursor_row = buffer->rows - 1u;
+    }
+
+    size_t top = 0u;
+    size_t bottom = 0u;
+    terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
+    if (buffer->cursor_row >= top && buffer->cursor_row <= bottom) {
+        if (buffer->cursor_row == top) {
+            terminal_buffer_scroll_region_down(buffer);
+        } else {
+            buffer->cursor_row--;
+        }
+    } else if (buffer->cursor_row > 0u) {
+        buffer->cursor_row--;
     }
 }
 
@@ -4206,7 +4348,14 @@ static void terminal_buffer_insert_lines(struct terminal_buffer *buffer, size_t 
     if (count == 0u) {
         return;
     }
-    size_t available = buffer->rows - buffer->cursor_row;
+
+    size_t top = 0u;
+    size_t bottom = 0u;
+    terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
+    if (buffer->cursor_row < top || buffer->cursor_row > bottom) {
+        return;
+    }
+    size_t available = bottom - buffer->cursor_row + 1u;
     if (count > available) {
         count = available;
     }
@@ -4235,7 +4384,14 @@ static void terminal_buffer_delete_lines(struct terminal_buffer *buffer, size_t 
     if (count == 0u) {
         return;
     }
-    size_t available = buffer->rows - buffer->cursor_row;
+
+    size_t top = 0u;
+    size_t bottom = 0u;
+    terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
+    if (buffer->cursor_row < top || buffer->cursor_row > bottom) {
+        return;
+    }
+    size_t available = bottom - buffer->cursor_row + 1u;
     if (count > available) {
         count = available;
     }
@@ -4246,7 +4402,7 @@ static void terminal_buffer_delete_lines(struct terminal_buffer *buffer, size_t 
                 buffer->cells + (buffer->cursor_row + count) * buffer->columns,
                 rows_to_move * row_size);
     }
-    for (size_t row = buffer->rows - count; row < buffer->rows; row++) {
+    for (size_t row = bottom + 1u - count; row <= bottom; row++) {
         terminal_buffer_fill_line_current(buffer, row);
     }
 }
@@ -4285,8 +4441,8 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         return;
     case '\n':
         buffer->cursor_column = 0u;
-        buffer->cursor_row++;
-        break;
+        terminal_buffer_index(buffer);
+        return;
     case '\t': {
         size_t next_tab = ((buffer->cursor_column / 8u) + 1u) * 8u;
         size_t spaces = 0u;
@@ -4340,27 +4496,21 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
             return;
         }
         if (buffer->cursor_row >= buffer->rows) {
-            terminal_buffer_scroll(buffer);
+            terminal_buffer_index(buffer);
         }
         if (buffer->cursor_row >= buffer->rows) {
             return;
         }
         if (buffer->cursor_column >= buffer->columns) {
             buffer->cursor_column = 0u;
-            buffer->cursor_row++;
-            if (buffer->cursor_row >= buffer->rows) {
-                terminal_buffer_scroll(buffer);
-            }
+            terminal_buffer_index(buffer);
         }
         if (buffer->cursor_row >= buffer->rows) {
             return;
         }
         if (buffer->cursor_column >= buffer->columns) {
             buffer->cursor_column = 0u;
-            buffer->cursor_row++;
-            if (buffer->cursor_row >= buffer->rows) {
-                terminal_buffer_scroll(buffer);
-            }
+            terminal_buffer_index(buffer);
         }
         if (buffer->cursor_row >= buffer->rows) {
             return;
@@ -4374,7 +4524,7 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
     }
 
     if (buffer->cursor_row >= buffer->rows) {
-        terminal_buffer_scroll(buffer);
+        terminal_buffer_index(buffer);
     }
 }
 
@@ -5621,6 +5771,25 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
         terminal_buffer_set_cursor(buffer, buffer->cursor_column, (size_t)(row - 1));
         break;
     }
+    case 'r': { /* Set scrolling region */
+        int top = ansi_parser_get_param(parser, 0u, 1);
+        int bottom = ansi_parser_get_param(parser, 1u, (int)buffer->rows);
+        if (top < 1) {
+            top = 1;
+        }
+        if (bottom < 1) {
+            bottom = (int)buffer->rows;
+        }
+        if ((size_t)top > buffer->rows || (size_t)bottom > buffer->rows || top >= bottom) {
+            buffer->scroll_top = 0u;
+            buffer->scroll_bottom = buffer->rows > 0u ? buffer->rows - 1u : 0u;
+        } else {
+            buffer->scroll_top = (size_t)(top - 1);
+            buffer->scroll_bottom = (size_t)(bottom - 1);
+        }
+        terminal_buffer_set_cursor(buffer, 0u, 0u);
+        break;
+    }
     case 'h':
     case 'l':
         if (parser && parser->private_marker == '?') {
@@ -5751,6 +5920,14 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             ansi_parser_reset_utf8(parser);
         } else if (ch == '8') {
             terminal_buffer_restore_cursor(buffer);
+            parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
+        } else if (ch == 'D') {
+            terminal_buffer_index(buffer);
+            parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
+        } else if (ch == 'M') {
+            terminal_buffer_reverse_index(buffer);
             parser->state = ANSI_STATE_GROUND;
             ansi_parser_reset_utf8(parser);
         } else {

@@ -945,6 +945,7 @@ struct terminal_buffer {
     int cursor_saved;
     int attr_saved;
     int origin_mode;
+    int autowrap_enabled;
     struct terminal_cell *cells;
     struct terminal_cell *history;
     struct terminal_attributes current_attr;
@@ -3721,6 +3722,7 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->cursor_saved = 0;
     buffer->attr_saved = 0;
     buffer->origin_mode = 0;
+    buffer->autowrap_enabled = 1;
     buffer->cursor_visible = 1;
     buffer->bracketed_paste_enabled = 0; // Default: OFF
     buffer->saved_cursor_visible = 1;
@@ -3861,6 +3863,7 @@ static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_col
     buffer->scroll_top = 0u;
     buffer->scroll_bottom = new_rows > 0u ? new_rows - 1u : 0u;
     buffer->origin_mode = 0;
+    buffer->autowrap_enabled = 1;
 
     return 0;
 }
@@ -3883,6 +3886,7 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     buffer->scroll_bottom = 0u;
     buffer->cursor_saved = 0;
     buffer->origin_mode = 0;
+    buffer->autowrap_enabled = 1;
     buffer->cursor_visible = 1;
     buffer->saved_cursor_visible = 1;
     buffer->history_rows = 0u;
@@ -4540,15 +4544,23 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
             return;
         }
         if (buffer->cursor_column >= buffer->columns) {
-            buffer->cursor_column = 0u;
-            terminal_buffer_index(buffer);
+            if (buffer->autowrap_enabled) {
+                buffer->cursor_column = 0u;
+                terminal_buffer_index(buffer);
+            } else {
+                buffer->cursor_column = buffer->columns - 1u;
+            }
         }
         if (buffer->cursor_row >= buffer->rows) {
             return;
         }
         if (buffer->cursor_column >= buffer->columns) {
-            buffer->cursor_column = 0u;
-            terminal_buffer_index(buffer);
+            if (buffer->autowrap_enabled) {
+                buffer->cursor_column = 0u;
+                terminal_buffer_index(buffer);
+            } else {
+                buffer->cursor_column = buffer->columns - 1u;
+            }
         }
         if (buffer->cursor_row >= buffer->rows) {
             return;
@@ -4558,6 +4570,9 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         buffer->last_emitted = ch;
         buffer->last_emitted_valid = 1;
         buffer->cursor_column++;
+        if (!buffer->autowrap_enabled && buffer->cursor_column >= buffer->columns) {
+            buffer->cursor_column = buffer->columns - 1u;
+        }
         return;
     }
 
@@ -5869,6 +5884,16 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                         terminal_buffer_set_cursor(buffer, 0u, 0u);
                     }
                     break;
+                case 7: /* autowrap */
+                    if (command == 'h') {
+                        buffer->autowrap_enabled = 1;
+                    } else {
+                        buffer->autowrap_enabled = 0;
+                        if (buffer->columns > 0u && buffer->cursor_column >= buffer->columns) {
+                            buffer->cursor_column = buffer->columns - 1u;
+                        }
+                    }
+                    break;
                 case 2004: /* bracketed paste */
                     /* This is to enable multi-row paste in edit.c */
                     if (command == 'h') {
@@ -5891,6 +5916,7 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                     buffer->scroll_top = 0u;
                     buffer->scroll_bottom = buffer->rows > 0u ? buffer->rows - 1u : 0u;
                     buffer->origin_mode = 0;
+                    buffer->autowrap_enabled = 1;
                     break;
                 default:
                     break;

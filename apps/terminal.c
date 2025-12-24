@@ -5857,6 +5857,8 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                         terminal_buffer_clear_display(buffer);
                         terminal_buffer_restore_cursor(buffer);
                     }
+                    buffer->scroll_top = 0u;
+                    buffer->scroll_bottom = buffer->rows > 0u ? buffer->rows - 1u : 0u;
                     break;
                 default:
                     break;

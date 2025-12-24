@@ -2007,6 +2007,16 @@ static void terminal_cell_apply_current(struct terminal_buffer *buffer, struct t
     cell->style = buffer->current_attr.style;
 }
 
+static void terminal_cell_apply_current_blank(struct terminal_buffer *buffer, struct terminal_cell *cell) {
+    if (!buffer || !cell) {
+        return;
+    }
+    cell->ch = 0u;
+    cell->fg = terminal_resolve_fg(buffer);
+    cell->bg = terminal_resolve_bg(buffer);
+    cell->style = buffer->current_attr.style;
+}
+
 static void terminal_set_fg_palette_index(struct terminal_buffer *buffer, int index) {
     if (!buffer) {
         return;
@@ -3991,7 +4001,7 @@ static void terminal_buffer_clear_line_segment(struct terminal_buffer *buffer,
     }
     struct terminal_cell *line = buffer->cells + row * buffer->columns;
     for (size_t col = start_column; col < end_column; col++) {
-        terminal_cell_apply_defaults(buffer, &line[col]);
+        terminal_cell_apply_current_blank(buffer, &line[col]);
     }
 }
 
@@ -4004,7 +4014,7 @@ static void terminal_buffer_clear_entire_line(struct terminal_buffer *buffer, si
     }
     struct terminal_cell *line = buffer->cells + row * buffer->columns;
     for (size_t col = 0u; col < buffer->columns; col++) {
-        terminal_cell_apply_defaults(buffer, &line[col]);
+        terminal_cell_apply_current_blank(buffer, &line[col]);
     }
 }
 
@@ -4037,7 +4047,7 @@ static void terminal_buffer_clear_display(struct terminal_buffer *buffer) {
     }
     size_t total = buffer->columns * buffer->rows;
     for (size_t i = 0u; i < total; i++) {
-        terminal_cell_apply_defaults(buffer, &buffer->cells[i]);
+        terminal_cell_apply_current_blank(buffer, &buffer->cells[i]);
     }
     buffer->cursor_column = 0u;
     buffer->cursor_row = 0u;
@@ -4093,7 +4103,7 @@ static void terminal_buffer_fill_line_current(struct terminal_buffer *buffer, si
     }
     struct terminal_cell *line = buffer->cells + row * buffer->columns;
     for (size_t col = 0u; col < buffer->columns; col++) {
-        terminal_cell_apply_current(buffer, &line[col], ' ');
+        terminal_cell_apply_current_blank(buffer, &line[col]);
     }
 }
 
@@ -4115,7 +4125,7 @@ static void terminal_buffer_fill_line_segment_current(struct terminal_buffer *bu
     }
     struct terminal_cell *line = buffer->cells + row * buffer->columns;
     for (size_t col = start_column; col < end_column; col++) {
-        terminal_cell_apply_current(buffer, &line[col], ' ');
+        terminal_cell_apply_current_blank(buffer, &line[col]);
     }
 }
 

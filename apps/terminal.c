@@ -4456,7 +4456,6 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         buffer->cursor_column = 0u;
         return;
     case '\n':
-        buffer->cursor_column = 0u;
         terminal_buffer_index(buffer);
         return;
     case '\t': {
@@ -4489,22 +4488,9 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
 //        return;
 //  New Implementation: Fixes the left arrow delete
     case '\b':
-        /* Backspace: move cursor one cell left, wrapping to previous row.
-         *
-         * FIX: Do NOT clear the character here.
-         * - Our line editor uses "\b \b" (backspace, space, backspace)
-         *   when it actually wants to delete a character.
-         * - Left arrow now sends plain '\b' to move the cursor left
-         *   without erasing text.
-         *
-         * If we cleared the cell here, every cursor move left would
-         * visually delete characters, which is what we are seeing now.
-         */
+        /* Backspace: move cursor one cell left without erasing. */
         if (buffer->cursor_column > 0u) {
             buffer->cursor_column--;
-        } else if (buffer->cursor_row > 0u) {
-            buffer->cursor_row--;
-            buffer->cursor_column = buffer->columns ? buffer->columns - 1u : 0u;
         }
         return;
     default:

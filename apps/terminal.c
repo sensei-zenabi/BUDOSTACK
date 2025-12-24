@@ -956,6 +956,8 @@ struct terminal_buffer {
     size_t history_start;
     size_t scroll_offset;
     uint32_t palette[256];
+    uint32_t last_emitted;
+    int last_emitted_valid;
 };
 
 static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
@@ -3719,6 +3721,8 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->history_rows = 0u;
     buffer->history_start = 0u;
     buffer->scroll_offset = 0u;
+    buffer->last_emitted = 0u;
+    buffer->last_emitted_valid = 0;
 
     if (columns == 0u || rows == 0u) {
         buffer->cells = NULL;
@@ -4363,6 +4367,8 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         }
         struct terminal_cell *cell = &buffer->cells[buffer->cursor_row * buffer->columns + buffer->cursor_column];
         terminal_cell_apply_current(buffer, cell, ch);
+        buffer->last_emitted = ch;
+        buffer->last_emitted_valid = 1;
         buffer->cursor_column++;
         return;
     }
@@ -5551,6 +5557,18 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
             count = 1;
         }
         terminal_buffer_erase_chars(buffer, (size_t)count);
+        break;
+    }
+    case 'b': { /* Repeat the preceding character */
+        int count = ansi_parser_get_param(parser, 0u, 1);
+        if (count < 1) {
+            count = 1;
+        }
+        if (buffer->last_emitted_valid) {
+            for (int i = 0; i < count; i++) {
+                terminal_put_char(buffer, buffer->last_emitted);
+            }
+        }
         break;
     }
     case '@': { /* Insert Character */

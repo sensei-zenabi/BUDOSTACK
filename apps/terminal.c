@@ -961,6 +961,7 @@ struct terminal_buffer {
     uint32_t palette[256];
     uint32_t last_emitted;
     int last_emitted_valid;
+    int newline_mode;
 };
 
 static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
@@ -3728,6 +3729,7 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->scroll_offset = 0u;
     buffer->last_emitted = 0u;
     buffer->last_emitted_valid = 0;
+    buffer->newline_mode = 1;
 
     if (columns == 0u || rows == 0u) {
         buffer->cells = NULL;
@@ -4456,6 +4458,9 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         buffer->cursor_column = 0u;
         return;
     case '\n':
+        if (buffer->newline_mode) {
+            buffer->cursor_column = 0u;
+        }
         terminal_buffer_index(buffer);
         return;
     case '\t': {
@@ -5810,7 +5815,10 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
     }
     case 'h':
     case 'l':
-        if (parser && parser->private_marker == '?') {
+        if (!parser) {
+            break;
+        }
+        if (parser->private_marker == '?') {
             for (size_t i = 0u; i < parser->param_count; i++) {
                 int mode = parser->params[i];
                 if (mode < 0) {
@@ -5845,6 +5853,20 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                     }
                     buffer->scroll_top = 0u;
                     buffer->scroll_bottom = buffer->rows > 0u ? buffer->rows - 1u : 0u;
+                    break;
+                default:
+                    break;
+                }
+            }
+        } else if (parser->private_marker == 0) {
+            for (size_t i = 0u; i < parser->param_count; i++) {
+                int mode = parser->params[i];
+                if (mode < 0) {
+                    continue;
+                }
+                switch (mode) {
+                case 20: /* Linefeed/newline mode */
+                    buffer->newline_mode = (command == 'h') ? 1 : 0;
                     break;
                 default:
                     break;
@@ -5948,6 +5970,11 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             ansi_parser_reset_utf8(parser);
         } else if (ch == 'M') {
             terminal_buffer_reverse_index(buffer);
+            parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
+        } else if (ch == 'E') {
+            buffer->cursor_column = 0u;
+            terminal_buffer_index(buffer);
             parser->state = ANSI_STATE_GROUND;
             ansi_parser_reset_utf8(parser);
         } else {

@@ -1511,6 +1511,7 @@ static void terminal_mark_full_redraw(void) {
 
 static void terminal_mark_background_dirty(void) {
     terminal_background_dirty = 1;
+    terminal_force_full_redraw = 1;
 }
 
 static uint32_t terminal_rgba_from_components(uint8_t r, uint8_t g, uint8_t b) {

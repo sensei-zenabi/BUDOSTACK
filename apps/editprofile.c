@@ -1,8 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "../lib/retroprofile.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,8 +13,6 @@
 #include <sys/stat.h>
 #include <termios.h>
 #include <unistd.h>
-
-#include "../lib/retroprofile.h"
 
 typedef enum {
     KEY_UNKNOWN = 0,
@@ -164,6 +165,46 @@ static int clamp_channel(int value) {
     return value;
 }
 
+static void emit_osc(const char *fmt, ...) {
+    char buffer[128];
+    va_list args;
+
+    va_start(args, fmt);
+    int written = vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+
+    if (written < 0)
+        return;
+
+    fwrite("\033]", 1, 2, stdout);
+    if ((size_t)written >= sizeof(buffer)) {
+        fwrite(buffer, 1, sizeof(buffer) - 1, stdout);
+    } else {
+        fwrite(buffer, 1, (size_t)written, stdout);
+    }
+    fwrite("\033\\", 1, 2, stdout);
+}
+
+static void emit_palette_sequence(const RetroProfile *profile) {
+    for (int i = 0; i < 16; ++i) {
+        const RetroColor *color = &profile->colors[i];
+        emit_osc("4;%d;#%02X%02X%02X", i, color->r, color->g, color->b);
+    }
+    emit_osc("10;#%02X%02X%02X",
+             profile->defaults.foreground.r,
+             profile->defaults.foreground.g,
+             profile->defaults.foreground.b);
+    emit_osc("11;#%02X%02X%02X",
+             profile->defaults.background.r,
+             profile->defaults.background.g,
+             profile->defaults.background.b);
+    emit_osc("12;#%02X%02X%02X",
+             profile->defaults.cursor.r,
+             profile->defaults.cursor.g,
+             profile->defaults.cursor.b);
+    fflush(stdout);
+}
+
 static void draw_profile_header(const RetroProfile *profile, size_t profile_index, size_t total, int dirty) {
     char name[25];
     char key[13];
@@ -179,7 +220,7 @@ static void draw_profile_header(const RetroProfile *profile, size_t profile_inde
            dirty ? " *" : "");
     printf("Arrows: move  Tab: next channel  +/-: fine step  </>: coarse step\n");
     printf("p: next  c: copy to defaults  s/Ctrl+S: save  w: write .prf  l: load .prf\n");
-    printf("a: apply profile  q/Ctrl+Q: quit (changes apply after restart)\n\n");
+    printf("a: apply profile  q/Ctrl+Q: quit\n\n");
 }
 
 static void draw_row_prefix(int selected) {
@@ -374,10 +415,12 @@ int main(void) {
                 continue;
             } else if (ch == 'a' || ch == 'A') {
                 const RetroProfile *current = &editable[current_profile];
-                if (retroprofile_set_active(current->key) == 0)
-                    printf("\nApplied active profile: %s. Restart to see it.\n", current->key);
-                else
+                if (retroprofile_set_active(current->key) == 0) {
+                    emit_palette_sequence(current);
+                    printf("\nApplied active profile: %s.\n", current->key);
+                } else {
                     printf("\nFailed to set active profile (%s).\n", strerror(errno));
+                }
                 fflush(stdout);
                 continue;
             } else if (ch == '+') {
@@ -424,7 +467,6 @@ int main(void) {
         draw_screen(&editable[current_profile], (size_t)current_profile, profile_count, selected_row, selected_channel, dirty_flags);
     }
 
-    printf("\nNo changes applied to running session. Restart to see new palettes.\n");
+    printf("\nExited RetroProfile Editor.\n");
     return EXIT_SUCCESS;
 }
-

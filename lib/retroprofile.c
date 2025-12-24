@@ -35,11 +35,43 @@
 #define RETROPROFILE_OVERRIDE_PATH "users/retroprofile_presets.ini"
 #endif
 
+static int is_absolute_path(const char *path) {
+    if (path == NULL || path[0] == '\0')
+        return 0;
+#ifdef _WIN32
+    if ((path[0] != '\0' && path[1] == ':') || path[0] == '\\' || path[0] == '/')
+        return 1;
+#else
+    if (path[0] == '/')
+        return 1;
+#endif
+    return 0;
+}
+
+static const char *resolve_base_path(const char *path, char *buffer, size_t buffer_size) {
+    const char *base = getenv("BUDOSTACK_BASE");
+    if (path == NULL)
+        return NULL;
+    if (path[0] == '\0')
+        return path;
+    if (is_absolute_path(path))
+        return path;
+    if (base == NULL || base[0] == '\0')
+        return path;
+    size_t base_len = strlen(base);
+    const char *fmt = (base_len > 0 && base[base_len - 1] == '/') ? "%s%s" : "%s/%s";
+    if (snprintf(buffer, buffer_size, fmt, base, path) >= (int)buffer_size) {
+        buffer[buffer_size - 1] = '\0';
+    }
+    return buffer;
+}
+
 static const char *override_path(void) {
+    static char resolved[PATH_MAX];
     const char *env = getenv("BUDOSTACK_RETROPROFILE_PRESETS");
     if (env != NULL && env[0] != '\0')
-        return env;
-    return RETROPROFILE_OVERRIDE_PATH;
+        return resolve_base_path(env, resolved, sizeof(resolved));
+    return resolve_base_path(RETROPROFILE_OVERRIDE_PATH, resolved, sizeof(resolved));
 }
 
 static const RetroProfile builtin_profiles[] = {
@@ -329,10 +361,11 @@ const RetroProfile *retroprofile_default(void) {
 }
 
 static const char *state_path(void) {
+    static char resolved[PATH_MAX];
     const char *env = getenv("BUDOSTACK_RETROPROFILE_STATE");
     if (env != NULL && env[0] != '\0')
-        return env;
-    return RETROPROFILE_STATE_PATH;
+        return resolve_base_path(env, resolved, sizeof(resolved));
+    return resolve_base_path(RETROPROFILE_STATE_PATH, resolved, sizeof(resolved));
 }
 
 static int ensure_directory(const char *path) {

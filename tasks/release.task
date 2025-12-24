@@ -10,7 +10,7 @@ SET $TAG_OLD = "none"
 # TASK script
 RUN clear
 PRINT "\nRetrieving tags...\n\n"
-RUN git tag --sort=-v:refname
+RUN git tag --sort=-creatordate
 PRINT "\nEnter NEW release tag: "
 INPUT $TAG
 PRINT "\nEnter baseline release tag ('none' if no baseline): "

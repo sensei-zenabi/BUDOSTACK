@@ -4084,6 +4084,159 @@ static void terminal_buffer_erase_chars(struct terminal_buffer *buffer, size_t c
                                        end_column);
 }
 
+static void terminal_buffer_fill_line_current(struct terminal_buffer *buffer, size_t row) {
+    if (!buffer || !buffer->cells) {
+        return;
+    }
+    if (row >= buffer->rows || buffer->columns == 0u) {
+        return;
+    }
+    struct terminal_cell *line = buffer->cells + row * buffer->columns;
+    for (size_t col = 0u; col < buffer->columns; col++) {
+        terminal_cell_apply_current(buffer, &line[col], ' ');
+    }
+}
+
+static void terminal_buffer_fill_line_segment_current(struct terminal_buffer *buffer,
+                                                      size_t row,
+                                                      size_t start_column,
+                                                      size_t end_column) {
+    if (!buffer || !buffer->cells) {
+        return;
+    }
+    if (row >= buffer->rows || buffer->columns == 0u) {
+        return;
+    }
+    if (start_column >= buffer->columns) {
+        return;
+    }
+    if (end_column > buffer->columns) {
+        end_column = buffer->columns;
+    }
+    struct terminal_cell *line = buffer->cells + row * buffer->columns;
+    for (size_t col = start_column; col < end_column; col++) {
+        terminal_cell_apply_current(buffer, &line[col], ' ');
+    }
+}
+
+static void terminal_buffer_insert_chars(struct terminal_buffer *buffer, size_t count) {
+    if (!buffer || !buffer->cells) {
+        return;
+    }
+    if (buffer->rows == 0u || buffer->columns == 0u) {
+        return;
+    }
+    if (buffer->cursor_row >= buffer->rows || buffer->cursor_column >= buffer->columns) {
+        return;
+    }
+    if (count == 0u) {
+        return;
+    }
+    size_t available = buffer->columns - buffer->cursor_column;
+    if (count > available) {
+        count = available;
+    }
+    size_t tail_count = available - count;
+    struct terminal_cell *line = buffer->cells + buffer->cursor_row * buffer->columns;
+    if (tail_count > 0u) {
+        memmove(line + buffer->cursor_column + count,
+                line + buffer->cursor_column,
+                tail_count * sizeof(struct terminal_cell));
+    }
+    terminal_buffer_fill_line_segment_current(buffer,
+                                              buffer->cursor_row,
+                                              buffer->cursor_column,
+                                              buffer->cursor_column + count);
+}
+
+static void terminal_buffer_delete_chars(struct terminal_buffer *buffer, size_t count) {
+    if (!buffer || !buffer->cells) {
+        return;
+    }
+    if (buffer->rows == 0u || buffer->columns == 0u) {
+        return;
+    }
+    if (buffer->cursor_row >= buffer->rows || buffer->cursor_column >= buffer->columns) {
+        return;
+    }
+    if (count == 0u) {
+        return;
+    }
+    size_t available = buffer->columns - buffer->cursor_column;
+    if (count > available) {
+        count = available;
+    }
+    size_t tail_count = available - count;
+    struct terminal_cell *line = buffer->cells + buffer->cursor_row * buffer->columns;
+    if (tail_count > 0u) {
+        memmove(line + buffer->cursor_column,
+                line + buffer->cursor_column + count,
+                tail_count * sizeof(struct terminal_cell));
+    }
+    terminal_buffer_fill_line_segment_current(buffer,
+                                              buffer->cursor_row,
+                                              buffer->columns - count,
+                                              buffer->columns);
+}
+
+static void terminal_buffer_insert_lines(struct terminal_buffer *buffer, size_t count) {
+    if (!buffer || !buffer->cells) {
+        return;
+    }
+    if (buffer->rows == 0u || buffer->columns == 0u) {
+        return;
+    }
+    if (buffer->cursor_row >= buffer->rows) {
+        return;
+    }
+    if (count == 0u) {
+        return;
+    }
+    size_t available = buffer->rows - buffer->cursor_row;
+    if (count > available) {
+        count = available;
+    }
+    size_t rows_to_move = available - count;
+    size_t row_size = buffer->columns * sizeof(struct terminal_cell);
+    if (rows_to_move > 0u) {
+        memmove(buffer->cells + (buffer->cursor_row + count) * buffer->columns,
+                buffer->cells + buffer->cursor_row * buffer->columns,
+                rows_to_move * row_size);
+    }
+    for (size_t row = buffer->cursor_row; row < buffer->cursor_row + count; row++) {
+        terminal_buffer_fill_line_current(buffer, row);
+    }
+}
+
+static void terminal_buffer_delete_lines(struct terminal_buffer *buffer, size_t count) {
+    if (!buffer || !buffer->cells) {
+        return;
+    }
+    if (buffer->rows == 0u || buffer->columns == 0u) {
+        return;
+    }
+    if (buffer->cursor_row >= buffer->rows) {
+        return;
+    }
+    if (count == 0u) {
+        return;
+    }
+    size_t available = buffer->rows - buffer->cursor_row;
+    if (count > available) {
+        count = available;
+    }
+    size_t rows_to_move = available - count;
+    size_t row_size = buffer->columns * sizeof(struct terminal_cell);
+    if (rows_to_move > 0u) {
+        memmove(buffer->cells + buffer->cursor_row * buffer->columns,
+                buffer->cells + (buffer->cursor_row + count) * buffer->columns,
+                rows_to_move * row_size);
+    }
+    for (size_t row = buffer->rows - count; row < buffer->rows; row++) {
+        terminal_buffer_fill_line_current(buffer, row);
+    }
+}
+
 static void terminal_buffer_save_cursor(struct terminal_buffer *buffer) {
     if (!buffer) {
         return;
@@ -5307,6 +5460,18 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
         terminal_buffer_move_relative(buffer, -amount, 0);
         break;
     }
+    case 'E': { /* Cursor Next Line */
+        int amount = ansi_parser_get_param(parser, 0u, 1);
+        terminal_buffer_move_relative(buffer, 0, amount);
+        buffer->cursor_column = 0u;
+        break;
+    }
+    case 'F': { /* Cursor Previous Line */
+        int amount = ansi_parser_get_param(parser, 0u, 1);
+        terminal_buffer_move_relative(buffer, 0, -amount);
+        buffer->cursor_column = 0u;
+        break;
+    }
     case 'G': { /* Cursor Horizontal Absolute */
         int column = ansi_parser_get_param(parser, 0u, 1);
         if (column < 1) {
@@ -5328,6 +5493,22 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
         terminal_buffer_set_cursor(buffer, (size_t)(column - 1), (size_t)(row - 1));
         break;
     }
+    case 'L': { /* Insert Line */
+        int count = ansi_parser_get_param(parser, 0u, 1);
+        if (count < 1) {
+            count = 1;
+        }
+        terminal_buffer_insert_lines(buffer, (size_t)count);
+        break;
+    }
+    case 'M': { /* Delete Line */
+        int count = ansi_parser_get_param(parser, 0u, 1);
+        if (count < 1) {
+            count = 1;
+        }
+        terminal_buffer_delete_lines(buffer, (size_t)count);
+        break;
+    }
     case 'J': { /* Erase in Display */
         int mode = ansi_parser_get_param(parser, 0u, 0);
         switch (mode) {
@@ -5346,12 +5527,28 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
         }
         break;
     }
+    case 'P': { /* Delete Character */
+        int count = ansi_parser_get_param(parser, 0u, 1);
+        if (count < 1) {
+            count = 1;
+        }
+        terminal_buffer_delete_chars(buffer, (size_t)count);
+        break;
+    }
     case 'X': { /* Erase Character */
         int count = ansi_parser_get_param(parser, 0u, 1);
         if (count < 1) {
             count = 1;
         }
         terminal_buffer_erase_chars(buffer, (size_t)count);
+        break;
+    }
+    case '@': { /* Insert Character */
+        int count = ansi_parser_get_param(parser, 0u, 1);
+        if (count < 1) {
+            count = 1;
+        }
+        terminal_buffer_insert_chars(buffer, (size_t)count);
         break;
     }
     case 'K': { /* Erase in Line */
@@ -5380,6 +5577,22 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
     case 'm': /* Select Graphic Rendition - unsupported, ignore */
         terminal_apply_sgr(buffer, parser);
         break;
+    case '`': { /* Horizontal Position Absolute */
+        int column = ansi_parser_get_param(parser, 0u, 1);
+        if (column < 1) {
+            column = 1;
+        }
+        terminal_buffer_set_cursor(buffer, (size_t)(column - 1), buffer->cursor_row);
+        break;
+    }
+    case 'd': { /* Vertical Position Absolute */
+        int row = ansi_parser_get_param(parser, 0u, 1);
+        if (row < 1) {
+            row = 1;
+        }
+        terminal_buffer_set_cursor(buffer, buffer->cursor_column, (size_t)(row - 1));
+        break;
+    }
     case 'h':
     case 'l':
         if (parser && parser->private_marker == '?') {

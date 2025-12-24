@@ -3968,7 +3968,7 @@ static void terminal_buffer_scroll(struct terminal_buffer *buffer) {
     }
 }
 
-static void terminal_buffer_scroll_region_up(struct terminal_buffer *buffer) {
+static void terminal_buffer_scroll_region_up(struct terminal_buffer *buffer, size_t count) {
     if (!buffer || buffer->rows == 0u || buffer->columns == 0u) {
         return;
     }
@@ -3977,25 +3977,34 @@ static void terminal_buffer_scroll_region_up(struct terminal_buffer *buffer) {
     size_t bottom = 0u;
     terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
     if (top == 0u && bottom == buffer->rows - 1u) {
-        terminal_buffer_scroll(buffer);
+        for (size_t i = 0u; i < count; i++) {
+            terminal_buffer_scroll(buffer);
+        }
         return;
     }
     if (bottom <= top) {
         return;
     }
 
+    size_t region_rows = bottom - top + 1u;
+    if (count >= region_rows) {
+        for (size_t row = top; row <= bottom; row++) {
+            terminal_buffer_fill_line_current(buffer, row);
+        }
+        return;
+    }
+
     size_t row_size = buffer->columns * sizeof(struct terminal_cell);
     memmove(buffer->cells + top * buffer->columns,
-            buffer->cells + (top + 1u) * buffer->columns,
-            row_size * (bottom - top));
+            buffer->cells + (top + count) * buffer->columns,
+            row_size * (region_rows - count));
 
-    struct terminal_cell *last_row = buffer->cells + bottom * buffer->columns;
-    for (size_t col = 0u; col < buffer->columns; col++) {
-        terminal_cell_apply_defaults(buffer, &last_row[col]);
+    for (size_t row = bottom + 1u - count; row <= bottom; row++) {
+        terminal_buffer_fill_line_current(buffer, row);
     }
 }
 
-static void terminal_buffer_scroll_region_down(struct terminal_buffer *buffer) {
+static void terminal_buffer_scroll_region_down(struct terminal_buffer *buffer, size_t count) {
     if (!buffer || buffer->rows == 0u || buffer->columns == 0u) {
         return;
     }
@@ -4005,12 +4014,11 @@ static void terminal_buffer_scroll_region_down(struct terminal_buffer *buffer) {
     terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
     if (top == 0u && bottom == buffer->rows - 1u) {
         size_t row_size = buffer->columns * sizeof(struct terminal_cell);
-        memmove(buffer->cells + buffer->columns,
-                buffer->cells,
-                row_size * (buffer->rows - 1u));
-        struct terminal_cell *first_row = buffer->cells;
-        for (size_t col = 0u; col < buffer->columns; col++) {
-            terminal_cell_apply_defaults(buffer, &first_row[col]);
+        for (size_t i = 0u; i < count; i++) {
+            memmove(buffer->cells + buffer->columns,
+                    buffer->cells,
+                    row_size * (buffer->rows - 1u));
+            terminal_buffer_fill_line_current(buffer, 0u);
         }
         return;
     }
@@ -4018,14 +4026,21 @@ static void terminal_buffer_scroll_region_down(struct terminal_buffer *buffer) {
         return;
     }
 
-    size_t row_size = buffer->columns * sizeof(struct terminal_cell);
-    memmove(buffer->cells + (top + 1u) * buffer->columns,
-            buffer->cells + top * buffer->columns,
-            row_size * (bottom - top));
+    size_t region_rows = bottom - top + 1u;
+    if (count >= region_rows) {
+        for (size_t row = top; row <= bottom; row++) {
+            terminal_buffer_fill_line_current(buffer, row);
+        }
+        return;
+    }
 
-    struct terminal_cell *first_row = buffer->cells + top * buffer->columns;
-    for (size_t col = 0u; col < buffer->columns; col++) {
-        terminal_cell_apply_defaults(buffer, &first_row[col]);
+    size_t row_size = buffer->columns * sizeof(struct terminal_cell);
+    memmove(buffer->cells + (top + count) * buffer->columns,
+            buffer->cells + top * buffer->columns,
+            row_size * (region_rows - count));
+
+    for (size_t row = top; row < top + count; row++) {
+        terminal_buffer_fill_line_current(buffer, row);
     }
 }
 
@@ -4041,12 +4056,12 @@ static void terminal_buffer_index(struct terminal_buffer *buffer) {
     size_t top = 0u;
     size_t bottom = 0u;
     terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
-    if (buffer->cursor_row >= top && buffer->cursor_row <= bottom) {
-        if (buffer->cursor_row == bottom) {
-            terminal_buffer_scroll_region_up(buffer);
-        } else {
-            buffer->cursor_row++;
-        }
+        if (buffer->cursor_row >= top && buffer->cursor_row <= bottom) {
+            if (buffer->cursor_row == bottom) {
+                terminal_buffer_scroll_region_up(buffer, 1u);
+            } else {
+                buffer->cursor_row++;
+            }
     } else if (buffer->cursor_row + 1u < buffer->rows) {
         buffer->cursor_row++;
     }
@@ -4064,12 +4079,12 @@ static void terminal_buffer_reverse_index(struct terminal_buffer *buffer) {
     size_t top = 0u;
     size_t bottom = 0u;
     terminal_buffer_resolve_scroll_region(buffer, &top, &bottom);
-    if (buffer->cursor_row >= top && buffer->cursor_row <= bottom) {
-        if (buffer->cursor_row == top) {
-            terminal_buffer_scroll_region_down(buffer);
-        } else {
-            buffer->cursor_row--;
-        }
+        if (buffer->cursor_row >= top && buffer->cursor_row <= bottom) {
+            if (buffer->cursor_row == top) {
+                terminal_buffer_scroll_region_down(buffer, 1u);
+            } else {
+                buffer->cursor_row--;
+            }
     } else if (buffer->cursor_row > 0u) {
         buffer->cursor_row--;
     }
@@ -5699,6 +5714,22 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
             count = 1;
         }
         terminal_buffer_delete_chars(buffer, (size_t)count);
+        break;
+    }
+    case 'S': { /* Scroll Up */
+        int count = ansi_parser_get_param(parser, 0u, 1);
+        if (count < 1) {
+            count = 1;
+        }
+        terminal_buffer_scroll_region_up(buffer, (size_t)count);
+        break;
+    }
+    case 'T': { /* Scroll Down */
+        int count = ansi_parser_get_param(parser, 0u, 1);
+        if (count < 1) {
+            count = 1;
+        }
+        terminal_buffer_scroll_region_down(buffer, (size_t)count);
         break;
     }
     case 'X': { /* Erase Character */

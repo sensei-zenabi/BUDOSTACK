@@ -55,7 +55,7 @@ static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s -<cmd> -<waveform> <note> <duration_ms> [channel] "
         "[attack_ms] [decay_ms] [sustain_ms] [release_ms] [lowpass_hz] [highpass_hz]\n"
-        "  cmd       : enter, play, loop (plays already entered notes), stop (stops all notes)\n"
+        "  cmd       : enter, play, loop <count> (plays entered notes count times), stop (stops all notes)\n"
         "  waveforms : sine, square, triangle, sawtooth, noise\n"
         "  note      : standard concert pitch notes (e.g. c2, c3, c4, d4, e4)\n"
         "  duration  : milliseconds (e.g. 500 = 500ms)\n"
@@ -583,9 +583,20 @@ int main(int argc, char *argv[]) {
     if (!strcmp(cmd, "play") || !strcmp(cmd, "loop")) {
         enum { F_RAW, F_TEXT, F_WAV, F_PLAY } mode = F_PLAY;
         int loop_mode = strcmp(cmd, "loop") == 0;
-        if (loop_mode && argc > 2) {
-            fprintf(stderr, "signal: loop does not accept a format.\n");
-            usage(argv[0]);
+        long loop_count = 0;
+        if (loop_mode) {
+            if (argc < 3) {
+                fprintf(stderr, "signal: loop requires a count.\n");
+                usage(argv[0]);
+            }
+            if (parse_long(argv[2], &loop_count, 1, 1000000) != 0) {
+                fprintf(stderr, "signal: loop count must be a positive integer.\n");
+                usage(argv[0]);
+            }
+            if (argc > 3) {
+                fprintf(stderr, "signal: loop only accepts a count argument.\n");
+                usage(argv[0]);
+            }
         }
         if (!loop_mode && argc >= 3) {
             const char *fmt = argv[2];
@@ -717,7 +728,8 @@ int main(int argc, char *argv[]) {
         }
 
         int stop_requested = 0;
-        do {
+        long loops_remaining = loop_mode ? loop_count : 1;
+        while (loops_remaining > 0 && !stop_requested) {
             for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
                 note_index[i] = 0;
                 note_sample_pos[i] = 0;
@@ -852,7 +864,11 @@ int main(int argc, char *argv[]) {
                     }
                 }
             }
-        } while (loop_mode && !stop_requested && !should_stop_playback(control_token));
+            loops_remaining--;
+            if (loop_mode && loops_remaining > 0 && should_stop_playback(control_token)) {
+                stop_requested = 1;
+            }
+        }
 
         if (mode == F_PLAY) {
             pclose(out);

@@ -501,8 +501,9 @@ static uint64_t note_samples(const NoteEntry *entry) {
     return samples == 0 ? 1 : samples;
 }
 
-static void enforce_play_gap(double duration_s) {
+static double reserve_play_slot(double duration_s) {
     FILE *fp = fopen(SIGNAL_PLAY_PATH, "r");
+    double delay = 0.0;
     if (fp) {
         double end_time = 0.0;
         if (fscanf(fp, "%lf", &end_time) == 1) {
@@ -510,11 +511,7 @@ static void enforce_play_gap(double duration_s) {
             clock_gettime(CLOCK_REALTIME, &now);
             double current = now.tv_sec + now.tv_nsec / 1e9;
             if (current < end_time) {
-                double delay = end_time - current;
-                struct timespec sleep_time;
-                sleep_time.tv_sec = (time_t)delay;
-                sleep_time.tv_nsec = (long)((delay - sleep_time.tv_sec) * 1e9);
-                nanosleep(&sleep_time, NULL);
+                delay = end_time - current;
             }
         }
         fclose(fp);
@@ -522,12 +519,14 @@ static void enforce_play_gap(double duration_s) {
 
     struct timespec now;
     clock_gettime(CLOCK_REALTIME, &now);
-    double next_end = now.tv_sec + now.tv_nsec / 1e9 + duration_s;
+    double start_time = now.tv_sec + now.tv_nsec / 1e9 + delay;
+    double next_end = start_time + duration_s;
     fp = fopen(SIGNAL_PLAY_PATH, "w");
     if (fp) {
         fprintf(fp, "%.6f", next_end);
         fclose(fp);
     }
+    return delay;
 }
 
 int main(int argc, char *argv[]) {
@@ -599,7 +598,7 @@ int main(int argc, char *argv[]) {
         }
 
         double total_duration_s = max_samples / SAMPLE_RATE;
-        enforce_play_gap(total_duration_s);
+        double delay_s = reserve_play_slot(total_duration_s);
 
         FILE *out = stdout;
         if (mode == F_PLAY) {
@@ -618,6 +617,12 @@ int main(int argc, char *argv[]) {
                 }
                 return 0;
             }
+            if (delay_s > 0.0) {
+                struct timespec sleep_time;
+                sleep_time.tv_sec = (time_t)delay_s;
+                sleep_time.tv_nsec = (long)((delay_s - sleep_time.tv_sec) * 1e9);
+                nanosleep(&sleep_time, NULL);
+            }
             out = popen("aplay -q -f S16_LE -c1 -r44100", "w");
             if (!out) {
                 fprintf(stderr, "Failed to launch aplay: %s\n", strerror(errno));
@@ -626,6 +631,12 @@ int main(int argc, char *argv[]) {
                 }
                 return EXIT_FAILURE;
             }
+        }
+        if (mode != F_PLAY && delay_s > 0.0) {
+            struct timespec sleep_time;
+            sleep_time.tv_sec = (time_t)delay_s;
+            sleep_time.tv_nsec = (long)((delay_s - sleep_time.tv_sec) * 1e9);
+            nanosleep(&sleep_time, NULL);
         }
 
         if (mode == F_WAV) {

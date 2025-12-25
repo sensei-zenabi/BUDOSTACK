@@ -44,6 +44,12 @@ typedef struct {
     unsigned int noise_seed;
 } NoteState;
 
+typedef struct {
+    NoteEntry *notes;
+    size_t count;
+    size_t cap;
+} NoteSequence;
+
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s -<cmd> -<waveform> <note> <duration_ms> [channel] "
@@ -60,6 +66,7 @@ static void usage(const char *prog) {
         "  release   : (optional) in milliseconds\n"
         "  lowpass   : (optional) in Hz\n"
         "  highpass  : (optional) in Hz\n"
+        "Notes entered on the same channel play sequentially in the order entered.\n"
         "Examples:\n"
         "  %s -enter -sine c4 500 1 20 30 300 150 1000 200\n"
         "  %s -enter -square e4 250 2\n"
@@ -151,6 +158,33 @@ static const char *waveform_name(enum waveform_type wave) {
     return "sine";
 }
 
+static void init_sequence(NoteSequence *sequence) {
+    sequence->notes = NULL;
+    sequence->count = 0;
+    sequence->cap = 0;
+}
+
+static void free_sequence(NoteSequence *sequence) {
+    free(sequence->notes);
+    sequence->notes = NULL;
+    sequence->count = 0;
+    sequence->cap = 0;
+}
+
+static int append_note(NoteSequence *sequence, const NoteEntry *note) {
+    if (sequence->count == sequence->cap) {
+        size_t next_cap = sequence->cap == 0 ? 4 : sequence->cap * 2;
+        NoteEntry *next_notes = realloc(sequence->notes, next_cap * sizeof(*next_notes));
+        if (!next_notes) {
+            return -1;
+        }
+        sequence->notes = next_notes;
+        sequence->cap = next_cap;
+    }
+    sequence->notes[sequence->count++] = *note;
+    return 0;
+}
+
 static int note_to_frequency(const char *note, double *freq) {
     char buffer[8];
     size_t len = 0;
@@ -209,7 +243,7 @@ static int note_to_frequency(const char *note, double *freq) {
     return 0;
 }
 
-static void load_state(NoteEntry entries[], size_t count) {
+static void load_state(NoteSequence sequences[], size_t count) {
     FILE *fp = fopen(SIGNAL_STATE_PATH, "r");
     if (!fp) {
         return;
@@ -242,30 +276,34 @@ static void load_state(NoteEntry entries[], size_t count) {
         if (channel < SIGNAL_MIN_CHANNEL || channel > (long)count) {
             continue;
         }
-        NoteEntry *entry = &entries[channel - 1];
-        entry->active = 1;
-        if (parse_waveform(fields[1], &entry->wave) != 0) {
-            entry->active = 0;
+        NoteEntry entry;
+        memset(&entry, 0, sizeof(entry));
+        entry.active = 1;
+        if (parse_waveform(fields[1], &entry.wave) != 0) {
             continue;
         }
-        snprintf(entry->note, sizeof(entry->note), "%s", fields[2]);
-        entry->duration_ms = strtol(fields[3], NULL, 10);
-        entry->attack_ms = strtol(fields[4], NULL, 10);
-        entry->decay_ms = strtol(fields[5], NULL, 10);
-        entry->sustain_ms = strtol(fields[6], NULL, 10);
-        entry->release_ms = strtol(fields[7], NULL, 10);
-        entry->lowpass_hz = strtod(fields[8], NULL);
-        entry->highpass_hz = strtod(fields[9], NULL);
-        if (note_to_frequency(entry->note, &entry->freq) != 0) {
-            entry->active = 0;
+        snprintf(entry.note, sizeof(entry.note), "%s", fields[2]);
+        entry.duration_ms = strtol(fields[3], NULL, 10);
+        entry.attack_ms = strtol(fields[4], NULL, 10);
+        entry.decay_ms = strtol(fields[5], NULL, 10);
+        entry.sustain_ms = strtol(fields[6], NULL, 10);
+        entry.release_ms = strtol(fields[7], NULL, 10);
+        entry.lowpass_hz = strtod(fields[8], NULL);
+        entry.highpass_hz = strtod(fields[9], NULL);
+        if (note_to_frequency(entry.note, &entry.freq) != 0) {
             continue;
+        }
+        if (append_note(&sequences[channel - 1], &entry) != 0) {
+            perror("signal: realloc");
+            fclose(fp);
+            return;
         }
     }
 
     fclose(fp);
 }
 
-static int save_state(const NoteEntry entries[], size_t count) {
+static int save_state(const NoteSequence sequences[], size_t count) {
     char tmp_path[256];
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", SIGNAL_STATE_PATH);
 
@@ -276,21 +314,24 @@ static int save_state(const NoteEntry entries[], size_t count) {
     }
 
     for (size_t i = 0; i < count; ++i) {
-        const NoteEntry *entry = &entries[i];
-        if (!entry->active) {
-            continue;
+        const NoteSequence *sequence = &sequences[i];
+        for (size_t j = 0; j < sequence->count; ++j) {
+            const NoteEntry *entry = &sequence->notes[j];
+            if (!entry->active) {
+                continue;
+            }
+            fprintf(fp, "%zu|%s|%s|%ld|%ld|%ld|%ld|%ld|%.3f|%.3f\n",
+                i + 1,
+                waveform_name(entry->wave),
+                entry->note,
+                entry->duration_ms,
+                entry->attack_ms,
+                entry->decay_ms,
+                entry->sustain_ms,
+                entry->release_ms,
+                entry->lowpass_hz,
+                entry->highpass_hz);
         }
-        fprintf(fp, "%zu|%s|%s|%ld|%ld|%ld|%ld|%ld|%.3f|%.3f\n",
-            i + 1,
-            waveform_name(entry->wave),
-            entry->note,
-            entry->duration_ms,
-            entry->attack_ms,
-            entry->decay_ms,
-            entry->sustain_ms,
-            entry->release_ms,
-            entry->lowpass_hz,
-            entry->highpass_hz);
     }
 
     if (fclose(fp) != 0) {
@@ -452,6 +493,14 @@ static double next_noise(NoteState *state) {
     return ((state->noise_seed >> 8) / (double)UINT32_MAX) * 2.0 - 1.0;
 }
 
+static uint64_t note_samples(const NoteEntry *entry) {
+    if (!entry->active || entry->duration_ms <= 0) {
+        return 0;
+    }
+    uint64_t samples = (uint64_t)((entry->duration_ms / 1000.0) * SAMPLE_RATE);
+    return samples == 0 ? 1 : samples;
+}
+
 static void enforce_play_gap(double duration_s) {
     FILE *fp = fopen(SIGNAL_PLAY_PATH, "r");
     if (fp) {
@@ -507,32 +556,45 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        NoteEntry entries[SIGNAL_MAX_CHANNEL];
-        memset(entries, 0, sizeof(entries));
-        load_state(entries, SIGNAL_MAX_CHANNEL);
+        NoteSequence sequences[SIGNAL_MAX_CHANNEL];
+        for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+            init_sequence(&sequences[i]);
+        }
+        load_state(sequences, SIGNAL_MAX_CHANNEL);
 
         uint64_t max_samples = 0;
-        size_t active_count = 0;
+        size_t active_channels = 0;
+        uint64_t channel_totals[SIGNAL_MAX_CHANNEL];
+        memset(channel_totals, 0, sizeof(channel_totals));
+
         for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
-            if (!entries[i].active) {
+            if (sequences[i].count == 0) {
                 continue;
             }
-            if (entries[i].duration_ms <= 0) {
-                entries[i].active = 0;
-                continue;
+            uint64_t channel_samples = 0;
+            for (size_t j = 0; j < sequences[i].count; ++j) {
+                NoteEntry *entry = &sequences[i].notes[j];
+                uint64_t samples = note_samples(entry);
+                if (samples == 0) {
+                    entry->active = 0;
+                    continue;
+                }
+                channel_samples += samples;
             }
-            uint64_t samples = (uint64_t)((entries[i].duration_ms / 1000.0) * SAMPLE_RATE);
-            if (samples == 0) {
-                samples = 1;
+            channel_totals[i] = channel_samples;
+            if (channel_samples > 0) {
+                active_channels++;
+                if (channel_samples > max_samples) {
+                    max_samples = channel_samples;
+                }
             }
-            if (samples > max_samples) {
-                max_samples = samples;
-            }
-            active_count++;
         }
 
-        if (active_count == 0) {
+        if (active_channels == 0 || max_samples == 0) {
             fprintf(stderr, "signal: no notes entered.\n");
+            for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+                free_sequence(&sequences[i]);
+            }
             return EXIT_FAILURE;
         }
 
@@ -544,15 +606,24 @@ int main(int argc, char *argv[]) {
             pid_t pid = fork();
             if (pid < 0) {
                 fprintf(stderr, "Failed to fork for playback: %s\n", strerror(errno));
+                for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+                    free_sequence(&sequences[i]);
+                }
                 return EXIT_FAILURE;
             }
             if (pid > 0) {
                 clear_state();
+                for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+                    free_sequence(&sequences[i]);
+                }
                 return 0;
             }
             out = popen("aplay -q -f S16_LE -c1 -r44100", "w");
             if (!out) {
                 fprintf(stderr, "Failed to launch aplay: %s\n", strerror(errno));
+                for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+                    free_sequence(&sequences[i]);
+                }
                 return EXIT_FAILURE;
             }
         }
@@ -567,43 +638,69 @@ int main(int argc, char *argv[]) {
 
         NoteState states[SIGNAL_MAX_CHANNEL];
         memset(states, 0, sizeof(states));
+        size_t note_index[SIGNAL_MAX_CHANNEL];
+        uint64_t note_sample_pos[SIGNAL_MAX_CHANNEL];
+        uint64_t note_total_samples[SIGNAL_MAX_CHANNEL];
         for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
-            if (!entries[i].active) {
-                continue;
+            note_index[i] = 0;
+            note_sample_pos[i] = 0;
+            note_total_samples[i] = 0;
+            if (sequences[i].count > 0) {
+                NoteEntry *entry = &sequences[i].notes[0];
+                note_total_samples[i] = note_samples(entry);
+                states[i].phase = (2.0 * M_PI / 32.0) * (double)i;
+                states[i].noise_seed = (unsigned)time(NULL) ^ (unsigned)(i + 1);
             }
-            states[i].phase = (2.0 * M_PI / 32.0) * (double)i;
-            states[i].noise_seed = (unsigned)time(NULL) ^ (unsigned)(i + 1);
         }
 
         for (uint64_t n = 0; n < max_samples; ++n) {
             double mixed = 0.0;
+            size_t active_mix = 0;
             for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
-                if (!entries[i].active) {
+                if (sequences[i].count == 0) {
                     continue;
                 }
-                uint64_t total_samples = (uint64_t)((entries[i].duration_ms / 1000.0) * SAMPLE_RATE);
-                if (total_samples == 0) {
-                    total_samples = 1;
-                }
-                if (n >= total_samples) {
+                if (note_index[i] >= sequences[i].count) {
                     continue;
                 }
 
-                uint64_t attack = (uint64_t)((entries[i].attack_ms / 1000.0) * SAMPLE_RATE);
-                uint64_t decay = (uint64_t)((entries[i].decay_ms / 1000.0) * SAMPLE_RATE);
-                uint64_t sustain = (uint64_t)((entries[i].sustain_ms / 1000.0) * SAMPLE_RATE);
-                uint64_t release = (uint64_t)((entries[i].release_ms / 1000.0) * SAMPLE_RATE);
+                while (note_index[i] < sequences[i].count &&
+                    (note_total_samples[i] == 0 || note_sample_pos[i] >= note_total_samples[i])) {
+                    note_index[i]++;
+                    note_sample_pos[i] = 0;
+                    if (note_index[i] < sequences[i].count) {
+                        NoteEntry *next = &sequences[i].notes[note_index[i]];
+                        note_total_samples[i] = note_samples(next);
+                        states[i].phase = (2.0 * M_PI / 32.0) * (double)i;
+                        states[i].lowpass_state = 0.0;
+                        states[i].highpass_state = 0.0;
+                        states[i].highpass_prev = 0.0;
+                        states[i].noise_seed = (unsigned)time(NULL) ^ (unsigned)(i + 1 + note_index[i]);
+                    }
+                }
 
-                int sustain_specified = entries[i].sustain_ms > 0;
+                if (note_index[i] >= sequences[i].count) {
+                    continue;
+                }
+
+                NoteEntry *entry = &sequences[i].notes[note_index[i]];
+                uint64_t total_samples = note_total_samples[i];
+
+                uint64_t attack = (uint64_t)((entry->attack_ms / 1000.0) * SAMPLE_RATE);
+                uint64_t decay = (uint64_t)((entry->decay_ms / 1000.0) * SAMPLE_RATE);
+                uint64_t sustain = (uint64_t)((entry->sustain_ms / 1000.0) * SAMPLE_RATE);
+                uint64_t release = (uint64_t)((entry->release_ms / 1000.0) * SAMPLE_RATE);
+
+                int sustain_specified = entry->sustain_ms > 0;
                 clamp_adsr(total_samples, &attack, &decay, &sustain, &release, sustain_specified);
 
                 double gain = 1.0;
-                apply_adsr(n, attack, decay, sustain, release, total_samples, &gain);
+                apply_adsr(note_sample_pos[i], attack, decay, sustain, release, total_samples, &gain);
 
                 double sample = 0.0;
                 double phase = states[i].phase;
                 const double two_pi = 2.0 * M_PI;
-                switch (entries[i].wave) {
+                switch (entry->wave) {
                     case W_SINE:
                         sample = sin(phase);
                         break;
@@ -626,8 +723,8 @@ int main(int argc, char *argv[]) {
                         break;
                 }
 
-                if (entries[i].wave != W_NOISE) {
-                    double phase_inc = two_pi * entries[i].freq / SAMPLE_RATE;
+                if (entry->wave != W_NOISE) {
+                    double phase_inc = two_pi * entry->freq / SAMPLE_RATE;
                     phase += phase_inc;
                     if (phase >= two_pi) {
                         phase -= two_pi;
@@ -636,12 +733,14 @@ int main(int argc, char *argv[]) {
                 }
 
                 sample *= gain;
-                sample = apply_filters(sample, &states[i], entries[i].lowpass_hz, entries[i].highpass_hz);
+                sample = apply_filters(sample, &states[i], entry->lowpass_hz, entry->highpass_hz);
                 mixed += sample;
+                active_mix++;
+                note_sample_pos[i]++;
             }
 
-            if (active_count > 0) {
-                mixed /= (double)active_count;
+            if (active_mix > 0) {
+                mixed /= (double)active_mix;
             }
             if (mixed > 1.0) {
                 mixed = 1.0;
@@ -671,6 +770,9 @@ int main(int argc, char *argv[]) {
         }
 
         clear_state();
+        for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+            free_sequence(&sequences[i]);
+        }
         return 0;
     }
 
@@ -732,27 +834,44 @@ int main(int argc, char *argv[]) {
             arg_index++;
         }
 
-        NoteEntry entries[SIGNAL_MAX_CHANNEL];
-        memset(entries, 0, sizeof(entries));
-        load_state(entries, SIGNAL_MAX_CHANNEL);
+        NoteSequence sequences[SIGNAL_MAX_CHANNEL];
+        for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+            init_sequence(&sequences[i]);
+        }
+        load_state(sequences, SIGNAL_MAX_CHANNEL);
 
-        NoteEntry *entry = &entries[channel - 1];
-        entry->active = 1;
-        entry->wave = wave;
-        snprintf(entry->note, sizeof(entry->note), "%s", note);
-        entry->freq = freq;
-        entry->duration_ms = duration_ms;
-        entry->attack_ms = attack_ms;
-        entry->decay_ms = decay_ms;
-        entry->sustain_ms = sustain_ms;
-        entry->release_ms = release_ms;
-        entry->lowpass_hz = lowpass_hz;
-        entry->highpass_hz = highpass_hz;
+        NoteEntry entry;
+        memset(&entry, 0, sizeof(entry));
+        entry.active = 1;
+        entry.wave = wave;
+        snprintf(entry.note, sizeof(entry.note), "%s", note);
+        entry.freq = freq;
+        entry.duration_ms = duration_ms;
+        entry.attack_ms = attack_ms;
+        entry.decay_ms = decay_ms;
+        entry.sustain_ms = sustain_ms;
+        entry.release_ms = release_ms;
+        entry.lowpass_hz = lowpass_hz;
+        entry.highpass_hz = highpass_hz;
 
-        if (save_state(entries, SIGNAL_MAX_CHANNEL) != 0) {
+        if (append_note(&sequences[channel - 1], &entry) != 0) {
+            perror("signal: realloc");
+            for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+                free_sequence(&sequences[i]);
+            }
             return EXIT_FAILURE;
         }
 
+        if (save_state(sequences, SIGNAL_MAX_CHANNEL) != 0) {
+            for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+                free_sequence(&sequences[i]);
+            }
+            return EXIT_FAILURE;
+        }
+
+        for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+            free_sequence(&sequences[i]);
+        }
         return 0;
     }
 

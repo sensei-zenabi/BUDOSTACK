@@ -39,24 +39,53 @@ END
 
 IF ($SELECT==2):
 
+  PRINT "\nEntering notes..."
+
   RUN signal -enter -sine c4 1000 1
   RUN signal -enter -sine e4 1000 2
   RUN signal -enter -sine g4 1000 3
   RUN signal -enter -sine c5 333 4
   RUN signal -enter -sine d5 333 4
   RUN signal -enter -sine e5 333 4
-  RUN signal -play
 
   RUN signal -enter -sine d4 1000 1
   RUN signal -enter -sine f4 1000 2
   RUN signal -enter -sine a4 1000 3
-  RUN signal -play
 
   RUN signal -enter -sine b3 1000 1
   RUN signal -enter -sine d4 1000 2
   RUN signal -enter -sine f4 1000 3
+
+  PRINT "\nPlaying them once..."
+
   RUN signal -play
 
+  RUN _WAIT 3000
+  
+  PRINT "\nNow, playing them three times in a loop..."
+
+  RUN signal -enter -sine c4 1000 1
+  RUN signal -enter -sine e4 1000 2
+  RUN signal -enter -sine g4 1000 3
+  RUN signal -enter -sine c5 333 4
+  RUN signal -enter -sine d5 333 4
+  RUN signal -enter -sine e5 333 4
+
+  RUN signal -enter -sine d4 1000 1
+  RUN signal -enter -sine f4 1000 2
+  RUN signal -enter -sine a4 1000 3
+
+  RUN signal -enter -sine b3 1000 1
+  RUN signal -enter -sine d4 1000 2
+  RUN signal -enter -sine f4 1000 3
+
+  RUN signal -loop 3
+  
+  RUN _WAIT 9000
+  
+  RUN signal -stop
+  
+  PRINT "\nPlayed the notes four times in total!\"
 
 END
 

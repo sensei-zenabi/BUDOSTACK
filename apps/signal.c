@@ -29,6 +29,7 @@ typedef struct {
     char note[8];
     double freq;
     long duration_ms;
+    long volume;
     long attack_ms;
     long decay_ms;
     long sustain_ms;
@@ -53,13 +54,13 @@ typedef struct {
 
 static void usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s -<cmd> -<waveform> <note> <duration_ms> [channel] "
+        "Usage: %s -<cmd> -<waveform> <note> <duration_ms> <volume> [channel] "
         "[attack_ms] [decay_ms] [sustain_ms] [release_ms] [lowpass_hz] [highpass_hz]\n"
         "  cmd       : enter, play, loop <count> (plays entered notes count times), stop (stops all notes)\n"
         "  waveforms : sine, square, triangle, sawtooth, noise\n"
         "  note      : standard concert pitch notes (e.g. c2, c3, c4, d4, e4)\n"
         "  duration  : milliseconds (e.g. 500 = 500ms)\n"
-        "  format    : raw, text, wav\n"
+        "  volume    : (optional) 0-100 (100 is default if not given)\n"
         "  channel   : (optional) 1-32 (to enable parallel sounds, default 1)\n"
         "  attack    : (optional) in milliseconds\n"
         "  decay     : (optional) in milliseconds\n"
@@ -69,9 +70,9 @@ static void usage(const char *prog) {
         "  highpass  : (optional) in Hz\n"
         "Notes entered on the same channel play sequentially in the order entered.\n"
         "Examples:\n"
-        "  %s -enter -sine c4 500 1 20 30 300 150 1000 200\n"
-        "  %s -enter -square e4 250 2\n"
-        "  %s -play wav > chord.wav\n",
+        "  %s -enter -sine c4 500 80 1 20 30 300 150 1000 200\n"
+        "  %s -enter -square e4 250 60 2\n"
+        "  %s -play\n",
         prog, prog, prog, prog);
     exit(EXIT_FAILURE);
 }
@@ -253,9 +254,9 @@ static void load_state(NoteSequence sequences[], size_t count) {
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
         char *cursor = line;
-        char *fields[10];
+        char *fields[11];
         int idx = 0;
-        while (idx < 10) {
+        while (idx < 11) {
             fields[idx++] = cursor;
             char *sep = strchr(cursor, '|');
             if (!sep) {
@@ -285,12 +286,26 @@ static void load_state(NoteSequence sequences[], size_t count) {
         }
         snprintf(entry.note, sizeof(entry.note), "%s", fields[2]);
         entry.duration_ms = strtol(fields[3], NULL, 10);
-        entry.attack_ms = strtol(fields[4], NULL, 10);
-        entry.decay_ms = strtol(fields[5], NULL, 10);
-        entry.sustain_ms = strtol(fields[6], NULL, 10);
-        entry.release_ms = strtol(fields[7], NULL, 10);
-        entry.lowpass_hz = strtod(fields[8], NULL);
-        entry.highpass_hz = strtod(fields[9], NULL);
+        if (idx >= 11) {
+            entry.volume = strtol(fields[4], NULL, 10);
+            entry.attack_ms = strtol(fields[5], NULL, 10);
+            entry.decay_ms = strtol(fields[6], NULL, 10);
+            entry.sustain_ms = strtol(fields[7], NULL, 10);
+            entry.release_ms = strtol(fields[8], NULL, 10);
+            entry.lowpass_hz = strtod(fields[9], NULL);
+            entry.highpass_hz = strtod(fields[10], NULL);
+        } else {
+            entry.volume = 100;
+            entry.attack_ms = strtol(fields[4], NULL, 10);
+            entry.decay_ms = strtol(fields[5], NULL, 10);
+            entry.sustain_ms = strtol(fields[6], NULL, 10);
+            entry.release_ms = strtol(fields[7], NULL, 10);
+            entry.lowpass_hz = strtod(fields[8], NULL);
+            entry.highpass_hz = strtod(fields[9], NULL);
+        }
+        if (entry.volume < 0 || entry.volume > 100) {
+            entry.volume = 100;
+        }
         if (note_to_frequency(entry.note, &entry.freq) != 0) {
             continue;
         }
@@ -321,11 +336,12 @@ static int save_state(const NoteSequence sequences[], size_t count) {
             if (!entry->active) {
                 continue;
             }
-            fprintf(fp, "%zu|%s|%s|%ld|%ld|%ld|%ld|%ld|%.3f|%.3f\n",
+            fprintf(fp, "%zu|%s|%s|%ld|%ld|%ld|%ld|%ld|%ld|%.3f|%.3f\n",
                 i + 1,
                 waveform_name(entry->wave),
                 entry->note,
                 entry->duration_ms,
+                entry->volume,
                 entry->attack_ms,
                 entry->decay_ms,
                 entry->sustain_ms,
@@ -389,36 +405,6 @@ static int should_stop_playback(const char *token) {
     if (strcmp(current, token) != 0) {
         return 1;
     }
-    return 0;
-}
-
-static int write_wav_header(FILE *f, uint32_t total_samples) {
-    uint32_t data_bytes = total_samples * 2;
-
-    fwrite("RIFF", 1, 4, f);
-    uint32_t chunk_size = 36 + data_bytes;
-    fwrite(&chunk_size, 4, 1, f);
-    fwrite("WAVE", 1, 4, f);
-
-    fwrite("fmt ", 1, 4, f);
-    uint32_t subchunk1_size = 16;
-    fwrite(&subchunk1_size, 4, 1, f);
-    uint16_t audio_format = 1;
-    fwrite(&audio_format, 2, 1, f);
-    uint16_t num_channels = 1;
-    fwrite(&num_channels, 2, 1, f);
-    uint32_t sample_rate = (uint32_t)SAMPLE_RATE;
-    fwrite(&sample_rate, 4, 1, f);
-    uint32_t byte_rate = sample_rate * num_channels * 2;
-    fwrite(&byte_rate, 4, 1, f);
-    uint16_t block_align = num_channels * 2;
-    fwrite(&block_align, 2, 1, f);
-    uint16_t bits_per_sample = 16;
-    fwrite(&bits_per_sample, 2, 1, f);
-
-    fwrite("data", 1, 4, f);
-    fwrite(&data_bytes, 4, 1, f);
-
     return 0;
 }
 
@@ -581,7 +567,6 @@ int main(int argc, char *argv[]) {
     }
 
     if (!strcmp(cmd, "play") || !strcmp(cmd, "loop")) {
-        enum { F_RAW, F_TEXT, F_WAV, F_PLAY } mode = F_PLAY;
         int loop_mode = strcmp(cmd, "loop") == 0;
         long loop_count = 0;
         if (loop_mode) {
@@ -598,18 +583,9 @@ int main(int argc, char *argv[]) {
                 usage(argv[0]);
             }
         }
-        if (!loop_mode && argc >= 3) {
-            const char *fmt = argv[2];
-            if (!strcmp(fmt, "raw")) {
-                mode = F_RAW;
-            } else if (!strcmp(fmt, "text")) {
-                mode = F_TEXT;
-            } else if (!strcmp(fmt, "wav")) {
-                mode = F_WAV;
-            } else {
-                fprintf(stderr, "Unknown format: %s\n", fmt);
-                usage(argv[0]);
-            }
+        if (!loop_mode && argc > 2) {
+            fprintf(stderr, "signal: play does not accept a format argument.\n");
+            usage(argv[0]);
         }
 
         NoteSequence sequences[SIGNAL_MAX_CHANNEL];
@@ -662,52 +638,36 @@ int main(int argc, char *argv[]) {
         double delay_s = reserve_play_slot(total_duration_s);
 
         FILE *out = stdout;
-        if (mode == F_PLAY) {
-            pid_t pid = fork();
-            if (pid < 0) {
-                fprintf(stderr, "Failed to fork for playback: %s\n", strerror(errno));
-                for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
-                    free_sequence(&sequences[i]);
-                }
-                return EXIT_FAILURE;
+        pid_t pid = fork();
+        if (pid < 0) {
+            fprintf(stderr, "Failed to fork for playback: %s\n", strerror(errno));
+            for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+                free_sequence(&sequences[i]);
             }
-            if (pid > 0) {
-                if (!loop_mode) {
-                    clear_state();
-                }
-                for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
-                    free_sequence(&sequences[i]);
-                }
-                return 0;
-            }
-            if (delay_s > 0.0) {
-                struct timespec sleep_time;
-                sleep_time.tv_sec = (time_t)delay_s;
-                sleep_time.tv_nsec = (long)((delay_s - sleep_time.tv_sec) * 1e9);
-                nanosleep(&sleep_time, NULL);
-            }
-            out = popen("aplay -q -f S16_LE -c1 -r44100", "w");
-            if (!out) {
-                fprintf(stderr, "Failed to launch aplay: %s\n", strerror(errno));
-                for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
-                    free_sequence(&sequences[i]);
-                }
-                return EXIT_FAILURE;
-            }
+            return EXIT_FAILURE;
         }
-        if (mode != F_PLAY && delay_s > 0.0) {
+        if (pid > 0) {
+            if (!loop_mode) {
+                clear_state();
+            }
+            for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+                free_sequence(&sequences[i]);
+            }
+            return 0;
+        }
+        if (delay_s > 0.0) {
             struct timespec sleep_time;
             sleep_time.tv_sec = (time_t)delay_s;
             sleep_time.tv_nsec = (long)((delay_s - sleep_time.tv_sec) * 1e9);
             nanosleep(&sleep_time, NULL);
         }
-
-        if (mode == F_WAV) {
-            write_wav_header(out, (uint32_t)max_samples);
-        }
-
-        if (mode == F_RAW && isatty(STDOUT_FILENO)) {
-            fprintf(stderr, "Warning: streaming binary floats to terminal. Redirect to file.\n");
+        out = popen("aplay -q -f S16_LE -c1 -r44100", "w");
+        if (!out) {
+            fprintf(stderr, "Failed to launch aplay: %s\n", strerror(errno));
+            for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
+                free_sequence(&sequences[i]);
+            }
+            return EXIT_FAILURE;
         }
 
         NoteState states[SIGNAL_MAX_CHANNEL];
@@ -829,7 +789,7 @@ int main(int argc, char *argv[]) {
                         states[i].phase = phase;
                     }
 
-                    sample *= gain;
+                    sample *= gain * ((double)entry->volume / 100.0);
                     sample = apply_filters(sample, &states[i], entry->lowpass_hz, entry->highpass_hz);
                     mixed += sample;
                     active_mix++;
@@ -845,23 +805,10 @@ int main(int argc, char *argv[]) {
                     mixed = -1.0;
                 }
 
-                if (mode == F_RAW) {
-                    float fval = (float)mixed;
-                    if (fwrite(&fval, sizeof(fval), 1, out) != 1) {
-                        stop_requested = 1;
-                        break;
-                    }
-                } else if (mode == F_TEXT) {
-                    if (fprintf(out, "%f\n", mixed) < 0) {
-                        stop_requested = 1;
-                        break;
-                    }
-                } else {
-                    int16_t s16 = (int16_t)(mixed * 32767);
-                    if (fwrite(&s16, sizeof(s16), 1, out) != 1) {
-                        stop_requested = 1;
-                        break;
-                    }
+                int16_t s16 = (int16_t)(mixed * 32767);
+                if (fwrite(&s16, sizeof(s16), 1, out) != 1) {
+                    stop_requested = 1;
+                    break;
                 }
             }
             loops_remaining--;
@@ -870,9 +817,7 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        if (mode == F_PLAY) {
-            pclose(out);
-        }
+        pclose(out);
 
         if (!loop_mode) {
             clear_state();
@@ -907,8 +852,14 @@ int main(int argc, char *argv[]) {
             usage(argv[0]);
         }
 
+        long volume = 100;
         long channel = 1;
         int arg_index = 5;
+        if (argc > arg_index) {
+            if (parse_long(argv[arg_index], &volume, 0, 100) == 0) {
+                arg_index++;
+            }
+        }
         if (argc > arg_index) {
             if (parse_long(argv[arg_index], &channel, SIGNAL_MIN_CHANNEL, SIGNAL_MAX_CHANNEL) == 0) {
                 arg_index++;
@@ -954,6 +905,7 @@ int main(int argc, char *argv[]) {
         snprintf(entry.note, sizeof(entry.note), "%s", note);
         entry.freq = freq;
         entry.duration_ms = duration_ms;
+        entry.volume = volume;
         entry.attack_ms = attack_ms;
         entry.decay_ms = decay_ms;
         entry.sustain_ms = sustain_ms;

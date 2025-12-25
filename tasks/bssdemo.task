@@ -1,0 +1,44 @@
+# bssdemo.task
+#=============================================================================
+# Commodore-inspired demo showcasing BSS audio with _TERM* graphics commands.
+# Plays a looping soundtrack in the background while animating text and bars.
+#=============================================================================
+
+RUN _TERM_RESOLUTION 640 360
+RUN _TERM_MARGIN 8
+RUN _RETROPROFILE apply c64
+RUN _TERM_SHADER enable
+RUN _CLEAR
+
+# Start looping soundtrack in the background (press Ctrl+C to stop the demo)
+RUN _BSS --background --loop 0 1200 tri:220:0.28:0.5:20:120:0.6:120 saw:330:0.22:0.5:10:80:0.5:120 pulse:110:0.18:0.35:5:50:0.4:80
+
+RUN _TEXT -x 20 -y 4 -text "BUDOSTACK SOUND SYSTEM"
+RUN _TEXT -x 28 -y 6 -text "BSS DEMO"
+RUN _RECT -x 4 -y 8 -w 72 -h 30 -border 1
+RUN _RECT -x 6 -y 10 -w 68 -h 26 -border 1
+
+SET $X = 8
+SET $LOAD = 0
+
+@SCROLLER
+RUN _TERM_TEXT -x $X -y 14 -text "*"
+RUN _WAIT 35
+RUN _TERM_TEXT -x $X -y 14 -text " "
+SET $X = $X + 1
+IF ($X > 68):
+  SET $X = 8
+END
+
+RUN _BAR -x 18 -y 20 -title "SYNC" -progress $LOAD
+SET $LOAD = $LOAD + 5
+IF ($LOAD > 100):
+  SET $LOAD = 0
+  RUN _BSS 250 noise:1200:0.18:0.5:1:30:0.2:40
+END
+
+RUN _TEXT -x 14 -y 26 -text "SOUNDTRACK: RUNNING IN BACKGROUND"
+RUN _TEXT -x 16 -y 28 -text "SFX TRIGGERED EVERY LOOP"
+RUN _TEXT -x 18 -y 32 -text "CTRL+C TO EXIT"
+
+GOTO SCROLLER

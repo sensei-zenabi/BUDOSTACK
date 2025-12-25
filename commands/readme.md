@@ -12,6 +12,12 @@ Commands without prefix _TERM*:
   terminal emulator.
 - Are optimized for 78 columns and 42 rows.
 
+Sound Commands:
+
+- `_BSS` generates SID-inspired tones via the Budostack Sound System.
+  Use it in TASK scripts to play up to three voices at once, with optional
+  background playback and looping for soundtracks.
+
 General Guidelines for Commands:
 
 - Written with plain C with no separate header files.

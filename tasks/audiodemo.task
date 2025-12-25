@@ -8,6 +8,8 @@ PRINT "\n[2] Signal Demo"
 PRINT "\nSelect: "
 INPUT $SELECT
 
+# --- BEEP DEMO ---
+
 IF ($SELECT==0):
   RUN _BEEP -A3 -100
   RUN _BEEP -B3 -100
@@ -22,6 +24,8 @@ IF ($SELECT==0):
   RUN _BEEP -C5 -500
 END
 
+# --- WAV DEMO ---
+
 IF ($SELECT==1):
   # Play wav file
   RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
@@ -31,20 +35,28 @@ IF ($SELECT==1):
   RUN _TERM_SOUND_PLAY 2 ../sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
 END
 
+# --- SIGNAL DEMO ---
+
 IF ($SELECT==2):
 
-  SET @WAIT = 500
+  RUN signal -enter -sine c4 1000 1
+  RUN signal -enter -sine e4 1000 2
+  RUN signal -enter -sine g4 1000 3
+  RUN signal -enter -sine c5 333 4
+  RUN signal -enter -sine d5 333 4
+  RUN signal -enter -sine e5 333 4
+  RUN signal -play
 
-  FOR ($i=0;$i<10;$i++):
-    
-    RUN signal -square 20 0.05 1
-    RUN signal -sine 175 0.1 1
-    RUN _WAIT 250
-    RUN signal -noise 1 0.05 1
-    RUN signal -sine 200 0.1 1
-    RUN _WAIT 250
-    
-  END
+  RUN signal -enter -sine d4 1000 1
+  RUN signal -enter -sine f4 1000 2
+  RUN signal -enter -sine a4 1000 3
+  RUN signal -play
+
+  RUN signal -enter -sine b3 1000 1
+  RUN signal -enter -sine d4 1000 2
+  RUN signal -enter -sine f4 1000 3
+  RUN signal -play
+
 
 END
 

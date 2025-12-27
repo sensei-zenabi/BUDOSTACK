@@ -149,7 +149,7 @@ void main()
 	float hot = smoothstep(0.15, 1.25, len); // NEW: own region for hotspot
 
 	// create the noise effects from a LUT of actual film noise
-    vec4 film_noise1 = COMPAT_TEXTURE(noise1, vTexCoord.xx * 2.0 *
+    vec4 film_noise1 = COMPAT_TEXTURE(noise1, vTexCoord.xy * 2.0 *
         sin(hash(mod(float(FrameCount), 47.0))));
     vec4 film_noise2 = COMPAT_TEXTURE(noise1, vTexCoord.xy * 2.0 *
         cos(hash(mod(float(FrameCount), 92.0))));

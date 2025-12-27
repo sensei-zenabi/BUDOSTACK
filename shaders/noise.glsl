@@ -133,16 +133,22 @@ uniform COMPAT_PRECISION float noise_toggle;
 #define noise_toggle 1.0
 #endif
 
-//https://www.shadertoy.com/view/4sXSWs strength= 16.0
-float filmGrain(vec2 uv, float strength, float timer ){
-    float t = timer * 0.07;
-    float seed = dot(floor(uv * TextureSize), vec2(12.9898, 78.233)) + t;
-    float noise = fract(sin(seed) * 43758.5453123);
-    return (noise - 0.5) * strength;
-}
-
 float hash( float n ){
     return fract(sin(n)*43758.5453123);
+}
+
+float hash21(vec2 p){
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
+}
+
+//https://www.shadertoy.com/view/4sXSWs strength= 16.0
+float filmGrain(vec2 uv, float strength, float timer ){
+    vec2 p = floor(uv * TextureSize);
+    vec2 t = vec2(timer, timer * 0.37);
+    float noise = hash21(p + t);
+    return (noise - 0.5) * strength;
 }
 
 void main()

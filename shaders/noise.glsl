@@ -131,9 +131,10 @@ uniform COMPAT_PRECISION float noise_toggle;
 #endif
 
 //https://www.shadertoy.com/view/4sXSWs strength= 16.0
-float filmGrain(vec2 uv, float strength, float timer ){       
-    float x = (uv.x + 4.0 ) * (uv.y + 4.0 ) * ((mod(timer, 800.0) + 10.0) * 10.0);
-    return  (mod((mod(x, 13.0) + 1.0) * (mod(x, 123.0) + 1.0), 0.01)-0.005) * strength;
+float filmGrain(vec2 uv, float strength, float timer ){
+    float t = (mod(timer, 800.0) + 10.0) * 10.0;
+    float x = dot(uv + 4.0, vec2(12.9898, 78.233)) * t;
+    return (mod((mod(x, 13.0) + 1.0) * (mod(x, 123.0) + 1.0), 0.01) - 0.005) * strength;
 }
 
 float hash( float n ){
@@ -158,7 +159,7 @@ void main()
     vec3 red_light = COMPAT_TEXTURE(Source, red_coord).rgb;
     vec2 green_coord = vTexCoord + 0.01 * vec2(x_off_g, y_off_g);
     vec3 green_light = COMPAT_TEXTURE(Source, green_coord).rgb;
-    vec2 blue_coord = vTexCoord + 0.01 * vec2(x_off_r, y_off_r);
+    vec2 blue_coord = vTexCoord + 0.01 * vec2(x_off_b, y_off_b);
     vec3 blue_light = COMPAT_TEXTURE(Source, blue_coord).rgb;
 
     vec3 film = vec3(red_light.r, green_light.g, blue_light.b);

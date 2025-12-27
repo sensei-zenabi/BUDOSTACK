@@ -13,6 +13,7 @@
 
 //#pragma parameter grain_str "Grain Strength" 12.0 0.0 16.0 1.0
 #pragma parameter grain_str "Grain Strength" 8.0 0.0 16.0 1.0
+#pragma parameter grain_intensity "Grain Intensity" 0.35 0.0 1.0 0.01
 
 #pragma parameter hotspot "Hotspot Toggle" 1.0 0.0 1.0 1.0
 //#pragma parameter hotspot "Hotspot Toggle" 0.0 0.0 0.0 0.0
@@ -113,6 +114,7 @@ uniform COMPAT_PRECISION float y_off_g;
 uniform COMPAT_PRECISION float x_off_b;
 uniform COMPAT_PRECISION float y_off_b;
 uniform COMPAT_PRECISION float grain_str;
+uniform COMPAT_PRECISION float grain_intensity;
 uniform COMPAT_PRECISION float hotspot;
 uniform COMPAT_PRECISION float vignette;
 uniform COMPAT_PRECISION float noise_toggle;
@@ -124,6 +126,7 @@ uniform COMPAT_PRECISION float noise_toggle;
 #define x_off_b -0.05
 #define y_off_b 0.05
 #define grain_str 12.0
+#define grain_intensity 0.35
 //#define hotspot 0.25
 #define hotspot 0.5
 #define vignette 1.0
@@ -164,7 +167,8 @@ void main()
     vec3 blue_light = COMPAT_TEXTURE(Source, blue_coord).rgb;
 
     vec3 film = vec3(red_light.r, green_light.g, blue_light.b);
-    film += filmGrain(vTexCoord.xy, grain_str, float(FrameCount)); // Film grain
+    float grain = filmGrain(vTexCoord.xy, grain_str, float(FrameCount));
+    film = mix(film, film + grain, grain_intensity); // Film grain
 
     film *= (vignette > 0.5) ? (1.0 - vig) : 1.0; // Vignette
     film += ((1.0 - hot) * 0.2) * hotspot; // Hotspot

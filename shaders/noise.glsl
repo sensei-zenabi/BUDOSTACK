@@ -132,9 +132,10 @@ uniform COMPAT_PRECISION float noise_toggle;
 
 //https://www.shadertoy.com/view/4sXSWs strength= 16.0
 float filmGrain(vec2 uv, float strength, float timer ){
-    float t = (mod(timer, 800.0) + 10.0) * 10.0;
-    float x = dot(uv + 4.0, vec2(12.9898, 78.233)) * t;
-    return (mod((mod(x, 13.0) + 1.0) * (mod(x, 123.0) + 1.0), 0.01) - 0.005) * strength;
+    float t = timer * 0.07;
+    float seed = dot(uv * TextureSize + t, vec2(12.9898, 78.233));
+    float noise = fract(sin(seed) * 43758.5453123);
+    return (noise - 0.5) * strength;
 }
 
 float hash( float n ){

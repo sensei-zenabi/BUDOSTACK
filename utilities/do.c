@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <glob.h>
 #include <limits.h>
+#include <fcntl.h>
 
 #define BUFFER_SIZE 8192
 
@@ -40,27 +41,39 @@ static int prompt_yes_no(const char *message) {
     char buffer[8];
     FILE *in = stdin;
     FILE *out = stderr;
-    if (!isatty(fileno(in)) || !isatty(fileno(out))) {
-        if (!tty) {
-            tty = fopen("/dev/tty", "r+");
-            if (tty) {
-                setvbuf(tty, NULL, _IONBF, 0);
-            }
-        }
+    if (!tty) {
+        tty = fopen("/dev/tty", "r+");
         if (tty) {
-            in = tty;
-            out = tty;
+            setvbuf(tty, NULL, _IONBF, 0);
+        }
+    }
+    if (tty) {
+        in = tty;
+        out = tty;
+    }
+
+    int fd = fileno(in);
+    int flags = fcntl(fd, F_GETFL);
+    if (flags != -1 && (flags & O_NONBLOCK)) {
+        if (fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == -1) {
+            perror("fcntl");
         }
     }
     fprintf(out, "%s [y/N]: ", message);
     fflush(out);
     if (!fgets(buffer, sizeof(buffer), in)) {
+        if (flags != -1 && (flags & O_NONBLOCK)) {
+            (void)fcntl(fd, F_SETFL, flags);
+        }
         return 0;
     }
     if (!strchr(buffer, '\n')) {
         int ch = 0;
         while ((ch = fgetc(in)) != '\n' && ch != EOF) {
         }
+    }
+    if (flags != -1 && (flags & O_NONBLOCK)) {
+        (void)fcntl(fd, F_SETFL, flags);
     }
     return (buffer[0] == 'y' || buffer[0] == 'Y');
 }

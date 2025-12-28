@@ -70,6 +70,7 @@
 #endif
 
 #define TERMINAL_CURSOR_SPRITE_PATH "./tasks/assets/cursor.png"
+#define TERMINAL_FPS_LAYER 16u
 
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
@@ -99,6 +100,17 @@ static Uint32 terminal_shader_frame_interval_ms = 0u;
 static Uint32 terminal_render_last_frame_tick = 0u;
 static Uint32 terminal_render_frame_interval_ms = 0u;
 static int terminal_shaders_enabled = 1;
+static int terminal_show_fps = 0;
+static unsigned int terminal_fps_frame_count = 0u;
+static unsigned int terminal_fps_value = 0u;
+static Uint32 terminal_fps_last_tick = 0u;
+static int terminal_fps_dirty = 0;
+static int terminal_fps_last_x = -1;
+static int terminal_fps_last_y = -1;
+static int terminal_fps_last_w = 0;
+static int terminal_fps_last_h = 0;
+static int terminal_fps_last_frame_width = 0;
+static int terminal_fps_last_frame_height = 0;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -1982,6 +1994,138 @@ static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int he
             *dst32 = terminal_rgba_from_components(entry->r, entry->g, entry->b);
         }
     }
+}
+
+static void terminal_custom_pixels_commit_clear(uint8_t layer) {
+    int modified = terminal_custom_pixels_apply_pending_clears(layer);
+    uint16_t layer_mask = terminal_custom_layer_mask(layer);
+    if ((terminal_custom_pixels_pending_layers & layer_mask) != 0u) {
+        terminal_custom_pixels_pending_layers &= (uint16_t)(~layer_mask);
+        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+        terminal_custom_pixels_dirty = 1;
+    } else if (modified) {
+        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+        terminal_custom_pixels_dirty = 1;
+    }
+}
+
+static void terminal_fps_clear_overlay(void) {
+    if (terminal_fps_last_w > 0 && terminal_fps_last_h > 0 &&
+        terminal_fps_last_x >= 0 && terminal_fps_last_y >= 0) {
+        if (terminal_custom_pixels_clear_rect(terminal_fps_last_x,
+                                              terminal_fps_last_y,
+                                              terminal_fps_last_w,
+                                              terminal_fps_last_h,
+                                              (uint8_t)TERMINAL_FPS_LAYER) == 0) {
+            terminal_custom_pixels_commit_clear((uint8_t)TERMINAL_FPS_LAYER);
+        }
+    }
+    terminal_fps_last_x = -1;
+    terminal_fps_last_y = -1;
+    terminal_fps_last_w = 0;
+    terminal_fps_last_h = 0;
+    terminal_fps_last_frame_width = 0;
+    terminal_fps_last_frame_height = 0;
+}
+
+static void terminal_fps_reset_counters(void) {
+    terminal_fps_frame_count = 0u;
+    terminal_fps_value = 0u;
+    terminal_fps_last_tick = SDL_GetTicks();
+    terminal_fps_dirty = 1;
+}
+
+static void terminal_fps_update_overlay(const struct terminal_buffer *buffer,
+                                        int frame_width,
+                                        int frame_height,
+                                        int margin_pixels,
+                                        Uint32 now) {
+    if (!terminal_show_fps) {
+        return;
+    }
+    if (!buffer || !terminal_font.glyphs) {
+        return;
+    }
+
+    if (terminal_fps_last_tick == 0u) {
+        terminal_fps_last_tick = now;
+    }
+
+    Uint32 elapsed = now - terminal_fps_last_tick;
+    if (elapsed >= 1000u) {
+        unsigned int fps_value = 0u;
+        if (elapsed > 0u) {
+            fps_value = (unsigned int)((terminal_fps_frame_count * 1000u) / elapsed);
+        }
+        terminal_fps_frame_count = 0u;
+        terminal_fps_last_tick = now;
+        if (fps_value != terminal_fps_value) {
+            terminal_fps_value = fps_value;
+            terminal_fps_dirty = 1;
+        }
+    }
+
+    if (frame_width != terminal_fps_last_frame_width ||
+        frame_height != terminal_fps_last_frame_height) {
+        terminal_fps_dirty = 1;
+    }
+
+    if (!terminal_fps_dirty) {
+        return;
+    }
+
+    char text[32];
+    int written = snprintf(text, sizeof(text), "FPS %u", terminal_fps_value);
+    if (written <= 0) {
+        return;
+    }
+    size_t text_length = (size_t)written;
+    if (text_length >= sizeof(text)) {
+        text_length = sizeof(text) - 1u;
+        text[text_length] = '\0';
+    }
+
+    uint8_t *text_pixels = NULL;
+    int text_w = 0;
+    int text_h = 0;
+    if (terminal_render_text_sprite(&terminal_font,
+                                    (const uint8_t *)text,
+                                    text_length,
+                                    buffer->default_fg,
+                                    &text_pixels,
+                                    &text_w,
+                                    &text_h) != 0) {
+        return;
+    }
+
+    int origin_x = frame_width - margin_pixels - text_w;
+    int origin_y = frame_height - margin_pixels - text_h;
+    if (origin_x < 0) {
+        origin_x = 0;
+    }
+    if (origin_y < 0) {
+        origin_y = 0;
+    }
+
+    terminal_fps_clear_overlay();
+    if (terminal_custom_pixels_draw_sprite(origin_x,
+                                           origin_y,
+                                           text_pixels,
+                                           text_w,
+                                           text_h,
+                                           (uint8_t)TERMINAL_FPS_LAYER) == 0) {
+        terminal_custom_pixels_active = 1;
+        terminal_custom_pixels_dirty = 1;
+        terminal_fps_last_x = origin_x;
+        terminal_fps_last_y = origin_y;
+        terminal_fps_last_w = text_w;
+        terminal_fps_last_h = text_h;
+        terminal_fps_last_frame_width = frame_width;
+        terminal_fps_last_frame_height = frame_height;
+        terminal_fps_dirty = 0;
+    }
+
+    free(text_pixels);
 }
 
 static int terminal_ensure_render_cache(size_t columns, size_t rows) {
@@ -5138,6 +5282,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int mouse_query_requested = 0;
     int shader_toggle_requested = 0;
     int shader_enable_requested = 0;
+    int fps_toggle_requested = 0;
+    int fps_enable_requested = 0;
 
     if (args && args[0] != '\0') {
         char *copy = strdup(args);
@@ -5263,6 +5409,15 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         } else if (strcmp(value, "disable") == 0) {
                             shader_toggle_requested = 1;
                             shader_enable_requested = 0;
+                        }
+                    } else if (strcmp(key, "fps") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' &&
+                            (parsed == 0 || parsed == 1)) {
+                            fps_toggle_requested = 1;
+                            fps_enable_requested = (int)parsed;
                         }
 #if BUDOSTACK_HAVE_SDL2
                     } else if (strcmp(key, "sound") == 0 && value && *value != '\0') {
@@ -5610,6 +5765,16 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     terminal_disable_shaders();
                 }
                 terminal_mark_full_redraw();
+            }
+
+            if (fps_toggle_requested) {
+                if (fps_enable_requested) {
+                    terminal_show_fps = 1;
+                    terminal_fps_reset_counters();
+                } else {
+                    terminal_show_fps = 0;
+                    terminal_fps_clear_overlay();
+                }
             }
 
             free(copy);
@@ -8116,6 +8281,8 @@ int main(int argc, char **argv) {
             }
         }
 
+        terminal_fps_update_overlay(&buffer, frame_width, frame_height, margin_pixels, now);
+
         if (terminal_custom_pixel_count > 0u &&
             (terminal_custom_pixels_dirty ||
              (terminal_custom_pixels_active && frame_dirty))) {
@@ -8424,6 +8591,10 @@ int main(int argc, char **argv) {
         }
 
         SDL_GL_SwapWindow(window);
+
+        if (terminal_show_fps) {
+            terminal_fps_frame_count++;
+        }
 
         terminal_cursor_dirty = 0;
 

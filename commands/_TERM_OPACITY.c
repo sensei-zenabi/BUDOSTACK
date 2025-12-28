@@ -6,7 +6,7 @@
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: _TERM_OPACITY <value>\n");
-    fprintf(stderr, "  Sets terminal opacity from 0 (opaque) to 100 (transparent).\n");
+    fprintf(stderr, "  Sets terminal opacity from 0 (desktop only) to 100 (terminal only).\n");
 }
 
 int main(int argc, char **argv) {

@@ -36,11 +36,39 @@
 #if BUDOSTACK_HAVE_SDL2
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL2/SDL_opengl.h>
+#if defined(__has_include)
+#if __has_include(<SDL2/SDL_syswm.h>)
+#include <SDL2/SDL_syswm.h>
+#define BUDOSTACK_HAVE_SDL_SYSWM 1
+#elif __has_include(<SDL_syswm.h>)
+#include <SDL_syswm.h>
+#define BUDOSTACK_HAVE_SDL_SYSWM 1
+#else
+#define BUDOSTACK_HAVE_SDL_SYSWM 0
+#endif
+#else
+#define BUDOSTACK_HAVE_SDL_SYSWM 0
+#endif
 #define DR_MP3_IMPLEMENTATION
 #include "../lib/dr_mp3.h"
 #define STB_VORBIS_IMPLEMENTATION
 #include "../lib/stb_vorbis.h"
 #include "../lib/stb_image.h"
+#endif
+
+#if BUDOSTACK_HAVE_SDL2 && BUDOSTACK_HAVE_SDL_SYSWM && defined(__has_include)
+#if __has_include(<X11/Xlib.h>) && __has_include(<X11/extensions/XShm.h>) && \
+    __has_include(<sys/ipc.h>) && __has_include(<sys/shm.h>)
+#define BUDOSTACK_HAVE_X11_SHM 1
+#include <X11/Xlib.h>
+#include <X11/extensions/XShm.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#else
+#define BUDOSTACK_HAVE_X11_SHM 0
+#endif
+#else
+#define BUDOSTACK_HAVE_X11_SHM 0
 #endif
 
 #ifndef PATH_MAX
@@ -79,7 +107,10 @@ _Static_assert(TERMINAL_TARGET_FPS > 0u, "TERMINAL_TARGET_FPS must be positive")
 static SDL_Window *terminal_window_handle = NULL;
 static SDL_GLContext terminal_gl_context_handle = NULL;
 static int terminal_master_fd_handle = -1;
-static int terminal_fullscreen_enabled = 0;
+static int terminal_opacity_value = 100;
+static float terminal_terminal_alpha = 1.0f;
+static int terminal_desktop_active = 0;
+static int terminal_cursor_opacity_enabled = 0;
 static int terminal_cell_pixel_width = 0;
 static int terminal_cell_pixel_height = 0;
 static int terminal_logical_width = 0;
@@ -155,6 +186,34 @@ static GLuint terminal_gl_framebuffer = 0;
 static GLuint terminal_gl_intermediate_textures[2] = {0u, 0u};
 static int terminal_intermediate_width = 0;
 static int terminal_intermediate_height = 0;
+
+#if BUDOSTACK_HAVE_X11_SHM
+struct terminal_x11_capture {
+    Display *display;
+    Window root;
+    XImage *image;
+    XShmSegmentInfo shminfo;
+    int width;
+    int height;
+    int bytes_per_pixel;
+    int byte_order;
+    uint32_t red_mask;
+    uint32_t green_mask;
+    uint32_t blue_mask;
+    int red_shift;
+    int green_shift;
+    int blue_shift;
+    int red_bits;
+    int green_bits;
+    int blue_bits;
+    uint8_t *rgba;
+    size_t rgba_size;
+    GLuint texture;
+    int ready;
+};
+
+static struct terminal_x11_capture terminal_x11_capture = {0};
+#endif
 
 struct terminal_render_cache_entry {
     uint32_t ch;
@@ -368,6 +427,11 @@ static int terminal_load_cursor_sprite(const char *path);
 static void terminal_destroy_cursor_sprite(void);
 static void terminal_cursor_update_position(int window_x, int window_y);
 static void terminal_cursor_render(int framebuffer_width, int framebuffer_height, int drawable_width, int drawable_height);
+#if BUDOSTACK_HAVE_X11_SHM
+static int terminal_x11_init(SDL_Window *window);
+static void terminal_x11_shutdown(void);
+static int terminal_x11_update_desktop(int drawable_width, int drawable_height);
+#endif
 static int psf_unicode_map_compare(const void *a, const void *b);
 static int psf_font_lookup_unicode(const struct psf_font *font, uint32_t codepoint, uint32_t *out_index);
 static uint32_t psf_font_resolve_glyph(const struct psf_font *font, uint32_t codepoint);
@@ -3193,6 +3257,266 @@ static int terminal_prepare_intermediate_targets(int width, int height) {
     return 0;
 }
 
+#if BUDOSTACK_HAVE_X11_SHM
+static int terminal_mask_info(uint32_t mask, int *shift, int *bits) {
+    if (!shift || !bits) {
+        return -1;
+    }
+    if (mask == 0u) {
+        *shift = 0;
+        *bits = 0;
+        return 0;
+    }
+    int local_shift = 0;
+    while ((mask & 1u) == 0u) {
+        mask >>= 1;
+        local_shift++;
+    }
+    int local_bits = 0;
+    while ((mask & 1u) != 0u) {
+        local_bits++;
+        mask >>= 1;
+    }
+    *shift = local_shift;
+    *bits = local_bits;
+    return 0;
+}
+
+static uint8_t terminal_scale_component(uint32_t value, int bits) {
+    if (bits <= 0) {
+        return 0u;
+    }
+    uint32_t max_value = (1u << bits) - 1u;
+    if (max_value == 0u) {
+        return 0u;
+    }
+    return (uint8_t)((value * 255u) / max_value);
+}
+
+static void terminal_x11_release_image(struct terminal_x11_capture *capture) {
+    if (!capture) {
+        return;
+    }
+    if (capture->image) {
+        if (capture->display) {
+            XShmDetach(capture->display, &capture->shminfo);
+        }
+        XDestroyImage(capture->image);
+        capture->image = NULL;
+    }
+    if (capture->shminfo.shmaddr && capture->shminfo.shmaddr != (char *)-1) {
+        shmdt(capture->shminfo.shmaddr);
+    }
+    if (capture->shminfo.shmid >= 0) {
+        shmctl(capture->shminfo.shmid, IPC_RMID, NULL);
+    }
+    memset(&capture->shminfo, 0, sizeof(capture->shminfo));
+    capture->shminfo.shmid = -1;
+}
+
+static int terminal_x11_resize_capture(struct terminal_x11_capture *capture, int width, int height) {
+    if (!capture || !capture->display || width <= 0 || height <= 0) {
+        return -1;
+    }
+    terminal_x11_release_image(capture);
+
+    int screen = DefaultScreen(capture->display);
+    Visual *visual = DefaultVisual(capture->display, screen);
+    int depth = DefaultDepth(capture->display, screen);
+    capture->image = XShmCreateImage(capture->display,
+                                     visual,
+                                     (unsigned int)depth,
+                                     ZPixmap,
+                                     NULL,
+                                     &capture->shminfo,
+                                     (unsigned int)width,
+                                     (unsigned int)height);
+    if (!capture->image) {
+        return -1;
+    }
+
+    size_t image_size = (size_t)capture->image->bytes_per_line * (size_t)capture->image->height;
+    capture->shminfo.shmid = shmget(IPC_PRIVATE, image_size, IPC_CREAT | 0600);
+    if (capture->shminfo.shmid < 0) {
+        terminal_x11_release_image(capture);
+        return -1;
+    }
+    capture->shminfo.shmaddr = shmat(capture->shminfo.shmid, NULL, 0);
+    capture->shminfo.readOnly = False;
+    if (capture->shminfo.shmaddr == (char *)-1) {
+        terminal_x11_release_image(capture);
+        return -1;
+    }
+    capture->image->data = capture->shminfo.shmaddr;
+    if (!XShmAttach(capture->display, &capture->shminfo)) {
+        terminal_x11_release_image(capture);
+        return -1;
+    }
+
+    capture->width = width;
+    capture->height = height;
+    capture->bytes_per_pixel = capture->image->bits_per_pixel / 8;
+    capture->byte_order = capture->image->byte_order;
+    capture->red_mask = (uint32_t)capture->image->red_mask;
+    capture->green_mask = (uint32_t)capture->image->green_mask;
+    capture->blue_mask = (uint32_t)capture->image->blue_mask;
+    terminal_mask_info(capture->red_mask, &capture->red_shift, &capture->red_bits);
+    terminal_mask_info(capture->green_mask, &capture->green_shift, &capture->green_bits);
+    terminal_mask_info(capture->blue_mask, &capture->blue_shift, &capture->blue_bits);
+
+    size_t rgba_size = (size_t)width * (size_t)height * 4u;
+    if (rgba_size > capture->rgba_size) {
+        uint8_t *new_rgba = realloc(capture->rgba, rgba_size);
+        if (!new_rgba) {
+            terminal_x11_release_image(capture);
+            return -1;
+        }
+        capture->rgba = new_rgba;
+        capture->rgba_size = rgba_size;
+    }
+
+    if (capture->texture == 0) {
+        glGenTextures(1, &capture->texture);
+        if (capture->texture == 0) {
+            terminal_x11_release_image(capture);
+            return -1;
+        }
+    }
+    terminal_bind_texture(capture->texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    terminal_bind_texture(0);
+    return 0;
+}
+
+static int terminal_x11_init(SDL_Window *window) {
+    if (!window) {
+        return -1;
+    }
+    SDL_SysWMinfo info;
+    SDL_VERSION(&info.version);
+    if (!SDL_GetWindowWMInfo(window, &info)) {
+        return -1;
+    }
+    if (info.subsystem != SDL_SYSWM_X11) {
+        return -1;
+    }
+    terminal_x11_capture.display = info.info.x11.display;
+    terminal_x11_capture.root = DefaultRootWindow(terminal_x11_capture.display);
+    terminal_x11_capture.shminfo.shmid = -1;
+    terminal_x11_capture.shminfo.shmaddr = (char *)-1;
+    if (!XShmQueryExtension(terminal_x11_capture.display)) {
+        return -1;
+    }
+
+    XWindowAttributes attrs;
+    if (XGetWindowAttributes(terminal_x11_capture.display, terminal_x11_capture.root, &attrs) == 0) {
+        return -1;
+    }
+    if (terminal_x11_resize_capture(&terminal_x11_capture, attrs.width, attrs.height) != 0) {
+        terminal_x11_shutdown();
+        return -1;
+    }
+    terminal_x11_capture.ready = 1;
+    return 0;
+}
+
+static void terminal_x11_shutdown(void) {
+    terminal_x11_capture.ready = 0;
+    if (terminal_x11_capture.texture != 0) {
+        glDeleteTextures(1, &terminal_x11_capture.texture);
+        terminal_x11_capture.texture = 0;
+    }
+    terminal_x11_release_image(&terminal_x11_capture);
+    free(terminal_x11_capture.rgba);
+    terminal_x11_capture.rgba = NULL;
+    terminal_x11_capture.rgba_size = 0u;
+    terminal_x11_capture.width = 0;
+    terminal_x11_capture.height = 0;
+    terminal_x11_capture.display = NULL;
+    terminal_x11_capture.root = 0;
+}
+
+static int terminal_x11_update_desktop(int drawable_width, int drawable_height) {
+    if (!terminal_x11_capture.ready || !terminal_x11_capture.display || !terminal_x11_capture.image) {
+        return -1;
+    }
+    (void)drawable_width;
+    (void)drawable_height;
+
+    XWindowAttributes attrs;
+    if (XGetWindowAttributes(terminal_x11_capture.display, terminal_x11_capture.root, &attrs) == 0) {
+        return -1;
+    }
+    if (attrs.width != terminal_x11_capture.width || attrs.height != terminal_x11_capture.height) {
+        if (terminal_x11_resize_capture(&terminal_x11_capture, attrs.width, attrs.height) != 0) {
+            return -1;
+        }
+    }
+
+    if (!XShmGetImage(terminal_x11_capture.display,
+                      terminal_x11_capture.root,
+                      terminal_x11_capture.image,
+                      0,
+                      0,
+                      AllPlanes)) {
+        return -1;
+    }
+
+    const uint8_t *src = (const uint8_t *)terminal_x11_capture.image->data;
+    int bytes_per_pixel = terminal_x11_capture.bytes_per_pixel;
+    if (bytes_per_pixel <= 0 || bytes_per_pixel > 4) {
+        return -1;
+    }
+    size_t stride = (size_t)terminal_x11_capture.image->bytes_per_line;
+    int width = terminal_x11_capture.width;
+    int height = terminal_x11_capture.height;
+
+    for (int y = 0; y < height; y++) {
+        const uint8_t *row = src + (size_t)y * stride;
+        uint8_t *dst = terminal_x11_capture.rgba + ((size_t)y * (size_t)width * 4u);
+        for (int x = 0; x < width; x++) {
+            const uint8_t *pixel_ptr = row + (size_t)x * (size_t)bytes_per_pixel;
+            uint32_t pixel = 0u;
+            if (terminal_x11_capture.byte_order == LSBFirst) {
+                for (int b = 0; b < bytes_per_pixel; b++) {
+                    pixel |= ((uint32_t)pixel_ptr[b]) << (8 * b);
+                }
+            } else {
+                for (int b = 0; b < bytes_per_pixel; b++) {
+                    pixel = (pixel << 8) | (uint32_t)pixel_ptr[b];
+                }
+            }
+            uint32_t red = (pixel & terminal_x11_capture.red_mask) >> terminal_x11_capture.red_shift;
+            uint32_t green = (pixel & terminal_x11_capture.green_mask) >> terminal_x11_capture.green_shift;
+            uint32_t blue = (pixel & terminal_x11_capture.blue_mask) >> terminal_x11_capture.blue_shift;
+            dst[x * 4u + 0u] = terminal_scale_component(red, terminal_x11_capture.red_bits);
+            dst[x * 4u + 1u] = terminal_scale_component(green, terminal_x11_capture.green_bits);
+            dst[x * 4u + 2u] = terminal_scale_component(blue, terminal_x11_capture.blue_bits);
+            dst[x * 4u + 3u] = 255u;
+        }
+    }
+
+    terminal_bind_texture(terminal_x11_capture.texture);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    terminal_x11_capture.width,
+                    terminal_x11_capture.height,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    terminal_x11_capture.rgba);
+    terminal_bind_texture(0);
+    return 0;
+}
+#endif
+
 static int terminal_load_cursor_sprite(const char *path) {
     if (!path || !terminal_gl_ready) {
         return -1;
@@ -3294,6 +3618,9 @@ static void terminal_cursor_render(int framebuffer_width, int framebuffer_height
     if (!terminal_cursor_enabled || terminal_cursor_texture == 0 || !terminal_cursor_position_valid) {
         return;
     }
+    if (terminal_cursor_opacity_enabled && terminal_terminal_alpha <= 0.001f) {
+        return;
+    }
     if (framebuffer_width <= 0 || framebuffer_height <= 0 || drawable_width <= 0 || drawable_height <= 0) {
         return;
     }
@@ -3320,6 +3647,9 @@ static void terminal_cursor_render(int framebuffer_width, int framebuffer_height
     glEnable(GL_TEXTURE_2D);
     terminal_bind_texture(terminal_cursor_texture);
 
+    if (terminal_cursor_opacity_enabled) {
+        glColor4f(1.0f, 1.0f, 1.0f, terminal_terminal_alpha);
+    }
     glBegin(GL_TRIANGLE_STRIP);
     glTexCoord2f(0.0f, 0.0f);
     glVertex2f(left, top);
@@ -3330,6 +3660,9 @@ static void terminal_cursor_render(int framebuffer_width, int framebuffer_height
     glTexCoord2f(1.0f, 1.0f);
     glVertex2f(right, bottom);
     glEnd();
+    if (terminal_cursor_opacity_enabled) {
+        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+    }
 
     glDisable(GL_TEXTURE_2D);
     terminal_bind_texture(0);
@@ -3339,6 +3672,32 @@ static void terminal_cursor_render(int framebuffer_width, int framebuffer_height
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
     glMatrixMode(GL_MODELVIEW);
+}
+
+static void terminal_draw_fullscreen_quad(int use_fbo_coords) {
+    if (use_fbo_coords) {
+        glBegin(GL_TRIANGLE_STRIP);
+        glTexCoord2f(0.0f, 0.0f);
+        glVertex2f(-1.0f, -1.0f);
+        glTexCoord2f(1.0f, 0.0f);
+        glVertex2f(1.0f, -1.0f);
+        glTexCoord2f(0.0f, 1.0f);
+        glVertex2f(-1.0f, 1.0f);
+        glTexCoord2f(1.0f, 1.0f);
+        glVertex2f(1.0f, 1.0f);
+        glEnd();
+    } else {
+        glBegin(GL_TRIANGLE_STRIP);
+        glTexCoord2f(0.0f, 1.0f);
+        glVertex2f(-1.0f, -1.0f);
+        glTexCoord2f(1.0f, 1.0f);
+        glVertex2f(1.0f, -1.0f);
+        glTexCoord2f(0.0f, 0.0f);
+        glVertex2f(-1.0f, 1.0f);
+        glTexCoord2f(1.0f, 0.0f);
+        glVertex2f(1.0f, 1.0f);
+        glEnd();
+    }
 }
 
 static void terminal_clear_gl_shaders(void) {
@@ -3361,6 +3720,9 @@ static void terminal_release_gl_resources(void) {
         glDeleteTextures(1, &terminal_gl_texture);
         terminal_gl_texture = 0;
     }
+#if BUDOSTACK_HAVE_X11_SHM
+    terminal_x11_shutdown();
+#endif
     terminal_destroy_cursor_sprite();
     terminal_clear_gl_shaders();
     if (terminal_gl_intermediate_textures[0] != 0) {
@@ -5646,40 +6008,19 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
         terminal_apply_resolution(buffer, resolution_width, resolution_height);
     }
     if (opacity_requested) {
-        float normalized = (100.0f - (float)opacity_value) / 100.0f;
+        float normalized = (float)opacity_value / 100.0f;
         if (normalized < 0.0f) {
             normalized = 0.0f;
         } else if (normalized > 1.0f) {
             normalized = 1.0f;
         }
+        terminal_opacity_value = (int)opacity_value;
         terminal_mark_full_redraw();
-        if (terminal_window_handle) {
-            if (opacity_value > 0 && terminal_fullscreen_enabled) {
-                if (SDL_SetWindowFullscreen(terminal_window_handle, 0) == 0) {
-                    terminal_fullscreen_enabled = 0;
-                    SDL_SetWindowBordered(terminal_window_handle, SDL_FALSE);
-                    SDL_Rect bounds;
-                    if (SDL_GetDisplayBounds(0, &bounds) != 0 &&
-                        SDL_GetDisplayUsableBounds(0, &bounds) != 0) {
-                        bounds.x = 0;
-                        bounds.y = 0;
-                        bounds.w = terminal_logical_width;
-                        bounds.h = terminal_logical_height;
-                    }
-                    SDL_SetWindowPosition(terminal_window_handle, bounds.x, bounds.y);
-                    if (bounds.w > 0 && bounds.h > 0) {
-                        SDL_SetWindowSize(terminal_window_handle, bounds.w, bounds.h);
-                    }
-                }
-            } else if (opacity_value == 0 && !terminal_fullscreen_enabled) {
-                if (SDL_SetWindowFullscreen(terminal_window_handle, SDL_WINDOW_FULLSCREEN_DESKTOP) == 0) {
-                    terminal_fullscreen_enabled = 1;
-                }
-            }
-            if (SDL_SetWindowOpacity(terminal_window_handle, normalized) != 0) {
-                fprintf(stderr, "terminal: Failed to set window opacity: %s\n", SDL_GetError());
-            }
+#if !BUDOSTACK_HAVE_X11_SHM
+        if (terminal_window_handle && SDL_SetWindowOpacity(terminal_window_handle, normalized) != 0) {
+            fprintf(stderr, "terminal: Failed to set window opacity: %s\n", SDL_GetError());
         }
+#endif
     }
 }
 
@@ -7025,7 +7366,6 @@ int main(int argc, char **argv) {
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
-    terminal_fullscreen_enabled = 1;
 
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     if (!gl_context) {
@@ -7104,6 +7444,11 @@ int main(int argc, char **argv) {
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+#if BUDOSTACK_HAVE_X11_SHM
+    if (terminal_x11_init(window) != 0) {
+        fprintf(stderr, "terminal: Desktop capture unavailable; transparency disabled.\n");
+    }
+#endif
 
     terminal_window_handle = window;
     terminal_gl_context_handle = gl_context;
@@ -8256,6 +8601,23 @@ int main(int argc, char **argv) {
         int cursor_ready_for_composition = terminal_cursor_enabled &&
                                            terminal_cursor_texture != 0 &&
                                            terminal_cursor_position_valid;
+        terminal_desktop_active = 0;
+        terminal_terminal_alpha = 1.0f;
+        float terminal_alpha = (float)terminal_opacity_value / 100.0f;
+        if (terminal_alpha < 0.0f) {
+            terminal_alpha = 0.0f;
+        } else if (terminal_alpha > 1.0f) {
+            terminal_alpha = 1.0f;
+        }
+#if BUDOSTACK_HAVE_X11_SHM
+        if (terminal_opacity_value < 100 && terminal_x11_capture.ready) {
+            if (terminal_x11_update_desktop(drawable_width, drawable_height) == 0) {
+                terminal_desktop_active = 1;
+                terminal_terminal_alpha = terminal_alpha;
+            }
+        }
+#endif
+        terminal_cursor_opacity_enabled = 0;
         if (terminal_shaders_active() && cursor_ready_for_composition) {
             if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) == 0) {
                 glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
@@ -8276,16 +8638,7 @@ int main(int argc, char **argv) {
                     terminal_bind_texture(terminal_gl_texture);
                     glEnable(GL_TEXTURE_2D);
 
-                    glBegin(GL_TRIANGLE_STRIP);
-                    glTexCoord2f(0.0f, 1.0f);
-                    glVertex2f(-1.0f, -1.0f);
-                    glTexCoord2f(1.0f, 1.0f);
-                    glVertex2f(1.0f, -1.0f);
-                    glTexCoord2f(0.0f, 0.0f);
-                    glVertex2f(-1.0f, 1.0f);
-                    glTexCoord2f(1.0f, 0.0f);
-                    glVertex2f(1.0f, 1.0f);
-                    glEnd();
+                    terminal_draw_fullscreen_quad(0);
 
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -8306,11 +8659,68 @@ int main(int argc, char **argv) {
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
         }
+
+#if BUDOSTACK_HAVE_X11_SHM
+        if (terminal_desktop_active && terminal_shaders_active()) {
+            GLuint composite_texture = 0;
+            if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) == 0) {
+                composite_texture = terminal_gl_intermediate_textures[0];
+                glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, composite_texture, 0);
+                GLenum composite_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+                if (composite_status == GL_FRAMEBUFFER_COMPLETE) {
+                    GLuint terminal_layer_texture = source_texture;
+                    int terminal_layer_use_fbo = (terminal_layer_texture != terminal_gl_texture);
+
+                    glViewport(0, 0, drawable_width, drawable_height);
+                    glClear(GL_COLOR_BUFFER_BIT);
+
+                    glUseProgram(0);
+                    glMatrixMode(GL_PROJECTION);
+                    glLoadIdentity();
+                    glMatrixMode(GL_MODELVIEW);
+                    glLoadIdentity();
+
+                    glActiveTexture(GL_TEXTURE0);
+                    terminal_bind_texture(terminal_x11_capture.texture);
+                    glEnable(GL_TEXTURE_2D);
+                    terminal_draw_fullscreen_quad(0);
+
+                    if (terminal_terminal_alpha > 0.001f) {
+                        glEnable(GL_BLEND);
+                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                        glColor4f(1.0f, 1.0f, 1.0f, terminal_terminal_alpha);
+                        terminal_bind_texture(terminal_layer_texture);
+                        terminal_draw_fullscreen_quad(terminal_layer_use_fbo);
+                        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+                        glDisable(GL_BLEND);
+                    }
+
+                    glDisable(GL_TEXTURE_2D);
+                    terminal_bind_texture(0);
+                    source_texture = composite_texture;
+                    source_texture_width = (GLfloat)drawable_width;
+                    source_texture_height = (GLfloat)drawable_height;
+                    source_input_width = (GLfloat)drawable_width;
+                    source_input_height = (GLfloat)drawable_height;
+                } else {
+                    terminal_desktop_active = 0;
+                    terminal_terminal_alpha = 1.0f;
+                }
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            } else {
+                terminal_desktop_active = 0;
+                terminal_terminal_alpha = 1.0f;
+            }
+        }
+#endif
+
         if (terminal_shaders_active()) {
             static int frame_counter = 0;
             int frame_value = frame_counter++;
 
             int multipass_failed = 0;
+            int texture_offset = (source_texture == terminal_gl_intermediate_textures[0]) ? 1 : 0;
 
             for (size_t shader_index = 0; shader_index < terminal_gl_shader_count; shader_index++) {
                 struct terminal_gl_shader *shader = &terminal_gl_shaders[shader_index];
@@ -8328,7 +8738,7 @@ int main(int argc, char **argv) {
                         multipass_failed = 1;
                         last_pass = 1;
                     } else {
-                        target_texture = terminal_gl_intermediate_textures[shader_index % 2u];
+                        target_texture = terminal_gl_intermediate_textures[(shader_index + (size_t)texture_offset) % 2u];
                         glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
                         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target_texture, 0);
                         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -8449,24 +8859,34 @@ int main(int argc, char **argv) {
             glLoadIdentity();
 
             glActiveTexture(GL_TEXTURE0);
-            terminal_bind_texture(terminal_gl_texture);
             glEnable(GL_TEXTURE_2D);
-
-            glBegin(GL_TRIANGLE_STRIP);
-            glTexCoord2f(0.0f, 1.0f);
-            glVertex2f(-1.0f, -1.0f);
-            glTexCoord2f(1.0f, 1.0f);
-            glVertex2f(1.0f, -1.0f);
-            glTexCoord2f(0.0f, 0.0f);
-            glVertex2f(-1.0f, 1.0f);
-            glTexCoord2f(1.0f, 0.0f);
-            glVertex2f(1.0f, 1.0f);
-            glEnd();
+#if BUDOSTACK_HAVE_X11_SHM
+            if (terminal_desktop_active) {
+                terminal_bind_texture(terminal_x11_capture.texture);
+                terminal_draw_fullscreen_quad(0);
+                if (terminal_terminal_alpha > 0.001f) {
+                    glEnable(GL_BLEND);
+                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                    glColor4f(1.0f, 1.0f, 1.0f, terminal_terminal_alpha);
+                    terminal_bind_texture(terminal_gl_texture);
+                    terminal_draw_fullscreen_quad(0);
+                    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+                    glDisable(GL_BLEND);
+                }
+            } else {
+                terminal_bind_texture(terminal_gl_texture);
+                terminal_draw_fullscreen_quad(0);
+            }
+#else
+            terminal_bind_texture(terminal_gl_texture);
+            terminal_draw_fullscreen_quad(0);
+#endif
 
             glDisable(GL_TEXTURE_2D);
             terminal_bind_texture(0);
         }
 
+        terminal_cursor_opacity_enabled = terminal_desktop_active;
         if (!cursor_composited_into_shader) {
             terminal_cursor_render(frame_width, frame_height, drawable_width, drawable_height);
         }

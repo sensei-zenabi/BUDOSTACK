@@ -119,6 +119,9 @@ static int terminal_mouse_x = 0;
 static int terminal_mouse_y = 0;
 static unsigned int terminal_mouse_left_clicks = 0u;
 static unsigned int terminal_mouse_right_clicks = 0u;
+static int terminal_using_alternate = 0;
+static int terminal_alternate_initialized = 0;
+static struct terminal_buffer *terminal_alternate_buffer_handle = NULL;
 
 struct terminal_quad_vertex {
     GLfloat position[4];
@@ -300,6 +303,14 @@ struct terminal_buffer;
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);
 static int terminal_send_string(int fd, const char *str);
+static int terminal_mouse_reporting_enabled(const struct terminal_buffer *buffer);
+static int terminal_send_mouse_report(const struct terminal_buffer *buffer,
+                                      int button_code,
+                                      int released,
+                                      int motion,
+                                      size_t column,
+                                      size_t row,
+                                      SDL_Keymod mod);
 static size_t terminal_total_rows(const struct terminal_buffer *buffer);
 static const struct terminal_cell *terminal_buffer_row_at(const struct terminal_buffer *buffer, size_t index);
 static size_t terminal_clamped_scroll_offset(const struct terminal_buffer *buffer);
@@ -327,8 +338,11 @@ static int terminal_selection_contains_cell(size_t global_row,
                                             size_t columns);
 static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer);
 // FIX: for edit.c paste to work
-//static int terminal_paste_from_clipboard(struct terminal_buffer *buffer, int fd);
+static int terminal_paste_from_clipboard(struct terminal_buffer *buffer, int fd);
 static size_t terminal_encode_utf8(uint32_t codepoint, char *dst);
+static uint32_t terminal_map_charset(const struct ansi_parser *parser, uint32_t codepoint);
+static int terminal_prepare_alternate_buffer(const struct terminal_buffer *source);
+static void terminal_swap_alternate_buffer(struct terminal_buffer *buffer);
 static int terminal_initialize_gl_program(const char *shader_path);
 static void terminal_release_gl_resources(void);
 static void terminal_clear_gl_shaders(void);
@@ -954,6 +968,12 @@ struct terminal_buffer {
     int cursor_visible;
     int saved_cursor_visible;
     int bracketed_paste_enabled; // to pass multi-row paste for edit
+    int app_keypad;
+    int app_cursor;
+    int mouse_tracking;
+    int mouse_drag_tracking;
+    int mouse_motion_tracking;
+    int mouse_sgr;
     size_t history_limit;
     size_t history_rows;
     size_t history_start;
@@ -985,6 +1005,10 @@ struct ansi_parser {
     size_t param_count;
     int collecting_param;
     int private_marker;
+    char charset_g0;
+    char charset_g1;
+    char charset_target;
+    int charset_use_g1;
     char osc_buffer[131072];
     size_t osc_length;
     uint32_t utf8_codepoint;
@@ -1302,6 +1326,33 @@ static size_t terminal_encode_utf8(uint32_t codepoint, char *dst) {
     return 4u;
 }
 
+static uint32_t terminal_map_charset(const struct ansi_parser *parser, uint32_t codepoint) {
+    if (!parser || codepoint >= 128u) {
+        return codepoint;
+    }
+
+    char charset = parser->charset_use_g1 ? parser->charset_g1 : parser->charset_g0;
+    if (charset != '0') {
+        return codepoint;
+    }
+
+    switch (codepoint) {
+    case 'j': return 0x2518u; /* lower-right corner */
+    case 'k': return 0x2510u; /* upper-right corner */
+    case 'l': return 0x250Cu; /* upper-left corner */
+    case 'm': return 0x2514u; /* lower-left corner */
+    case 'n': return 0x253Cu; /* crossing lines */
+    case 'q': return 0x2500u; /* horizontal line */
+    case 't': return 0x251Cu; /* left tee */
+    case 'u': return 0x2524u; /* right tee */
+    case 'v': return 0x2534u; /* bottom tee */
+    case 'w': return 0x252Cu; /* top tee */
+    case 'x': return 0x2502u; /* vertical line */
+    default:
+        return codepoint;
+    }
+}
+
 static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer) {
     if (!buffer) {
         return 0;
@@ -1423,7 +1474,7 @@ static int terminal_paste_from_clipboard(int fd) {
     return result;
 }
 */
-int terminal_paste_from_clipboard(struct terminal_buffer *buffer, int fd) {
+static int terminal_paste_from_clipboard(struct terminal_buffer *buffer, int fd) {
     char *text = SDL_GetClipboardText();
     if (!text) {
         return -1;
@@ -1455,6 +1506,51 @@ int terminal_paste_from_clipboard(struct terminal_buffer *buffer, int fd) {
     
     SDL_free(text);
     return result;
+}
+
+static int terminal_mouse_reporting_enabled(const struct terminal_buffer *buffer) {
+    if (!buffer) {
+        return 0;
+    }
+    return buffer->mouse_tracking || buffer->mouse_drag_tracking || buffer->mouse_motion_tracking;
+}
+
+static int terminal_send_mouse_report(const struct terminal_buffer *buffer,
+                                      int button_code,
+                                      int released,
+                                      int motion,
+                                      size_t column,
+                                      size_t row,
+                                      SDL_Keymod mod) {
+    if (!buffer || !buffer->mouse_sgr) {
+        return 0;
+    }
+
+    int code = button_code & 0x7F;
+    if ((mod & KMOD_SHIFT) != 0) {
+        code |= 4;
+    }
+    if ((mod & KMOD_ALT) != 0) {
+        code |= 8;
+    }
+    if ((mod & KMOD_CTRL) != 0) {
+        code |= 16;
+    }
+    if (motion) {
+        code |= 32;
+    }
+
+    char sequence[64];
+    char final = released ? 'm' : 'M';
+    int written = snprintf(sequence, sizeof(sequence), "\x1b[<%d;%zu;%zu%c",
+                           code,
+                           column,
+                           row,
+                           final);
+    if (written <= 0 || (size_t)written >= sizeof(sequence)) {
+        return -1;
+    }
+    return terminal_send_response(sequence);
 }
 
 static const uint32_t terminal_default_palette16[16] = {
@@ -3722,6 +3818,12 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->cursor_visible = 1;
     buffer->bracketed_paste_enabled = 0; // Default: OFF
     buffer->saved_cursor_visible = 1;
+    buffer->app_keypad = 0;
+    buffer->app_cursor = 0;
+    buffer->mouse_tracking = 0;
+    buffer->mouse_drag_tracking = 0;
+    buffer->mouse_motion_tracking = 0;
+    buffer->mouse_sgr = 0;
     buffer->history_limit = TERMINAL_HISTORY_LIMIT;
     buffer->history_rows = 0u;
     buffer->history_start = 0u;
@@ -3776,7 +3878,7 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     return 0;
 }
 
-static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_columns, size_t new_rows) {
+static int terminal_buffer_resize_single(struct terminal_buffer *buffer, size_t new_columns, size_t new_rows) {
     if (!buffer || new_columns == 0u || new_rows == 0u) {
         return -1;
     }
@@ -3862,6 +3964,25 @@ static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_col
     return 0;
 }
 
+static int terminal_buffer_resize(struct terminal_buffer *buffer, size_t new_columns, size_t new_rows) {
+    if (!buffer || new_columns == 0u || new_rows == 0u) {
+        return -1;
+    }
+
+    if (terminal_buffer_resize_single(buffer, new_columns, new_rows) != 0) {
+        return -1;
+    }
+
+    if (terminal_alternate_buffer_handle && terminal_alternate_initialized &&
+        terminal_alternate_buffer_handle != buffer) {
+        if (terminal_buffer_resize_single(terminal_alternate_buffer_handle, new_columns, new_rows) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
 static void terminal_buffer_free(struct terminal_buffer *buffer) {
     if (!buffer) {
         return;
@@ -3884,6 +4005,42 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     buffer->history_rows = 0u;
     buffer->history_start = 0u;
     buffer->scroll_offset = 0u;
+}
+
+static int terminal_prepare_alternate_buffer(const struct terminal_buffer *source) {
+    if (!terminal_alternate_buffer_handle || !source) {
+        return -1;
+    }
+    if (terminal_alternate_initialized) {
+        return 0;
+    }
+
+    terminal_buffer_initialize_palette(terminal_alternate_buffer_handle);
+    if (terminal_buffer_init(terminal_alternate_buffer_handle, source->columns, source->rows) != 0) {
+        terminal_buffer_free(terminal_alternate_buffer_handle);
+        return -1;
+    }
+    terminal_alternate_buffer_handle->history_limit = source->history_limit;
+    terminal_alternate_initialized = 1;
+    return 0;
+}
+
+static void terminal_swap_alternate_buffer(struct terminal_buffer *buffer) {
+    if (!buffer || !terminal_alternate_buffer_handle) {
+        return;
+    }
+    if (!terminal_alternate_initialized) {
+        if (terminal_prepare_alternate_buffer(buffer) != 0) {
+            return;
+        }
+    }
+
+    struct terminal_buffer temp = *buffer;
+    *buffer = *terminal_alternate_buffer_handle;
+    *terminal_alternate_buffer_handle = temp;
+    terminal_using_alternate = !terminal_using_alternate;
+    terminal_mark_full_redraw();
+    terminal_mark_background_dirty();
 }
 
 static void terminal_buffer_clamp_scroll(struct terminal_buffer *buffer) {
@@ -4561,11 +4718,11 @@ static void ansi_parser_reset_utf8(struct ansi_parser *parser) {
 }
 
 static void ansi_parser_emit_codepoint(struct ansi_parser *parser, struct terminal_buffer *buffer, uint32_t codepoint) {
-    (void)parser;
     if (!buffer) {
         return;
     }
-    terminal_put_char(buffer, codepoint);
+    uint32_t mapped = terminal_map_charset(parser, codepoint);
+    terminal_put_char(buffer, mapped);
 }
 
 static void ansi_parser_emit_replacement(struct ansi_parser *parser, struct terminal_buffer *buffer) {
@@ -4660,6 +4817,10 @@ static void ansi_parser_init(struct ansi_parser *parser) {
     }
     parser->state = ANSI_STATE_GROUND;
     ansi_parser_reset_parameters(parser);
+    parser->charset_g0 = 'B';
+    parser->charset_g1 = 'B';
+    parser->charset_target = 0;
+    parser->charset_use_g1 = 0;
     parser->osc_length = 0u;
     if (sizeof(parser->osc_buffer) > 0u) {
         parser->osc_buffer[0] = '\0';
@@ -5825,11 +5986,46 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                     continue;
                 }
                 switch (mode) {
+                case 1: /* application cursor keys */
+                    if (command == 'h') {
+                        buffer->app_cursor = 1;
+                    } else {
+                        buffer->app_cursor = 0;
+                    }
+                    break;
                 case 25: /* cursor visibility */
                     if (command == 'h') {
                         buffer->cursor_visible = 1;
                     } else {
                         buffer->cursor_visible = 0;
+                    }
+                    break;
+                case 1000: /* mouse click tracking */
+                    if (command == 'h') {
+                        buffer->mouse_tracking = 1;
+                    } else {
+                        buffer->mouse_tracking = 0;
+                    }
+                    break;
+                case 1002: /* mouse drag tracking */
+                    if (command == 'h') {
+                        buffer->mouse_drag_tracking = 1;
+                    } else {
+                        buffer->mouse_drag_tracking = 0;
+                    }
+                    break;
+                case 1003: /* mouse motion tracking */
+                    if (command == 'h') {
+                        buffer->mouse_motion_tracking = 1;
+                    } else {
+                        buffer->mouse_motion_tracking = 0;
+                    }
+                    break;
+                case 1006: /* SGR mouse mode */
+                    if (command == 'h') {
+                        buffer->mouse_sgr = 1;
+                    } else {
+                        buffer->mouse_sgr = 0;
                     }
                     break;
                 case 2004: /* bracketed paste */
@@ -5845,14 +6041,23 @@ static void ansi_apply_csi(struct ansi_parser *parser, struct terminal_buffer *b
                 case 1049:
                     /* Alternate screen buffer. Clear to approximate behaviour. */
                     if (command == 'h') {
-                        terminal_buffer_save_cursor(buffer);
-                        terminal_buffer_clear_display(buffer);
+                        if (!terminal_using_alternate) {
+                            terminal_buffer_save_cursor(buffer);
+                            terminal_swap_alternate_buffer(buffer);
+                            terminal_buffer_clear_display(buffer);
+                        }
+                        buffer->scroll_top = 0u;
+                        buffer->scroll_bottom = buffer->rows > 0u ? buffer->rows - 1u : 0u;
+                        buffer->scroll_offset = 0u;
                     } else {
-                        terminal_buffer_clear_display(buffer);
-                        terminal_buffer_restore_cursor(buffer);
+                        if (terminal_using_alternate) {
+                            terminal_swap_alternate_buffer(buffer);
+                            terminal_buffer_restore_cursor(buffer);
+                        }
+                        buffer->scroll_top = 0u;
+                        buffer->scroll_bottom = buffer->rows > 0u ? buffer->rows - 1u : 0u;
+                        buffer->scroll_offset = 0u;
                     }
-                    buffer->scroll_top = 0u;
-                    buffer->scroll_bottom = buffer->rows > 0u ? buffer->rows - 1u : 0u;
                     break;
                 default:
                     break;
@@ -5918,6 +6123,14 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
 
     switch (parser->state) {
     case ANSI_STATE_GROUND:
+        if (ch == 0x0Eu) {
+            parser->charset_use_g1 = 1;
+            return;
+        }
+        if (ch == 0x0Fu) {
+            parser->charset_use_g1 = 0;
+            return;
+        }
         ansi_parser_feed_utf8(parser, buffer, ch);
         break;
     case ANSI_STATE_ESCAPE:
@@ -5931,12 +6144,7 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
                 parser->osc_buffer[0] = '\0';
             }
         } else if (ch == '(' || ch == ')' || ch == '*' || ch == '+' || ch == '-' || ch == '.') {
-            /*
-             * Consume ISO-2022 character set designation sequences like ESC ( B
-             * or ESC ) 0. We don't implement alternate charsets, but we should
-             * still swallow the final designator byte instead of rendering it
-             * as a literal character.
-             */
+            parser->charset_target = (char)ch;
             parser->state = ANSI_STATE_ESCAPE_CHARSET;
         } else if (ch == 'c') {
             terminal_buffer_clear_display(buffer);
@@ -5958,12 +6166,29 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             terminal_buffer_reverse_index(buffer);
             parser->state = ANSI_STATE_GROUND;
             ansi_parser_reset_utf8(parser);
+        } else if (ch == '=') {
+            if (buffer) {
+                buffer->app_keypad = 1;
+            }
+            parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
+        } else if (ch == '>') {
+            if (buffer) {
+                buffer->app_keypad = 0;
+            }
+            parser->state = ANSI_STATE_GROUND;
+            ansi_parser_reset_utf8(parser);
         } else {
             parser->state = ANSI_STATE_GROUND;
             ansi_parser_reset_utf8(parser);
         }
         break;
     case ANSI_STATE_ESCAPE_CHARSET:
+        if (parser->charset_target == '(') {
+            parser->charset_g0 = (char)ch;
+        } else if (parser->charset_target == ')') {
+            parser->charset_g1 = (char)ch;
+        }
         parser->state = ANSI_STATE_GROUND;
         ansi_parser_reset_utf8(parser);
         break;
@@ -6885,6 +7110,10 @@ int main(int argc, char **argv) {
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
+    struct terminal_buffer alternate_buffer = {0};
+    terminal_alternate_buffer_handle = &alternate_buffer;
+    terminal_alternate_initialized = 0;
+    terminal_using_alternate = 0;
 
     update_pty_size(master_fd, columns, rows);
 
@@ -6977,7 +7206,44 @@ int main(int argc, char **argv) {
                     wheel_y = -wheel_y;
                 }
 #endif
-                if (wheel_y > 0) {
+                if (terminal_mouse_reporting_enabled(&buffer)) {
+                    int button_code = (wheel_y > 0) ? 64 : 65;
+                    size_t top_index = 0u;
+                    terminal_visible_row_range(&buffer, &top_index, NULL);
+                    size_t total_rows = terminal_total_rows(&buffer);
+                    size_t global_row = 0u;
+                    size_t column = 0u;
+                    int logical_x = 0;
+                    int logical_y = 0;
+                    int mouse_x = 0;
+                    int mouse_y = 0;
+                    SDL_GetMouseState(&mouse_x, &mouse_y);
+                    if (terminal_window_point_to_framebuffer(mouse_x, mouse_y, &logical_x, &logical_y) == 0 &&
+                        terminal_screen_point_to_cell(logical_x,
+                                                      logical_y,
+                                                      buffer.columns,
+                                                      buffer.rows,
+                                                      top_index,
+                                                      total_rows,
+                                                      &global_row,
+                                                      &column,
+                                                      1) == 0) {
+                        size_t row_in_view = global_row >= top_index ? global_row - top_index : 0u;
+                        if (row_in_view >= buffer.rows && buffer.rows > 0u) {
+                            row_in_view = buffer.rows - 1u;
+                        }
+                        if (column >= buffer.columns && buffer.columns > 0u) {
+                            column = buffer.columns - 1u;
+                        }
+                        terminal_send_mouse_report(&buffer,
+                                                   button_code,
+                                                   0,
+                                                   0,
+                                                   column + 1u,
+                                                   row_in_view + 1u,
+                                                   SDL_GetModState());
+                    }
+                } else if (wheel_y > 0) {
                     size_t delta = (size_t)wheel_y;
                     buffer.scroll_offset += delta;
                     terminal_buffer_clamp_scroll(&buffer);
@@ -6992,7 +7258,52 @@ int main(int argc, char **argv) {
 #endif
             } else if (event.type == SDL_MOUSEBUTTONDOWN) {
                 terminal_cursor_update_position(event.button.x, event.button.y);
-                if (event.button.button == SDL_BUTTON_LEFT) {
+                int mouse_reporting = terminal_mouse_reporting_enabled(&buffer);
+                if (mouse_reporting) {
+                    size_t top_index = 0u;
+                    terminal_visible_row_range(&buffer, &top_index, NULL);
+                    size_t total_rows = terminal_total_rows(&buffer);
+                    size_t global_row = 0u;
+                    size_t column = 0u;
+                    int logical_x = 0;
+                    int logical_y = 0;
+                    if (terminal_window_point_to_framebuffer(event.button.x, event.button.y, &logical_x, &logical_y) == 0 &&
+                        terminal_screen_point_to_cell(logical_x,
+                                                      logical_y,
+                                                      buffer.columns,
+                                                      buffer.rows,
+                                                      top_index,
+                                                      total_rows,
+                                                      &global_row,
+                                                      &column,
+                                                      1) == 0) {
+                        size_t row_in_view = global_row >= top_index ? global_row - top_index : 0u;
+                        if (row_in_view >= buffer.rows && buffer.rows > 0u) {
+                            row_in_view = buffer.rows - 1u;
+                        }
+                        if (column >= buffer.columns && buffer.columns > 0u) {
+                            column = buffer.columns - 1u;
+                        }
+                        int button_code = -1;
+                        if (event.button.button == SDL_BUTTON_LEFT) {
+                            button_code = 0;
+                        } else if (event.button.button == SDL_BUTTON_MIDDLE) {
+                            button_code = 1;
+                        } else if (event.button.button == SDL_BUTTON_RIGHT) {
+                            button_code = 2;
+                        }
+                        if (button_code >= 0) {
+                            terminal_send_mouse_report(&buffer,
+                                                       button_code,
+                                                       0,
+                                                       0,
+                                                       column + 1u,
+                                                       row_in_view + 1u,
+                                                       SDL_GetModState());
+                        }
+                    }
+                    terminal_selection_clear();
+                } else if (event.button.button == SDL_BUTTON_LEFT) {
                     size_t top_index = 0u;
                     terminal_visible_row_range(&buffer, &top_index, NULL);
                     size_t total_rows = terminal_total_rows(&buffer);
@@ -7023,12 +7334,107 @@ int main(int argc, char **argv) {
                     }
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP) {
-                if (event.button.button == SDL_BUTTON_LEFT) {
+                if (terminal_mouse_reporting_enabled(&buffer)) {
+                    size_t top_index = 0u;
+                    terminal_visible_row_range(&buffer, &top_index, NULL);
+                    size_t total_rows = terminal_total_rows(&buffer);
+                    size_t global_row = 0u;
+                    size_t column = 0u;
+                    int logical_x = 0;
+                    int logical_y = 0;
+                    if (terminal_window_point_to_framebuffer(event.button.x, event.button.y, &logical_x, &logical_y) == 0 &&
+                        terminal_screen_point_to_cell(logical_x,
+                                                      logical_y,
+                                                      buffer.columns,
+                                                      buffer.rows,
+                                                      top_index,
+                                                      total_rows,
+                                                      &global_row,
+                                                      &column,
+                                                      1) == 0) {
+                        size_t row_in_view = global_row >= top_index ? global_row - top_index : 0u;
+                        if (row_in_view >= buffer.rows && buffer.rows > 0u) {
+                            row_in_view = buffer.rows - 1u;
+                        }
+                        if (column >= buffer.columns && buffer.columns > 0u) {
+                            column = buffer.columns - 1u;
+                        }
+                        int button_code = -1;
+                        if (event.button.button == SDL_BUTTON_LEFT) {
+                            button_code = 0;
+                        } else if (event.button.button == SDL_BUTTON_MIDDLE) {
+                            button_code = 1;
+                        } else if (event.button.button == SDL_BUTTON_RIGHT) {
+                            button_code = 2;
+                        }
+                        if (button_code >= 0) {
+                            terminal_send_mouse_report(&buffer,
+                                                       button_code,
+                                                       1,
+                                                       0,
+                                                       column + 1u,
+                                                       row_in_view + 1u,
+                                                       SDL_GetModState());
+                        }
+                    }
+                    terminal_selection_dragging = 0;
+                } else if (event.button.button == SDL_BUTTON_LEFT) {
                     terminal_selection_dragging = 0;
                 }
             } else if (event.type == SDL_MOUSEMOTION) {
                 terminal_cursor_update_position(event.motion.x, event.motion.y);
-                if (terminal_selection_dragging) {
+                if (terminal_mouse_reporting_enabled(&buffer) &&
+                    (buffer.mouse_motion_tracking || buffer.mouse_drag_tracking)) {
+                    int send_motion = 0;
+                    int button_code = 0;
+                    if ((event.motion.state & SDL_BUTTON_LMASK) != 0) {
+                        button_code = 0;
+                        send_motion = 1;
+                    } else if ((event.motion.state & SDL_BUTTON_MMASK) != 0) {
+                        button_code = 1;
+                        send_motion = 1;
+                    } else if ((event.motion.state & SDL_BUTTON_RMASK) != 0) {
+                        button_code = 2;
+                        send_motion = 1;
+                    } else if (buffer.mouse_motion_tracking) {
+                        button_code = 0;
+                        send_motion = 1;
+                    }
+                    if (send_motion) {
+                        size_t top_index = 0u;
+                        terminal_visible_row_range(&buffer, &top_index, NULL);
+                        size_t total_rows = terminal_total_rows(&buffer);
+                        size_t global_row = 0u;
+                        size_t column = 0u;
+                        int logical_x = 0;
+                        int logical_y = 0;
+                        if (terminal_window_point_to_framebuffer(event.motion.x, event.motion.y, &logical_x, &logical_y) == 0 &&
+                            terminal_screen_point_to_cell(logical_x,
+                                                          logical_y,
+                                                          buffer.columns,
+                                                          buffer.rows,
+                                                          top_index,
+                                                          total_rows,
+                                                          &global_row,
+                                                          &column,
+                                                          1) == 0) {
+                            size_t row_in_view = global_row >= top_index ? global_row - top_index : 0u;
+                            if (row_in_view >= buffer.rows && buffer.rows > 0u) {
+                                row_in_view = buffer.rows - 1u;
+                            }
+                            if (column >= buffer.columns && buffer.columns > 0u) {
+                                column = buffer.columns - 1u;
+                            }
+                            terminal_send_mouse_report(&buffer,
+                                                       button_code,
+                                                       0,
+                                                       1,
+                                                       column + 1u,
+                                                       row_in_view + 1u,
+                                                       SDL_GetModState());
+                        }
+                    }
+                } else if (terminal_selection_dragging) {
                     if ((event.motion.state & SDL_BUTTON_LMASK) == 0) {
                         terminal_selection_dragging = 0;
                     } else {
@@ -7065,6 +7471,16 @@ int main(int argc, char **argv) {
                         if (terminal_copy_selection_to_clipboard(&buffer)) {
                             clipboard_handled = 1;
                         }
+                    }
+                    if ((mod & KMOD_SHIFT) != 0 && sym == SDLK_v) {
+                        if (terminal_paste_from_clipboard(&buffer, master_fd) == 0) {
+                            clipboard_handled = 1;
+                        }
+                    }
+                }
+                if ((mod & KMOD_SHIFT) != 0 && sym == SDLK_INSERT) {
+                    if (terminal_paste_from_clipboard(&buffer, master_fd) == 0) {
+                        clipboard_handled = 1;
                     }
                 }
                 if (clipboard_handled) {
@@ -7109,7 +7525,11 @@ int main(int argc, char **argv) {
                 case SDLK_RETURN:
                 case SDLK_KP_ENTER: {
                     unsigned int modifier = terminal_modifier_param(mod);
-                    if (modifier == 1u) {
+                    if (sym == SDLK_KP_ENTER && buffer.app_keypad && modifier == 1u) {
+                        if (terminal_send_ss3_final(master_fd, mod, 'M') < 0) {
+                            running = 0;
+                        }
+                    } else if (modifier == 1u) {
                         unsigned char cr = '\r';
                         if (terminal_send_bytes(master_fd, &cr, 1u) < 0) {
                             running = 0;
@@ -7162,25 +7582,33 @@ int main(int argc, char **argv) {
                     handled = 1;
                     break;
                 case SDLK_UP:
-                    if (terminal_send_csi_final(master_fd, mod, 'A') < 0) {
+                    if ((buffer.app_cursor != 0) ?
+                        (terminal_send_ss3_final(master_fd, mod, 'A') < 0) :
+                        (terminal_send_csi_final(master_fd, mod, 'A') < 0)) {
                         running = 0;
                     }
                     handled = 1;
                     break;
                 case SDLK_DOWN:
-                    if (terminal_send_csi_final(master_fd, mod, 'B') < 0) {
+                    if ((buffer.app_cursor != 0) ?
+                        (terminal_send_ss3_final(master_fd, mod, 'B') < 0) :
+                        (terminal_send_csi_final(master_fd, mod, 'B') < 0)) {
                         running = 0;
                     }
                     handled = 1;
                     break;
                 case SDLK_RIGHT:
-                    if (terminal_send_csi_final(master_fd, mod, 'C') < 0) {
+                    if ((buffer.app_cursor != 0) ?
+                        (terminal_send_ss3_final(master_fd, mod, 'C') < 0) :
+                        (terminal_send_csi_final(master_fd, mod, 'C') < 0)) {
                         running = 0;
                     }
                     handled = 1;
                     break;
                 case SDLK_LEFT:
-                    if (terminal_send_csi_final(master_fd, mod, 'D') < 0) {
+                    if ((buffer.app_cursor != 0) ?
+                        (terminal_send_ss3_final(master_fd, mod, 'D') < 0) :
+                        (terminal_send_csi_final(master_fd, mod, 'D') < 0)) {
                         running = 0;
                     }
                     handled = 1;
@@ -7364,6 +7792,49 @@ int main(int argc, char **argv) {
                         running = 0;
                     }
                     handled = 1;
+                    break;
+                case SDLK_KP_0:
+                case SDLK_KP_1:
+                case SDLK_KP_2:
+                case SDLK_KP_3:
+                case SDLK_KP_4:
+                case SDLK_KP_5:
+                case SDLK_KP_6:
+                case SDLK_KP_7:
+                case SDLK_KP_8:
+                case SDLK_KP_9:
+                case SDLK_KP_PERIOD:
+                case SDLK_KP_PLUS:
+                case SDLK_KP_MINUS:
+                case SDLK_KP_MULTIPLY:
+                case SDLK_KP_DIVIDE:
+                    if (buffer.app_keypad) {
+                        char final_char = 0;
+                        switch (sym) {
+                        case SDLK_KP_0: final_char = 'p'; break;
+                        case SDLK_KP_1: final_char = 'q'; break;
+                        case SDLK_KP_2: final_char = 'r'; break;
+                        case SDLK_KP_3: final_char = 's'; break;
+                        case SDLK_KP_4: final_char = 't'; break;
+                        case SDLK_KP_5: final_char = 'u'; break;
+                        case SDLK_KP_6: final_char = 'v'; break;
+                        case SDLK_KP_7: final_char = 'w'; break;
+                        case SDLK_KP_8: final_char = 'x'; break;
+                        case SDLK_KP_9: final_char = 'y'; break;
+                        case SDLK_KP_PERIOD: final_char = 'n'; break;
+                        case SDLK_KP_PLUS: final_char = 'k'; break;
+                        case SDLK_KP_MINUS: final_char = 'm'; break;
+                        case SDLK_KP_MULTIPLY: final_char = 'j'; break;
+                        case SDLK_KP_DIVIDE: final_char = 'o'; break;
+                        default: break;
+                        }
+                        if (final_char != 0) {
+                            if (terminal_send_ss3_final(master_fd, mod, final_char) < 0) {
+                                running = 0;
+                            }
+                            handled = 1;
+                        }
+                    }
                     break;
                 default:
                     break;
@@ -7964,6 +8435,7 @@ int main(int argc, char **argv) {
     }
 
     terminal_buffer_free(&buffer);
+    terminal_buffer_free(&alternate_buffer);
     terminal_release_gl_resources();
     if (terminal_gl_context_handle) {
         SDL_GL_DeleteContext(terminal_gl_context_handle);

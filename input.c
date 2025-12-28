@@ -40,6 +40,9 @@ static void move_to_end_of_line(const char *buffer, size_t *cursor, size_t pos);
 static void clear_line_contents(const char *buffer, size_t *pos, size_t *cursor);
 static char *system_clipboard_read(void);
 static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, size_t *cursor);
+static size_t find_token_start(const char *buffer, size_t pos);
+static void unescape_token(const char *src, char *dest, size_t dest_size);
+static void escape_token(const char *src, char *dest, size_t dest_size);
 
 /*
  * read_input()
@@ -200,9 +203,7 @@ char* read_input(void) {
         /* TAB pressed: trigger autocomplete */
         else if (c == '\t') {
             /* Find beginning of current token */
-            size_t token_start = pos;
-            while (token_start > 0 && buffer[token_start - 1] != ' ')
-                token_start--;
+            size_t token_start = find_token_start(buffer, pos);
             char token[INPUT_SIZE];
             size_t token_len = pos - token_start;
             strncpy(token, buffer + token_start, token_len);
@@ -210,25 +211,61 @@ char* read_input(void) {
             if (token_len == 0)
                 continue; /* Nothing to complete */
 
+            char quote_char = '\0';
+            size_t content_start = 0;
+            size_t content_len = token_len;
+            if (token[0] == '"' || token[0] == '\'') {
+                quote_char = token[0];
+                content_start = 1;
+                if (token_len > 1 && token[token_len - 1] == quote_char) {
+                    content_len = token_len - 1;
+                }
+            }
+
+            char raw_token[INPUT_SIZE];
+            if (content_start >= token_len) {
+                continue;
+            }
+            {
+                char unescaped[INPUT_SIZE];
+                size_t copy_len = content_len - content_start;
+                if (copy_len >= sizeof(unescaped)) {
+                    copy_len = sizeof(unescaped) - 1;
+                }
+                memcpy(unescaped, token + content_start, copy_len);
+                unescaped[copy_len] = '\0';
+                unescape_token(unescaped, raw_token, sizeof(raw_token));
+            }
+
             /* If first token, try command completion first. If that fails, fall back to filenames. */
             if (token_start == 0) {
                 char completion[INPUT_SIZE] = {0};
                 int count = autocomplete_command(token, completion, sizeof(completion));
                 int used_filenames = 0;
                 if (count == 0) {
-                    count = autocomplete_filename(token, completion, sizeof(completion));
+                    count = autocomplete_filename(raw_token, completion, sizeof(completion));
                     if (count > 0) {
                         used_filenames = 1;
                     }
                 }
                 if (count == 1) {
-                    size_t comp_len = strlen(completion);
+                    char formatted[INPUT_SIZE * 2];
+                    if (used_filenames) {
+                        if (quote_char != '\0') {
+                            snprintf(formatted, sizeof(formatted), "%c%s%c", quote_char, completion, quote_char);
+                        } else {
+                            escape_token(completion, formatted, sizeof(formatted));
+                        }
+                    } else {
+                        snprintf(formatted, sizeof(formatted), "%s", completion);
+                    }
+                    size_t comp_len = strlen(formatted);
                     int erase_width = utf8_display_width_range(buffer, token_start, pos);
                     for (int i = 0; i < erase_width; i++) {
                         printf("\b");
                     }
-                    printf("%s", completion);
-                    int completion_width = utf8_string_display_width(completion);
+                    printf("%s", formatted);
+                    int completion_width = utf8_string_display_width(formatted);
                     if (completion_width < erase_width) {
                         int diff = erase_width - completion_width;
                         for (int i = 0; i < diff; i++) {
@@ -239,7 +276,7 @@ char* read_input(void) {
                         }
                     }
                     fflush(stdout);
-                    memmove(buffer + token_start, completion, comp_len + 1);
+                    memmove(buffer + token_start, formatted, comp_len + 1);
                     pos = token_start + comp_len;
                     cursor = pos;
                 } else if (count > 1) {
@@ -247,15 +284,15 @@ char* read_input(void) {
                     if (used_filenames) {
                         char dir[INPUT_SIZE];
                         char prefix[INPUT_SIZE];
-                        const char *last_slash = strrchr(token, '/');
+                        const char *last_slash = strrchr(raw_token, '/');
                         if (last_slash) {
-                            size_t dir_len = last_slash - token + 1;
-                            strncpy(dir, token, dir_len);
+                            size_t dir_len = last_slash - raw_token + 1;
+                            strncpy(dir, raw_token, dir_len);
                             dir[dir_len] = '\0';
                             strcpy(prefix, last_slash + 1);
                         } else {
                             strcpy(dir, "./");
-                            strcpy(prefix, token);
+                            strcpy(prefix, raw_token);
                         }
                         list_filename_matches(dir, prefix);
                     } else {
@@ -267,15 +304,21 @@ char* read_input(void) {
                 }
             } else {
                 char completion[INPUT_SIZE] = {0};
-                int count = autocomplete_filename(token, completion, sizeof(completion));
+                int count = autocomplete_filename(raw_token, completion, sizeof(completion));
                 if (count == 1) {
-                    size_t comp_len = strlen(completion);
+                    char formatted[INPUT_SIZE * 2];
+                    if (quote_char != '\0') {
+                        snprintf(formatted, sizeof(formatted), "%c%s%c", quote_char, completion, quote_char);
+                    } else {
+                        escape_token(completion, formatted, sizeof(formatted));
+                    }
+                    size_t comp_len = strlen(formatted);
                     int erase_width = utf8_display_width_range(buffer, token_start, pos);
                     for (int i = 0; i < erase_width; i++) {
                         printf("\b");
                     }
-                    printf("%s", completion);
-                    int completion_width = utf8_string_display_width(completion);
+                    printf("%s", formatted);
+                    int completion_width = utf8_string_display_width(formatted);
                     if (completion_width < erase_width) {
                         int diff = erase_width - completion_width;
                         for (int i = 0; i < diff; i++) {
@@ -286,22 +329,22 @@ char* read_input(void) {
                         }
                     }
                     fflush(stdout);
-                    memmove(buffer + token_start, completion, comp_len + 1);
+                    memmove(buffer + token_start, formatted, comp_len + 1);
                     pos = token_start + comp_len;
                     cursor = pos;
                 } else if (count > 1) {
                     printf("\n");
                     char dir[INPUT_SIZE];
                     char prefix[INPUT_SIZE];
-                    const char *last_slash = strrchr(token, '/');
+                    const char *last_slash = strrchr(raw_token, '/');
                     if (last_slash) {
-                        size_t dir_len = last_slash - token + 1;
-                        strncpy(dir, token, dir_len);
+                        size_t dir_len = last_slash - raw_token + 1;
+                        strncpy(dir, raw_token, dir_len);
                         dir[dir_len] = '\0';
                         strcpy(prefix, last_slash + 1);
                     } else {
                         strcpy(dir, "./");
-                        strcpy(prefix, token);
+                        strcpy(prefix, raw_token);
                     }
                     list_filename_matches(dir, prefix);
                     printf("%s", buffer);
@@ -588,6 +631,74 @@ static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, s
 
     fwrite(text, 1, text_len, stdout);
     redraw_from_cursor(buffer, *cursor, 0);
+}
+
+static size_t find_token_start(const char *buffer, size_t pos) {
+    size_t token_start = 0;
+    int in_quotes = 0;
+    char quote_char = '\0';
+    size_t i = 0;
+    while (i < pos) {
+        char c = buffer[i];
+        if (!in_quotes && c == '\\') {
+            if (i + 1 < pos) {
+                i += 2;
+                continue;
+            }
+            i++;
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            if (in_quotes && c == quote_char) {
+                in_quotes = 0;
+                quote_char = '\0';
+            } else if (!in_quotes) {
+                in_quotes = 1;
+                quote_char = c;
+            }
+            i++;
+            continue;
+        }
+        if (!in_quotes && (c == ' ' || c == '\t')) {
+            token_start = i + 1;
+        }
+        i++;
+    }
+    return token_start;
+}
+
+static void unescape_token(const char *src, char *dest, size_t dest_size) {
+    if (!src || !dest || dest_size == 0) {
+        return;
+    }
+    size_t di = 0;
+    for (size_t si = 0; src[si] != '\0' && di + 1 < dest_size; si++) {
+        if (src[si] == '\\' && src[si + 1] != '\0') {
+            dest[di++] = src[si + 1];
+            si++;
+        } else {
+            dest[di++] = src[si];
+        }
+    }
+    dest[di] = '\0';
+}
+
+static void escape_token(const char *src, char *dest, size_t dest_size) {
+    if (!src || !dest || dest_size == 0) {
+        return;
+    }
+    size_t di = 0;
+    for (size_t si = 0; src[si] != '\0' && di + 1 < dest_size; si++) {
+        char c = src[si];
+        if (c == ' ' || c == '\t' || c == '"' || c == '\'' || c == '\\') {
+            if (di + 2 >= dest_size) {
+                break;
+            }
+            dest[di++] = '\\';
+        }
+        dest[di++] = c;
+    }
+    dest[di] = '\0';
 }
 
 static int utf8_display_width_range(const char *buffer, size_t start, size_t end) {

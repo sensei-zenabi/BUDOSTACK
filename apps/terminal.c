@@ -58,9 +58,11 @@
 
 #if BUDOSTACK_HAVE_SDL2 && BUDOSTACK_HAVE_SDL_SYSWM && defined(__has_include)
 #if __has_include(<X11/Xlib.h>) && __has_include(<X11/extensions/XShm.h>) && \
-    __has_include(<sys/ipc.h>) && __has_include(<sys/shm.h>)
+    __has_include(<X11/Xutil.h>) && __has_include(<sys/ipc.h>) && \
+    __has_include(<sys/shm.h>)
 #define BUDOSTACK_HAVE_X11_SHM 1
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <X11/extensions/XShm.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>

@@ -51,6 +51,18 @@ SDL2_GL_LIBS = -lGL
 endif
 endif
 
+X11_LIBS = $(shell pkg-config --libs x11 xext 2>/dev/null)
+ifeq ($(strip $(X11_LIBS)),)
+X11_FILES := $(wildcard /usr/lib*/libX11.so*)
+XEXT_FILES := $(wildcard /usr/lib*/libXext.so*)
+ifneq ($(strip $(X11_FILES)),)
+X11_LIBS = -lX11
+endif
+ifneq ($(strip $(XEXT_FILES)),)
+X11_LIBS += -lXext
+endif
+endif
+
 ifeq ($(strip $(SDL2_LIBS)),)
 SDL2_ENABLED = 0
 endif
@@ -61,7 +73,7 @@ endif
 
 ifeq ($(SDL2_ENABLED),1)
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
-apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
+apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS) $(X11_LIBS)
 endif
 
 # --------------------------------------------------------------------

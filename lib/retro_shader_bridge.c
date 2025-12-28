@@ -489,7 +489,6 @@ static int retro_initialize_gl_program(struct retro_shader_bridge *bridge, const
         if (!line_end) {
             line_end = end;
         }
-        size_t line_len = (size_t)(line_end - cursor);
         const char *scan = cursor;
         while (scan < line_end && (*scan == ' ' || *scan == '\t')) {
             scan++;

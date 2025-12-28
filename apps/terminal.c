@@ -4036,9 +4036,20 @@ static void terminal_swap_alternate_buffer(struct terminal_buffer *buffer) {
         }
     }
 
+    int mouse_tracking = buffer->mouse_tracking;
+    int mouse_drag_tracking = buffer->mouse_drag_tracking;
+    int mouse_motion_tracking = buffer->mouse_motion_tracking;
+    int mouse_sgr = buffer->mouse_sgr;
+
     struct terminal_buffer temp = *buffer;
     *buffer = *terminal_alternate_buffer_handle;
     *terminal_alternate_buffer_handle = temp;
+
+    buffer->mouse_tracking = mouse_tracking;
+    buffer->mouse_drag_tracking = mouse_drag_tracking;
+    buffer->mouse_motion_tracking = mouse_motion_tracking;
+    buffer->mouse_sgr = mouse_sgr;
+
     terminal_using_alternate = !terminal_using_alternate;
     terminal_mark_full_redraw();
     terminal_mark_background_dirty();

@@ -25,10 +25,16 @@ static const char *commands[] = {
 static const int num_commands = sizeof(commands) / sizeof(commands[0]);
 
 /* Helper function prototypes */
-static int autocomplete_command(const char *token, char *completion, size_t completion_size);
-static int autocomplete_filename(const char *token, char *completion, size_t completion_size);
-static void list_command_matches(const char *token);
-static void list_filename_matches(const char *dir, const char *prefix);
+struct completion_state {
+    int active;
+    size_t token_start;
+    int used_filenames;
+    char quote_char;
+    char **matches;
+    size_t match_count;
+    size_t index;
+};
+
 static int utf8_string_display_width(const char *s);
 static int utf8_display_width_range(const char *buffer, size_t start, size_t end);
 static size_t utf8_prev_char_start(const char *buffer, size_t cursor);
@@ -43,6 +49,11 @@ static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, s
 static size_t find_token_start(const char *buffer, size_t pos);
 static void unescape_token(const char *src, char *dest, size_t dest_size);
 static void escape_token(const char *src, char *dest, size_t dest_size);
+static char **collect_command_matches(const char *token, size_t *match_count);
+static char **collect_filename_matches(const char *token, size_t *match_count);
+static void clear_completion_state(struct completion_state *state);
+static void format_completion(const char *completion, int used_filenames, char quote_char,
+                              char *formatted, size_t formatted_size);
 
 /*
  * read_input()
@@ -65,6 +76,7 @@ char* read_input(void) {
     size_t cursor = 0;     // Current cursor position within buffer
     struct termios oldt, newt;
     int in_paste_mode = 0;
+    static struct completion_state completion_state = {0};
 
     /* Static history storage */
     static char *history[MAX_HISTORY] = {0};
@@ -98,11 +110,13 @@ char* read_input(void) {
     while (1) {
         int c = getchar();
         if ((c == '\n' || c == '\r') && !in_paste_mode) {
+            clear_completion_state(&completion_state);
             putchar('\n');
             break;
         }
         /* Handle escape sequences for arrow keys (command history navigation) */
         else if (c == '\033') {
+            clear_completion_state(&completion_state);
             int next1 = getchar();
             if (next1 == '[') {
                 int next2 = getchar();
@@ -237,124 +251,66 @@ char* read_input(void) {
                 unescape_token(unescaped, raw_token, sizeof(raw_token));
             }
 
-            /* If first token, try command completion first. If that fails, fall back to filenames. */
-            if (token_start == 0) {
-                char completion[INPUT_SIZE] = {0};
-                int count = autocomplete_command(token, completion, sizeof(completion));
-                int used_filenames = 0;
-                if (count == 0) {
-                    count = autocomplete_filename(raw_token, completion, sizeof(completion));
-                    if (count > 0) {
-                        used_filenames = 1;
-                    }
-                }
-                if (count == 1) {
-                    char formatted[INPUT_SIZE * 2];
-                    if (used_filenames) {
-                        if (quote_char != '\0') {
-                            snprintf(formatted, sizeof(formatted), "%c%s%c", quote_char, completion, quote_char);
-                        } else {
-                            escape_token(completion, formatted, sizeof(formatted));
-                        }
-                    } else {
-                        snprintf(formatted, sizeof(formatted), "%s", completion);
-                    }
-                    size_t comp_len = strlen(formatted);
-                    int erase_width = utf8_display_width_range(buffer, token_start, pos);
-                    for (int i = 0; i < erase_width; i++) {
-                        printf("\b");
-                    }
-                    printf("%s", formatted);
-                    int completion_width = utf8_string_display_width(formatted);
-                    if (completion_width < erase_width) {
-                        int diff = erase_width - completion_width;
-                        for (int i = 0; i < diff; i++) {
-                            printf(" ");
-                        }
-                        for (int i = 0; i < diff; i++) {
-                            printf("\b");
-                        }
-                    }
-                    fflush(stdout);
-                    memmove(buffer + token_start, formatted, comp_len + 1);
-                    pos = token_start + comp_len;
-                    cursor = pos;
-                } else if (count > 1) {
-                    printf("\n");
-                    if (used_filenames) {
-                        char dir[INPUT_SIZE];
-                        char prefix[INPUT_SIZE];
-                        const char *last_slash = strrchr(raw_token, '/');
-                        if (last_slash) {
-                            size_t dir_len = last_slash - raw_token + 1;
-                            strncpy(dir, raw_token, dir_len);
-                            dir[dir_len] = '\0';
-                            strcpy(prefix, last_slash + 1);
-                        } else {
-                            strcpy(dir, "./");
-                            strcpy(prefix, raw_token);
-                        }
-                        list_filename_matches(dir, prefix);
-                    } else {
-                        list_command_matches(token);
-                    }
-                    printf("%s", buffer);
-                    fflush(stdout);
-                    cursor = pos;
+            if (completion_state.active && completion_state.token_start == token_start) {
+                if (completion_state.match_count > 0) {
+                    completion_state.index =
+                        (completion_state.index + 1u) % completion_state.match_count;
                 }
             } else {
-                char completion[INPUT_SIZE] = {0};
-                int count = autocomplete_filename(raw_token, completion, sizeof(completion));
-                if (count == 1) {
-                    char formatted[INPUT_SIZE * 2];
-                    if (quote_char != '\0') {
-                        snprintf(formatted, sizeof(formatted), "%c%s%c", quote_char, completion, quote_char);
+                clear_completion_state(&completion_state);
+                if (token_start == 0) {
+                    completion_state.matches = collect_command_matches(token,
+                                                                      &completion_state.match_count);
+                    if (completion_state.match_count > 0) {
+                        completion_state.used_filenames = 0;
                     } else {
-                        escape_token(completion, formatted, sizeof(formatted));
+                        completion_state.matches =
+                            collect_filename_matches(raw_token, &completion_state.match_count);
+                        completion_state.used_filenames = 1;
                     }
-                    size_t comp_len = strlen(formatted);
-                    int erase_width = utf8_display_width_range(buffer, token_start, pos);
-                    for (int i = 0; i < erase_width; i++) {
+                } else {
+                    completion_state.matches =
+                        collect_filename_matches(raw_token, &completion_state.match_count);
+                    completion_state.used_filenames = 1;
+                }
+                completion_state.token_start = token_start;
+                completion_state.quote_char = quote_char;
+                completion_state.index = 0;
+                completion_state.active = completion_state.match_count > 1;
+            }
+
+            if (completion_state.match_count > 0) {
+                char formatted[INPUT_SIZE * 2];
+                format_completion(completion_state.matches[completion_state.index],
+                                  completion_state.used_filenames,
+                                  completion_state.quote_char,
+                                  formatted,
+                                  sizeof(formatted));
+                size_t comp_len = strlen(formatted);
+                int erase_width = utf8_display_width_range(buffer, token_start, pos);
+                for (int i = 0; i < erase_width; i++) {
+                    printf("\b");
+                }
+                printf("%s", formatted);
+                int completion_width = utf8_string_display_width(formatted);
+                if (completion_width < erase_width) {
+                    int diff = erase_width - completion_width;
+                    for (int i = 0; i < diff; i++) {
+                        printf(" ");
+                    }
+                    for (int i = 0; i < diff; i++) {
                         printf("\b");
                     }
-                    printf("%s", formatted);
-                    int completion_width = utf8_string_display_width(formatted);
-                    if (completion_width < erase_width) {
-                        int diff = erase_width - completion_width;
-                        for (int i = 0; i < diff; i++) {
-                            printf(" ");
-                        }
-                        for (int i = 0; i < diff; i++) {
-                            printf("\b");
-                        }
-                    }
-                    fflush(stdout);
-                    memmove(buffer + token_start, formatted, comp_len + 1);
-                    pos = token_start + comp_len;
-                    cursor = pos;
-                } else if (count > 1) {
-                    printf("\n");
-                    char dir[INPUT_SIZE];
-                    char prefix[INPUT_SIZE];
-                    const char *last_slash = strrchr(raw_token, '/');
-                    if (last_slash) {
-                        size_t dir_len = last_slash - raw_token + 1;
-                        strncpy(dir, raw_token, dir_len);
-                        dir[dir_len] = '\0';
-                        strcpy(prefix, last_slash + 1);
-                    } else {
-                        strcpy(dir, "./");
-                        strcpy(prefix, raw_token);
-                    }
-                    list_filename_matches(dir, prefix);
-                    printf("%s", buffer);
-                    fflush(stdout);
-                    cursor = pos;
                 }
+                fflush(stdout);
+                memmove(buffer + token_start, formatted, comp_len + 1);
+                pos = token_start + comp_len;
+                cursor = pos;
             }
         }
         /* Handle backspace */
         else if (c == 127 || c == 8) {
+            clear_completion_state(&completion_state);
             if (cursor > 0) {
                 size_t char_start = utf8_prev_char_start(buffer, cursor);
                 size_t removed_bytes = cursor - char_start;
@@ -376,6 +332,7 @@ char* read_input(void) {
         }
         /* Paste clipboard with Ctrl+V */
         else if (c == 0x16) {
+            clear_completion_state(&completion_state);
             char *clipboard = system_clipboard_read();
             if (clipboard) {
                 insert_text_at_cursor(clipboard, buffer, &pos, &cursor);
@@ -384,6 +341,7 @@ char* read_input(void) {
         }
         /* Regular character input */
         else {
+            clear_completion_state(&completion_state);
             char utf8_seq[MB_LEN_MAX];
             size_t seq_len = utf8_read_sequence(c, utf8_seq, sizeof(utf8_seq));
             if (seq_len == 0) {
@@ -431,82 +389,6 @@ char* read_input(void) {
 
     /* Return a duplicate of the buffer (caller must free it) */
     return strdup(buffer);
-}
-
-static int autocomplete_command(const char *token, char *completion, size_t completion_size) {
-    int match_count = 0;
-    const char *match = NULL;
-    for (int i = 0; i < num_commands; i++) {
-        if (strncmp(commands[i], token, strlen(token)) == 0) {
-            match_count++;
-            if (match_count == 1) {
-                match = commands[i];
-                strncpy(completion, match, completion_size - 1);
-                completion[completion_size - 1] = '\0';
-            }
-        }
-    }
-    return match_count;
-}
-
-static void list_command_matches(const char *token) {
-    for (int i = 0; i < num_commands; i++) {
-        if (strncmp(commands[i], token, strlen(token)) == 0)
-            printf("%s ", commands[i]);
-    }
-    printf("\n");
-}
-
-static int autocomplete_filename(const char *token, char *completion, size_t completion_size) {
-    char dir[INPUT_SIZE];
-    char prefix[INPUT_SIZE];
-    const char *last_slash = strrchr(token, '/');
-    if (last_slash) {
-        size_t dir_len = last_slash - token + 1;
-        strncpy(dir, token, dir_len);
-        dir[dir_len] = '\0';
-        strcpy(prefix, last_slash + 1);
-    } else {
-        strcpy(dir, "./");
-        strcpy(prefix, token);
-    }
-    int match_count = 0;
-    char match[INPUT_SIZE] = {0};
-    DIR *d = opendir(dir);
-    if (!d)
-        return 0;
-    struct dirent *entry;
-    while ((entry = readdir(d)) != NULL) {
-        if (strncmp(entry->d_name, prefix, strlen(prefix)) == 0) {
-            match_count++;
-            if (match_count == 1)
-                strcpy(match, entry->d_name);
-        }
-    }
-    closedir(d);
-    if (match_count == 1) {
-        char full_completion[INPUT_SIZE];
-        /* Safely construct the completion without overflowing the buffer */
-        strncpy(full_completion, dir, sizeof(full_completion));
-        full_completion[sizeof(full_completion) - 1] = '\0';
-        strncat(full_completion, match,
-                sizeof(full_completion) - strlen(full_completion) - 1);
-        snprintf(completion, completion_size, "%s", full_completion);
-    }
-    return match_count;
-}
-
-static void list_filename_matches(const char *dir, const char *prefix) {
-    DIR *d = opendir(dir);
-    if (!d)
-        return;
-    struct dirent *entry;
-    while ((entry = readdir(d)) != NULL) {
-        if (strncmp(entry->d_name, prefix, strlen(prefix)) == 0)
-            printf("%s ", entry->d_name);
-    }
-    closedir(d);
-    printf("\n");
 }
 
 static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space) {
@@ -786,4 +668,153 @@ static size_t utf8_prev_char_start(const char *buffer, size_t cursor) {
     while (index > 0 && ((unsigned char)buffer[index] & 0xC0) == 0x80)
         index--;
     return index;
+}
+
+static void clear_completion_state(struct completion_state *state) {
+    if (!state) {
+        return;
+    }
+    if (state->matches) {
+        for (size_t i = 0; i < state->match_count; i++) {
+            free(state->matches[i]);
+        }
+        free(state->matches);
+    }
+    state->matches = NULL;
+    state->match_count = 0;
+    state->index = 0;
+    state->active = 0;
+    state->used_filenames = 0;
+    state->quote_char = '\0';
+    state->token_start = 0;
+}
+
+static char **collect_command_matches(const char *token, size_t *match_count) {
+    if (match_count) {
+        *match_count = 0;
+    }
+    if (!token) {
+        return NULL;
+    }
+
+    size_t count = 0;
+    size_t cap = 0;
+    char **matches = NULL;
+    size_t token_len = strlen(token);
+
+    for (int i = 0; i < num_commands; i++) {
+        if (strncmp(commands[i], token, token_len) == 0) {
+            if (count == cap) {
+                size_t new_cap = cap == 0 ? 8u : cap * 2u;
+                char **new_matches = realloc(matches, new_cap * sizeof(*matches));
+                if (!new_matches) {
+                    perror("realloc");
+                    clear_completion_state(&(struct completion_state){.matches = matches,
+                                                                     .match_count = count});
+                    return NULL;
+                }
+                matches = new_matches;
+                cap = new_cap;
+            }
+            matches[count] = strdup(commands[i]);
+            if (!matches[count]) {
+                perror("strdup");
+                clear_completion_state(&(struct completion_state){.matches = matches,
+                                                                 .match_count = count});
+                return NULL;
+            }
+            count++;
+        }
+    }
+
+    if (match_count) {
+        *match_count = count;
+    }
+    return matches;
+}
+
+static char **collect_filename_matches(const char *token, size_t *match_count) {
+    if (match_count) {
+        *match_count = 0;
+    }
+    if (!token) {
+        return NULL;
+    }
+
+    char dir[INPUT_SIZE];
+    char prefix[INPUT_SIZE];
+    const char *last_slash = strrchr(token, '/');
+    if (last_slash) {
+        size_t dir_len = last_slash - token + 1;
+        strncpy(dir, token, dir_len);
+        dir[dir_len] = '\0';
+        strcpy(prefix, last_slash + 1);
+    } else {
+        strcpy(dir, "./");
+        strcpy(prefix, token);
+    }
+
+    DIR *d = opendir(dir);
+    if (!d) {
+        return NULL;
+    }
+
+    size_t count = 0;
+    size_t cap = 0;
+    char **matches = NULL;
+    struct dirent *entry;
+    size_t prefix_len = strlen(prefix);
+    while ((entry = readdir(d)) != NULL) {
+        if (strncmp(entry->d_name, prefix, prefix_len) == 0) {
+            char full_completion[INPUT_SIZE];
+            if (snprintf(full_completion, sizeof(full_completion), "%s%s", dir,
+                         entry->d_name) >= (int)sizeof(full_completion)) {
+                continue;
+            }
+            if (count == cap) {
+                size_t new_cap = cap == 0 ? 8u : cap * 2u;
+                char **new_matches = realloc(matches, new_cap * sizeof(*matches));
+                if (!new_matches) {
+                    perror("realloc");
+                    closedir(d);
+                    clear_completion_state(&(struct completion_state){.matches = matches,
+                                                                     .match_count = count});
+                    return NULL;
+                }
+                matches = new_matches;
+                cap = new_cap;
+            }
+            matches[count] = strdup(full_completion);
+            if (!matches[count]) {
+                perror("strdup");
+                closedir(d);
+                clear_completion_state(&(struct completion_state){.matches = matches,
+                                                                 .match_count = count});
+                return NULL;
+            }
+            count++;
+        }
+    }
+    closedir(d);
+
+    if (match_count) {
+        *match_count = count;
+    }
+    return matches;
+}
+
+static void format_completion(const char *completion, int used_filenames, char quote_char,
+                              char *formatted, size_t formatted_size) {
+    if (!completion || !formatted || formatted_size == 0) {
+        return;
+    }
+    if (used_filenames) {
+        if (quote_char != '\0') {
+            snprintf(formatted, formatted_size, "%c%s%c", quote_char, completion, quote_char);
+        } else {
+            escape_token(completion, formatted, formatted_size);
+        }
+    } else {
+        snprintf(formatted, formatted_size, "%s", completion);
+    }
 }

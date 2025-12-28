@@ -243,7 +243,7 @@ static int delete_directory(const char *path, int force) {
 
 static int delete_item(const char *path, int force) {
     struct stat st;
-    if (stat(path, &st) != 0) {
+    if (lstat(path, &st) != 0) {
         fprintf(stderr, "Error accessing '%s': %s\n", path, strerror(errno));
         return -1;
     }
@@ -254,12 +254,16 @@ static int delete_item(const char *path, int force) {
 
     if (!force) {
         char question[PATH_MAX + 64];
-        snprintf(question, sizeof(question), "Delete file '%s'?", path);
+        if (S_ISLNK(st.st_mode)) {
+            snprintf(question, sizeof(question), "Delete link '%s'?", path);
+        } else {
+            snprintf(question, sizeof(question), "Delete file '%s'?", path);
+        }
         if (!prompt_yes_no(question)) {
             return 0;
         }
     }
-    if (remove(path) != 0) {
+    if (unlink(path) != 0) {
         fprintf(stderr, "Error removing file '%s': %s\n", path, strerror(errno));
         return -1;
     }

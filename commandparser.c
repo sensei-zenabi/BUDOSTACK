@@ -49,6 +49,36 @@ static int ensure_capacity(char ***array, size_t *capacity, size_t required) {
     return 1;
 }
 
+static int ensure_token_capacity(char ***tokens, unsigned char **quoted_flags,
+                                 size_t *capacity, size_t required) {
+    if (required <= *capacity) {
+        return 1;
+    }
+
+    size_t new_capacity = *capacity == 0 ? 8 : *capacity;
+    while (new_capacity < required) {
+        new_capacity *= 2;
+    }
+
+    char **new_tokens = realloc(*tokens, new_capacity * sizeof(*new_tokens));
+    if (!new_tokens) {
+        perror("realloc failed");
+        return 0;
+    }
+
+    unsigned char *new_flags = realloc(*quoted_flags, new_capacity * sizeof(*new_flags));
+    if (!new_flags) {
+        perror("realloc failed");
+        *tokens = new_tokens;
+        return 0;
+    }
+
+    *tokens = new_tokens;
+    *quoted_flags = new_flags;
+    *capacity = new_capacity;
+    return 1;
+}
+
 void init_command_struct(CommandStruct *cmd) {
     if (!cmd)
         return;
@@ -101,12 +131,14 @@ static int contains_wildcard(const char *str) {
  */
 void parse_input(const char *input, CommandStruct *cmd) {
     char **tokens = NULL;
+    unsigned char *quoted_flags = NULL;
     size_t token_capacity = 0;
     size_t token_count = 0;
     char token_buffer[INPUT_SIZE];
     size_t token_len = 0;
     int in_quotes = 0;
     char quote_char = '\0';
+    int token_was_quoted = 0;
 
     if (!cmd)
         return;
@@ -149,6 +181,7 @@ void parse_input(const char *input, CommandStruct *cmd) {
         if (*p == '\'' || *p == '"') {
             in_quotes = 1;
             quote_char = *p;
+            token_was_quoted = 1;
             p++;
             continue;
         }
@@ -156,14 +189,17 @@ void parse_input(const char *input, CommandStruct *cmd) {
         if (isspace(c)) {
             if (token_len > 0) {
                 token_buffer[token_len] = '\0';
-                if (!ensure_capacity(&tokens, &token_capacity, token_count + 1)) {
+                if (!ensure_token_capacity(&tokens, &quoted_flags, &token_capacity, token_count + 1)) {
                     free(tokens);
+                    free(quoted_flags);
                     return;
                 }
                 char *dup = strdup(token_buffer);
                 if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
                 tokens[token_count++] = dup;
+                quoted_flags[token_count - 1] = (unsigned char)token_was_quoted;
                 token_len = 0;
+                token_was_quoted = 0;
             }
             p++;
             continue;
@@ -177,17 +213,20 @@ void parse_input(const char *input, CommandStruct *cmd) {
 
     if (token_len > 0) {
         token_buffer[token_len] = '\0';
-        if (!ensure_capacity(&tokens, &token_capacity, token_count + 1)) {
+        if (!ensure_token_capacity(&tokens, &quoted_flags, &token_capacity, token_count + 1)) {
             free(tokens);
+            free(quoted_flags);
             return;
         }
         char *dup = strdup(token_buffer);
         if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
         tokens[token_count++] = dup;
+        quoted_flags[token_count - 1] = (unsigned char)token_was_quoted;
     }
 
     if (token_count == 0) {
         free(tokens);
+        free(quoted_flags);
         return;
     }
 
@@ -198,6 +237,7 @@ void parse_input(const char *input, CommandStruct *cmd) {
     size_t i = 1;
     while (i < token_count) {
         char *token = tokens[i];
+        int token_quoted = quoted_flags[i] != 0;
 
         if (token[0] == '-' && token[1] != '\0') {
             if (!ensure_capacity(&cmd->options, &cmd->opt_capacity, cmd->opt_count + 1)) {
@@ -217,7 +257,7 @@ void parse_input(const char *input, CommandStruct *cmd) {
                 i++;
             }
         } else {
-            if (should_bypass_expansion(cmd->command)) {
+            if (should_bypass_expansion(cmd->command) || token_quoted) {
                 if (!ensure_capacity(&cmd->parameters, &cmd->param_capacity, cmd->param_count + 1)) {
                     free(token);
                     break;
@@ -263,6 +303,7 @@ void parse_input(const char *input, CommandStruct *cmd) {
     }
 
     free(tokens);
+    free(quoted_flags);
 }
 
 /*

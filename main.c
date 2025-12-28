@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <limits.h>
 #include <unistd.h>
 #include <termios.h>    // For terminal control (raw mode)
@@ -489,6 +490,7 @@ int execute_command_with_paging(CommandStruct *cmd) {
     }
     char buffer[4096];
     int child_status = 0;
+    int child_exited = 0;
     
     /* Concurrently read from the pipe while monitoring the child process */
     while (1) {
@@ -531,6 +533,7 @@ int execute_command_with_paging(CommandStruct *cmd) {
         pid_t result = waitpid(pid, &child_status, WNOHANG);
         if (result == pid) {
             // Child finished. Continue reading any remaining data.
+            child_exited = 1;
         }
         if (time(NULL) - start_time > timeout_seconds) {
             /* Timeout reached; kill child process if still running */
@@ -540,8 +543,11 @@ int execute_command_with_paging(CommandStruct *cmd) {
         }
     }
     close(pipefd[0]);
-    if (waitpid(pid, &child_status, 0) < 0)
-        perror("waitpid");
+    if (!child_exited) {
+        if (waitpid(pid, &child_status, 0) < 0 && errno != ECHILD) {
+            perror("waitpid");
+        }
+    }
 
     if (realtime_mode) {
         return (WIFEXITED(child_status) && WEXITSTATUS(child_status) == 127) ? -1 : 0;

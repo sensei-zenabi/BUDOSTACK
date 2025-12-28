@@ -79,6 +79,7 @@ _Static_assert(TERMINAL_TARGET_FPS > 0u, "TERMINAL_TARGET_FPS must be positive")
 static SDL_Window *terminal_window_handle = NULL;
 static SDL_GLContext terminal_gl_context_handle = NULL;
 static int terminal_master_fd_handle = -1;
+static int terminal_fullscreen_enabled = 0;
 static int terminal_cell_pixel_width = 0;
 static int terminal_cell_pixel_height = 0;
 static int terminal_logical_width = 0;
@@ -104,7 +105,6 @@ static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
 static int terminal_texture_height = 0;
 static int terminal_gl_ready = 0;
-static float terminal_opacity_alpha = 1.0f;
 static GLuint terminal_bound_texture = 0;
 static GLuint terminal_cursor_texture = 0;
 static int terminal_cursor_width = 0;
@@ -3320,7 +3320,6 @@ static void terminal_cursor_render(int framebuffer_width, int framebuffer_height
     glEnable(GL_TEXTURE_2D);
     terminal_bind_texture(terminal_cursor_texture);
 
-    glColor4f(1.0f, 1.0f, 1.0f, terminal_opacity_alpha);
     glBegin(GL_TRIANGLE_STRIP);
     glTexCoord2f(0.0f, 0.0f);
     glVertex2f(left, top);
@@ -3331,7 +3330,6 @@ static void terminal_cursor_render(int framebuffer_width, int framebuffer_height
     glTexCoord2f(1.0f, 1.0f);
     glVertex2f(right, bottom);
     glEnd();
-    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 
     glDisable(GL_TEXTURE_2D);
     terminal_bind_texture(0);
@@ -5654,10 +5652,33 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
         } else if (normalized > 1.0f) {
             normalized = 1.0f;
         }
-        terminal_opacity_alpha = normalized;
         terminal_mark_full_redraw();
-        if (terminal_window_handle && SDL_SetWindowOpacity(terminal_window_handle, normalized) != 0) {
-            fprintf(stderr, "terminal: Failed to set window opacity: %s\n", SDL_GetError());
+        if (terminal_window_handle) {
+            if (opacity_value > 0 && terminal_fullscreen_enabled) {
+                if (SDL_SetWindowFullscreen(terminal_window_handle, 0) == 0) {
+                    terminal_fullscreen_enabled = 0;
+                    SDL_SetWindowBordered(terminal_window_handle, SDL_FALSE);
+                    SDL_Rect bounds;
+                    if (SDL_GetDisplayBounds(0, &bounds) != 0 &&
+                        SDL_GetDisplayUsableBounds(0, &bounds) != 0) {
+                        bounds.x = 0;
+                        bounds.y = 0;
+                        bounds.w = terminal_logical_width;
+                        bounds.h = terminal_logical_height;
+                    }
+                    SDL_SetWindowPosition(terminal_window_handle, bounds.x, bounds.y);
+                    if (bounds.w > 0 && bounds.h > 0) {
+                        SDL_SetWindowSize(terminal_window_handle, bounds.w, bounds.h);
+                    }
+                }
+            } else if (opacity_value == 0 && !terminal_fullscreen_enabled) {
+                if (SDL_SetWindowFullscreen(terminal_window_handle, SDL_WINDOW_FULLSCREEN_DESKTOP) == 0) {
+                    terminal_fullscreen_enabled = 1;
+                }
+            }
+            if (SDL_SetWindowOpacity(terminal_window_handle, normalized) != 0) {
+                fprintf(stderr, "terminal: Failed to set window opacity: %s\n", SDL_GetError());
+            }
         }
     }
 }
@@ -6967,7 +6988,6 @@ int main(int argc, char **argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
 #endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
 
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
 
@@ -7005,6 +7025,7 @@ int main(int argc, char **argv) {
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
+    terminal_fullscreen_enabled = 1;
 
     SDL_GLContext gl_context = SDL_GL_CreateContext(window);
     if (!gl_context) {
@@ -7082,7 +7103,7 @@ int main(int argc, char **argv) {
 
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
-    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
     terminal_window_handle = window;
     terminal_gl_context_handle = gl_context;
@@ -8225,9 +8246,6 @@ int main(int argc, char **argv) {
             }
         }
 
-        float opacity_alpha = terminal_opacity_alpha;
-        int apply_opacity = (opacity_alpha < 0.999f);
-
         glClear(GL_COLOR_BUFFER_BIT);
         GLuint source_texture = terminal_gl_texture;
         GLfloat source_texture_width = (GLfloat)terminal_texture_width;
@@ -8293,7 +8311,6 @@ int main(int argc, char **argv) {
             int frame_value = frame_counter++;
 
             int multipass_failed = 0;
-            GLuint final_texture = 0;
 
             for (size_t shader_index = 0; shader_index < terminal_gl_shader_count; shader_index++) {
                 struct terminal_gl_shader *shader = &terminal_gl_shaders[shader_index];
@@ -8302,23 +8319,16 @@ int main(int argc, char **argv) {
                 }
 
                 int last_pass = (shader_index + 1u == terminal_gl_shader_count);
-                int force_offscreen = (apply_opacity && last_pass);
                 GLuint target_texture = 0;
                 int using_intermediate = 0;
 
-                if (!last_pass || force_offscreen) {
+                if (!last_pass) {
                     if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) != 0) {
                         fprintf(stderr, "Failed to prepare intermediate render targets; skipping remaining shader passes.\n");
                         multipass_failed = 1;
                         last_pass = 1;
                     } else {
                         target_texture = terminal_gl_intermediate_textures[shader_index % 2u];
-                        if (force_offscreen) {
-                            if (target_texture == source_texture) {
-                                target_texture = terminal_gl_intermediate_textures[1u - (shader_index % 2u)];
-                            }
-                            final_texture = target_texture;
-                        }
                         glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
                         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, target_texture, 0);
                         GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
@@ -8432,37 +8442,6 @@ int main(int argc, char **argv) {
                 }
             }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            if (apply_opacity && final_texture != 0) {
-                glViewport(0, 0, drawable_width, drawable_height);
-                glUseProgram(0);
-                glMatrixMode(GL_PROJECTION);
-                glLoadIdentity();
-                glMatrixMode(GL_MODELVIEW);
-                glLoadIdentity();
-
-                glActiveTexture(GL_TEXTURE0);
-                terminal_bind_texture(final_texture);
-                glEnable(GL_TEXTURE_2D);
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                glColor4f(1.0f, 1.0f, 1.0f, opacity_alpha);
-
-                glBegin(GL_TRIANGLE_STRIP);
-                glTexCoord2f(0.0f, 0.0f);
-                glVertex2f(-1.0f, -1.0f);
-                glTexCoord2f(1.0f, 0.0f);
-                glVertex2f(1.0f, -1.0f);
-                glTexCoord2f(0.0f, 1.0f);
-                glVertex2f(-1.0f, 1.0f);
-                glTexCoord2f(1.0f, 1.0f);
-                glVertex2f(1.0f, 1.0f);
-                glEnd();
-
-                glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-                glDisable(GL_BLEND);
-                glDisable(GL_TEXTURE_2D);
-                terminal_bind_texture(0);
-            }
         } else {
             glMatrixMode(GL_PROJECTION);
             glLoadIdentity();
@@ -8472,11 +8451,6 @@ int main(int argc, char **argv) {
             glActiveTexture(GL_TEXTURE0);
             terminal_bind_texture(terminal_gl_texture);
             glEnable(GL_TEXTURE_2D);
-            if (apply_opacity) {
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                glColor4f(1.0f, 1.0f, 1.0f, opacity_alpha);
-            }
 
             glBegin(GL_TRIANGLE_STRIP);
             glTexCoord2f(0.0f, 1.0f);
@@ -8489,10 +8463,6 @@ int main(int argc, char **argv) {
             glVertex2f(1.0f, 1.0f);
             glEnd();
 
-            if (apply_opacity) {
-                glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-                glDisable(GL_BLEND);
-            }
             glDisable(GL_TEXTURE_2D);
             terminal_bind_texture(0);
         }

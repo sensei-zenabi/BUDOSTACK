@@ -299,6 +299,7 @@ static void terminal_sound_stop(int channel_index);
 #endif
 
 struct terminal_buffer;
+struct ansi_parser;
 
 static ssize_t safe_write(int fd, const void *buf, size_t count);
 static int terminal_send_bytes(int fd, const void *data, size_t length);

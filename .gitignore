@@ -7,13 +7,16 @@ budostack
 # In the commands directory, ignore everything except source files
 apps/*
 !apps/*.c
+!apps/*.cpp
 !apps/*.h
 !apps/*.ini
 commands/*
 !commands/*.c
+!commands/*.cpp
 !commands/*.h
 games/*
 !games/*.c
+!games/*.cpp
 !games/*.h
 !games/*.task
 lib/*
@@ -24,6 +27,7 @@ tasks/*
 !tasks/*.md
 utilities/*
 !utilities/*.c
+!utilities/*.cpp
 !utilities/*.h
 
 # Do not ignore these

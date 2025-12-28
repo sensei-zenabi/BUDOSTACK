@@ -29,6 +29,26 @@ Screenshots from BUDOSTACK built-in retro terminal emulator (apps/terminal).
 * `./start.sh` still launches BUDOSTACK inside the retro-styled `apps/terminal` emulator with the CRT shader stack enabled by default.
 * If you prefer to stay in your own GUI terminal emulator, you can run `./budostack` directly. The shell detects VTE/Konsole-style terminals and skips the resize escape sequence that used to displace the cursor, so the prompt and block cursor stay aligned.
 
+## DOSBox Pure (libretro) frontend
+BUDOSTACK now ships a minimal libretro frontend for the DOSBox Pure core. Provide the core path and a DOS game directory (or ZIP) to launch content, and the frontend will persist core data under `users/<name>/dosbox_pure/` (system + save directories).
+
+Example usage:
+
+```
+./apps/dosbox_pure --core ./cores/dosbox_pure/dosbox_pure_libretro.so --content ./users/demo/dos_games/WOLF3D
+```
+
+Optional CRT shaders can be stacked (defaults to `shaders/crtscreen.glsl` when SDL2 is available):
+
+```
+./apps/dosbox_pure --core ./cores/dosbox_pure/dosbox_pure_libretro.so --content ./users/demo/dos_games/WOLF3D \\
+  --shader ./shaders/crtscreen.glsl --shader ./shaders/noise.glsl
+```
+
+Use `--no-shader` to disable the CRT shader stack entirely.
+
+If you drop DOSBox Pure sources into `cores/dosbox_pure/`, the makefile will build a `libdosbox_pure.a` static library and link it into the frontend automatically.
+
 ## Licence:
 BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 
 copyleft license, that allows you to:
@@ -45,4 +65,3 @@ code.
 
 Are not distributed using the GLP-2.0 license. Instead, these folders 
 contain their own LICENSE.txt files indicating their licensing conditions.
-

@@ -370,6 +370,7 @@ static void print_help(FILE *stream) {
     fprintf(stream, "\n");
     fprintf(stream, "  -action : cp = copy; mv = move; del=delete\n");
     fprintf(stream, "  -f      : (Optional) If used, uses brute force and does not prompt.\n");
+    fprintf(stream, "\n");
 }
 
 int main(int argc, char *argv[]) {

@@ -109,10 +109,10 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  cd       : Change Directory, remember to put 'if space' in folder name.\n");
     printf("  cls      : Clear terminal screen.\n");
-    printf("  do       : Copy, move, or delete files and folders with prompts.\n");
     printf("  crc32    : Calculate and/or verify CRC32 checksum of a file.\n");
     printf("  diff     : See the difference of two files.\n");
     printf("  display  : Display the contents of a file or an image supported by paint.\n");    
+    printf("  do       : Copy, move, or delete files and folders with prompts.\n");
     printf("  drives   : Lists all found drives.\n");    
     printf("  find     : Find anything.\n");    
     printf("  gitter   : Professional git helper for your daily development activities.\n");
@@ -127,6 +127,8 @@ int main(int argc, char *argv[]) {
     printf("  stats    : Displays basic hardware stats.\n");
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  exit     : Exit BUDOSTACK.\n");
+    printf("\n");
+    printf("\n");
     printf("\n");
     printf("\n");
     printf("\n");

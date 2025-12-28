@@ -10,6 +10,10 @@
 #include <stdint.h>
 #include <unistd.h>
 
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 #if defined(__has_include)
 #if __has_include(<SDL2/SDL.h>)
 #include <SDL2/SDL.h>
@@ -477,7 +481,6 @@ static int retro_initialize_gl_program(struct retro_shader_bridge *bridge, const
     }
 
     const char *version_line = NULL;
-    size_t version_len = 0u;
     size_t version_prefix_len = 0u;
     const char *cursor = stripped_source;
     const char *end = stripped_source + stripped_len;
@@ -493,7 +496,6 @@ static int retro_initialize_gl_program(struct retro_shader_bridge *bridge, const
         }
         if (scan < line_end && strncmp(scan, "#version", 8) == 0) {
             version_line = cursor;
-            version_len = line_len;
             version_prefix_len = (size_t)(line_end - stripped_source);
             if (line_end < end) {
                 version_prefix_len++;

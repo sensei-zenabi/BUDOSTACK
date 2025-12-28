@@ -36,11 +36,21 @@ static char *c_strdup(const char *s) {
 }
 
 static int prompt_yes_no(const char *message) {
+    static FILE *tty = NULL;
     char buffer[8];
-    printf("%s [y/N]: ", message);
-    fflush(stdout);
-    if (!fgets(buffer, sizeof(buffer), stdin)) {
+    if (!tty) {
+        tty = fopen("/dev/tty", "r+");
+    }
+    FILE *io = tty ? tty : stdin;
+    fprintf(tty ? tty : stdout, "%s [y/N]: ", message);
+    fflush(tty ? tty : stdout);
+    if (!fgets(buffer, sizeof(buffer), io)) {
         return 0;
+    }
+    if (!strchr(buffer, '\n')) {
+        int ch = 0;
+        while ((ch = fgetc(io)) != '\n' && ch != EOF) {
+        }
     }
     return (buffer[0] == 'y' || buffer[0] == 'Y');
 }

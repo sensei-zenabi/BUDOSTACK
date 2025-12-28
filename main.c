@@ -431,8 +431,12 @@ int execute_command_with_paging(CommandStruct *cmd) {
     /* Realtime mode is now entered if:
      * - The "-nopaging" flag is provided, or
      * - The command is in the realtime command list loaded from apps/ folder.
+     * - The command requires interactive input (e.g., prompts).
      */
     int realtime_mode = nopaging || is_realtime_command(cmd->command);
+    if (!realtime_mode && strcmp(cmd->command, "do") == 0) {
+        realtime_mode = 1;
+    }
 
     if (realtime_mode && log_file == NULL) {
         return execute_command(cmd);

@@ -5135,6 +5135,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int resolution_width_set = 0;
     int resolution_height_set = 0;
     int resolution_requested = 0;
+    int opacity_requested = 0;
+    long opacity_value = 0;
     int mouse_query_requested = 0;
     int shader_toggle_requested = 0;
     int shader_enable_requested = 0;
@@ -5255,6 +5257,14 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             resolution_height = (int)parsed;
                             resolution_height_set = 1;
                             resolution_requested = 1;
+                        }
+                    } else if (strcmp(key, "opacity") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0 && parsed <= 100) {
+                            opacity_value = parsed;
+                            opacity_requested = 1;
                         }
                     } else if (strcmp(key, "shader") == 0 && value && *value != '\0') {
                         if (strcmp(value, "enable") == 0) {
@@ -5633,6 +5643,17 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     }
     if (resolution_requested && resolution_width_set && resolution_height_set) {
         terminal_apply_resolution(buffer, resolution_width, resolution_height);
+    }
+    if (opacity_requested && terminal_window_handle) {
+        float normalized = (100.0f - (float)opacity_value) / 100.0f;
+        if (normalized < 0.0f) {
+            normalized = 0.0f;
+        } else if (normalized > 1.0f) {
+            normalized = 1.0f;
+        }
+        if (SDL_SetWindowOpacity(terminal_window_handle, normalized) != 0) {
+            fprintf(stderr, "terminal: Failed to set window opacity: %s\n", SDL_GetError());
+        }
     }
 }
 

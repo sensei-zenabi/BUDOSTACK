@@ -281,9 +281,6 @@ static int delete_directory(const char *path, int force) {
     closedir(dir);
 
     if (rmdir(path) != 0) {
-        if (errno == ENOTEMPTY) {
-            return 0;
-        }
         fprintf(stderr, "Error removing directory '%s': %s\n", path, strerror(errno));
         return -1;
     }
@@ -301,21 +298,26 @@ static int delete_item(const char *path, int force) {
         return delete_directory(path, force);
     }
 
-    if (!force) {
-        char question[PATH_MAX + 64];
-        if (S_ISLNK(st.st_mode)) {
-            snprintf(question, sizeof(question), "Delete link '%s'?", path);
-        } else {
-            snprintf(question, sizeof(question), "Delete file '%s'?", path);
+    if (S_ISREG(st.st_mode) || S_ISLNK(st.st_mode)) {
+        if (!force) {
+            char question[PATH_MAX + 64];
+            if (S_ISLNK(st.st_mode)) {
+                snprintf(question, sizeof(question), "Delete link '%s'?", path);
+            } else {
+                snprintf(question, sizeof(question), "Delete file '%s'?", path);
+            }
+            if (!prompt_yes_no(question)) {
+                return 0;
+            }
         }
-        if (!prompt_yes_no(question)) {
-            return 0;
+        if (unlink(path) != 0) {
+            fprintf(stderr, "Error removing file '%s': %s\n", path, strerror(errno));
+            return -1;
         }
+        return 0;
     }
-    if (unlink(path) != 0) {
-        fprintf(stderr, "Error removing file '%s': %s\n", path, strerror(errno));
-        return -1;
-    }
+
+    fprintf(stderr, "Skipping unsupported file type: '%s'\n", path);
     return 0;
 }
 

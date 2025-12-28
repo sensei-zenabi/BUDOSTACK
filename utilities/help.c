@@ -122,12 +122,12 @@ int main(int argc, char *argv[]) {
     printf("  makedir  : Create a new directory.\n");    
     printf("  mute     : Enable/Disable Voice Assistant.\n");
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");    
+    printf("  rename   : File and folder rename tool.\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");
     printf("  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n");
     printf("  exit     : Exit BUDOSTACK.\n");
-    printf("\n");
     printf("\n");
     printf("\n");
     printf("\n");

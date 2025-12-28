@@ -109,7 +109,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("  cd       : Change Directory, remember to put 'if space' in folder name.\n");
     printf("  cls      : Clear terminal screen.\n");
-    printf("  copy     : Copy anything to anywhere, a file or complete folder.\n");
+    printf("  do       : Copy, move, or delete files and folders with prompts.\n");
     printf("  crc32    : Calculate and/or verify CRC32 checksum of a file.\n");
     printf("  diff     : See the difference of two files.\n");
     printf("  display  : Display the contents of a file or an image supported by paint.\n");    
@@ -120,10 +120,8 @@ int main(int argc, char *argv[]) {
     printf("  hw       : Learn your hardware specs just by typing 'hw'.\n");
     printf("  list     : List contents of a directory (type 'list -help').\n");    
     printf("  makedir  : Create a new directory.\n");    
-    printf("  move     : Moves anything. Can be used for renaming as well.\n");
     printf("  mute     : Enable/Disable Voice Assistant.\n");
     printf("  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n");    
-    printf("  remove   : Remove anything, whether it is a file or folder.\n");
     printf("  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n");
     printf("             Type: runtask -help for more details.\n");
     printf("  stats    : Displays basic hardware stats.\n");

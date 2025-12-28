@@ -433,28 +433,45 @@ int main(int argc, char *argv[]) {
     }
 
     glob_t matches;
+    const char **sources = NULL;
+    size_t source_count = 0;
+    int used_glob = 0;
     memset(&matches, 0, sizeof(matches));
-    int glob_result = glob(args[0], 0, NULL, &matches);
-    if (glob_result == GLOB_NOMATCH || matches.gl_pathc == 0) {
-        fprintf(stderr, "No matches found for '%s'\n", args[0]);
-        globfree(&matches);
+    struct stat src_stat;
+    if (lstat(args[0], &src_stat) == 0) {
+        sources = &args[0];
+        source_count = 1;
+    } else if (errno != ENOENT) {
+        fprintf(stderr, "Error accessing '%s': %s\n", args[0], strerror(errno));
         return EXIT_FAILURE;
-    }
-    if (glob_result != 0) {
-        fprintf(stderr, "Error expanding pattern '%s'\n", args[0]);
-        globfree(&matches);
-        return EXIT_FAILURE;
+    } else {
+        int glob_result = glob(args[0], 0, NULL, &matches);
+        if (glob_result == GLOB_NOMATCH || matches.gl_pathc == 0) {
+            fprintf(stderr, "No matches found for '%s'\n", args[0]);
+            globfree(&matches);
+            return EXIT_FAILURE;
+        }
+        if (glob_result != 0) {
+            fprintf(stderr, "Error expanding pattern '%s'\n", args[0]);
+            globfree(&matches);
+            return EXIT_FAILURE;
+        }
+        used_glob = 1;
+        sources = (const char **)matches.gl_pathv;
+        source_count = matches.gl_pathc;
     }
 
     int result = EXIT_SUCCESS;
     if (action == ACTION_DELETE) {
-        for (size_t i = 0; i < matches.gl_pathc; i++) {
-            if (delete_item(matches.gl_pathv[i], force) != 0) {
+        for (size_t i = 0; i < source_count; i++) {
+            if (delete_item(sources[i], force) != 0) {
                 result = EXIT_FAILURE;
                 break;
             }
         }
-        globfree(&matches);
+        if (used_glob) {
+            globfree(&matches);
+        }
         return result;
     }
 
@@ -467,24 +484,28 @@ int main(int argc, char *argv[]) {
     if (!dest_is_dir && dest_len > 0 && destination[dest_len - 1] == '/') {
         dest_is_dir = 1;
     }
-    if (matches.gl_pathc > 1) {
+    if (source_count > 1) {
         dest_is_dir = 1;
         if (dest_exists && !S_ISDIR(st_dest.st_mode)) {
             fprintf(stderr, "Destination must be a directory for multiple sources.\n");
-            globfree(&matches);
+            if (used_glob) {
+                globfree(&matches);
+            }
             return EXIT_FAILURE;
         }
     }
     if (dest_is_dir && !dest_exists) {
         if (mkdir(destination, 0755) != 0 && errno != EEXIST) {
             fprintf(stderr, "Error creating directory '%s': %s\n", destination, strerror(errno));
-            globfree(&matches);
+            if (used_glob) {
+                globfree(&matches);
+            }
             return EXIT_FAILURE;
         }
     }
 
-    for (size_t i = 0; i < matches.gl_pathc; i++) {
-        const char *src = matches.gl_pathv[i];
+    for (size_t i = 0; i < source_count; i++) {
+        const char *src = sources[i];
         char dest_path[PATH_MAX];
         if (dest_is_dir) {
             snprintf(dest_path, sizeof(dest_path), "%s/%s", destination, get_basename(src));
@@ -507,6 +528,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    globfree(&matches);
+    if (used_glob) {
+        globfree(&matches);
+    }
     return result;
 }

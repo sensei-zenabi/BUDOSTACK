@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include <glob.h>
 #include <limits.h>
+#include <ctype.h>
 
 #define BUFFER_SIZE 8192
 
@@ -35,24 +36,61 @@ static char *c_strdup(const char *s) {
     return copy;
 }
 
-static int prompt_yes_no(const char *message) {
+static void select_prompt_streams(FILE **input, FILE **output) {
     static FILE *tty = NULL;
-    char buffer[8];
-    if (!tty) {
+
+    if (!isatty(STDIN_FILENO) && !tty) {
         tty = fopen("/dev/tty", "r+");
     }
-    FILE *io = tty ? tty : stdin;
-    fprintf(tty ? tty : stdout, "%s [y/N]: ", message);
-    fflush(tty ? tty : stdout);
-    if (!fgets(buffer, sizeof(buffer), io)) {
-        return 0;
+    if (tty) {
+        *input = tty;
+        *output = tty;
+        return;
     }
-    if (!strchr(buffer, '\n')) {
-        int ch = 0;
-        while ((ch = fgetc(io)) != '\n' && ch != EOF) {
+    *input = stdin;
+    *output = stdout;
+}
+
+static int prompt_yes_no(const char *message) {
+    char buffer[32];
+    FILE *input = NULL;
+    FILE *output = NULL;
+    int interactive = 0;
+
+    select_prompt_streams(&input, &output);
+    interactive = isatty(fileno(input));
+
+    for (;;) {
+        fprintf(output, "%s [y/N]: ", message);
+        fflush(output);
+
+        if (!fgets(buffer, sizeof(buffer), input)) {
+            return 0;
         }
+        if (!strchr(buffer, '\n')) {
+            int ch = 0;
+            while ((ch = fgetc(input)) != '\n' && ch != EOF) {
+            }
+        }
+
+        char *cursor = buffer;
+        while (*cursor && isspace((unsigned char)*cursor)) {
+            cursor++;
+        }
+        if (*cursor == '\0' || *cursor == '\n') {
+            return 0;
+        }
+        if (*cursor == 'y' || *cursor == 'Y') {
+            return 1;
+        }
+        if (*cursor == 'n' || *cursor == 'N') {
+            return 0;
+        }
+        if (!interactive) {
+            return 0;
+        }
+        fprintf(output, "Please answer y or n.\n");
     }
-    return (buffer[0] == 'y' || buffer[0] == 'Y');
 }
 
 static int create_parent_dirs(const char *path) {
@@ -229,7 +267,12 @@ static int delete_directory(const char *path, int force) {
             continue;
         }
         char fullpath[PATH_MAX];
-        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
+        int written = snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
+        if (written < 0 || (size_t)written >= sizeof(fullpath)) {
+            fprintf(stderr, "Path too long: %s/%s\n", path, entry->d_name);
+            closedir(dir);
+            return -1;
+        }
         if (delete_item(fullpath, force) != 0) {
             closedir(dir);
             return -1;
@@ -237,14 +280,10 @@ static int delete_directory(const char *path, int force) {
     }
     closedir(dir);
 
-    if (!force) {
-        char question[PATH_MAX + 64];
-        snprintf(question, sizeof(question), "Delete directory '%s'?", path);
-        if (!prompt_yes_no(question)) {
+    if (rmdir(path) != 0) {
+        if (errno == ENOTEMPTY) {
             return 0;
         }
-    }
-    if (rmdir(path) != 0) {
         fprintf(stderr, "Error removing directory '%s': %s\n", path, strerror(errno));
         return -1;
     }

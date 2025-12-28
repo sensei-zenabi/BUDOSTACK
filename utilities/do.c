@@ -353,15 +353,34 @@ static int move_item(const char *src, const char *dest, int force, int *skipped)
     return 0;
 }
 
-static void print_usage(void) {
-    fprintf(stderr, "Usage: do -cp|-mv <source> <destination> [-f]\n");
-    fprintf(stderr, "       do -del <source> [-f]\n");
+static void print_help(FILE *stream) {
+    fprintf(stream, "Usage:  do -action <source> <destination> -f\n");
+    fprintf(stream, "\n");
+    fprintf(stream, "Description:\n");
+    fprintf(stream, "\n");
+    fprintf(stream, "  Generic command to copy, move, and delete files and folders.\n");
+    fprintf(stream, "  Prompts in case of conflicts found and lets user decide\n");
+    fprintf(stream, "  independently regarding every file how to resolve. In case of\n");
+    fprintf(stream, "  delete, prompts before each delete. Supports various search\n");
+    fprintf(stream, "  capabilities, including *.*, *.txt, note.*, *note.*, note*.*,\n");
+    fprintf(stream, "  *note*.*, *note.txt, note*.txt, *note*.txt, note.ex*, note.*xe,\n");
+    fprintf(stream, "  etc...\n");
+    fprintf(stream, "\n");
+    fprintf(stream, "Arguments:\n");
+    fprintf(stream, "\n");
+    fprintf(stream, "  -action : cp = copy; mv = move; del=delete\n");
+    fprintf(stream, "  -f      : (Optional) If used, uses brute force and does not prompt.\n");
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 3) {
-        print_usage();
+    if (argc < 2) {
+        print_help(stderr);
         return EXIT_FAILURE;
+    }
+
+    if (strcmp(argv[1], "-help") == 0 || strcmp(argv[1], "-h") == 0) {
+        print_help(stdout);
+        return EXIT_SUCCESS;
     }
 
     Action action;
@@ -372,7 +391,7 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(argv[1], "-del") == 0) {
         action = ACTION_DELETE;
     } else {
-        print_usage();
+        print_help(stderr);
         return EXIT_FAILURE;
     }
 
@@ -386,7 +405,7 @@ int main(int argc, char *argv[]) {
             if (arg_count < 2) {
                 args[arg_count++] = argv[i];
             } else {
-                print_usage();
+                print_help(stderr);
                 return EXIT_FAILURE;
             }
         }
@@ -394,7 +413,7 @@ int main(int argc, char *argv[]) {
 
     if ((action == ACTION_DELETE && arg_count != 1) ||
         (action != ACTION_DELETE && arg_count != 2)) {
-        print_usage();
+        print_help(stderr);
         return EXIT_FAILURE;
     }
 

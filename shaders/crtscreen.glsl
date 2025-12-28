@@ -26,10 +26,10 @@
 #pragma parameter SCANLINE_SINE_COMP_B "Scanline Intensity" 0.4 0.0 1.0 0.05
 #pragma parameter shadowMask "shadowMask" 1.0 0.0 4.0 1.0
 
-#pragma parameter warpX "warpX" 0.031 0.0 0.125 0.01
+#pragma parameter warpX "warpX" 0.02 0.0 0.125 0.01
 //#pragma parameter warpX "warpX" 0.01 0.0 0.01 0.005
 
-#pragma parameter warpY "warpY" 0.041 0.0 0.125 0.01
+#pragma parameter warpY "warpY" 0.02 0.0 0.125 0.01
 //#pragma parameter warpY "warpY" 0.01 0.0 0.01 0.005
 
 //#pragma parameter maskDark "maskDark" 0.5 0.0 2.0 0.1
@@ -50,7 +50,7 @@
 //#pragma parameter bsmooth "Border Smoothness" 150.0 40.0 1000.0 25.0
 #pragma parameter bsmooth "Border Smoothness" 250.0 80.0 2000.0 50.0
 
-#pragma parameter a_corner "Corner Roundness" 0.03 0.0 0.2 0.01
+#pragma parameter a_corner "Corner Roundness" 0.01 0.0 0.2 0.01
 
 // prevent stupid behavior
 #if defined ROTATE_SCANLINES && !defined SCANLINES

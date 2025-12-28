@@ -37,10 +37,20 @@ static char *c_strdup(const char *s) {
 
 static int prompt_yes_no(const char *message) {
     char buffer[8];
-    printf("%s [y/N]: ", message);
-    fflush(stdout);
-    if (!fgets(buffer, sizeof(buffer), stdin)) {
+    FILE *tty = fopen("/dev/tty", "r+");
+    FILE *in = tty ? tty : stdin;
+    FILE *out = tty ? tty : stdout;
+
+    fprintf(out, "%s [y/N]: ", message);
+    fflush(out);
+    if (!fgets(buffer, sizeof(buffer), in)) {
+        if (tty) {
+            fclose(tty);
+        }
         return 0;
+    }
+    if (tty) {
+        fclose(tty);
     }
     return (buffer[0] == 'y' || buffer[0] == 'Y');
 }

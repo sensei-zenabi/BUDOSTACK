@@ -30,10 +30,10 @@ typedef struct {
     double freq;
     long duration_ms;
     int volume;
-    long attack_ms;
-    long decay_ms;
-    long sustain_ms;
-    long release_ms;
+    int attack_pct;
+    int decay_pct;
+    int sustain_pct;
+    int release_pct;
     double lowpass_hz;
     double highpass_hz;
 } NoteEntry;
@@ -55,22 +55,23 @@ typedef struct {
 static void usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s -<cmd> -<waveform> <note> <duration_ms> <volume> [channel] "
-        "[attack_ms] [decay_ms] [sustain_ms] [release_ms] [lowpass_hz] [highpass_hz]\n"
+        "[attack_pct] [decay_pct] [sustain_pct] [release_pct] [lowpass_hz] [highpass_hz]\n"
         "  cmd       : enter, play, loop <count> (plays entered notes count times), stop (stops all notes)\n"
         "  waveforms : sine, square, triangle, sawtooth, noise\n"
         "  note      : standard concert pitch notes (e.g. c2, c3, c4, d4, e4)\n"
         "  duration  : milliseconds (e.g. 500 = 500ms)\n"
         "  volume    : 0-100 (0 silent, 100 max volume)\n"
         "  channel   : (optional) 1-32 (to enable parallel sounds, default 1)\n"
-        "  attack    : (optional) in milliseconds\n"
-        "  decay     : (optional) in milliseconds\n"
-        "  sustain   : (optional) in milliseconds\n"
-        "  release   : (optional) in milliseconds\n"
+        "  attack    : (optional) 0-100 percent of duration\n"
+        "  decay     : (optional) 0-100 percent of duration\n"
+        "  sustain   : (optional) 0-100 percent of duration\n"
+        "  release   : (optional) 0-100 percent of duration\n"
+        "  adsr      : percentages must total 100\n"
         "  lowpass   : (optional) in Hz\n"
         "  highpass  : (optional) in Hz\n"
         "Notes entered on the same channel play sequentially in the order entered.\n"
         "Examples:\n"
-        "  %s -enter -sine c4 500 100 1 20 30 300 150 1000 200\n"
+        "  %s -enter -sine c4 500 100 1 10 20 60 10 1000 200\n"
         "  %s -enter -square e4 250 80\n"
         "  %s -play wav > chord.wav\n",
         prog, prog, prog, prog);
@@ -120,6 +121,63 @@ static int parse_double(const char *arg, double *out, double min, double max) {
         return -1;
     }
     *out = value;
+    return 0;
+}
+
+static int normalize_adsr_percent(long duration_ms, long attack_value, long decay_value,
+    long sustain_value, long release_value, int values_are_ms, int *attack_pct,
+    int *decay_pct, int *sustain_pct, int *release_pct) {
+    if (duration_ms <= 0) {
+        return -1;
+    }
+    if (attack_value < 0 || decay_value < 0 || sustain_value < 0 || release_value < 0) {
+        return -1;
+    }
+
+    if (values_are_ms) {
+        long total_ms = attack_value + decay_value + sustain_value + release_value;
+        if (total_ms == 0) {
+            *attack_pct = 0;
+            *decay_pct = 0;
+            *sustain_pct = 100;
+            *release_pct = 0;
+            return 0;
+        }
+        if (total_ms > duration_ms) {
+            return -1;
+        }
+        double scale = 100.0 / (double)duration_ms;
+        *attack_pct = (int)lround(attack_value * scale);
+        *decay_pct = (int)lround(decay_value * scale);
+        *sustain_pct = (int)lround(sustain_value * scale);
+        *release_pct = (int)lround(release_value * scale);
+    } else {
+        if (attack_value > 100 || decay_value > 100 || sustain_value > 100 || release_value > 100) {
+            return -1;
+        }
+        if ((attack_value + decay_value + sustain_value + release_value) != 100) {
+            return -1;
+        }
+        *attack_pct = (int)attack_value;
+        *decay_pct = (int)decay_value;
+        *sustain_pct = (int)sustain_value;
+        *release_pct = (int)release_value;
+    }
+
+    int total_pct = *attack_pct + *decay_pct + *sustain_pct + *release_pct;
+    if (total_pct != 100) {
+        int adjust = 100 - total_pct;
+        *sustain_pct += adjust;
+    }
+    if (*attack_pct < 0 || *decay_pct < 0 || *sustain_pct < 0 || *release_pct < 0) {
+        return -1;
+    }
+    if (*attack_pct > 100 || *decay_pct > 100 || *sustain_pct > 100 || *release_pct > 100) {
+        return -1;
+    }
+    if ((*attack_pct + *decay_pct + *sustain_pct + *release_pct) != 100) {
+        return -1;
+    }
     return 0;
 }
 
@@ -287,25 +345,41 @@ static void load_state(NoteSequence sequences[], size_t count) {
         snprintf(entry.note, sizeof(entry.note), "%s", fields[2]);
         entry.duration_ms = strtol(fields[3], NULL, 10);
         entry.volume = 100;
+        long attack_value = 0;
+        long decay_value = 0;
+        long sustain_value = 0;
+        long release_value = 0;
+        int values_are_ms = 1;
         if (field_count >= 11) {
             long volume = strtol(fields[4], NULL, 10);
             if (volume < 0 || volume > 100) {
                 continue;
             }
             entry.volume = (int)volume;
-            entry.attack_ms = strtol(fields[5], NULL, 10);
-            entry.decay_ms = strtol(fields[6], NULL, 10);
-            entry.sustain_ms = strtol(fields[7], NULL, 10);
-            entry.release_ms = strtol(fields[8], NULL, 10);
+            attack_value = strtol(fields[5], NULL, 10);
+            decay_value = strtol(fields[6], NULL, 10);
+            sustain_value = strtol(fields[7], NULL, 10);
+            release_value = strtol(fields[8], NULL, 10);
             entry.lowpass_hz = strtod(fields[9], NULL);
             entry.highpass_hz = strtod(fields[10], NULL);
+            if (attack_value >= 0 && decay_value >= 0 && sustain_value >= 0 && release_value >= 0 &&
+                attack_value <= 100 && decay_value <= 100 && sustain_value <= 100 &&
+                release_value <= 100 &&
+                (attack_value + decay_value + sustain_value + release_value) == 100) {
+                values_are_ms = 0;
+            }
         } else {
-            entry.attack_ms = strtol(fields[4], NULL, 10);
-            entry.decay_ms = strtol(fields[5], NULL, 10);
-            entry.sustain_ms = strtol(fields[6], NULL, 10);
-            entry.release_ms = strtol(fields[7], NULL, 10);
+            attack_value = strtol(fields[4], NULL, 10);
+            decay_value = strtol(fields[5], NULL, 10);
+            sustain_value = strtol(fields[6], NULL, 10);
+            release_value = strtol(fields[7], NULL, 10);
             entry.lowpass_hz = strtod(fields[8], NULL);
             entry.highpass_hz = strtod(fields[9], NULL);
+        }
+        if (normalize_adsr_percent(entry.duration_ms, attack_value, decay_value, sustain_value,
+                release_value, values_are_ms, &entry.attack_pct, &entry.decay_pct,
+                &entry.sustain_pct, &entry.release_pct) != 0) {
+            continue;
         }
         if (note_to_frequency(entry.note, &entry.freq) != 0) {
             continue;
@@ -337,16 +411,16 @@ static int save_state(const NoteSequence sequences[], size_t count) {
             if (!entry->active) {
                 continue;
             }
-            fprintf(fp, "%zu|%s|%s|%ld|%d|%ld|%ld|%ld|%ld|%.3f|%.3f\n",
+            fprintf(fp, "%zu|%s|%s|%ld|%d|%d|%d|%d|%d|%.3f|%.3f\n",
                 i + 1,
                 waveform_name(entry->wave),
                 entry->note,
                 entry->duration_ms,
                 entry->volume,
-                entry->attack_ms,
-                entry->decay_ms,
-                entry->sustain_ms,
-                entry->release_ms,
+                entry->attack_pct,
+                entry->decay_pct,
+                entry->sustain_pct,
+                entry->release_pct,
                 entry->lowpass_hz,
                 entry->highpass_hz);
         }
@@ -800,12 +874,12 @@ int main(int argc, char *argv[]) {
                     NoteEntry *entry = &sequences[i].notes[note_index[i]];
                     uint64_t total_samples = note_total_samples[i];
 
-                    uint64_t attack = (uint64_t)((entry->attack_ms / 1000.0) * SAMPLE_RATE);
-                    uint64_t decay = (uint64_t)((entry->decay_ms / 1000.0) * SAMPLE_RATE);
-                    uint64_t sustain = (uint64_t)((entry->sustain_ms / 1000.0) * SAMPLE_RATE);
-                    uint64_t release = (uint64_t)((entry->release_ms / 1000.0) * SAMPLE_RATE);
+                    uint64_t attack = (uint64_t)(total_samples * (entry->attack_pct / 100.0));
+                    uint64_t decay = (uint64_t)(total_samples * (entry->decay_pct / 100.0));
+                    uint64_t sustain = (uint64_t)(total_samples * (entry->sustain_pct / 100.0));
+                    uint64_t release = (uint64_t)(total_samples * (entry->release_pct / 100.0));
 
-                    int sustain_specified = entry->sustain_ms > 0;
+                    int sustain_specified = 1;
                     clamp_adsr(total_samples, &attack, &decay, &sustain, &release, sustain_specified);
 
                     double gain = 1.0;
@@ -939,23 +1013,23 @@ int main(int argc, char *argv[]) {
             }
         }
 
-        long attack_ms = 0;
-        long decay_ms = 0;
-        long sustain_ms = 0;
-        long release_ms = 0;
+        long attack_pct = -1;
+        long decay_pct = -1;
+        long sustain_pct = -1;
+        long release_pct = -1;
         double lowpass_hz = 0.0;
         double highpass_hz = 0.0;
 
-        if (argc > arg_index && parse_long(argv[arg_index], &attack_ms, 0, 600000) == 0) {
+        if (argc > arg_index && parse_long(argv[arg_index], &attack_pct, 0, 100) == 0) {
             arg_index++;
         }
-        if (argc > arg_index && parse_long(argv[arg_index], &decay_ms, 0, 600000) == 0) {
+        if (argc > arg_index && parse_long(argv[arg_index], &decay_pct, 0, 100) == 0) {
             arg_index++;
         }
-        if (argc > arg_index && parse_long(argv[arg_index], &sustain_ms, 0, 600000) == 0) {
+        if (argc > arg_index && parse_long(argv[arg_index], &sustain_pct, 0, 100) == 0) {
             arg_index++;
         }
-        if (argc > arg_index && parse_long(argv[arg_index], &release_ms, 0, 600000) == 0) {
+        if (argc > arg_index && parse_long(argv[arg_index], &release_pct, 0, 100) == 0) {
             arg_index++;
         }
         if (argc > arg_index && parse_double(argv[arg_index], &lowpass_hz, 0.0, 20000.0) == 0) {
@@ -963,6 +1037,25 @@ int main(int argc, char *argv[]) {
         }
         if (argc > arg_index && parse_double(argv[arg_index], &highpass_hz, 0.0, 20000.0) == 0) {
             arg_index++;
+        }
+
+        long attack_value = attack_pct >= 0 ? attack_pct : 0;
+        long decay_value = decay_pct >= 0 ? decay_pct : 0;
+        long release_value = release_pct >= 0 ? release_pct : 0;
+        long sustain_value = 0;
+        if (sustain_pct >= 0) {
+            sustain_value = sustain_pct;
+            if (attack_value + decay_value + sustain_value + release_value != 100) {
+                fprintf(stderr, "ADSR percentages must total 100.\n");
+                usage(argv[0]);
+            }
+        } else {
+            long sum = attack_value + decay_value + release_value;
+            if (sum > 100) {
+                fprintf(stderr, "ADSR percentages must total 100.\n");
+                usage(argv[0]);
+            }
+            sustain_value = 100 - sum;
         }
 
         NoteSequence sequences[SIGNAL_MAX_CHANNEL];
@@ -979,10 +1072,12 @@ int main(int argc, char *argv[]) {
         entry.freq = freq;
         entry.duration_ms = duration_ms;
         entry.volume = (int)volume;
-        entry.attack_ms = attack_ms;
-        entry.decay_ms = decay_ms;
-        entry.sustain_ms = sustain_ms;
-        entry.release_ms = release_ms;
+        if (normalize_adsr_percent(duration_ms, attack_value, decay_value, sustain_value,
+                release_value, 0, &entry.attack_pct, &entry.decay_pct,
+                &entry.sustain_pct, &entry.release_pct) != 0) {
+            fprintf(stderr, "ADSR percentages must total 100.\n");
+            usage(argv[0]);
+        }
         entry.lowpass_hz = lowpass_hz;
         entry.highpass_hz = highpass_hz;
 

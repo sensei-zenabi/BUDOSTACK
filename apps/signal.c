@@ -52,12 +52,15 @@ typedef struct {
     size_t cap;
 } NoteSequence;
 
-static void usage(const char *prog) {
+static void usage() {
     fprintf(stderr,
+        "\n"
         "Usage:\n"
-        "  %s -<cmd> -<waveform> <note> <duration_ms> <volume> [channel]\n"
+        "\n"
+        "  signal -<cmd> -<waveform> <note> <duration_ms> <volume> [channel]\n"
         "     [attack_pct] [decay_pct] [sustain_pct] [release_pct]\n"
         "     [lowpass_hz] [highpass_hz]\n"
+        "\n"
         "  cmd       : enter, play, loop <count> (plays entered notes count\n"
         "              times), stop (stops all notes)\n"
         "  waveforms : sine, square, triangle, sawtooth, noise\n"
@@ -73,13 +76,15 @@ static void usage(const char *prog) {
         "  adsr      : percentages must total 100\n"
         "  lowpass   : (optional) in Hz\n"
         "  highpass  : (optional) in Hz\n"
+        "\n"
         "Notes entered on the same channel play sequentially in the order\n"
         "entered.\n"
+        "\n"
         "Examples:\n"
-        "  %s -enter -sine c4 500 100 1 10 20 60 10 1000 200\n"
-        "  %s -enter -square e4 250 80\n"
-        "  %s -play wav > chord.wav\n",
-        prog, prog, prog, prog);
+        "  signal -enter -sine c4 500 100 1 10 20 60 10 1000 200\n"
+        "  signal -enter -square e4 250 80\n"
+        "  signal -play (wav > chord.wav)\n"
+        "\n");
     exit(EXIT_FAILURE);
 }
 

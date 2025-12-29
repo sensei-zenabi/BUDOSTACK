@@ -46,6 +46,7 @@ static void move_to_end_of_line(const char *buffer, size_t *cursor, size_t pos);
 static void clear_line_contents(const char *buffer, size_t *pos, size_t *cursor);
 static char *system_clipboard_read(void);
 static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, size_t *cursor);
+static size_t sanitize_text_input(const char *src, char *dest, size_t dest_size);
 static size_t find_token_start(const char *buffer, size_t pos);
 static void unescape_token(const char *src, char *dest, size_t dest_size);
 static void escape_token(const char *src, char *dest, size_t dest_size);
@@ -347,6 +348,14 @@ char* read_input(void) {
             if (seq_len == 0) {
                 continue;
             }
+            if (seq_len == 1) {
+                unsigned char byte = (unsigned char)utf8_seq[0];
+                if (byte == '\t') {
+                    utf8_seq[0] = ' ';
+                } else if (byte < 0x20u || byte == 0x7Fu) {
+                    continue;
+                }
+            }
             if (pos + seq_len >= INPUT_SIZE) {
                 continue;
             }
@@ -493,7 +502,8 @@ static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, s
         return;
     }
 
-    size_t text_len = strlen(text);
+    char sanitized[INPUT_SIZE];
+    size_t text_len = sanitize_text_input(text, sanitized, sizeof(sanitized));
     if (text_len == 0) {
         return;
     }
@@ -507,11 +517,11 @@ static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, s
     }
 
     memmove(buffer + *cursor + text_len, buffer + *cursor, *pos - *cursor + 1);
-    memcpy(buffer + *cursor, text, text_len);
+    memcpy(buffer + *cursor, sanitized, text_len);
     *pos += text_len;
     *cursor += text_len;
 
-    fwrite(text, 1, text_len, stdout);
+    fwrite(sanitized, 1, text_len, stdout);
     redraw_from_cursor(buffer, *cursor, 0);
 }
 
@@ -668,6 +678,27 @@ static size_t utf8_prev_char_start(const char *buffer, size_t cursor) {
     while (index > 0 && ((unsigned char)buffer[index] & 0xC0) == 0x80)
         index--;
     return index;
+}
+
+static size_t sanitize_text_input(const char *src, char *dest, size_t dest_size) {
+    if (!src || !dest || dest_size == 0) {
+        return 0;
+    }
+
+    size_t di = 0;
+    for (size_t si = 0; src[si] != '\0' && di + 1 < dest_size; si++) {
+        unsigned char c = (unsigned char)src[si];
+        if (c == '\t') {
+            dest[di++] = ' ';
+            continue;
+        }
+        if (c < 0x20u || c == 0x7Fu) {
+            continue;
+        }
+        dest[di++] = src[si];
+    }
+    dest[di] = '\0';
+    return di;
 }
 
 static void clear_completion_state(struct completion_state *state) {

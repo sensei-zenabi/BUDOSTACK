@@ -29,6 +29,7 @@ typedef struct {
     char note[8];
     double freq;
     long duration_ms;
+    int volume;
     long attack_ms;
     long decay_ms;
     long sustain_ms;
@@ -53,13 +54,13 @@ typedef struct {
 
 static void usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s -<cmd> -<waveform> <note> <duration_ms> [channel] "
+        "Usage: %s -<cmd> -<waveform> <note> <duration_ms> <volume> [channel] "
         "[attack_ms] [decay_ms] [sustain_ms] [release_ms] [lowpass_hz] [highpass_hz]\n"
         "  cmd       : enter, play, loop <count> (plays entered notes count times), stop (stops all notes)\n"
         "  waveforms : sine, square, triangle, sawtooth, noise\n"
         "  note      : standard concert pitch notes (e.g. c2, c3, c4, d4, e4)\n"
         "  duration  : milliseconds (e.g. 500 = 500ms)\n"
-        "  format    : raw, text, wav\n"
+        "  volume    : 0-100 (0 silent, 100 max volume)\n"
         "  channel   : (optional) 1-32 (to enable parallel sounds, default 1)\n"
         "  attack    : (optional) in milliseconds\n"
         "  decay     : (optional) in milliseconds\n"
@@ -69,8 +70,8 @@ static void usage(const char *prog) {
         "  highpass  : (optional) in Hz\n"
         "Notes entered on the same channel play sequentially in the order entered.\n"
         "Examples:\n"
-        "  %s -enter -sine c4 500 1 20 30 300 150 1000 200\n"
-        "  %s -enter -square e4 250 2\n"
+        "  %s -enter -sine c4 500 100 1 20 30 300 150 1000 200\n"
+        "  %s -enter -square e4 250 80\n"
         "  %s -play wav > chord.wav\n",
         prog, prog, prog, prog);
     exit(EXIT_FAILURE);
@@ -253,10 +254,10 @@ static void load_state(NoteSequence sequences[], size_t count) {
     char line[256];
     while (fgets(line, sizeof(line), fp)) {
         char *cursor = line;
-        char *fields[10];
-        int idx = 0;
-        while (idx < 10) {
-            fields[idx++] = cursor;
+        char *fields[11];
+        int field_count = 0;
+        while (field_count < 11) {
+            fields[field_count++] = cursor;
             char *sep = strchr(cursor, '|');
             if (!sep) {
                 break;
@@ -264,7 +265,7 @@ static void load_state(NoteSequence sequences[], size_t count) {
             *sep = '\0';
             cursor = sep + 1;
         }
-        if (idx < 10) {
+        if (field_count < 10) {
             continue;
         }
 
@@ -285,12 +286,27 @@ static void load_state(NoteSequence sequences[], size_t count) {
         }
         snprintf(entry.note, sizeof(entry.note), "%s", fields[2]);
         entry.duration_ms = strtol(fields[3], NULL, 10);
-        entry.attack_ms = strtol(fields[4], NULL, 10);
-        entry.decay_ms = strtol(fields[5], NULL, 10);
-        entry.sustain_ms = strtol(fields[6], NULL, 10);
-        entry.release_ms = strtol(fields[7], NULL, 10);
-        entry.lowpass_hz = strtod(fields[8], NULL);
-        entry.highpass_hz = strtod(fields[9], NULL);
+        entry.volume = 100;
+        if (field_count >= 11) {
+            long volume = strtol(fields[4], NULL, 10);
+            if (volume < 0 || volume > 100) {
+                continue;
+            }
+            entry.volume = (int)volume;
+            entry.attack_ms = strtol(fields[5], NULL, 10);
+            entry.decay_ms = strtol(fields[6], NULL, 10);
+            entry.sustain_ms = strtol(fields[7], NULL, 10);
+            entry.release_ms = strtol(fields[8], NULL, 10);
+            entry.lowpass_hz = strtod(fields[9], NULL);
+            entry.highpass_hz = strtod(fields[10], NULL);
+        } else {
+            entry.attack_ms = strtol(fields[4], NULL, 10);
+            entry.decay_ms = strtol(fields[5], NULL, 10);
+            entry.sustain_ms = strtol(fields[6], NULL, 10);
+            entry.release_ms = strtol(fields[7], NULL, 10);
+            entry.lowpass_hz = strtod(fields[8], NULL);
+            entry.highpass_hz = strtod(fields[9], NULL);
+        }
         if (note_to_frequency(entry.note, &entry.freq) != 0) {
             continue;
         }
@@ -321,11 +337,12 @@ static int save_state(const NoteSequence sequences[], size_t count) {
             if (!entry->active) {
                 continue;
             }
-            fprintf(fp, "%zu|%s|%s|%ld|%ld|%ld|%ld|%ld|%.3f|%.3f\n",
+            fprintf(fp, "%zu|%s|%s|%ld|%d|%ld|%ld|%ld|%ld|%.3f|%.3f\n",
                 i + 1,
                 waveform_name(entry->wave),
                 entry->note,
                 entry->duration_ms,
+                entry->volume,
                 entry->attack_ms,
                 entry->decay_ms,
                 entry->sustain_ms,
@@ -830,6 +847,7 @@ int main(int argc, char *argv[]) {
                     }
 
                     sample *= gain;
+                    sample *= entry->volume / 100.0;
                     sample = apply_filters(sample, &states[i], entry->lowpass_hz, entry->highpass_hz);
                     mixed += sample;
                     active_mix++;
@@ -884,7 +902,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (!strcmp(cmd, "enter")) {
-        if (argc < 5) {
+        if (argc < 6) {
             usage(argv[0]);
         }
 
@@ -907,8 +925,14 @@ int main(int argc, char *argv[]) {
             usage(argv[0]);
         }
 
+        long volume = 0;
+        if (parse_long(argv[5], &volume, 0, 100) != 0) {
+            fprintf(stderr, "Volume must be an integer between 0 and 100.\n");
+            usage(argv[0]);
+        }
+
         long channel = 1;
-        int arg_index = 5;
+        int arg_index = 6;
         if (argc > arg_index) {
             if (parse_long(argv[arg_index], &channel, SIGNAL_MIN_CHANNEL, SIGNAL_MAX_CHANNEL) == 0) {
                 arg_index++;
@@ -954,6 +978,7 @@ int main(int argc, char *argv[]) {
         snprintf(entry.note, sizeof(entry.note), "%s", note);
         entry.freq = freq;
         entry.duration_ms = duration_ms;
+        entry.volume = (int)volume;
         entry.attack_ms = attack_ms;
         entry.decay_ms = decay_ms;
         entry.sustain_ms = sustain_ms;

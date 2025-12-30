@@ -25,6 +25,7 @@ tasks/*
 utilities/*
 !utilities/*.c
 !utilities/*.h
+!utilities/*.ini
 
 # Do not ignore these
 !*.png

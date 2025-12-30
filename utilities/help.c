@@ -82,7 +82,7 @@ int main(int argc, char *argv[]) {
     printf("  ./sounds/      - Collection of system sounds.\n");
     printf("  ./tasks/       - Reserved for tasks. Few built-in examples provided.\n");
     printf("  ./users/       - User folders for those who like them.\n");
-    printf("  ./utilities/   - System utilities that use paging.\n");
+    printf("  ./utilities/   - System utilities (see utilities/nopaging.ini for exceptions).\n");
     printf("\n");
     printf("\n");
     printf("\n");

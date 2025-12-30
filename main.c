@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <ctype.h>
 #include <limits.h>
 #include <unistd.h>
 #include <termios.h>    // For terminal control (raw mode)
@@ -166,6 +167,26 @@ static int add_realtime_command(const char *command_name) {
     return 0;
 }
 
+static void trim_realtime_line(char *line) {
+    if (line == NULL) {
+        return;
+    }
+
+    char *start = line;
+    while (*start != '\0' && isspace((unsigned char)*start)) {
+        start++;
+    }
+    if (start != line) {
+        memmove(line, start, strlen(start) + 1);
+    }
+
+    size_t len = strlen(line);
+    while (len > 0 && isspace((unsigned char)line[len - 1])) {
+        line[len - 1] = '\0';
+        len--;
+    }
+}
+
 static void load_realtime_commands_from_dir(const char *relative_dir) {
     char target_path[PATH_MAX];
     if (snprintf(target_path, sizeof(target_path), "%s/%s", base_directory, relative_dir) >= (int)sizeof(target_path)) {
@@ -202,14 +223,50 @@ static void load_realtime_commands_from_dir(const char *relative_dir) {
     closedir(dir);
 }
 
+static void load_realtime_commands_from_file(const char *relative_path) {
+    char target_path[PATH_MAX];
+    if (snprintf(target_path, sizeof(target_path), "%s/%s", base_directory, relative_path) >= (int)sizeof(target_path)) {
+        perror("snprintf");
+        return;
+    }
+
+    FILE *fp = fopen(target_path, "r");
+    if (!fp) {
+        if (errno != ENOENT) {
+            perror("fopen");
+        }
+        return;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        trim_realtime_line(line);
+        if (line[0] == '\0' || line[0] == '#' || line[0] == ';') {
+            continue;
+        }
+        if (add_realtime_command(line) == -1) {
+            fclose(fp);
+            return;
+        }
+    }
+
+    if (ferror(fp)) {
+        perror("fgets");
+    }
+    fclose(fp);
+}
+
 /* load_realtime_commands()
  *
- * This function scans the "apps/" and "commands/" directories (relative to the base_directory)
- * and adds the name of each executable file found to the realtime_commands list.
+ * This function scans the "apps/", "commands/", and "games/" directories (relative to the base_directory)
+ * and adds the name of each executable file found to the realtime_commands list. It also loads
+ * explicit nopaging utilities from the utilities/nopaging.ini file.
  */
 void load_realtime_commands(void) {
     load_realtime_commands_from_dir("apps");
     load_realtime_commands_from_dir("commands");
+    load_realtime_commands_from_dir("games");
+    load_realtime_commands_from_file("utilities/nopaging.ini");
 }
 
 /* free_realtime_commands()
@@ -434,9 +491,6 @@ int execute_command_with_paging(CommandStruct *cmd) {
      * - The command requires interactive input (e.g., prompts).
      */
     int realtime_mode = nopaging || is_realtime_command(cmd->command);
-    if (!realtime_mode && strcmp(cmd->command, "do") == 0) {
-        realtime_mode = 1;
-    }
 
     if (realtime_mode && log_file == NULL) {
         return execute_command(cmd);

@@ -2,6 +2,7 @@
 // film noise
 // by hunterk
 // license: public domain
+// Modified by BUDOSTACK contributors (parameter tuning).
 
 // Parameter lines go here:
 #pragma parameter x_off_r "X Offset Red" 0.01 -1.0 1.0 0.01

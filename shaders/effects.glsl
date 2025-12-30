@@ -2,6 +2,7 @@
 // by hunterk
 // adapted from ompuco's more AVdistortion shadertoy:
 // https://www.shadertoy.com/view/XlsczN
+// Modified by BUDOSTACK contributors (parameter adjustments).
 
 // Parameter lines go here:
 //#pragma parameter wiggle "Wiggle" 0.0 0.0 10.0 1.0

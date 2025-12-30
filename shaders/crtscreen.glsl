@@ -2,6 +2,7 @@
 // Parameter range extended to allow brightness compensation
 // by Rogalian aka cools
 // On sub-HD resolution devices, suggest Scanline Intensity: 0.0
+// Modified by BUDOSTACK contributors (tuning defaults and feature toggles).
 
 // Simple scanlines with curvature and mask effects lifted from crt-lottes
 // by hunterk

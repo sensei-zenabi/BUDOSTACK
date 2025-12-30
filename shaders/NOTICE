@@ -1,0 +1,18 @@
+Shader attributions
+===================
+
+crtscreen.glsl
+- Corners lifted from fake-crt-geom
+- Scanlines/mask/curvature effects lifted from crt-lottes
+- Source: https://github.com/libretro/glsl-shaders/tree/master/crt/shaders/fakelottes-geom.glsl
+- Local modifications: BUDOSTACK parameter tuning and feature toggles
+
+effects.glsl
+- VHS shader by hunterk, adapted from ompuco's AVdistortion shadertoy
+- Source: https://github.com/libretro/glsl-shaders/tree/master/vhs/shaders/vhs.glsl
+- Local modifications: BUDOSTACK parameter tuning
+
+noise.glsl
+- Film noise shader by hunterk
+- Source: https://github.com/libretro/glsl-shaders/tree/master/film/shaders/film_noise.glsl
+- Local modifications: BUDOSTACK parameter tuning

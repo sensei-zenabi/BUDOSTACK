@@ -15,4 +15,4 @@ effects.glsl
 noise.glsl
 - Film noise shader by hunterk
 - Source: https://github.com/libretro/glsl-shaders/tree/master/film/shaders/film_noise.glsl
-- Local modifications: BUDOSTACK parameter tuning
+- Local modifications: BUDOSTACK parameter tuning and small algorithm changes.

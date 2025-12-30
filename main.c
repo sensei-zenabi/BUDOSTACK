@@ -19,6 +19,7 @@
 #include <dirent.h>     // For directory handling
 #include <sys/stat.h>   // For stat()
 #include <locale.h>
+#include <wchar.h>
 
 #include "commandparser.h"
 #include "input.h"      // Include the input handling header
@@ -400,23 +401,179 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
     return result;
 }
 
-/* Pager function remains unchanged from the original implementation. */
-void pager(const char **lines, size_t line_count) {
+static int get_terminal_rows(void) {
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
         w.ws_row = 24;
     }
-    int page_height = w.ws_row - 2;
+    if (w.ws_row < 1) {
+        w.ws_row = 24;
+    }
+    return (int)w.ws_row;
+}
+
+static int get_terminal_cols(void) {
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
+        w.ws_col = 80;
+    }
+    if (w.ws_col < 1) {
+        w.ws_col = 80;
+    }
+    return (int)w.ws_col;
+}
+
+static int pager_page_height(int rows) {
+    int page_height = rows - 2;
     if (page_height < 1)
         page_height = 10;
-    int start = 0;
+    return page_height;
+}
+
+static size_t display_width(const char *line, int cols) {
+    if (line == NULL || cols <= 0) {
+        return 0;
+    }
+
+    mbstate_t state;
+    memset(&state, 0, sizeof(state));
+
+    size_t width = 0;
+    const unsigned char *p = (const unsigned char *)line;
+    while (*p != '\0') {
+        if (*p == '\x1b') {
+            const unsigned char *seq = p + 1;
+            if (*seq == '[') {
+                seq++;
+                while (*seq != '\0' && (*seq < '@' || *seq > '~')) {
+                    seq++;
+                }
+                if (*seq != '\0') {
+                    seq++;
+                }
+                p = seq;
+                continue;
+            }
+            if (*seq == ']') {
+                seq++;
+                while (*seq != '\0') {
+                    if (*seq == '\a') {
+                        seq++;
+                        break;
+                    }
+                    if (*seq == '\x1b' && seq[1] == '\\') {
+                        seq += 2;
+                        break;
+                    }
+                    seq++;
+                }
+                p = seq;
+                continue;
+            }
+        }
+
+        if (*p == '\t') {
+            size_t next_tab = ((width / 8) + 1) * 8;
+            width = next_tab;
+            p++;
+            continue;
+        }
+        if (*p == '\r') {
+            width = 0;
+            p++;
+            continue;
+        }
+
+        wchar_t wc;
+        size_t consumed = mbrtowc(&wc, (const char *)p, MB_CUR_MAX, &state);
+        if (consumed == (size_t)-1 || consumed == (size_t)-2) {
+            memset(&state, 0, sizeof(state));
+            width += 1;
+            p++;
+            continue;
+        }
+        if (consumed == 0) {
+            break;
+        }
+        int char_width = wcwidth(wc);
+        if (char_width > 0) {
+            width += (size_t)char_width;
+        }
+        p += consumed;
+    }
+
+    return width;
+}
+
+static size_t line_display_rows(const char *line, int cols) {
+    if (cols < 1) {
+        cols = 80;
+    }
+    size_t width = display_width(line, cols);
+    if (width == 0) {
+        return 1;
+    }
+    return (width + (size_t)cols - 1) / (size_t)cols;
+}
+
+static size_t total_display_rows(const char **lines, size_t line_count, int cols) {
+    size_t total = 0;
+    for (size_t i = 0; i < line_count; i++) {
+        total += line_display_rows(lines[i], cols);
+    }
+    return total;
+}
+
+static size_t find_line_for_row(const size_t *prefix, size_t line_count, size_t row_offset) {
+    for (size_t i = 0; i < line_count; i++) {
+        if (row_offset < prefix[i + 1]) {
+            return i;
+        }
+    }
+    return line_count;
+}
+
+/* Pager function accounts for wrapped display rows. */
+void pager(const char **lines, size_t line_count) {
+    int rows = get_terminal_rows();
+    int cols = get_terminal_cols();
+    int page_height = pager_page_height(rows);
+    size_t *line_rows = malloc(line_count * sizeof(size_t));
+    size_t *prefix = malloc((line_count + 1) * sizeof(size_t));
+    if (line_rows == NULL || prefix == NULL) {
+        perror("malloc");
+        free(line_rows);
+        free(prefix);
+        return;
+    }
+    prefix[0] = 0;
+    for (size_t i = 0; i < line_count; i++) {
+        line_rows[i] = line_display_rows(lines[i], cols);
+        prefix[i + 1] = prefix[i] + line_rows[i];
+    }
+    size_t total_rows = prefix[line_count];
+    if (total_rows == 0) {
+        free(line_rows);
+        free(prefix);
+        return;
+    }
+
+    size_t row_offset = 0;
     while (1) {
         printf("\033[H\033[J"); // Clear the screen.
-        for (int i = start; i < start + page_height && i < (int)line_count; i++) {
+        size_t start_line = find_line_for_row(prefix, line_count, row_offset);
+        size_t rows_used = 0;
+        for (size_t i = start_line; i < line_count && rows_used < (size_t)page_height; i++) {
             printf("%s\n", lines[i]);
+            rows_used += line_rows[i];
         }
+        if (rows_used == 0 && start_line < line_count) {
+            printf("%s\n", lines[start_line]);
+        }
+        int total_pages = (int)((total_rows + (size_t)page_height - 1) / (size_t)page_height);
+        int current_page = (int)(row_offset / (size_t)page_height) + 1;
         printf("\nPage %d/%d - Use Up/Down arrows to scroll, 'f' to search, 'q' to quit.",
-               start / page_height + 1, (int)((line_count + page_height - 1) / page_height));
+               current_page, total_pages);
         fflush(stdout);
         struct termios oldt, newt;
         tcgetattr(STDIN_FILENO, &oldt);
@@ -431,13 +588,21 @@ void pager(const char **lines, size_t line_count) {
             if (getchar() == '[') {
                 int code = getchar();
                 if (code == 'A') { // Up arrow.
-                    if (start - page_height >= 0)
-                        start -= page_height;
+                    if (row_offset >= (size_t)page_height)
+                        row_offset -= (size_t)page_height;
                     else
-                        start = 0;
+                        row_offset = 0;
+                    size_t new_line = find_line_for_row(prefix, line_count, row_offset);
+                    if (new_line < line_count) {
+                        row_offset = prefix[new_line];
+                    }
                 } else if (code == 'B') { // Down arrow.
-                    if (start + page_height < (int)line_count)
-                        start += page_height;
+                    if (row_offset + (size_t)page_height < total_rows)
+                        row_offset += (size_t)page_height;
+                    size_t new_line = find_line_for_row(prefix, line_count, row_offset);
+                    if (new_line < line_count) {
+                        row_offset = prefix[new_line];
+                    }
                 }
             }
         } else if (c == 'f') {
@@ -448,13 +613,16 @@ void pager(const char **lines, size_t line_count) {
                 search[strcspn(search, "\n")] = '\0';
                 if (strlen(search) > 0) {
                     int selected = search_mode(lines, line_count, search);
-                    if (selected != -1)
-                        start = selected;
+                    if (selected != -1) {
+                        row_offset = prefix[selected];
+                    }
                 }
             }
         }
     }
     printf("\n");
+    free(line_rows);
+    free(prefix);
 }
 
 int is_realtime_command(const char *command) {
@@ -650,16 +818,13 @@ int execute_command_with_paging(CommandStruct *cmd) {
     }
     
     /* Determine page height based on terminal size. */
-    struct winsize ws;
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
-        ws.ws_row = 24;
-    }
-    int page_height = ws.ws_row - 1;
-    if (page_height < 1)
-        page_height = 10;
+    int rows = get_terminal_rows();
+    int cols = get_terminal_cols();
+    int page_height = pager_page_height(rows);
+    size_t display_rows = total_display_rows((const char **)lines, current_line, cols);
     
     /* If the output fits in one page, print directly; otherwise, page the output. */
-    if ((int)current_line <= page_height) {
+    if (display_rows <= (size_t)page_height) {
         for (size_t i = 0; i < current_line; i++) {
             printf("%s\n", lines[i]);
         }

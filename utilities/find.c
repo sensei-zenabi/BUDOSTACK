@@ -1,22 +1,20 @@
 /*
- * find.c - A command-line tool to search files for tokens matching a given pattern.
+ * find.c - A command-line tool to search files for patterns with optional flags.
  *
- * Design principles:
- * - Uses recursion to traverse directories using opendir/readdir/closedir.
- * - For each regular file, reads line-by-line.
- * - Tokenizes each line by scanning for alphanumeric characters and underscores.
- * - Supports search patterns with wildcards:
- *      Plain text: token contains the pattern as a substring.
- *      Pattern ending with '*' (e.g., "ass*"): token must start with the given prefix.
- *      Pattern starting with '*' (e.g., "*ass"): token must end with the given suffix.
- *      Pattern with '*' at both ends (e.g., "*ass*"): token must contain the given infix.
- * - When matches are found, prints the file’s relative path, and for each matching line prints
- *   the line number (with an indent) and the matching line.
- * - If no argument is provided, prints "please provide an argument".
- * - If two arguments are provided, the first argument is treated as a file or directory to search,
- *   and the second argument is the search pattern.
+ * Usage: find <string> [-fw] [-hf] [-cs] [-git]
  *
- * Compile with: gcc -std=c11 -Wall -Wextra -o find find.c
+ * Flags:
+ *   -fw  = full word matching (match must align to word boundaries).
+ *   -hf  = include hidden folders and files in search (except .git unless -git).
+ *   -cs  = case-sensitive matching (default is case-insensitive).
+ *   -git = include .git folders in search.
+ *
+ * The search string supports '*' wildcards to match any sequence of characters.
+ * Examples: *.*, *.txt, note.*, *note.*, note*.*, *note*.*, *note.txt, note*.txt,
+ *           *note*.txt, note.ex*, note.*xe.
+ *
+ * Output prints the file path, then matching lines with line numbers and
+ * highlighted matches. A blank line separates results between files.
  */
 
 #include <stdio.h>
@@ -26,208 +24,290 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <limits.h>
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 #define MAX_LINE 1024
-#define MAX_TOKEN 256
 #define INDENT "    "
+#define HIGHLIGHT_START "\x1b[43m"
+#define HIGHLIGHT_END "\x1b[0m"
 
-/*
- * match_token() checks if a given token matches the search pattern.
- * Wildcard rules:
- *   - If pattern starts with '*' and ends with '*' (and length > 2): match if token contains the infix.
- *   - If pattern starts with '*' (only): token must end with the remainder (suffix).
- *   - If pattern ends with '*' (only): token must start with the prefix.
- *   - Otherwise: match if token contains pattern as a substring.
- */
-int match_token(const char *token, const char *pattern) {
-    size_t tlen = strlen(token);
-    size_t plen = strlen(pattern);
-    
-    if (plen == 0)
-        return 0; // empty pattern doesn't match
+struct search_options {
+    int full_word;
+    int include_hidden;
+    int case_sensitive;
+    int include_git;
+};
 
-    int starts_wild = (pattern[0] == '*');
-    int ends_wild = (pattern[plen - 1] == '*');
+struct match_span {
+    size_t start;
+    size_t length;
+};
 
-    if (starts_wild && ends_wild && plen > 2) {
-        // Pattern of form "*infix*": token must contain infix.
-        size_t infix_len = plen - 2;
-        char infix[MAX_TOKEN];
-        if (infix_len >= MAX_TOKEN)
-            return 0;
-        strncpy(infix, pattern + 1, infix_len);
-        infix[infix_len] = '\0';
-        return (strstr(token, infix) != NULL);
-    } else if (starts_wild && !ends_wild) {
-        // Pattern of form "*suffix": token must end with suffix.
-        size_t suffix_len = plen - 1;
-        const char *suffix = pattern + 1;
-        if (suffix_len > tlen)
-            return 0;
-        return (strcmp(token + tlen - suffix_len, suffix) == 0);
-    } else if (!starts_wild && ends_wild) {
-        // Pattern of form "prefix*": token must start with prefix.
-        size_t prefix_len = plen - 1;
-        if (prefix_len > tlen)
-            return 0;
-        return (strncmp(token, pattern, prefix_len) == 0);
-    } else {
-        // No wildcards: token must contain pattern as a substring.
-        return (strstr(token, pattern) != NULL);
-    }
+static int is_word_char(char c) {
+    return isalnum((unsigned char)c) || c == '_';
 }
 
-/*
- * check_line() tokenizes a line and returns 1 if any token matches the pattern.
- */
-int check_line(const char *line, const char *pattern) {
-    char token[MAX_TOKEN];
-    int i = 0, j;
-    int matched = 0;
-    int in_token = 0;
-    
-    for (j = 0; line[j] != '\0'; j++) {
-        if (isalnum((unsigned char)line[j]) || line[j] == '_') {
-            if (!in_token) {
-                in_token = 1;
-                i = 0;
+static int chars_equal(char a, char b, int case_sensitive) {
+    if (case_sensitive) {
+        return a == b;
+    }
+    return tolower((unsigned char)a) == tolower((unsigned char)b);
+}
+
+static int pattern_all_wildcards(const char *pattern) {
+    while (*pattern != '\0') {
+        if (*pattern != '*') {
+            return 0;
+        }
+        pattern++;
+    }
+    return 1;
+}
+
+static int match_pattern_recursive(const char *text, const char *pattern,
+                                   int case_sensitive, size_t *match_len) {
+    if (*pattern == '\0') {
+        *match_len = 0;
+        return 1;
+    }
+
+    if (*pattern == '*') {
+        size_t i = 0;
+        while (1) {
+            size_t sub_len = 0;
+            if (match_pattern_recursive(text + i, pattern + 1, case_sensitive,
+                                        &sub_len)) {
+                *match_len = i + sub_len;
+                return 1;
             }
-            if (i < MAX_TOKEN - 1)
-                token[i++] = line[j];
-        } else {
-            if (in_token) {
-                token[i] = '\0';
-                if (match_token(token, pattern)) {
-                    matched = 1;
-                    break;
+            if (text[i] == '\0') {
+                break;
+            }
+            i++;
+        }
+        return 0;
+    }
+
+    if (*text == '\0') {
+        return 0;
+    }
+
+    if (!chars_equal(*text, *pattern, case_sensitive)) {
+        return 0;
+    }
+
+    size_t sub_len = 0;
+    if (match_pattern_recursive(text + 1, pattern + 1, case_sensitive,
+                                &sub_len)) {
+        *match_len = 1 + sub_len;
+        return 1;
+    }
+
+    return 0;
+}
+
+static int match_pattern_at(const char *text, const char *pattern,
+                            const struct search_options *options,
+                            size_t *match_len) {
+    return match_pattern_recursive(text, pattern, options->case_sensitive,
+                                   match_len);
+}
+
+static int match_full_word(const char *line, size_t line_len, size_t start,
+                           size_t length) {
+    size_t end = start + length;
+    if (start > 0 && is_word_char(line[start - 1])) {
+        return 0;
+    }
+    if (end < line_len && is_word_char(line[end])) {
+        return 0;
+    }
+    return 1;
+}
+
+static size_t collect_matches(const char *line, const char *pattern,
+                              const struct search_options *options,
+                              struct match_span *matches, size_t max_matches) {
+    size_t line_len = strlen(line);
+    size_t count = 0;
+
+    if (pattern_all_wildcards(pattern)) {
+        if (line_len > 0 && count < max_matches) {
+            matches[count].start = 0;
+            matches[count].length = line_len;
+            count++;
+        }
+        return count;
+    }
+
+    for (size_t i = 0; i < line_len; ) {
+        size_t match_len = 0;
+        if (match_pattern_at(line + i, pattern, options, &match_len)) {
+            if (match_len == 0) {
+                i++;
+                continue;
+            }
+
+            if (!options->full_word ||
+                match_full_word(line, line_len, i, match_len)) {
+                if (count < max_matches) {
+                    matches[count].start = i;
+                    matches[count].length = match_len;
+                    count++;
                 }
-                in_token = 0;
+                i += match_len;
+                continue;
             }
         }
+        i++;
     }
-    if (!matched && in_token) {
-        token[i] = '\0';
-        if (match_token(token, pattern))
-            matched = 1;
-    }
-    return matched;
+
+    return count;
 }
 
-/*
- * process_file() opens a file and prints matching lines (with line numbers)
- * if any token in the line matches the search pattern.
- */
-void process_file(const char *filepath, const char *pattern) {
+static void print_line_with_highlight(int lineno, const char *line,
+                                      const struct match_span *matches,
+                                      size_t match_count) {
+    printf(INDENT "%d: ", lineno);
+
+    size_t cursor = 0;
+    size_t line_len = strlen(line);
+    for (size_t i = 0; i < match_count; i++) {
+        size_t start = matches[i].start;
+        size_t length = matches[i].length;
+        if (start > cursor) {
+            fwrite(line + cursor, 1, start - cursor, stdout);
+        }
+        printf(HIGHLIGHT_START);
+        fwrite(line + start, 1, length, stdout);
+        printf(HIGHLIGHT_END);
+        cursor = start + length;
+    }
+    if (cursor < line_len) {
+        fwrite(line + cursor, 1, line_len - cursor, stdout);
+    }
+    printf("\n");
+}
+
+static int process_file(const char *filepath, const char *pattern,
+                        const struct search_options *options) {
     FILE *fp = fopen(filepath, "r");
     if (!fp) {
-        fprintf(stderr, "Could not open file %s: %s\n", filepath, strerror(errno));
-        return;
+        fprintf(stderr, "Could not open file %s: %s\n", filepath,
+                strerror(errno));
+        return 0;
     }
-    
+
     char line[MAX_LINE];
     int lineno = 0;
     int file_printed = 0;
-    
+
     while (fgets(line, sizeof(line), fp)) {
         lineno++;
-        if (check_line(line, pattern)) {
+        line[strcspn(line, "\n")] = '\0';
+
+        struct match_span matches[MAX_LINE];
+        size_t match_count = collect_matches(line, pattern, options, matches,
+                                             MAX_LINE);
+        if (match_count > 0) {
             if (!file_printed) {
                 printf("%s\n", filepath);
                 file_printed = 1;
             }
-            // Remove newline from the line.
-            line[strcspn(line, "\n")] = '\0';
-            printf(INDENT "%d: %s\n", lineno, line);
+            print_line_with_highlight(lineno, line, matches, match_count);
         }
     }
+
     fclose(fp);
+    return file_printed;
 }
 
-/*
- * search_directory() recursively traverses directories starting from dir.
- * For each regular file found, it calls process_file().
- */
-void search_directory(const char *dir, const char *pattern) {
+static int should_skip_entry(const char *name,
+                             const struct search_options *options) {
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
+        return 1;
+    }
+
+    if (name[0] == '.') {
+        if (strcmp(name, ".git") == 0) {
+            return !options->include_git;
+        }
+        return !options->include_hidden;
+    }
+
+    return 0;
+}
+
+static void search_directory(const char *dir, const char *pattern,
+                             const struct search_options *options) {
     DIR *dp = opendir(dir);
     if (!dp) {
-        fprintf(stderr, "Cannot open directory %s: %s\n", dir, strerror(errno));
+        fprintf(stderr, "Cannot open directory %s: %s\n", dir,
+                strerror(errno));
         return;
     }
-    
+
     struct dirent *entry;
     while ((entry = readdir(dp)) != NULL) {
-        // Skip "." and ".."
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+        if (should_skip_entry(entry->d_name, options)) {
             continue;
-        
-        char path[1024];
+        }
+
+        char path[PATH_MAX];
         snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
-        
+
         struct stat path_stat;
         if (stat(path, &path_stat) < 0) {
             fprintf(stderr, "stat error on %s: %s\n", path, strerror(errno));
             continue;
         }
-        
+
         if (S_ISDIR(path_stat.st_mode)) {
-            // Recursively search subdirectories.
-            search_directory(path, pattern);
+            search_directory(path, pattern, options);
         } else if (S_ISREG(path_stat.st_mode)) {
-            // Process regular file.
-            process_file(path, pattern);
+            if (process_file(path, pattern, options)) {
+                printf("\n");
+            }
         }
     }
+
     closedir(dp);
 }
 
-/*
- * main() parses command-line arguments.
- *
- * Usage:
- *   1. To search the entire directory tree:
- *          find "pattern"
- *   2. To search a specific file or directory:
- *          find path "pattern"
- *
- * If no argument is provided, prints "please provide an argument".
- */
+static void print_usage(const char *program) {
+    fprintf(stderr,
+            "Usage: %s <string> [-fw] [-hf] [-cs] [-git]\n",
+            program);
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         printf("please provide an argument\n");
         return EXIT_FAILURE;
     }
 
-    if (argc == 2) {
-        // Only pattern provided; search starting from the current directory.
-        const char *pattern = argv[1];
-        search_directory(".", pattern);
-    } else if (argc == 3) {
-        // A specific file or directory is provided.
-        const char *path = argv[1];
-        const char *pattern = argv[2];
-        
-        struct stat path_stat;
-        if (stat(path, &path_stat) < 0) {
-            fprintf(stderr, "stat error on %s: %s\n", path, strerror(errno));
-            return EXIT_FAILURE;
-        }
-        
-        if (S_ISDIR(path_stat.st_mode)) {
-            // If a directory, search within it.
-            search_directory(path, pattern);
-        } else if (S_ISREG(path_stat.st_mode)) {
-            // If a file, process only that file.
-            process_file(path, pattern);
+    const char *pattern = argv[1];
+    struct search_options options = {0, 0, 0, 0};
+
+    for (int i = 2; i < argc; i++) {
+        if (strcmp(argv[i], "-fw") == 0) {
+            options.full_word = 1;
+        } else if (strcmp(argv[i], "-hf") == 0) {
+            options.include_hidden = 1;
+        } else if (strcmp(argv[i], "-cs") == 0) {
+            options.case_sensitive = 1;
+        } else if (strcmp(argv[i], "-git") == 0) {
+            options.include_git = 1;
         } else {
-            fprintf(stderr, "%s is not a regular file or directory.\n", path);
+            print_usage(argv[0]);
             return EXIT_FAILURE;
         }
-    } else {
-        fprintf(stderr, "Usage:\n");
-        fprintf(stderr, "  %s \"pattern\"\n", argv[0]);
-        fprintf(stderr, "  %s path \"pattern\"\n", argv[0]);
-        return EXIT_FAILURE;
     }
-    
+
+    search_directory(".", pattern, &options);
     return EXIT_SUCCESS;
 }

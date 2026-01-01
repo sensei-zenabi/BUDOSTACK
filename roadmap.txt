@@ -2,19 +2,19 @@
 ================== DEVELOPMENT ROADMAP FOR BUDOSTACK ===================
 
  This is a public development roadmap for BUDOSTACK, mainly composed out
- of my personal interests using BUDOSTACK to my other hobby projects,
- such as the BUDOSTACK MS-DOS Application development using Borland C++
- Version 3.1 environment with Dosbox emulating MS-DOS 5.0.
-
+ of my personal interests using BUDOSTACK to my other hobby projects.
+ 
 
 ------------------------------------------------------------------------
 OK | PRIO | DESCRIPTION
 ------------------------------------------------------------------------
-   | High | Make applications like Midnight Commander work in BUDOSTACK.
+ X | High | Make applications like Midnight Commander work in BUDOSTACK.
+   |      | -> apps/terminal should be now close to xterm capabilities.
 ------------------------------------------------------------------------
-   | Med. | Improve copy, move, etc. system commands closer to MC.
+ X | Med. | Improve copy, move and remove
+   |      | -> implemented combined 'do' command.
 ------------------------------------------------------------------------
-
-
+ X | High | Way to define what commands bypass paging.
+            -> implemented ./utilities/nopaging.ini
 
 ========================================================================

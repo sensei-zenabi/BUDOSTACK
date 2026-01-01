@@ -4,11 +4,16 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: _TERM_RESOLUTION <width> <height>\n");
-    fprintf(stderr, "  Sets the terminal logical resolution in pixels.\n");
+    fprintf(stderr, "  Changes the resolution to <width>x<height> defined as pixels.\n");
     fprintf(stderr, "  Use 0 0 to restore the default resolution.\n");
+    fprintf(stderr, "Usage: _TERM_RESOLUTION LOW\n");
+    fprintf(stderr, "  Changes the resolution to 640x360.\n");
+    fprintf(stderr, "Usage: _TERM_RESOLUTION HIGH\n");
+    fprintf(stderr, "  Changes the resolution to 800x450.\n");
 }
 
 static int parse_dimension(const char *arg, const char *name, long *out_value) {
@@ -33,20 +38,45 @@ static int parse_dimension(const char *arg, const char *name, long *out_value) {
     return 0;
 }
 
-int main(int argc, char **argv) {
-    if (argc != 3) {
-        print_usage();
-        return EXIT_FAILURE;
+static int parse_preset(const char *arg, long *width, long *height) {
+    if (!arg || !width || !height) {
+        return 0;
     }
 
+    if (strcasecmp(arg, "LOW") == 0) {
+        *width = 640;
+        *height = 360;
+        return 1;
+    }
+
+    if (strcasecmp(arg, "HIGH") == 0) {
+        *width = 800;
+        *height = 450;
+        return 1;
+    }
+
+    return 0;
+}
+
+int main(int argc, char **argv) {
     long width = 0;
     long height = 0;
 
-    if (parse_dimension(argv[1], "width", &width) != 0) {
-        return EXIT_FAILURE;
-    }
+    if (argc == 2) {
+        if (!parse_preset(argv[1], &width, &height)) {
+            print_usage();
+            return EXIT_FAILURE;
+        }
+    } else if (argc == 3) {
+        if (parse_dimension(argv[1], "width", &width) != 0) {
+            return EXIT_FAILURE;
+        }
 
-    if (parse_dimension(argv[2], "height", &height) != 0) {
+        if (parse_dimension(argv[2], "height", &height) != 0) {
+            return EXIT_FAILURE;
+        }
+    } else {
+        print_usage();
         return EXIT_FAILURE;
     }
 

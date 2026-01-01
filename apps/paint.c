@@ -97,10 +97,10 @@ static void get_terminal_size(int *rows, int *cols) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0 || ws.ws_row == 0) {
         if (rows) {
-            *rows = BUDOSTACK_TARGET_ROWS;
+            *rows = budostack_get_target_rows();
         }
         if (cols) {
-            *cols = BUDOSTACK_TARGET_COLS;
+            *cols = budostack_get_target_cols();
         }
         return;
     }
@@ -115,7 +115,8 @@ static void get_terminal_size(int *rows, int *cols) {
 
 /* -------- Image data -------- */
 
-static int img_w = BUDOSTACK_TARGET_COLS, img_h = BUDOSTACK_TARGET_ROWS;
+static int img_w = 0;
+static int img_h = 0;
 static uint8_t pixels[MAX_W * MAX_H]; // Each = 0..TOTAL_COLORS-1 color index, or EMPTY
 
 static int cursor_x = 0, cursor_y = 0;
@@ -1447,6 +1448,10 @@ static void flood_fill_at_cursor(uint8_t color_idx){
 int main(int argc, char **argv){
     init_palettes();
     set_current_palette_variant(2);
+    if (img_w <= 0 || img_h <= 0) {
+        img_w = budostack_get_target_cols();
+        img_h = budostack_get_target_rows();
+    }
 
     // Initialize default image
     for (int i=0;i<MAX_W*MAX_H;i++) pixels[i]=EMPTY;

@@ -341,8 +341,8 @@ int cmp_currency_by_rate(const void *a, const void *b) {
    On Windows, we fall back to using environment variables.
 */
 void get_terminal_size(int *cols, int *rows) {
-    int local_cols = BUDOSTACK_TARGET_COLS;
-    int local_rows = BUDOSTACK_TARGET_ROWS;
+    int local_cols = budostack_get_target_cols();
+    int local_rows = budostack_get_target_rows();
 #ifdef _WIN32
     const char *env_cols = getenv("COLUMNS");
     const char *env_rows = getenv("LINES");

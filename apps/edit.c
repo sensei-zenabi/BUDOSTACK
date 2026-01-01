@@ -19,14 +19,6 @@
 #include <signal.h>
 #include <time.h>
 
-#ifndef EDITOR_TARGET_COLS
-#define EDITOR_TARGET_COLS BUDOSTACK_TARGET_COLS
-#endif
-
-#ifndef EDITOR_TARGET_ROWS
-#define EDITOR_TARGET_ROWS BUDOSTACK_TARGET_ROWS
-#endif
-
 /*
  * Design principles and notes:
  * - Plain C using -std=c11 and standard C libraries with POSIX-compliant functions.
@@ -753,8 +745,8 @@ int getWindowSize(int *rows, int *cols) {
 
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0 || ws.ws_row == 0) {
-        *rows = EDITOR_TARGET_ROWS;
-        *cols = EDITOR_TARGET_COLS;
+        *rows = budostack_get_target_rows();
+        *cols = budostack_get_target_cols();
     } else {
         *cols = ws.ws_col;
         *rows = ws.ws_row;
@@ -1226,11 +1218,11 @@ void editorSearch(void) {
     enableRawMode();
 
     /* Get terminal size */
-    int rows = (E.screenrows > 0) ? E.screenrows : EDITOR_TARGET_ROWS;
-    int cols = (E.screencols > 0) ? E.screencols : EDITOR_TARGET_COLS;
+    int rows = (E.screenrows > 0) ? E.screenrows : budostack_get_target_rows();
+    int cols = (E.screencols > 0) ? E.screencols : budostack_get_target_cols();
     if (getWindowSize(&rows, &cols) == -1) {
-        rows = (E.screenrows > 0) ? E.screenrows : EDITOR_TARGET_ROWS;
-        cols = (E.screencols > 0) ? E.screencols : EDITOR_TARGET_COLS;
+        rows = (E.screenrows > 0) ? E.screenrows : budostack_get_target_rows();
+        cols = (E.screencols > 0) ? E.screencols : budostack_get_target_cols();
     }
     budostack_clamp_terminal_size(&rows, &cols);
 
@@ -1859,8 +1851,8 @@ int main(int argc, char *argv[]) {
     E.preferred_cx = 0;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
-        E.screenrows = EDITOR_TARGET_ROWS;
-        E.screencols = EDITOR_TARGET_COLS;
+        E.screenrows = budostack_get_target_rows();
+        E.screencols = budostack_get_target_cols();
     }
     E.textrows = E.screenrows - 3;
 

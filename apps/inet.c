@@ -12,7 +12,7 @@
 
 #define MAX_INPUT 100
 #define MAX_INTERFACES 32
-#define MAX_BAR_LEN 28  // Maximum characters for histogram bars within 80 columns
+#define MAX_BAR_LEN 28  // Base characters for histogram bars within 80 columns
 
 // Table widths for proper alignment on an 80 column display
 #define TABLE1_WIDTH 74  // Main statistics table width
@@ -20,8 +20,9 @@
 
 // Helper function to print a separator line with a given width.
 void print_separator(int width) {
-    if (width > BUDOSTACK_TARGET_COLS) {
-        width = BUDOSTACK_TARGET_COLS;
+    int target_cols = budostack_get_target_cols();
+    if (width > target_cols) {
+        width = target_cols;
     }
     if (width < 0) {
         return;
@@ -30,6 +31,21 @@ void print_separator(int width) {
          putchar('-');
     }
     putchar('\n');
+}
+
+static int get_bar_limit(void) {
+    int target_cols = budostack_get_target_cols();
+    int scaled = (target_cols * MAX_BAR_LEN) / BUDOSTACK_TARGET_COLS;
+    if (scaled < 10) {
+        scaled = 10;
+    }
+    if (scaled > target_cols - 20) {
+        scaled = target_cols - 20;
+    }
+    if (scaled < 1) {
+        scaled = 1;
+    }
+    return scaled;
 }
 
 // Structure to store network interface statistics from /proc/net/dev
@@ -337,6 +353,7 @@ void monitor_mode(int interval) {
          
          // Print bar view for RX throughput per interface.
          printf("\nMeasured RX Throughput (bytes/sec):\n");
+         int bar_limit = get_bar_limit();
          for (int i = 0; i < curr_count; i++) {
              unsigned long iface_max_rx = 0;
              for (int k = 0; k < max_stats_count; k++) {
@@ -347,15 +364,15 @@ void monitor_mode(int interval) {
              }
              int bar_len = 0;
              if (iface_max_rx > 0) {
-                 bar_len = (int)((rx_rates[i] * MAX_BAR_LEN) / iface_max_rx);
-                 if (bar_len > MAX_BAR_LEN)
-                     bar_len = MAX_BAR_LEN;
+                 bar_len = (int)((rx_rates[i] * bar_limit) / iface_max_rx);
+                 if (bar_len > bar_limit)
+                     bar_len = bar_limit;
              }
              printf("%-6s [", curr[i].name);
              for (int j = 0; j < bar_len; j++) {
                  putchar('#');
              }
-             for (int j = bar_len; j < MAX_BAR_LEN; j++) {
+             for (int j = bar_len; j < bar_limit; j++) {
                  putchar(' ');
              }
              printf("] %8lu B/s\n", rx_rates[i]);
@@ -363,6 +380,7 @@ void monitor_mode(int interval) {
          
          // Print bar view for TX throughput per interface.
          printf("\nMeasured TX Throughput (bytes/sec):\n");
+         bar_limit = get_bar_limit();
          for (int i = 0; i < curr_count; i++) {
              unsigned long iface_max_tx = 0;
              for (int k = 0; k < max_stats_count; k++) {
@@ -373,15 +391,15 @@ void monitor_mode(int interval) {
              }
              int bar_len = 0;
              if (iface_max_tx > 0) {
-                 bar_len = (int)((tx_rates[i] * MAX_BAR_LEN) / iface_max_tx);
-                 if (bar_len > MAX_BAR_LEN)
-                     bar_len = MAX_BAR_LEN;
+                 bar_len = (int)((tx_rates[i] * bar_limit) / iface_max_tx);
+                 if (bar_len > bar_limit)
+                     bar_len = bar_limit;
              }
              printf("%-6s [", curr[i].name);
              for (int j = 0; j < bar_len; j++) {
                  putchar('#');
              }
-             for (int j = bar_len; j < MAX_BAR_LEN; j++) {
+             for (int j = bar_len; j < bar_limit; j++) {
                  putchar(' ');
              }
              printf("] %8lu B/s\n", tx_rates[i]);

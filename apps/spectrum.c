@@ -95,10 +95,10 @@ static void get_terminal_size(int *rows, int *cols)
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0 || ws.ws_row == 0) {
         if (rows) {
-            *rows = BUDOSTACK_TARGET_ROWS;
+            *rows = budostack_get_target_rows();
         }
         if (cols) {
-            *cols = BUDOSTACK_TARGET_COLS;
+            *cols = budostack_get_target_cols();
         }
         return;
     }
@@ -706,9 +706,9 @@ int main(void)
     int rows = 0;
     int cols = 0;
     get_terminal_size(&rows, &cols);
-    if (cols < BUDOSTACK_TARGET_COLS) {
+    if (cols < budostack_get_target_cols()) {
         fprintf(stderr, "spectrum: terminal width must be at least %d columns (got %d)\n",
-                BUDOSTACK_TARGET_COLS, cols);
+                budostack_get_target_cols(), cols);
         return EXIT_FAILURE;
     }
 
@@ -813,9 +813,12 @@ int main(void)
 
         if (should_draw) {
             get_terminal_size(&rows, &cols);
-            if (cols < BUDOSTACK_TARGET_COLS) {
+            int min_cols = budostack_get_target_cols();
+            if (cols < min_cols) {
                 printf("\x1b[H\x1b[0m");
-                write_padded_line("Spectrum Analyzer requires at least 80 columns.", cols, 1);
+                char min_line[80];
+                snprintf(min_line, sizeof(min_line), "Spectrum Analyzer requires at least %d columns.", min_cols);
+                write_padded_line(min_line, cols, 1);
                 char width_line[64];
                 snprintf(width_line, sizeof(width_line), "Current width: %d", cols);
                 write_padded_line(width_line, cols, 1);
@@ -954,4 +957,3 @@ int main(void)
     return EXIT_FAILURE;
 }
 #endif
-

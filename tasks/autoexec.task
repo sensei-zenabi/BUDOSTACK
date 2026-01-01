@@ -16,7 +16,7 @@ SET $SCHEME = "c64"
 SET $SHADERS = "enable"
 SET $LOAD = 0
 
-# Set resolution to ~80x45, i.e. wide screen VGA
+# Set default resolution to low mode
 
 RUN _TERM_RESOLUTION 640 360
 
@@ -71,6 +71,20 @@ IF ($SELECTION == 0):
 END
 RUN _TERM_SHADER $SHADERS
 RUN cls
+
+# Select terminal resolution mode
+
+PRINT "\nSelect terminal resolution mode:"
+PRINT "\n[0] Low (640x360)"
+PRINT "\n[1] High (800x450)"
+PRINT "\nEnter Selection: "
+INPUT $SELECTION
+IF ($SELECTION == 1):
+  RUN _TERM_RESOLUTION 800 450
+END
+IF ($SELECTION == 0):
+  RUN _TERM_RESOLUTION 640 360
+END
 
 # Display "simulated" loading screen and play related sound effects
 

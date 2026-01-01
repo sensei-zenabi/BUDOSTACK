@@ -1,10 +1,6 @@
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
-// Target the shared 80x45 layout so the app aligns with the SDL terminal
-#define BUDOSTACK_TARGET_COLS 80
-#define BUDOSTACK_TARGET_ROWS 45
-
 #include "../lib/terminal_layout.h"
 
 #include <ctype.h>
@@ -497,8 +493,8 @@ static void wrap_text(struct BookState *state) {
 static void update_dimensions(struct BookState *state) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        state->cols = BUDOSTACK_TARGET_COLS;
-        state->rows = BUDOSTACK_TARGET_ROWS;
+        state->cols = budostack_get_target_cols();
+        state->rows = budostack_get_target_rows();
     } else {
         state->cols = ws.ws_col;
         state->rows = ws.ws_row;

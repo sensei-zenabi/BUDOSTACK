@@ -271,10 +271,10 @@ static int get_terminal_size(int *rows, int *cols) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1) {
         if (rows) {
-            *rows = BUDOSTACK_TARGET_ROWS;
+            *rows = budostack_get_target_rows();
         }
         if (cols) {
-            *cols = BUDOSTACK_TARGET_COLS;
+            *cols = budostack_get_target_cols();
         }
         return 0;
     }
@@ -315,8 +315,8 @@ static void print_help_bar(void) {
     int term_cols = 0;
 
     if (!get_terminal_size(&term_rows, &term_cols) || term_rows <= 0 || term_cols <= 0) {
-        term_rows = BUDOSTACK_TARGET_ROWS;
-        term_cols = BUDOSTACK_TARGET_COLS;
+        term_rows = budostack_get_target_rows();
+        term_cols = budostack_get_target_cols();
     }
 
     int help_width = term_cols;
@@ -502,8 +502,8 @@ int main(int argc, char *argv[]) {
         int term_rows = 0;
         int term_cols = 0;
         if (!get_terminal_size(&term_rows, &term_cols) || term_rows <= 0 || term_cols <= 0) {
-            term_rows = BUDOSTACK_TARGET_ROWS;
-            term_cols = BUDOSTACK_TARGET_COLS;
+            term_rows = budostack_get_target_rows();
+            term_cols = budostack_get_target_cols();
         }
 
         const int help_lines = HELP_LINE_COUNT;  // Number of lines reserved by print_help_bar()

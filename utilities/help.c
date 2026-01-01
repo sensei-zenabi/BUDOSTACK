@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
     printf("  - Kubuntu\n");
     printf("\n");
     printf(" Note! BUDOSTACK is intended to be ran with the apps/terminal application.\n");
-    printf("       that uses 640x360 resolution with 79 columns and 44 rows.\n");
+    printf("       that supports 640x360 (80x45) and 800x450 (100x56) resolution modes.\n");
     printf("-----------------------------------------------------------------------------\n");
     // PAGE 2
     printf("-----------------------------------------------------------------------------\n");

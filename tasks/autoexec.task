@@ -11,6 +11,7 @@
 
 # Initialize variables
 
+SET $RESOLUTION = "LOW"
 SET $SELECTION = 0
 SET $SCHEME = "c64"
 SET $SHADERS = "enable"
@@ -70,21 +71,29 @@ IF ($SELECTION == 0):
   $SHADERS = "disable"
 END
 RUN _TERM_SHADER $SHADERS
-RUN cls
 
 # Select terminal resolution mode
 
+PRINT "\n"
 PRINT "\nSelect terminal resolution mode:"
 PRINT "\n[0] Low (640x360)"
 PRINT "\n[1] High (800x450)"
 PRINT "\nEnter Selection: "
 INPUT $SELECTION
 IF ($SELECTION == 1):
-  RUN _TERM_RESOLUTION 800 450
+  SET $RESOLUTION = "HIGH"
 END
 IF ($SELECTION == 0):
-  RUN _TERM_RESOLUTION 640 360
+  SET $RESOLUTION = "LOW"
 END
+
+PRINT "\n\nNote!"
+PRINT "\n\nResolution can be changed runtime with:"
+PRINT "\n\n  _TERM_RESOLUTION LOW  = sets the low resolution mode"
+PRINT "\n  _TERM_RESOLUTION HIGH = sets the high resolution mode"
+PRINT "\n\n Press ENTER to continue"
+INPUT $SELECTION
+RUN cls
 
 # Display "simulated" loading screen and play related sound effects
 
@@ -114,4 +123,12 @@ RUN _TEXT -x 2 -y 43 -text "Created by: Ville Suoranta"
 RUN _TEXT -x 2 -y 44 -text "email: ville.m.suoranta(at)gmail.com"
 RUN _WAIT 1600                                                                                                                      
             
+# Apply the selected resolution
+
+IF ($RESOLUTION == "HIGH"):
+  RUN _TERM_RESOLUTION 800 450
+END
+IF ($RESOLUTION == "LOW"):
+  RUN _TERM_RESOLUTION 640 360
+END
                                                                                                                                                                                                                                 

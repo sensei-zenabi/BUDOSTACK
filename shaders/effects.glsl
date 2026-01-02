@@ -9,6 +9,9 @@
 #pragma parameter wiggle "Wiggle" 0.0 0.0 0.0 0.0
 
 #pragma parameter smear "Chroma Smear" 0.25 0.0 0.5 0.025
+#pragma parameter phosphor_decay_enable "Phosphor Decay" 0.0 0.0 1.0 1.0
+#pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 250.0 1.0 2000.0 1.0
+#pragma parameter phosphor_decay_threshold "Phosphor Decay Threshold (%)" 50.0 0.0 100.0 1.0
 
 #if defined(VERTEX)
 
@@ -82,6 +85,7 @@ uniform COMPAT_PRECISION vec2 OutputSize;
 uniform COMPAT_PRECISION vec2 TextureSize;
 uniform COMPAT_PRECISION vec2 InputSize;
 uniform sampler2D Texture;
+uniform sampler2D Prev0;
 uniform sampler2D play;
 COMPAT_VARYING vec4 TEX0;
 
@@ -95,9 +99,15 @@ COMPAT_VARYING vec4 TEX0;
 #ifdef PARAMETER_UNIFORM
 uniform COMPAT_PRECISION float wiggle;
 uniform COMPAT_PRECISION float smear;
+uniform COMPAT_PRECISION float phosphor_decay_enable;
+uniform COMPAT_PRECISION float phosphor_decay_time_ms;
+uniform COMPAT_PRECISION float phosphor_decay_threshold;
 #else
 #define wiggle 3.0
 #define smear 1.0
+#define phosphor_decay_enable 0.0
+#define phosphor_decay_time_ms 250.0
+#define phosphor_decay_threshold 50.0
 #endif
 
 #define iTime mod(float(FrameCount), 7.0)
@@ -180,6 +190,37 @@ float onOff(float a, float b, float c, float framecount)
     return step(c, sin((framecount * 0.001) + a*cos((framecount * 0.001)*b)));
 }
 
+vec3 apply_phosphor_decay(vec2 uv, vec3 current_color)
+{
+    if (phosphor_decay_enable < 0.5) {
+        return current_color;
+    }
+
+    vec3 prev_color = COMPAT_TEXTURE(Prev0, uv).rgb;
+    float threshold = clamp(phosphor_decay_threshold / 100.0, 0.0, 1.0);
+    float current_luma = dot(current_color, vec3(0.299, 0.587, 0.114));
+
+    if (current_luma >= threshold) {
+        return current_color;
+    }
+
+    float prev_luma = dot(prev_color, vec3(0.299, 0.587, 0.114));
+    if (prev_luma <= 0.0) {
+        return current_color;
+    }
+
+    float decay_ms = max(phosphor_decay_time_ms, 1.0);
+    float frame_ms = 1000.0 / 60.0;
+    float decay = exp(-frame_ms / decay_ms);
+    /* Decay starts at the threshold and falls toward zero as pixels turn off. */
+    float start_luma = min(prev_luma, threshold);
+    float decayed_luma = start_luma * decay;
+    float scale = decayed_luma / max(prev_luma, 0.0001);
+    vec3 decayed_color = prev_color * scale;
+
+    return max(current_color, decayed_color);
+}
+
 vec2 jumpy(vec2 uv, float framecount)
 {
     vec2 look = uv;
@@ -223,6 +264,7 @@ void main()
     final.xyz =Blur(uv,c);
     float q = rgb2yiq(final.xyz).b;
     final = vec4(yiq2rgb(vec3(y,i,q))-pow(s+e*2.0,3.0), 1.0);
+    final.xyz = apply_phosphor_decay(uv2, final.xyz);
 
     vec4 play_osd = COMPAT_TEXTURE(play, uv2 * TextureSize.xy / InputSize.xy);
     float show_overlay = (mod(timer, 100.0) < 50.0) && (timer != 0.0) && (timer < 500.0) ? play_osd.a : 0.0;

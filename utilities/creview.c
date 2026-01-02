@@ -26,6 +26,12 @@ struct scan_state {
     int escape;
 };
 
+struct string_builder {
+    char *data;
+    size_t length;
+    size_t capacity;
+};
+
 static void print_usage(void) {
     fprintf(stderr, "usage: creview <main> <additional_files>\n");
     fprintf(stderr, "   ex: creview main.c\n");
@@ -80,6 +86,69 @@ static void file_list_free(struct file_list *list) {
         free(list->items[i]);
     }
     free(list->items);
+}
+
+static void string_builder_free(struct string_builder *builder) {
+    free(builder->data);
+    builder->data = NULL;
+    builder->length = 0;
+    builder->capacity = 0;
+}
+
+static int string_builder_append(struct string_builder *builder, const char *text) {
+    size_t text_len = strlen(text);
+    size_t needed = builder->length + text_len + 1;
+    char *next;
+
+    if (needed > builder->capacity) {
+        size_t new_capacity = builder->capacity == 0 ? 128 : builder->capacity * 2;
+
+        while (new_capacity < needed) {
+            new_capacity *= 2;
+        }
+
+        next = realloc(builder->data, new_capacity);
+        if (next == NULL) {
+            return -1;
+        }
+        builder->data = next;
+        builder->capacity = new_capacity;
+    }
+
+    memcpy(builder->data + builder->length, text, text_len);
+    builder->length += text_len;
+    builder->data[builder->length] = '\0';
+    return 0;
+}
+
+static int string_builder_append_char(struct string_builder *builder, char ch) {
+    char text[2] = {ch, '\0'};
+
+    return string_builder_append(builder, text);
+}
+
+static int string_builder_append_quoted(struct string_builder *builder, const char *text) {
+    const char *cursor = text;
+
+    if (string_builder_append_char(builder, '\'') != 0) {
+        return -1;
+    }
+
+    while (*cursor != '\0') {
+        if (*cursor == '\'') {
+            if (string_builder_append(builder, "'\\''") != 0) {
+                return -1;
+            }
+            cursor++;
+            continue;
+        }
+        if (string_builder_append_char(builder, *cursor) != 0) {
+            return -1;
+        }
+        cursor++;
+    }
+
+    return string_builder_append_char(builder, '\'');
 }
 
 static int add_search_path(struct file_list *list, const char *path) {
@@ -909,6 +978,67 @@ static void scan_vla(const char *file, const char *contents, int *issue_count) {
     }
 }
 
+static void run_syntax_check(const struct file_list *files, int *issue_count) {
+    const char *cc = getenv("CC");
+    struct string_builder command = {0};
+    size_t i;
+    int status;
+    FILE *pipe;
+    char buffer[256];
+    int printed_header = 0;
+
+    if (cc == NULL || *cc == '\0') {
+        cc = "cc";
+    }
+
+    if (string_builder_append(&command, cc) != 0
+        || string_builder_append(&command, " -std=c89 -pedantic -Wall -Wextra -fsyntax-only") != 0) {
+        fprintf(stderr, "Out of memory\n");
+        string_builder_free(&command);
+        return;
+    }
+
+    for (i = 0; i < files->count; i++) {
+        if (string_builder_append(&command, " ") != 0
+            || string_builder_append_quoted(&command, files->items[i]) != 0) {
+            fprintf(stderr, "Out of memory\n");
+            string_builder_free(&command);
+            return;
+        }
+    }
+
+    if (string_builder_append(&command, " 2>&1") != 0) {
+        fprintf(stderr, "Out of memory\n");
+        string_builder_free(&command);
+        return;
+    }
+
+    pipe = popen(command.data, "r");
+    if (pipe == NULL) {
+        perror("popen");
+        string_builder_free(&command);
+        return;
+    }
+
+    while (fgets(buffer, sizeof(buffer), pipe) != NULL) {
+        if (!printed_header) {
+            printf("\n[SYNTAX CHECK]\n");
+            printed_header = 1;
+        }
+        fputs(buffer, stdout);
+        (*issue_count)++;
+    }
+
+    status = pclose(pipe);
+    if (status == -1) {
+        perror("pclose");
+        string_builder_free(&command);
+        return;
+    }
+
+    string_builder_free(&command);
+}
+
 static int load_file(const char *path, char **contents) {
     FILE *fp = fopen(path, "rb");
     long length;
@@ -1040,6 +1170,8 @@ int main(int argc, char *argv[]) {
 
         free(contents);
     }
+
+    run_syntax_check(&list, &issue_count);
 
     printf("\n------------------------------------------------------------\n");
     printf("Review complete. Issues found: %d\n", issue_count);

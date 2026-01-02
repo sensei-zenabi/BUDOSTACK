@@ -120,6 +120,7 @@ struct EditorConfig {
 
     /* Preferred horizontal (desired) column */
     int preferred_cx;
+    int syntax_dirty;
 } E;
 
 /* Undo state structure */
@@ -629,7 +630,10 @@ void editorDrawShortcutBar(struct abuf *ab) {
 
 /*** Modified Screen Refresh Routine ***/
 void editorRefreshScreen(void) {
-    update_syntax();
+    if (is_c_source() && E.syntax_dirty) {
+        update_syntax();
+        E.syntax_dirty = 0;
+    }
     struct abuf ab = ABUF_INIT;
     int rn_width = getRowNumWidth();
     E.textrows = E.screenrows - 3;                // space for top bar + two bottom bars
@@ -1125,6 +1129,7 @@ void editorDeleteSelection(void) {
     E.cy = start_line;
     E.selecting = 0;
     E.dirty = 1;
+    E.syntax_dirty = 1;
     snprintf(E.status_message, sizeof(E.status_message), "Deleted selection");
 }
 
@@ -1140,6 +1145,7 @@ void editorDelCharAtCursor(void) {
        line->size -= (next_index - index);
        line->modified = 1;
        E.dirty = 1;
+       E.syntax_dirty = 1;
     } else if (E.cx == row_display_width && E.cy < E.numrows - 1) {
        EditorLine *next_line = &E.row[E.cy+1];
        line->chars = realloc(line->chars, line->size + next_line->size + 1);
@@ -1153,6 +1159,7 @@ void editorDelCharAtCursor(void) {
            E.row[j] = E.row[j+1];
        E.numrows--;
        E.dirty = 1;
+       E.syntax_dirty = 1;
     }
 }
 
@@ -1558,6 +1565,7 @@ void editorCutSelection(void) {
     E.cy = start_line;
     E.selecting = 0;
     E.dirty = 1;
+    E.syntax_dirty = 1;
     snprintf(E.status_message, sizeof(E.status_message), "Cut selection");
 }
 
@@ -1679,6 +1687,7 @@ void editorInsertNewline(void) {
     E.cy++;
     E.preferred_cx = E.cx;
     E.dirty = 1;
+    E.syntax_dirty = 1;
 }
 
 void editorDelChar(void) {
@@ -1712,6 +1721,7 @@ void editorDelChar(void) {
         line->modified = 1;
     }
     E.dirty = 1;
+    E.syntax_dirty = 1;
 }
 
 /*** File/Buffer Operations ***/
@@ -1725,6 +1735,7 @@ void editorOpen(const char *filename) {
         if (errno == ENOENT) {
             editorAppendLine("", 0);
             E.dirty = 0;
+            E.syntax_dirty = 1;
             return;
         } else {
             die("fopen");
@@ -1748,6 +1759,7 @@ void editorOpen(const char *filename) {
     E.dirty = 0;
     if (E.numrows == 0)
         editorAppendLine("", 0);
+    E.syntax_dirty = 1;
 }
 
 void editorSave(void) {
@@ -1814,6 +1826,7 @@ void editorInsertChar(int c) {
     E.cx++;
     E.preferred_cx = E.cx;
     line->modified = 1; E.dirty = 1;
+    E.syntax_dirty = 1;
 }
 
 void editorInsertUTF8(const char *s, int len) {
@@ -1837,6 +1850,7 @@ void editorInsertUTF8(const char *s, int len) {
     E.cx += width;
     E.preferred_cx = E.cx;
     line->modified = 1; E.dirty = 1;
+    E.syntax_dirty = 1;
 }
 
 /*** Modified Main ***/
@@ -1849,6 +1863,7 @@ int main(int argc, char *argv[]) {
     E.status_message[0] = '\0';
     E.selecting = 0; E.sel_anchor_x = 0; E.sel_anchor_y = 0;
     E.preferred_cx = 0;
+    E.syntax_dirty = 1;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
         E.screenrows = budostack_get_target_rows();

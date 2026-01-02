@@ -1046,11 +1046,21 @@ void editorDrawTopBar(struct abuf *ab) {
 void editorDrawStatusBar(struct abuf *ab) {
     char status[80];
     char rstatus[32];
-    int len = snprintf(status, sizeof(status), "%.20s%s",
-                       E.filename ? E.filename : "[No Name]",
-                       E.dirty ? " (modified)" : "");
     int rlen = snprintf(rstatus, sizeof(rstatus), "Ln %d, Col %d",
                         E.cy + 1, E.cx + 1);
+    int max_status = E.screencols - rlen - 1;
+    if (max_status < 0)
+        max_status = 0;
+    const char *filename = E.filename ? E.filename : "[No Name]";
+    const char *suffix = E.dirty ? " (modified)" : "";
+    int suffix_len = (int)strlen(suffix);
+    int base_max = max_status - suffix_len;
+    if (base_max < 0)
+        base_max = 0;
+    int len = snprintf(status, sizeof(status), "%.*s%s",
+                       base_max, filename, suffix);
+    if (len > max_status)
+        len = max_status;
     if (len > E.screencols)
         len = E.screencols;
     abAppend(ab, status, len);

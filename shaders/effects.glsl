@@ -5,12 +5,11 @@
 // Modified by BUDOSTACK contributors (parameter adjustments).
 
 // Parameter lines go here:
-//#pragma parameter wiggle "Wiggle" 0.0 0.0 10.0 1.0
+// Explanation of parameter values: default min max increment
 #pragma parameter wiggle "Wiggle" 0.0 0.0 0.0 0.0
-
 #pragma parameter smear "Chroma Smear" 0.25 0.0 0.5 0.025
-#pragma parameter phosphor_decay_enable "Phosphor Decay" 0.0 0.0 1.0 1.0
-#pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 250.0 1.0 2000.0 1.0
+#pragma parameter phosphor_decay_enable "Phosphor Decay" 1.0 0.0 1.0 1.0
+#pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 50.0 1.0 2000.0 1.0
 #pragma parameter phosphor_decay_threshold "Phosphor Decay Threshold (%)" 50.0 0.0 100.0 1.0
 
 #if defined(VERTEX)

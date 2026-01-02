@@ -524,13 +524,237 @@ static size_t total_display_rows(const char **lines, size_t line_count, int cols
     return total;
 }
 
-static size_t find_line_for_row(const size_t *prefix, size_t line_count, size_t row_offset) {
-    for (size_t i = 0; i < line_count; i++) {
-        if (row_offset < prefix[i + 1]) {
-            return i;
+struct wrapped_rows {
+    char **rows;
+    size_t count;
+    size_t capacity;
+};
+
+static int wrapped_rows_push(struct wrapped_rows *wrapped, const char *data, size_t len) {
+    if (wrapped->count == wrapped->capacity) {
+        size_t new_cap = wrapped->capacity == 0 ? 64 : wrapped->capacity * 2;
+        char **next = realloc(wrapped->rows, new_cap * sizeof(*wrapped->rows));
+        if (next == NULL) {
+            perror("realloc");
+            return -1;
+        }
+        wrapped->rows = next;
+        wrapped->capacity = new_cap;
+    }
+    char *row = malloc(len + 1);
+    if (row == NULL) {
+        perror("malloc");
+        return -1;
+    }
+    if (len > 0) {
+        memcpy(row, data, len);
+    }
+    row[len] = '\0';
+    wrapped->rows[wrapped->count++] = row;
+    return 0;
+}
+
+static void wrapped_rows_free(struct wrapped_rows *wrapped) {
+    if (wrapped == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < wrapped->count; i++) {
+        free(wrapped->rows[i]);
+    }
+    free(wrapped->rows);
+    wrapped->rows = NULL;
+    wrapped->count = 0;
+    wrapped->capacity = 0;
+}
+
+static int append_wrapped_line(struct wrapped_rows *wrapped, const char *line, int cols, size_t *line_rows) {
+    if (line_rows != NULL) {
+        *line_rows = 0;
+    }
+    if (cols < 1) {
+        cols = 80;
+    }
+    if (line == NULL) {
+        return wrapped_rows_push(wrapped, "", 0);
+    }
+
+    mbstate_t state;
+    memset(&state, 0, sizeof(state));
+
+    size_t row_start_count = wrapped->count;
+    size_t row_len = 0;
+    size_t row_cap = 0;
+    char *row_buf = NULL;
+    size_t col = 0;
+
+    const unsigned char *p = (const unsigned char *)line;
+    while (*p != '\0') {
+        if (*p == '\x1b') {
+            const unsigned char *seq = p + 1;
+            if (*seq == '[') {
+                seq++;
+                while (*seq != '\0' && (*seq < '@' || *seq > '~')) {
+                    seq++;
+                }
+                if (*seq != '\0') {
+                    seq++;
+                }
+            } else if (*seq == ']') {
+                seq++;
+                while (*seq != '\0') {
+                    if (*seq == '\a') {
+                        seq++;
+                        break;
+                    }
+                    if (*seq == '\x1b' && seq[1] == '\\') {
+                        seq += 2;
+                        break;
+                    }
+                    seq++;
+                }
+            } else {
+                seq++;
+            }
+
+            size_t seq_len = (size_t)(seq - p);
+            if (row_len + seq_len + 1 > row_cap) {
+                size_t next_cap = row_cap == 0 ? 128 : row_cap * 2;
+                while (row_len + seq_len + 1 > next_cap) {
+                    next_cap *= 2;
+                }
+                char *next = realloc(row_buf, next_cap);
+                if (next == NULL) {
+                    perror("realloc");
+                    free(row_buf);
+                    return -1;
+                }
+                row_buf = next;
+                row_cap = next_cap;
+            }
+            memcpy(row_buf + row_len, p, seq_len);
+            row_len += seq_len;
+            p = seq;
+            continue;
+        }
+
+        if (*p == '\t') {
+            size_t spaces = 8 - (col % 8);
+            if (col > 0 && col + spaces > (size_t)cols) {
+                if (wrapped_rows_push(wrapped, row_buf, row_len) != 0) {
+                    free(row_buf);
+                    return -1;
+                }
+                row_len = 0;
+                col = 0;
+                spaces = 8;
+            }
+            if (row_len + spaces + 1 > row_cap) {
+                size_t next_cap = row_cap == 0 ? 128 : row_cap * 2;
+                while (row_len + spaces + 1 > next_cap) {
+                    next_cap *= 2;
+                }
+                char *next = realloc(row_buf, next_cap);
+                if (next == NULL) {
+                    perror("realloc");
+                    free(row_buf);
+                    return -1;
+                }
+                row_buf = next;
+                row_cap = next_cap;
+            }
+            for (size_t i = 0; i < spaces; i++) {
+                row_buf[row_len++] = ' ';
+            }
+            col += spaces;
+            p++;
+            continue;
+        }
+
+        if (*p == '\r') {
+            if (row_len + 2 > row_cap) {
+                size_t next_cap = row_cap == 0 ? 128 : row_cap * 2;
+                if (next_cap < row_len + 2) {
+                    next_cap = row_len + 2;
+                }
+                char *next = realloc(row_buf, next_cap);
+                if (next == NULL) {
+                    perror("realloc");
+                    free(row_buf);
+                    return -1;
+                }
+                row_buf = next;
+                row_cap = next_cap;
+            }
+            row_buf[row_len++] = '\r';
+            col = 0;
+            p++;
+            continue;
+        }
+
+        wchar_t wc;
+        size_t consumed = mbrtowc(&wc, (const char *)p, MB_CUR_MAX, &state);
+        size_t char_len = 0;
+        int char_width = 1;
+        if (consumed == (size_t)-1 || consumed == (size_t)-2) {
+            memset(&state, 0, sizeof(state));
+            char_len = 1;
+            char_width = 1;
+        } else if (consumed == 0) {
+            break;
+        } else {
+            char_len = consumed;
+            char_width = wcwidth(wc);
+            if (char_width <= 0) {
+                char_width = 1;
+            }
+        }
+
+        if (col > 0 && col + (size_t)char_width > (size_t)cols) {
+            if (wrapped_rows_push(wrapped, row_buf, row_len) != 0) {
+                free(row_buf);
+                return -1;
+            }
+            row_len = 0;
+            col = 0;
+        }
+
+        if (row_len + char_len + 1 > row_cap) {
+            size_t next_cap = row_cap == 0 ? 128 : row_cap * 2;
+            while (row_len + char_len + 1 > next_cap) {
+                next_cap *= 2;
+            }
+            char *next = realloc(row_buf, next_cap);
+            if (next == NULL) {
+                perror("realloc");
+                free(row_buf);
+                return -1;
+            }
+            row_buf = next;
+            row_cap = next_cap;
+        }
+        memcpy(row_buf + row_len, p, char_len);
+        row_len += char_len;
+        col += (size_t)char_width;
+        p += char_len;
+    }
+
+    if (row_len == 0 && row_start_count == wrapped->count) {
+        if (wrapped_rows_push(wrapped, "", 0) != 0) {
+            free(row_buf);
+            return -1;
+        }
+    } else if (row_len > 0) {
+        if (wrapped_rows_push(wrapped, row_buf, row_len) != 0) {
+            free(row_buf);
+            return -1;
         }
     }
-    return line_count;
+
+    free(row_buf);
+    if (line_rows != NULL) {
+        *line_rows = wrapped->count - row_start_count;
+    }
+    return 0;
 }
 
 /* Pager function accounts for wrapped display rows. */
@@ -540,6 +764,7 @@ void pager(const char **lines, size_t line_count) {
     int page_height = pager_page_height(rows);
     size_t *line_rows = malloc(line_count * sizeof(size_t));
     size_t *prefix = malloc((line_count + 1) * sizeof(size_t));
+    struct wrapped_rows wrapped = {0};
     if (line_rows == NULL || prefix == NULL) {
         perror("malloc");
         free(line_rows);
@@ -548,31 +773,33 @@ void pager(const char **lines, size_t line_count) {
     }
     prefix[0] = 0;
     for (size_t i = 0; i < line_count; i++) {
-        line_rows[i] = line_display_rows(lines[i], cols);
+        if (append_wrapped_line(&wrapped, lines[i], cols, &line_rows[i]) != 0) {
+            free(line_rows);
+            free(prefix);
+            wrapped_rows_free(&wrapped);
+            return;
+        }
         prefix[i + 1] = prefix[i] + line_rows[i];
     }
-    size_t total_rows = prefix[line_count];
+    size_t total_rows = wrapped.count;
     if (total_rows == 0) {
         free(line_rows);
         free(prefix);
+        wrapped_rows_free(&wrapped);
         return;
     }
 
     size_t row_offset = 0;
     while (1) {
         printf("\033[H\033[J"); // Clear the screen.
-        size_t start_line = find_line_for_row(prefix, line_count, row_offset);
         size_t rows_used = 0;
-        for (size_t i = start_line; i < line_count && rows_used < (size_t)page_height; i++) {
-            printf("%s\n", lines[i]);
-            rows_used += line_rows[i];
-        }
-        if (rows_used == 0 && start_line < line_count) {
-            printf("%s\n", lines[start_line]);
+        for (size_t i = row_offset; i < total_rows && rows_used < (size_t)page_height; i++) {
+            printf("%s\n", wrapped.rows[i]);
+            rows_used++;
         }
         int total_pages = (int)((total_rows + (size_t)page_height - 1) / (size_t)page_height);
         int current_page = (int)(row_offset / (size_t)page_height) + 1;
-        printf("\nPage %d/%d - Use Up/Down arrows to scroll, 'f' to search, 'q' to quit.",
+        printf("\nPage %d/%d - Use Up/Down arrows to scroll, PgUp/PgDn to jump, 'f' to search, 'q' to quit.",
                current_page, total_pages);
         fflush(stdout);
         struct termios oldt, newt;
@@ -588,20 +815,36 @@ void pager(const char **lines, size_t line_count) {
             if (getchar() == '[') {
                 int code = getchar();
                 if (code == 'A') { // Up arrow.
-                    if (row_offset >= (size_t)page_height)
-                        row_offset -= (size_t)page_height;
-                    else
+                    if (row_offset > 0) {
+                        row_offset--;
+                    } else {
                         row_offset = 0;
-                    size_t new_line = find_line_for_row(prefix, line_count, row_offset);
-                    if (new_line < line_count) {
-                        row_offset = prefix[new_line];
                     }
                 } else if (code == 'B') { // Down arrow.
-                    if (row_offset + (size_t)page_height < total_rows)
-                        row_offset += (size_t)page_height;
-                    size_t new_line = find_line_for_row(prefix, line_count, row_offset);
-                    if (new_line < line_count) {
-                        row_offset = prefix[new_line];
+                    size_t max_start = total_rows > (size_t)page_height
+                                           ? total_rows - (size_t)page_height
+                                           : 0;
+                    if (row_offset < max_start) {
+                        row_offset++;
+                    }
+                } else if (code == '5') { // Page up.
+                    if (getchar() == '~') {
+                        if (row_offset >= (size_t)page_height) {
+                            row_offset -= (size_t)page_height;
+                        } else {
+                            row_offset = 0;
+                        }
+                    }
+                } else if (code == '6') { // Page down.
+                    if (getchar() == '~') {
+                        size_t max_start = total_rows > (size_t)page_height
+                                               ? total_rows - (size_t)page_height
+                                               : 0;
+                        if (row_offset + (size_t)page_height < max_start) {
+                            row_offset += (size_t)page_height;
+                        } else {
+                            row_offset = max_start;
+                        }
                     }
                 }
             }
@@ -615,6 +858,12 @@ void pager(const char **lines, size_t line_count) {
                     int selected = search_mode(lines, line_count, search);
                     if (selected != -1) {
                         row_offset = prefix[selected];
+                        size_t max_start = total_rows > (size_t)page_height
+                                               ? total_rows - (size_t)page_height
+                                               : 0;
+                        if (row_offset > max_start) {
+                            row_offset = max_start;
+                        }
                     }
                 }
             }
@@ -623,6 +872,7 @@ void pager(const char **lines, size_t line_count) {
     printf("\n");
     free(line_rows);
     free(prefix);
+    wrapped_rows_free(&wrapped);
 }
 
 int is_realtime_command(const char *command) {

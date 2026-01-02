@@ -241,10 +241,15 @@ vec3 apply_bloom(vec2 uv, vec3 base_color)
     vec3 sample_down = COMPAT_TEXTURE(iChannel0, uv - vec2(0.0, offset.y)).rgb;
     vec3 sample_left = COMPAT_TEXTURE(iChannel0, uv - vec2(offset.x, 0.0)).rgb;
     vec3 sample_right = COMPAT_TEXTURE(iChannel0, uv + vec2(offset.x, 0.0)).rgb;
+    vec3 sample_up_left = COMPAT_TEXTURE(iChannel0, uv + vec2(-offset.x, offset.y)).rgb;
+    vec3 sample_up_right = COMPAT_TEXTURE(iChannel0, uv + vec2(offset.x, offset.y)).rgb;
+    vec3 sample_down_left = COMPAT_TEXTURE(iChannel0, uv + vec2(-offset.x, -offset.y)).rgb;
+    vec3 sample_down_right = COMPAT_TEXTURE(iChannel0, uv + vec2(offset.x, -offset.y)).rgb;
 
-    vec3 blurred = base_color * 0.4 + (sample_up + sample_down + sample_left + sample_right) * 0.15;
+    vec3 blurred = (sample_up + sample_down + sample_left + sample_right) * 0.15 +
+        (sample_up_left + sample_up_right + sample_down_left + sample_down_right) * 0.05;
     float luma = dot(base_color, vec3(0.299, 0.587, 0.114));
-    float glow = smoothstep(0.15, 0.9, luma);
+    float glow = smoothstep(0.1, 0.85, luma);
     glow *= glow;
     vec3 bloom = blurred * glow;
 

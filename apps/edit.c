@@ -81,7 +81,10 @@ enum EditorKey {
     HOME_KEY = 1005, // explicitly set to 1005
     END_KEY,        // 1006
     PGUP_KEY,       // 1007
-    PGDN_KEY        // 1008
+    PGDN_KEY,       // 1008
+    F1_KEY,         // 1009
+    F2_KEY,         // 1010
+    F3_KEY          // 1011
 };
 
 /* Data structure for a text line */
@@ -96,6 +99,24 @@ typedef struct {
     char *name;
     int is_dir;
 } FileEntry;
+
+typedef struct UndoState UndoState;
+
+typedef struct {
+    int cx, cy;
+    int rowoff;
+    int coloff;
+    int numrows;
+    EditorLine *row;
+    char *filename;
+    int dirty;
+    int selecting;
+    int sel_anchor_x;
+    int sel_anchor_y;
+    int preferred_cx;
+    UndoState *undo_history[100];
+    int undo_history_len;
+} EditorBuffer;
 
 /* Global clipboard for cut/copy/paste functionality */
 char *clipboard = NULL;
@@ -137,22 +158,28 @@ struct EditorConfig {
     int files_count;
     int files_selected;
     int files_scroll;
+
+    int active_slot;
+    EditorBuffer buffers[3];
+    char menu_titles[3][16];
+    int menu_has_file[3];
+
+    UndoState *undo_history[100];
+    int undo_history_len;
 } E;
 
 #define MENU_FILES 0
-#define MENU_COUNT 1
+#define MENU_COUNT 3
 #define MENU_LABEL_FILES "FILES"
+#define MENU_TITLE_MAX 10
 
 /* Undo state structure */
-typedef struct {
+struct UndoState {
     int cx, cy;
     int numrows;
     EditorLine *row;
     int *modified;
-} UndoState;
-
-UndoState *undo_history[100];
-int undo_history_len = 0;
+};
 
 /* Global flag to control auto-indent.
    When set to 1 (default), pressing Enter auto-indents the new line.
@@ -270,6 +297,7 @@ void editorMenuLoadFiles(void);
 void editorMenuOpenFiles(void);
 void editorDrawFilesMenu(struct abuf *ab);
 void editorProcessMenuKeypress(int c);
+void editorSwitchToSlot(int slot);
 
 /* New function prototypes */
 void editorDeleteSelection(void);
@@ -303,6 +331,137 @@ void update_syntax(void) {
             j++;
         }
     }
+}
+
+static void editorBufferReset(EditorBuffer *buf) {
+    buf->cx = 0;
+    buf->cy = 0;
+    buf->rowoff = 0;
+    buf->coloff = 0;
+    buf->numrows = 0;
+    buf->row = NULL;
+    buf->filename = NULL;
+    buf->dirty = 0;
+    buf->selecting = 0;
+    buf->sel_anchor_x = 0;
+    buf->sel_anchor_y = 0;
+    buf->preferred_cx = 0;
+    buf->undo_history_len = 0;
+    for (int i = 0; i < 100; i++)
+        buf->undo_history[i] = NULL;
+}
+
+static void editorBufferFree(EditorBuffer *buf) {
+    for (int i = 0; i < buf->numrows; i++)
+        free(buf->row[i].chars);
+    free(buf->row);
+    free(buf->filename);
+    for (int i = 0; i < buf->undo_history_len; i++)
+        free_undo_state(buf->undo_history[i]);
+    editorBufferReset(buf);
+}
+
+static void editorBufferInit(EditorBuffer *buf) {
+    editorBufferReset(buf);
+    buf->row = malloc(sizeof(EditorLine));
+    if (!buf->row)
+        die("malloc");
+    buf->row[0].chars = strdup("");
+    if (!buf->row[0].chars)
+        die("strdup");
+    buf->row[0].size = 0;
+    buf->row[0].modified = 0;
+    buf->row[0].hl_in_comment = 0;
+    buf->numrows = 1;
+}
+
+static void editorSetMenuTitleForSlot(int slot, const char *filename) {
+    if (slot < 0 || slot >= MENU_COUNT)
+        return;
+    if (!filename || filename[0] == '\0') {
+        snprintf(E.menu_titles[slot], sizeof(E.menu_titles[slot]), "%s", MENU_LABEL_FILES);
+        E.menu_has_file[slot] = 0;
+        return;
+    }
+    const char *base = strrchr(filename, '/');
+    if (base)
+        base++;
+    else
+        base = filename;
+    size_t base_len = strlen(base);
+    if (base_len > MENU_TITLE_MAX) {
+        size_t copy_len = MENU_TITLE_MAX - 1;
+        memcpy(E.menu_titles[slot], base, copy_len);
+        E.menu_titles[slot][copy_len] = '~';
+        E.menu_titles[slot][copy_len + 1] = '\0';
+    } else {
+        snprintf(E.menu_titles[slot], sizeof(E.menu_titles[slot]), "%s", base);
+    }
+    E.menu_has_file[slot] = 1;
+}
+
+static int editorBuildMenuLabel(int slot, char *out, size_t out_len) {
+    const char *title = E.menu_titles[slot];
+    int len = snprintf(out, out_len, " %s ", title);
+    if (len < 0)
+        return 0;
+    if (len >= (int)out_len)
+        return (int)out_len - 1;
+    return len;
+}
+
+static int editorMenuLabelLength(int slot) {
+    char label[32];
+    return editorBuildMenuLabel(slot, label, sizeof(label));
+}
+
+static int editorMenuStartColumn(int slot) {
+    int col = 1;
+    for (int i = 0; i < slot; i++)
+        col += editorMenuLabelLength(i);
+    return col;
+}
+
+static void editorCaptureActiveBuffer(EditorBuffer *buf) {
+    editorBufferFree(buf);
+    buf->cx = E.cx;
+    buf->cy = E.cy;
+    buf->rowoff = E.rowoff;
+    buf->coloff = E.coloff;
+    buf->numrows = E.numrows;
+    buf->row = E.row;
+    buf->filename = E.filename;
+    buf->dirty = E.dirty;
+    buf->selecting = E.selecting;
+    buf->sel_anchor_x = E.sel_anchor_x;
+    buf->sel_anchor_y = E.sel_anchor_y;
+    buf->preferred_cx = E.preferred_cx;
+    buf->undo_history_len = E.undo_history_len;
+    for (int i = 0; i < E.undo_history_len; i++)
+        buf->undo_history[i] = E.undo_history[i];
+    for (int i = E.undo_history_len; i < 100; i++)
+        buf->undo_history[i] = NULL;
+}
+
+static void editorApplyBuffer(EditorBuffer *buf) {
+    E.cx = buf->cx;
+    E.cy = buf->cy;
+    E.rowoff = buf->rowoff;
+    E.coloff = buf->coloff;
+    E.numrows = buf->numrows;
+    E.row = buf->row;
+    E.filename = buf->filename;
+    E.dirty = buf->dirty;
+    E.selecting = buf->selecting;
+    E.sel_anchor_x = buf->sel_anchor_x;
+    E.sel_anchor_y = buf->sel_anchor_y;
+    E.preferred_cx = buf->preferred_cx;
+    E.undo_history_len = buf->undo_history_len;
+    for (int i = 0; i < buf->undo_history_len; i++)
+        E.undo_history[i] = buf->undo_history[i];
+    for (int i = buf->undo_history_len; i < 100; i++)
+        E.undo_history[i] = NULL;
+    editorBufferReset(buf);
 }
 
 static void editorFreeFileEntries(void) {
@@ -457,11 +616,14 @@ void editorDrawFilesMenu(struct abuf *ab) {
     }
 
     editorFilesMenuEnsureVisible();
+    int start_col = editorMenuStartColumn(E.menu_index);
+    if (start_col > E.screencols)
+        return;
     for (int i = 0; i < max_rows; i++) {
         int idx = E.files_scroll + i;
         int row = 2 + i;
         char pos[32];
-        int len = snprintf(pos, sizeof(pos), "\x1b[%d;1H", row);
+        int len = snprintf(pos, sizeof(pos), "\x1b[%d;%dH", row, start_col);
         abAppend(ab, pos, len);
         abAppend(ab, "\x1b[K", 3);
         if (idx < total) {
@@ -501,8 +663,12 @@ void editorProcessMenuKeypress(int c) {
         editorFilesMenuEnsureVisible();
         return;
     }
-    if (c == ARROW_LEFT || c == ARROW_RIGHT) {
-        E.files_menu_open = 0;
+    if (c == ARROW_LEFT) {
+        E.menu_index = (E.menu_index + MENU_COUNT - 1) % MENU_COUNT;
+        return;
+    }
+    if (c == ARROW_RIGHT) {
+        E.menu_index = (E.menu_index + 1) % MENU_COUNT;
         return;
     }
     if (c == '\r' && E.files_menu_open && E.files_count > 0) {
@@ -525,6 +691,7 @@ void editorProcessMenuKeypress(int c) {
                 snprintf(path, sizeof(path), "/%s", entry->name);
             else
                 snprintf(path, sizeof(path), "%s/%s", E.menu_dir, entry->name);
+            editorSwitchToSlot(E.menu_index);
             editorSwitchToFile(path);
             E.menu_active = 0;
             E.files_menu_open = 0;
@@ -852,17 +1019,27 @@ void editorDrawTopBar(struct abuf *ab) {
         len = cols;
     int padding = (cols - len) / 2;
     memcpy(line + padding, buf, (size_t)len);
-    const char *menu_label = " FILES ";
-    size_t menu_len = strlen(menu_label);
-    if (menu_len > (size_t)cols)
-        menu_len = (size_t)cols;
-    if (E.menu_active && E.menu_index == MENU_FILES)
-        abAppend(ab, "\x1b[7m", 4);
-    abAppend(ab, menu_label, (int)menu_len);
-    if (E.menu_active && E.menu_index == MENU_FILES)
-        abAppend(ab, "\x1b[0m\x1b[2m", 8);
-    if ((int)menu_len < cols)
-        abAppend(ab, line + menu_len, cols - (int)menu_len);
+    int offset = 0;
+    for (int i = 0; i < MENU_COUNT; i++) {
+        char label[32];
+        int label_len = editorBuildMenuLabel(i, label, sizeof(label));
+        if (label_len <= 0)
+            continue;
+        if (offset + label_len > cols)
+            label_len = cols - offset;
+        if (label_len <= 0)
+            break;
+        if (E.menu_active && E.menu_index == i)
+            abAppend(ab, "\x1b[7m", 4);
+        abAppend(ab, label, label_len);
+        if (E.menu_active && E.menu_index == i)
+            abAppend(ab, "\x1b[0m\x1b[2m", 8);
+        offset += label_len;
+        if (offset >= cols)
+            break;
+    }
+    if (offset < cols)
+        abAppend(ab, line + offset, cols - offset);
     abAppend(ab, "\x1b[0m", 4);
 }
 
@@ -956,6 +1133,14 @@ int editorReadKey(void) {
             return '\x1b';
         if (read(STDIN_FILENO, &seq[1], 1) != 1)
             return '\x1b';
+        if (seq[0] == 'O') {
+            switch (seq[1]) {
+                case 'P': return F1_KEY;
+                case 'Q': return F2_KEY;
+                case 'R': return F3_KEY;
+                default: return '\x1b';
+            }
+        }
         if (seq[0] != '[')
             return '\x1b';
 
@@ -980,10 +1165,24 @@ int editorReadKey(void) {
         }
         // If the second character is a digit, handle numeric escape sequences.
         if (seq[1] >= '0' && seq[1] <= '9') {
-            char seq3;
-            if (read(STDIN_FILENO, &seq3, 1) != 1)
+            char seq2;
+            if (read(STDIN_FILENO, &seq2, 1) != 1)
                 return '\x1b';
-            if (seq3 == '~') {
+            if (seq2 >= '0' && seq2 <= '9') {
+                char seq3;
+                if (read(STDIN_FILENO, &seq3, 1) != 1)
+                    return '\x1b';
+                if (seq3 == '~') {
+                    if (seq[1] == '1' && seq2 == '1')
+                        return F1_KEY;
+                    if (seq[1] == '1' && seq2 == '2')
+                        return F2_KEY;
+                    if (seq[1] == '1' && seq2 == '3')
+                        return F3_KEY;
+                }
+                return '\x1b';
+            }
+            if (seq2 == '~') {
                 switch (seq[1]) {
                     case '1': return HOME_KEY;
                     case '3': return DEL_KEY;
@@ -1045,13 +1244,13 @@ void push_undo_state(void) {
         state->row[i].chars[E.row[i].size] = '\0';
         state->modified[i] = E.row[i].modified;
     }
-    if (undo_history_len == 100) {
-        free_undo_state(undo_history[0]);
+    if (E.undo_history_len == 100) {
+        free_undo_state(E.undo_history[0]);
         for (int i = 1; i < 100; i++)
-            undo_history[i - 1] = undo_history[i];
-        undo_history_len--;
+            E.undo_history[i - 1] = E.undo_history[i];
+        E.undo_history_len--;
     }
-    undo_history[undo_history_len++] = state;
+    E.undo_history[E.undo_history_len++] = state;
 }
 
 void free_undo_state(UndoState *state) {
@@ -1063,10 +1262,10 @@ void free_undo_state(UndoState *state) {
 }
 
 void pop_undo_state(void) {
-    if (undo_history_len == 0)
+    if (E.undo_history_len == 0)
         return;
-    UndoState *state = undo_history[undo_history_len - 1];
-    undo_history_len--;
+    UndoState *state = E.undo_history[E.undo_history_len - 1];
+    E.undo_history_len--;
     for (int i = 0; i < E.numrows; i++)
         free(E.row[i].chars);
     free(E.row);
@@ -1122,13 +1321,28 @@ void editorProcessKeypress(void) {
     int c = editorReadKey();
     static int last_key_was_vertical = 0;
 
+    if (c == F1_KEY || c == F2_KEY || c == F3_KEY) {
+        int slot = 0;
+        if (c == F2_KEY)
+            slot = 1;
+        else if (c == F3_KEY)
+            slot = 2;
+        if (E.menu_has_file[slot]) {
+            E.menu_active = 0;
+            E.files_menu_open = 0;
+            editorSwitchToSlot(slot);
+            snprintf(E.status_message, sizeof(E.status_message), "Switched to slot %d", slot + 1);
+        }
+        last_key_was_vertical = 0;
+        return;
+    }
     if (c == '\x1b') {
         if (E.menu_active) {
             E.menu_active = 0;
             E.files_menu_open = 0;
         } else {
             E.menu_active = 1;
-            E.menu_index = MENU_FILES;
+            E.menu_index = E.active_slot;
         }
         last_key_was_vertical = 0;
         return;
@@ -2004,9 +2218,11 @@ void editorDelChar(void) {
 }
 
 void editorClearUndoHistory(void) {
-    for (int i = 0; i < undo_history_len; i++)
-        free_undo_state(undo_history[i]);
-    undo_history_len = 0;
+    for (int i = 0; i < E.undo_history_len; i++)
+        free_undo_state(E.undo_history[i]);
+    E.undo_history_len = 0;
+    for (int i = 0; i < 100; i++)
+        E.undo_history[i] = NULL;
 }
 
 void editorClearBuffer(void) {
@@ -2026,11 +2242,25 @@ void editorClearBuffer(void) {
     E.dirty = 0;
 }
 
+void editorSwitchToSlot(int slot) {
+    if (slot < 0 || slot >= MENU_COUNT)
+        return;
+    if (slot == E.active_slot)
+        return;
+    editorCaptureActiveBuffer(&E.buffers[E.active_slot]);
+    editorApplyBuffer(&E.buffers[slot]);
+    E.active_slot = slot;
+    E.menu_index = slot;
+    if (E.filename)
+        editorMenuUpdateDirectoryFromFile(E.filename);
+}
+
 void editorSwitchToFile(const char *filename) {
     editorClearUndoHistory();
     editorClearBuffer();
     editorOpen(filename);
     editorMenuUpdateDirectoryFromFile(filename);
+    editorSetMenuTitleForSlot(E.active_slot, filename);
     snprintf(E.status_message, sizeof(E.status_message), "Opened %s", filename);
 }
 
@@ -2178,6 +2408,15 @@ int main(int argc, char *argv[]) {
     E.files_count = 0;
     E.files_selected = 0;
     E.files_scroll = 0;
+    E.active_slot = 0;
+    for (int i = 0; i < MENU_COUNT; i++) {
+        editorBufferInit(&E.buffers[i]);
+        snprintf(E.menu_titles[i], sizeof(E.menu_titles[i]), "%s", MENU_LABEL_FILES);
+        E.menu_has_file[i] = 0;
+    }
+    E.undo_history_len = 0;
+    for (int i = 0; i < 100; i++)
+        E.undo_history[i] = NULL;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
         E.screenrows = budostack_get_target_rows();
@@ -2192,6 +2431,7 @@ int main(int argc, char *argv[]) {
         E.dirty = 0;
         editorMenuSetDirectory(".");
     }
+    editorSetMenuTitleForSlot(E.active_slot, E.filename);
 
     enableRawMode();
     while (1) {

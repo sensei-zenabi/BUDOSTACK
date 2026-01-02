@@ -1101,7 +1101,10 @@ static void page_jump(struct BookState *state, int direction) {
     if (state->line_count == 0) {
         return;
     }
-    int step = state->content_rows;
+    int step = (state->content_rows + 1) / 2;
+    if (step < 1) {
+        step = 1;
+    }
     int col = state->preferred_col;
     size_t line = line_for_cursor(state, NULL);
     int target = (int)line + (direction * step);

@@ -11,6 +11,9 @@
 #pragma parameter phosphor_decay_enable "Phosphor Decay" 1.0 0.0 1.0 1.0
 #pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 50.0 1.0 2000.0 1.0
 #pragma parameter phosphor_decay_threshold "Phosphor Decay Threshold (%)" 50.0 0.0 100.0 1.0
+#pragma parameter bloom_enable "CRT Bloom" 0.0 0.0 1.0 1.0
+#pragma parameter bloom_intensity "Bloom Intensity" 0.35 0.0 1.5 0.05
+#pragma parameter bloom_radius "Bloom Radius" 1.5 0.5 4.0 0.25
 
 #if defined(VERTEX)
 
@@ -101,12 +104,18 @@ uniform COMPAT_PRECISION float smear;
 uniform COMPAT_PRECISION float phosphor_decay_enable;
 uniform COMPAT_PRECISION float phosphor_decay_time_ms;
 uniform COMPAT_PRECISION float phosphor_decay_threshold;
+uniform COMPAT_PRECISION float bloom_enable;
+uniform COMPAT_PRECISION float bloom_intensity;
+uniform COMPAT_PRECISION float bloom_radius;
 #else
 #define wiggle 3.0
 #define smear 1.0
 #define phosphor_decay_enable 0.0
 #define phosphor_decay_time_ms 250.0
 #define phosphor_decay_threshold 50.0
+#define bloom_enable 0.0
+#define bloom_intensity 0.35
+#define bloom_radius 1.5
 #endif
 
 #define iTime mod(float(FrameCount), 7.0)
@@ -220,6 +229,27 @@ vec3 apply_phosphor_decay(vec2 uv, vec3 current_color)
     return max(current_color, decayed_color);
 }
 
+vec3 apply_bloom(vec2 uv, vec3 base_color)
+{
+    if (bloom_enable < 0.5 || bloom_intensity <= 0.0) {
+        return base_color;
+    }
+
+    vec2 texel = 1.0 / TextureSize;
+    vec2 offset = texel * bloom_radius;
+    vec3 sample_up = COMPAT_TEXTURE(iChannel0, uv + vec2(0.0, offset.y)).rgb;
+    vec3 sample_down = COMPAT_TEXTURE(iChannel0, uv - vec2(0.0, offset.y)).rgb;
+    vec3 sample_left = COMPAT_TEXTURE(iChannel0, uv - vec2(offset.x, 0.0)).rgb;
+    vec3 sample_right = COMPAT_TEXTURE(iChannel0, uv + vec2(offset.x, 0.0)).rgb;
+
+    vec3 blurred = base_color * 0.4 + (sample_up + sample_down + sample_left + sample_right) * 0.15;
+    float luma = dot(blurred, vec3(0.299, 0.587, 0.114));
+    float glow = smoothstep(0.35, 1.0, luma);
+    vec3 bloom = blurred * glow;
+
+    return base_color + bloom * bloom_intensity;
+}
+
 vec2 jumpy(vec2 uv, float framecount)
 {
     vec2 look = uv;
@@ -269,6 +299,7 @@ void main()
     float show_overlay = (mod(timer, 100.0) < 50.0) && (timer != 0.0) && (timer < 500.0) ? play_osd.a : 0.0;
     show_overlay = clamp(show_overlay, 0.0, 1.0);
     final = mix(final, play_osd, show_overlay);
+    final.xyz = apply_bloom(uv2, final.xyz);
 
     FragColor = final;
 }

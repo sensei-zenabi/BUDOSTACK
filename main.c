@@ -762,9 +762,9 @@ void pager(const char **lines, size_t line_count) {
     int rows = get_terminal_rows();
     int cols = get_terminal_cols();
     int page_height = pager_page_height(rows);
-    int half_page = page_height / 2;
-    if (half_page < 1) {
-        half_page = 1;
+    int page_jump = (page_height * 9) / 10;
+    if (page_jump < 1) {
+        page_jump = 1;
     }
     size_t *line_rows = malloc(line_count * sizeof(size_t));
     size_t *prefix = malloc((line_count + 1) * sizeof(size_t));
@@ -833,8 +833,8 @@ void pager(const char **lines, size_t line_count) {
                     }
                 } else if (code == '5') { // Page up.
                     if (getchar() == '~') {
-                        if (row_offset >= (size_t)half_page) {
-                            row_offset -= (size_t)half_page;
+                        if (row_offset >= (size_t)page_jump) {
+                            row_offset -= (size_t)page_jump;
                         } else {
                             row_offset = 0;
                         }
@@ -844,8 +844,8 @@ void pager(const char **lines, size_t line_count) {
                         size_t max_start = total_rows > (size_t)page_height
                                                ? total_rows - (size_t)page_height
                                                : 0;
-                        if (row_offset + (size_t)half_page < max_start) {
-                            row_offset += (size_t)half_page;
+                        if (row_offset + (size_t)page_jump < max_start) {
+                            row_offset += (size_t)page_jump;
                         } else {
                             row_offset = max_start;
                         }

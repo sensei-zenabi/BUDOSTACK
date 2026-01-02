@@ -92,6 +92,11 @@ typedef struct {
     int hl_in_comment;  // new field to store multi-line comment state for syntax highlighting
 } EditorLine;
 
+typedef struct {
+    char *name;
+    int is_dir;
+} MenuEntry;
+
 /* Global clipboard for cut/copy/paste functionality */
 char *clipboard = NULL;
 size_t clipboard_len = 0;
@@ -126,7 +131,7 @@ struct EditorConfig {
 
     int menu_active;
     int menu_open;
-    char **menu_files;
+    MenuEntry *menu_files;
     int menu_file_count;
     int menu_file_index;
     int menu_file_scroll;
@@ -227,6 +232,17 @@ static int editorIsRegularFile(const char *dir, const char *name) {
     return S_ISREG(st.st_mode);
 }
 
+static int editorIsDirectory(const char *dir, const char *name) {
+    char path[PATH_MAX];
+    int len = snprintf(path, sizeof(path), "%s/%s", dir, name);
+    if (len < 0 || (size_t)len >= sizeof(path))
+        return 0;
+    struct stat st;
+    if (stat(path, &st) == -1)
+        return 0;
+    return S_ISDIR(st.st_mode);
+}
+
 static void editorGetDirname(const char *path, char *dir, size_t dir_size) {
     if (dir_size == 0)
         return;
@@ -261,9 +277,11 @@ static const char *editorGetBasename(const char *path) {
 }
 
 static int editorFileNameCompare(const void *a, const void *b) {
-    const char *const *left = a;
-    const char *const *right = b;
-    return strcasecmp(*left, *right);
+    const MenuEntry *left = a;
+    const MenuEntry *right = b;
+    if (left->is_dir != right->is_dir)
+        return right->is_dir - left->is_dir;
+    return strcasecmp(left->name, right->name);
 }
 
 /* --- Function Prototypes --- */
@@ -712,11 +730,16 @@ void editorDrawFileMenu(struct abuf *ab) {
             continue;
         if (index == E.menu_file_index)
             abAppend(ab, "\x1b[7m", 4);
-        const char *name = E.menu_files[index];
-        int name_len = (int)strlen(name);
+        const MenuEntry *entry = &E.menu_files[index];
+        char display[PATH_MAX];
+        if (entry->is_dir)
+            snprintf(display, sizeof(display), "%s/", entry->name);
+        else
+            snprintf(display, sizeof(display), "%s", entry->name);
+        int name_len = (int)strlen(display);
         if (name_len > menu_width)
             name_len = menu_width;
-        abAppend(ab, name, name_len);
+        abAppend(ab, display, name_len);
         if (index == E.menu_file_index)
             abAppend(ab, "\x1b[0m", 4);
     }
@@ -991,7 +1014,7 @@ static void editorClearUndoHistory(void) {
 
 void editorFreeMenuFiles(void) {
     for (int i = 0; i < E.menu_file_count; i++)
-        free(E.menu_files[i]);
+        free(E.menu_files[i].name);
     free(E.menu_files);
     E.menu_files = NULL;
     E.menu_file_count = 0;
@@ -1003,7 +1026,10 @@ void editorFreeMenuFiles(void) {
 
 static int editorLoadMenuFiles(void) {
     char dir[PATH_MAX];
-    editorGetDirname(E.filename, dir, sizeof(dir));
+    if (E.menu_dir)
+        snprintf(dir, sizeof(dir), "%s", E.menu_dir);
+    else
+        editorGetDirname(E.filename, dir, sizeof(dir));
     editorFreeMenuFiles();
     DIR *dp = opendir(dir);
     if (!dp) {
@@ -1011,22 +1037,31 @@ static int editorLoadMenuFiles(void) {
         return -1;
     }
     size_t cap = 16;
-    E.menu_files = malloc(sizeof(char *) * cap);
+    E.menu_files = malloc(sizeof(MenuEntry) * cap);
     if (!E.menu_files) {
         closedir(dp);
         editorFreeMenuFiles();
         snprintf(E.status_message, sizeof(E.status_message), "FILES: out of memory");
         return -1;
     }
+    if (strcmp(dir, "/") != 0) {
+        E.menu_files[E.menu_file_count].name = strdup("..");
+        E.menu_files[E.menu_file_count].is_dir = 1;
+        if (!E.menu_files[E.menu_file_count].name) {
+            closedir(dp);
+            editorFreeMenuFiles();
+            snprintf(E.status_message, sizeof(E.status_message), "FILES: out of memory");
+            return -1;
+        }
+        E.menu_file_count++;
+    }
     struct dirent *entry;
     while ((entry = readdir(dp)) != NULL) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
-        if (!editorIsRegularFile(dir, entry->d_name))
-            continue;
         if ((size_t)E.menu_file_count == cap) {
             cap *= 2;
-            char **next = realloc(E.menu_files, sizeof(char *) * cap);
+            MenuEntry *next = realloc(E.menu_files, sizeof(MenuEntry) * cap);
             if (!next) {
                 closedir(dp);
                 editorFreeMenuFiles();
@@ -1035,18 +1070,23 @@ static int editorLoadMenuFiles(void) {
             }
             E.menu_files = next;
         }
-        E.menu_files[E.menu_file_count] = strdup(entry->d_name);
-        if (!E.menu_files[E.menu_file_count]) {
+        int is_dir = editorIsDirectory(dir, entry->d_name);
+        int is_file = editorIsRegularFile(dir, entry->d_name);
+        if (!is_dir && !is_file)
+            continue;
+        E.menu_files[E.menu_file_count].name = strdup(entry->d_name);
+        if (!E.menu_files[E.menu_file_count].name) {
             closedir(dp);
             editorFreeMenuFiles();
             snprintf(E.status_message, sizeof(E.status_message), "FILES: out of memory");
             return -1;
         }
+        E.menu_files[E.menu_file_count].is_dir = is_dir;
         E.menu_file_count++;
     }
     closedir(dp);
     if (E.menu_file_count > 1)
-        qsort(E.menu_files, (size_t)E.menu_file_count, sizeof(char *), editorFileNameCompare);
+        qsort(E.menu_files, (size_t)E.menu_file_count, sizeof(MenuEntry), editorFileNameCompare);
     E.menu_dir = strdup(dir);
     if (!E.menu_dir) {
         editorFreeMenuFiles();
@@ -1054,11 +1094,17 @@ static int editorLoadMenuFiles(void) {
         return -1;
     }
     const char *basename = editorGetBasename(E.filename);
-    for (int i = 0; i < E.menu_file_count; i++) {
-        if (strcmp(E.menu_files[i], basename) == 0) {
-            E.menu_file_index = i;
-            break;
+    char file_dir[PATH_MAX];
+    editorGetDirname(E.filename, file_dir, sizeof(file_dir));
+    if (strcmp(file_dir, dir) == 0) {
+        for (int i = 0; i < E.menu_file_count; i++) {
+            if (!E.menu_files[i].is_dir && strcmp(E.menu_files[i].name, basename) == 0) {
+                E.menu_file_index = i;
+                break;
+            }
         }
+    } else if (E.menu_file_count > 0) {
+        E.menu_file_index = 0;
     }
     return 0;
 }
@@ -1074,8 +1120,8 @@ void editorOpenFileMenu(void) {
     E.menu_file_scroll = 0;
 }
 
-static void editorCloseMenu(void) {
-    E.menu_active = 0;
+static void editorCloseMenu(int keep_active) {
+    E.menu_active = keep_active ? 1 : 0;
     E.menu_open = 0;
     editorFreeMenuFiles();
 }
@@ -1091,6 +1137,19 @@ static void editorSelectMenuFile(int direction) {
     E.menu_file_index = next;
 }
 
+static void editorChangeMenuDir(const char *dir) {
+    free(E.menu_dir);
+    E.menu_dir = strdup(dir);
+    if (!E.menu_dir) {
+        snprintf(E.status_message, sizeof(E.status_message), "FILES: out of memory");
+        editorCloseMenu(0);
+        return;
+    }
+    E.menu_file_index = 0;
+    if (editorLoadMenuFiles() == -1)
+        editorCloseMenu(0);
+}
+
 static int editorHandleMenuKeypress(int c) {
     if (!E.menu_active && !E.menu_open && c == '\x1b') {
         E.menu_active = 1;
@@ -1099,7 +1158,11 @@ static int editorHandleMenuKeypress(int c) {
     if (!E.menu_active && !E.menu_open)
         return 0;
     if (c == '\x1b') {
-        editorCloseMenu();
+        if (E.menu_open) {
+            editorCloseMenu(1);
+        } else if (E.menu_active) {
+            editorCloseMenu(0);
+        }
         return 1;
     }
     if (E.menu_open) {
@@ -1118,17 +1181,32 @@ static int editorHandleMenuKeypress(int c) {
                 return 1;
             case '\r': {
                 if (E.menu_file_count == 0) {
-                    editorCloseMenu();
+                    editorCloseMenu(0);
                     snprintf(E.status_message, sizeof(E.status_message), "No files available");
+                    return 1;
+                }
+                MenuEntry *entry = &E.menu_files[E.menu_file_index];
+                if (entry->is_dir) {
+                    char next_dir[PATH_MAX];
+                    if (strcmp(entry->name, "..") == 0) {
+                        editorGetDirname(E.menu_dir, next_dir, sizeof(next_dir));
+                    } else if (strcmp(E.menu_dir, "/") == 0) {
+                        snprintf(next_dir, sizeof(next_dir), "/%s", entry->name);
+                    } else if (strcmp(E.menu_dir, ".") == 0) {
+                        snprintf(next_dir, sizeof(next_dir), "%s", entry->name);
+                    } else {
+                        snprintf(next_dir, sizeof(next_dir), "%s/%s", E.menu_dir, entry->name);
+                    }
+                    editorChangeMenuDir(next_dir);
                     return 1;
                 }
                 char path[PATH_MAX];
                 if (E.menu_dir && strcmp(E.menu_dir, ".") != 0) {
-                    snprintf(path, sizeof(path), "%s/%s", E.menu_dir, E.menu_files[E.menu_file_index]);
+                    snprintf(path, sizeof(path), "%s/%s", E.menu_dir, entry->name);
                 } else {
-                    snprintf(path, sizeof(path), "%s", E.menu_files[E.menu_file_index]);
+                    snprintf(path, sizeof(path), "%s", entry->name);
                 }
-                editorCloseMenu();
+                editorCloseMenu(0);
                 editorSwitchFile(path);
                 return 1;
             }

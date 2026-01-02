@@ -11,6 +11,10 @@
 #pragma parameter phosphor_decay_enable "Phosphor Decay" 1.0 0.0 1.0 1.0
 #pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 50.0 1.0 2000.0 1.0
 #pragma parameter phosphor_decay_threshold "Phosphor Decay Threshold (%)" 50.0 0.0 100.0 1.0
+#pragma parameter bloom_enable "Bloom Enable" 1.0 0.0 1.0 1.0
+#pragma parameter bloom_strength "Bloom Strength" 0.25 0.0 1.0 0.05
+#pragma parameter bloom_radius "Bloom Radius (px)" 1.5 0.0 5.0 0.1
+#pragma parameter bloom_threshold "Bloom Threshold" 0.2 0.0 1.0 0.01
 
 #if defined(VERTEX)
 
@@ -101,12 +105,20 @@ uniform COMPAT_PRECISION float smear;
 uniform COMPAT_PRECISION float phosphor_decay_enable;
 uniform COMPAT_PRECISION float phosphor_decay_time_ms;
 uniform COMPAT_PRECISION float phosphor_decay_threshold;
+uniform COMPAT_PRECISION float bloom_enable;
+uniform COMPAT_PRECISION float bloom_strength;
+uniform COMPAT_PRECISION float bloom_radius;
+uniform COMPAT_PRECISION float bloom_threshold;
 #else
 #define wiggle 3.0
 #define smear 1.0
 #define phosphor_decay_enable 0.0
 #define phosphor_decay_time_ms 250.0
 #define phosphor_decay_threshold 50.0
+#define bloom_enable 0.0
+#define bloom_strength 0.25
+#define bloom_radius 1.5
+#define bloom_threshold 0.2
 #endif
 
 #define iTime mod(float(FrameCount), 7.0)
@@ -220,6 +232,89 @@ vec3 apply_phosphor_decay(vec2 uv, vec3 current_color)
     return max(current_color, decayed_color);
 }
 
+vec3 apply_bloom(vec2 uv, vec3 current_color)
+{
+    if (bloom_enable < 0.5 || bloom_strength <= 0.0 || bloom_radius <= 0.0) {
+        return current_color;
+    }
+
+    vec2 texel = SourceSize.zw * bloom_radius;
+    vec3 sum = vec3(0.0);
+    float total_weight = 0.0;
+    const float center_weight = 0.25;
+    const float edge_weight = 0.125;
+    const float corner_weight = 0.0625;
+
+    vec3 sample = COMPAT_TEXTURE(iChannel0, uv).rgb;
+    float luma = dot(sample, vec3(0.299, 0.587, 0.114));
+    float boost = smoothstep(bloom_threshold, 1.0, luma);
+    float weight = center_weight * boost;
+    sum += sample * weight;
+    total_weight += weight;
+
+    sample = COMPAT_TEXTURE(iChannel0, uv + vec2(texel.x, 0.0)).rgb;
+    luma = dot(sample, vec3(0.299, 0.587, 0.114));
+    boost = smoothstep(bloom_threshold, 1.0, luma);
+    weight = edge_weight * boost;
+    sum += sample * weight;
+    total_weight += weight;
+
+    sample = COMPAT_TEXTURE(iChannel0, uv + vec2(-texel.x, 0.0)).rgb;
+    luma = dot(sample, vec3(0.299, 0.587, 0.114));
+    boost = smoothstep(bloom_threshold, 1.0, luma);
+    weight = edge_weight * boost;
+    sum += sample * weight;
+    total_weight += weight;
+
+    sample = COMPAT_TEXTURE(iChannel0, uv + vec2(0.0, texel.y)).rgb;
+    luma = dot(sample, vec3(0.299, 0.587, 0.114));
+    boost = smoothstep(bloom_threshold, 1.0, luma);
+    weight = edge_weight * boost;
+    sum += sample * weight;
+    total_weight += weight;
+
+    sample = COMPAT_TEXTURE(iChannel0, uv + vec2(0.0, -texel.y)).rgb;
+    luma = dot(sample, vec3(0.299, 0.587, 0.114));
+    boost = smoothstep(bloom_threshold, 1.0, luma);
+    weight = edge_weight * boost;
+    sum += sample * weight;
+    total_weight += weight;
+
+    sample = COMPAT_TEXTURE(iChannel0, uv + vec2(texel.x, texel.y)).rgb;
+    luma = dot(sample, vec3(0.299, 0.587, 0.114));
+    boost = smoothstep(bloom_threshold, 1.0, luma);
+    weight = corner_weight * boost;
+    sum += sample * weight;
+    total_weight += weight;
+
+    sample = COMPAT_TEXTURE(iChannel0, uv + vec2(-texel.x, texel.y)).rgb;
+    luma = dot(sample, vec3(0.299, 0.587, 0.114));
+    boost = smoothstep(bloom_threshold, 1.0, luma);
+    weight = corner_weight * boost;
+    sum += sample * weight;
+    total_weight += weight;
+
+    sample = COMPAT_TEXTURE(iChannel0, uv + vec2(texel.x, -texel.y)).rgb;
+    luma = dot(sample, vec3(0.299, 0.587, 0.114));
+    boost = smoothstep(bloom_threshold, 1.0, luma);
+    weight = corner_weight * boost;
+    sum += sample * weight;
+    total_weight += weight;
+
+    sample = COMPAT_TEXTURE(iChannel0, uv + vec2(-texel.x, -texel.y)).rgb;
+    luma = dot(sample, vec3(0.299, 0.587, 0.114));
+    boost = smoothstep(bloom_threshold, 1.0, luma);
+    weight = corner_weight * boost;
+    sum += sample * weight;
+    total_weight += weight;
+
+    if (total_weight > 0.0) {
+        sum /= total_weight;
+    }
+
+    return current_color + sum * bloom_strength;
+}
+
 vec2 jumpy(vec2 uv, float framecount)
 {
     vec2 look = uv;
@@ -264,6 +359,7 @@ void main()
     float q = rgb2yiq(final.xyz).b;
     final = vec4(yiq2rgb(vec3(y,i,q))-pow(s+e*2.0,3.0), 1.0);
     final.xyz = apply_phosphor_decay(uv2, final.xyz);
+    final.xyz = apply_bloom(uv2, final.xyz);
 
     vec4 play_osd = COMPAT_TEXTURE(play, uv2 * TextureSize.xy / InputSize.xy);
     float show_overlay = (mod(timer, 100.0) < 50.0) && (timer != 0.0) && (timer < 500.0) ? play_osd.a : 0.0;

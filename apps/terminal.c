@@ -99,6 +99,7 @@ static Uint32 terminal_shader_frame_interval_ms = 0u;
 static Uint32 terminal_render_last_frame_tick = 0u;
 static Uint32 terminal_render_frame_interval_ms = 0u;
 static int terminal_shaders_enabled = 1;
+static int terminal_vsync_enabled = 0;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -7111,6 +7112,7 @@ int main(int argc, char **argv) {
     if (SDL_GL_SetSwapInterval(1) != 0) {
         fprintf(stderr, "Warning: Unable to enable VSync: %s\n", SDL_GetError());
     }
+    terminal_vsync_enabled = SDL_GL_GetSwapInterval() > 0 ? 1 : 0;
 
     for (size_t i = 0; i < shader_path_count; i++) {
         if (terminal_initialize_gl_program(shader_paths[i].path) != 0) {
@@ -7234,7 +7236,9 @@ int main(int argc, char **argv) {
     }
     terminal_shader_last_frame_tick = SDL_GetTicks();
 
-    if (TERMINAL_TARGET_FPS > 0u) {
+    if (terminal_vsync_enabled) {
+        terminal_render_frame_interval_ms = 0u;
+    } else if (TERMINAL_TARGET_FPS > 0u) {
         terminal_render_frame_interval_ms = 1000u / (Uint32)TERMINAL_TARGET_FPS;
         if (terminal_render_frame_interval_ms == 0u) {
             terminal_render_frame_interval_ms = 1u;

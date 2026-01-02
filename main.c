@@ -799,7 +799,7 @@ void pager(const char **lines, size_t line_count) {
         }
         int total_pages = (int)((total_rows + (size_t)page_height - 1) / (size_t)page_height);
         int current_page = (int)(row_offset / (size_t)page_height) + 1;
-        printf("\nPage %d/%d - Use Up/Down arrows to scroll, PgUp/PgDn to jump, 'f' to search, 'q' to quit.",
+        printf("\nPage %d/%d - Use Up/Dn to scroll, PgUp/PgDn to jump, 'f' to find, 'q' to quit.",
                current_page, total_pages);
         fflush(stdout);
         struct termios oldt, newt;

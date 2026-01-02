@@ -60,6 +60,7 @@ void abFree(struct abuf *ab) {
 #define CTRL_KEY(k) ((k) & 0x1f)
 #define BACKSPACE 127
 #define DEL_KEY 1004  // Key code for Delete
+#define ALT_KEY 1009
 
 /* Prototype for the syntax highlighter from libedit.c */
 char *highlight_c_line(const char *line, int hl_in_comment);
@@ -832,11 +833,11 @@ int editorReadKey(void) {
     if (c == '\x1b') {
         char seq[6];
         if (read(STDIN_FILENO, &seq[0], 1) != 1)
-            return '\x1b';
+            return ALT_KEY;
         if (read(STDIN_FILENO, &seq[1], 1) != 1)
-            return '\x1b';
+            return ALT_KEY;
         if (seq[0] != '[')
-            return '\x1b';
+            return ALT_KEY;
 
         // Check for bracketed paste sequences.
         if (seq[1] == '2') {
@@ -1151,19 +1152,29 @@ static void editorChangeMenuDir(const char *dir) {
 }
 
 static int editorHandleMenuKeypress(int c) {
-    if (!E.menu_active && !E.menu_open && c == '\x1b') {
+    if (!E.menu_active && !E.menu_open && c == ALT_KEY) {
         E.menu_active = 1;
         return 1;
     }
     if (!E.menu_active && !E.menu_open)
         return 0;
-    if (c == '\x1b') {
+    if (c == ALT_KEY) {
         if (E.menu_open) {
-            editorCloseMenu(1);
+            editorCloseMenu(0);
         } else if (E.menu_active) {
             editorCloseMenu(0);
         }
         return 1;
+    }
+    if (c == '\x1b') {
+        if (E.menu_open) {
+            editorCloseMenu(0);
+            return 1;
+        }
+        if (E.menu_active) {
+            editorCloseMenu(0);
+            return 1;
+        }
     }
     if (E.menu_open) {
         switch (c) {

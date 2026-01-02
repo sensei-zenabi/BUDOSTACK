@@ -105,6 +105,9 @@ static int terminal_texture_width = 0;
 static int terminal_texture_height = 0;
 static int terminal_gl_ready = 0;
 static GLuint terminal_bound_texture = 0;
+static GLuint terminal_gl_history_texture = 0;
+static int terminal_history_width = 0;
+static int terminal_history_height = 0;
 static GLuint terminal_cursor_texture = 0;
 static int terminal_cursor_width = 0;
 static int terminal_cursor_height = 0;
@@ -215,6 +218,7 @@ struct terminal_gl_shader {
     GLint uniform_texture_size;
     GLint uniform_input_size;
     GLint uniform_texture_sampler;
+    GLint uniform_prev_sampler;
     GLint uniform_crt_gamma;
     GLint uniform_monitor_gamma;
     GLint uniform_distance;
@@ -363,6 +367,8 @@ static void terminal_bind_texture(GLuint texture);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
+static int terminal_prepare_history_texture(int width, int height);
+static void terminal_update_history_texture(int width, int height);
 static int terminal_load_cursor_sprite(const char *path);
 static void terminal_destroy_cursor_sprite(void);
 static void terminal_cursor_update_position(int window_x, int window_y);
@@ -2926,6 +2932,7 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     shader_info.uniform_texture_size = glGetUniformLocation(program, "TextureSize");
     shader_info.uniform_input_size = glGetUniformLocation(program, "InputSize");
     shader_info.uniform_texture_sampler = glGetUniformLocation(program, "Texture");
+    shader_info.uniform_prev_sampler = glGetUniformLocation(program, "Prev0");
     shader_info.uniform_crt_gamma = glGetUniformLocation(program, "CRTgamma");
     shader_info.uniform_monitor_gamma = glGetUniformLocation(program, "monitorgamma");
     shader_info.uniform_distance = glGetUniformLocation(program, "d");
@@ -2948,6 +2955,9 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     glUseProgram(program);
     if (shader_info.uniform_texture_sampler >= 0) {
         glUniform1i(shader_info.uniform_texture_sampler, 0);
+    }
+    if (shader_info.uniform_prev_sampler >= 0) {
+        glUniform1i(shader_info.uniform_prev_sampler, 1);
     }
     if (shader_info.uniform_frame_direction >= 0) {
         glUniform1i(shader_info.uniform_frame_direction, 1);
@@ -3192,6 +3202,70 @@ static int terminal_prepare_intermediate_targets(int width, int height) {
     return 0;
 }
 
+static int terminal_prepare_history_texture(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return -1;
+    }
+
+    if (terminal_gl_history_texture == 0) {
+        glGenTextures(1, &terminal_gl_history_texture);
+    }
+    if (terminal_gl_history_texture == 0) {
+        return -1;
+    }
+
+    int resized = 0;
+    if (terminal_history_width != width || terminal_history_height != height) {
+        resized = 1;
+    }
+
+    if (resized) {
+        terminal_bind_texture(terminal_gl_history_texture);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        terminal_bind_texture(0);
+        terminal_history_width = width;
+        terminal_history_height = height;
+
+        if (terminal_gl_framebuffer == 0) {
+            glGenFramebuffers(1, &terminal_gl_framebuffer);
+        }
+        if (terminal_gl_framebuffer != 0) {
+            GLint viewport[4];
+            glGetIntegerv(GL_VIEWPORT, viewport);
+            glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   GL_TEXTURE_2D, terminal_gl_history_texture, 0);
+            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+                glViewport(0, 0, width, height);
+                glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+            }
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        }
+    }
+
+    return 0;
+}
+
+static void terminal_update_history_texture(int width, int height) {
+    if (terminal_gl_history_texture == 0 || width <= 0 || height <= 0) {
+        return;
+    }
+
+    glActiveTexture(GL_TEXTURE1);
+    terminal_bind_texture(terminal_gl_history_texture);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
+    terminal_bind_texture(0);
+    glActiveTexture(GL_TEXTURE0);
+}
+
 static int terminal_load_cursor_sprite(const char *path) {
     if (!path || !terminal_gl_ready) {
         return -1;
@@ -3351,6 +3425,12 @@ static void terminal_clear_gl_shaders(void) {
         free(terminal_gl_shaders);
         terminal_gl_shaders = NULL;
     }
+    if (terminal_gl_history_texture != 0) {
+        glDeleteTextures(1, &terminal_gl_history_texture);
+        terminal_gl_history_texture = 0;
+    }
+    terminal_history_width = 0;
+    terminal_history_height = 0;
     terminal_gl_shader_count = 0u;
     terminal_shader_last_frame_tick = SDL_GetTicks();
 }
@@ -8261,6 +8341,10 @@ int main(int argc, char **argv) {
         if (terminal_shaders_active()) {
             static int frame_counter = 0;
             int frame_value = frame_counter++;
+            int history_ready = 0;
+            if (terminal_prepare_history_texture(drawable_width, drawable_height) == 0) {
+                history_ready = 1;
+            }
 
             int multipass_failed = 0;
 
@@ -8322,6 +8406,12 @@ int main(int argc, char **argv) {
                                          &shader->has_cached_input_size,
                                          source_input_width,
                                          source_input_height);
+
+                if (shader->uniform_prev_sampler >= 0) {
+                    glActiveTexture(GL_TEXTURE1);
+                    terminal_bind_texture(history_ready ? terminal_gl_history_texture : 0);
+                    glActiveTexture(GL_TEXTURE0);
+                }
 
                 glActiveTexture(GL_TEXTURE0);
                 terminal_bind_texture(source_texture);
@@ -8394,6 +8484,9 @@ int main(int argc, char **argv) {
                 }
             }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            if (history_ready) {
+                terminal_update_history_texture(drawable_width, drawable_height);
+            }
         } else {
             glMatrixMode(GL_PROJECTION);
             glLoadIdentity();

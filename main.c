@@ -762,7 +762,7 @@ void pager(const char **lines, size_t line_count) {
     int rows = get_terminal_rows();
     int cols = get_terminal_cols();
     int page_height = pager_page_height(rows);
-    int page_jump = (page_height * 9) / 10;
+    int page_jump = (page_height * 95) / 100;
     if (page_jump < 1) {
         page_jump = 1;
     }

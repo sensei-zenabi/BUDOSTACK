@@ -243,8 +243,9 @@ vec3 apply_bloom(vec2 uv, vec3 base_color)
     vec3 sample_right = COMPAT_TEXTURE(iChannel0, uv + vec2(offset.x, 0.0)).rgb;
 
     vec3 blurred = base_color * 0.4 + (sample_up + sample_down + sample_left + sample_right) * 0.15;
-    float luma = dot(blurred, vec3(0.299, 0.587, 0.114));
-    float glow = smoothstep(0.35, 1.0, luma);
+    float luma = dot(base_color, vec3(0.299, 0.587, 0.114));
+    float glow = smoothstep(0.15, 0.9, luma);
+    glow *= glow;
     vec3 bloom = blurred * glow;
 
     return base_color + bloom * bloom_intensity;

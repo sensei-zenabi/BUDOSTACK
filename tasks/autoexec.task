@@ -88,10 +88,13 @@ IF ($SELECTION == 0):
 END
 
 PRINT "\n\nNote!"
-PRINT "\n\nResolution can be changed runtime with:"
-PRINT "\n\n  _TERM_RESOLUTION LOW  = sets the low resolution mode"
+PRINT "\n"
+PRINT "\nResolution can be changed runtime with:"
+PRINT "\n"
+PRINT "\n  _TERM_RESOLUTION LOW  = sets the low resolution mode"
 PRINT "\n  _TERM_RESOLUTION HIGH = sets the high resolution mode"
-PRINT "\n\n Press ENTER to continue"
+PRINT "\n"
+PRINT "\nPress ENTER to continue"
 INPUT $SELECTION
 RUN cls
 

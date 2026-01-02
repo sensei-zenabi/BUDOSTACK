@@ -18,6 +18,9 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <time.h>
+#include <limits.h>
+#include <dirent.h>
+#include <sys/stat.h>
 
 /*
  * Design principles and notes:
@@ -120,6 +123,14 @@ struct EditorConfig {
 
     /* Preferred horizontal (desired) column */
     int preferred_cx;
+
+    int menu_active;
+    int menu_open;
+    char **menu_files;
+    int menu_file_count;
+    int menu_file_index;
+    int menu_file_scroll;
+    char *menu_dir;
 } E;
 
 /* Undo state structure */
@@ -205,6 +216,56 @@ char *expand_tabs(const char *s) {
     return result;
 }
 
+static int editorIsRegularFile(const char *dir, const char *name) {
+    char path[PATH_MAX];
+    int len = snprintf(path, sizeof(path), "%s/%s", dir, name);
+    if (len < 0 || (size_t)len >= sizeof(path))
+        return 0;
+    struct stat st;
+    if (stat(path, &st) == -1)
+        return 0;
+    return S_ISREG(st.st_mode);
+}
+
+static void editorGetDirname(const char *path, char *dir, size_t dir_size) {
+    if (dir_size == 0)
+        return;
+    if (!path || path[0] == '\0') {
+        strncpy(dir, ".", dir_size);
+        dir[dir_size - 1] = '\0';
+        return;
+    }
+    const char *slash = strrchr(path, '/');
+    if (!slash) {
+        strncpy(dir, ".", dir_size);
+        dir[dir_size - 1] = '\0';
+        return;
+    }
+    if (slash == path) {
+        strncpy(dir, "/", dir_size);
+        dir[dir_size - 1] = '\0';
+        return;
+    }
+    size_t len = (size_t)(slash - path);
+    if (len >= dir_size)
+        len = dir_size - 1;
+    memcpy(dir, path, len);
+    dir[len] = '\0';
+}
+
+static const char *editorGetBasename(const char *path) {
+    if (!path)
+        return "";
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+static int editorFileNameCompare(const void *a, const void *b) {
+    const char *const *left = a;
+    const char *const *right = b;
+    return strcasecmp(*left, *right);
+}
+
 /* --- Function Prototypes --- */
 void die(const char *s);
 void disableRawMode(void);
@@ -221,10 +282,14 @@ void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, stru
 void abAppendHighlighted(struct abuf *ab, const char *s, int coloff, int avail);
 void editorDrawRows(struct abuf *ab, int rn_width);
 void editorDrawTopBar(struct abuf *ab); 
+void editorDrawFileMenu(struct abuf *ab);
 void editorDrawStatusBar(struct abuf *ab);
 void editorDrawShortcutBar(struct abuf *ab);
 void editorProcessKeypress(void);
 void editorOpen(const char *filename);
+void editorSwitchFile(const char *filename);
+void editorFreeMenuFiles(void);
+void editorOpenFileMenu(void);
 void editorSave(void);
 void editorAppendLine(char *s, size_t len);
 void editorInsertChar(int c);
@@ -584,15 +649,77 @@ void editorDrawTopBar(struct abuf *ab) {
     char buf[64];
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
     abAppend(ab, "\x1b[2m", 4);
-    int len = strlen(buf);
-    if (len > E.screencols) len = E.screencols;
-    int padding = (E.screencols - len) / 2;
+    char menu_label[] = " FILES ";
+    int menu_len = (int)strlen(menu_label);
+    int len = (int)strlen(buf);
+    if (menu_len > E.screencols)
+        menu_len = E.screencols;
+    int available = E.screencols - menu_len;
+    if (available < 0)
+        available = 0;
+    if (len > available)
+        len = available;
+    int padding = (available - len) / 2;
+    if (E.menu_active || E.menu_open)
+        abAppend(ab, "\x1b[7m", 4);
+    abAppend(ab, menu_label, menu_len);
+    if (E.menu_active || E.menu_open) {
+        abAppend(ab, "\x1b[0m", 4);
+        abAppend(ab, "\x1b[2m", 4);
+    }
     for (int i = 0; i < padding; i++)
         abAppend(ab, " ", 1);
     abAppend(ab, buf, len);
-    for (int i = padding + len; i < E.screencols; i++)
+    int filled = menu_len + padding + len;
+    for (int i = filled; i < E.screencols; i++)
         abAppend(ab, " ", 1);
     abAppend(ab, "\x1b[0m", 4);
+}
+
+void editorDrawFileMenu(struct abuf *ab) {
+    if (!E.menu_open)
+        return;
+    int menu_height = E.textrows;
+    if (menu_height < 1)
+        menu_height = 1;
+    if (menu_height > E.menu_file_count)
+        menu_height = E.menu_file_count;
+    if (menu_height < 1)
+        menu_height = 1;
+    if (E.menu_file_index < E.menu_file_scroll)
+        E.menu_file_scroll = E.menu_file_index;
+    if (E.menu_file_index >= E.menu_file_scroll + menu_height)
+        E.menu_file_scroll = E.menu_file_index - menu_height + 1;
+    int menu_width = E.screencols;
+    if (menu_width < 1)
+        menu_width = 1;
+    for (int i = 0; i < menu_height; i++) {
+        int index = E.menu_file_scroll + i;
+        char rowbuf[32];
+        int row = i + 2;
+        int row_len = snprintf(rowbuf, sizeof(rowbuf), "\x1b[%d;1H", row);
+        abAppend(ab, rowbuf, row_len);
+        abAppend(ab, "\x1b[0m\x1b[K", 7);
+        if (E.menu_file_count == 0) {
+            const char *empty = "(no files)";
+            int empty_len = (int)strlen(empty);
+            if (empty_len > menu_width)
+                empty_len = menu_width;
+            abAppend(ab, empty, empty_len);
+            continue;
+        }
+        if (index >= E.menu_file_count)
+            continue;
+        if (index == E.menu_file_index)
+            abAppend(ab, "\x1b[7m", 4);
+        const char *name = E.menu_files[index];
+        int name_len = (int)strlen(name);
+        if (name_len > menu_width)
+            name_len = menu_width;
+        abAppend(ab, name, name_len);
+        if (index == E.menu_file_index)
+            abAppend(ab, "\x1b[0m", 4);
+    }
 }
 
 void editorDrawStatusBar(struct abuf *ab) {
@@ -640,6 +767,7 @@ void editorRefreshScreen(void) {
     int len = snprintf(buf, sizeof(buf), "\x1b[2;1H");  // start text area on line 2
     abAppend(&ab, buf, len);
     editorDrawRows(&ab, rn_width);
+    editorDrawFileMenu(&ab);
     len = snprintf(buf, sizeof(buf), "\x1b[%d;1H", E.textrows + 2);
     abAppend(&ab, buf, len);
     abAppend(&ab, "\x1b[2m", 4);
@@ -845,10 +973,186 @@ void enableRawMode(void) {
     if (write(STDOUT_FILENO, "\x1b[?2004h", 9) < 0) perror("write");
 }
 
+static void editorClearRows(void) {
+    for (int i = 0; i < E.numrows; i++)
+        free(E.row[i].chars);
+    free(E.row);
+    E.row = NULL;
+    E.numrows = 0;
+}
+
+static void editorClearUndoHistory(void) {
+    for (int i = 0; i < undo_history_len; i++) {
+        free_undo_state(undo_history[i]);
+        undo_history[i] = NULL;
+    }
+    undo_history_len = 0;
+}
+
+void editorFreeMenuFiles(void) {
+    for (int i = 0; i < E.menu_file_count; i++)
+        free(E.menu_files[i]);
+    free(E.menu_files);
+    E.menu_files = NULL;
+    E.menu_file_count = 0;
+    free(E.menu_dir);
+    E.menu_dir = NULL;
+    E.menu_file_index = 0;
+    E.menu_file_scroll = 0;
+}
+
+static int editorLoadMenuFiles(void) {
+    char dir[PATH_MAX];
+    editorGetDirname(E.filename, dir, sizeof(dir));
+    editorFreeMenuFiles();
+    DIR *dp = opendir(dir);
+    if (!dp) {
+        snprintf(E.status_message, sizeof(E.status_message), "FILES: cannot open directory");
+        return -1;
+    }
+    size_t cap = 16;
+    E.menu_files = malloc(sizeof(char *) * cap);
+    if (!E.menu_files) {
+        closedir(dp);
+        editorFreeMenuFiles();
+        snprintf(E.status_message, sizeof(E.status_message), "FILES: out of memory");
+        return -1;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(dp)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+        if (!editorIsRegularFile(dir, entry->d_name))
+            continue;
+        if ((size_t)E.menu_file_count == cap) {
+            cap *= 2;
+            char **next = realloc(E.menu_files, sizeof(char *) * cap);
+            if (!next) {
+                closedir(dp);
+                editorFreeMenuFiles();
+                snprintf(E.status_message, sizeof(E.status_message), "FILES: out of memory");
+                return -1;
+            }
+            E.menu_files = next;
+        }
+        E.menu_files[E.menu_file_count] = strdup(entry->d_name);
+        if (!E.menu_files[E.menu_file_count]) {
+            closedir(dp);
+            editorFreeMenuFiles();
+            snprintf(E.status_message, sizeof(E.status_message), "FILES: out of memory");
+            return -1;
+        }
+        E.menu_file_count++;
+    }
+    closedir(dp);
+    if (E.menu_file_count > 1)
+        qsort(E.menu_files, (size_t)E.menu_file_count, sizeof(char *), editorFileNameCompare);
+    E.menu_dir = strdup(dir);
+    if (!E.menu_dir) {
+        editorFreeMenuFiles();
+        snprintf(E.status_message, sizeof(E.status_message), "FILES: out of memory");
+        return -1;
+    }
+    const char *basename = editorGetBasename(E.filename);
+    for (int i = 0; i < E.menu_file_count; i++) {
+        if (strcmp(E.menu_files[i], basename) == 0) {
+            E.menu_file_index = i;
+            break;
+        }
+    }
+    return 0;
+}
+
+void editorOpenFileMenu(void) {
+    if (editorLoadMenuFiles() == -1) {
+        E.menu_active = 0;
+        E.menu_open = 0;
+        return;
+    }
+    E.menu_active = 1;
+    E.menu_open = 1;
+    E.menu_file_scroll = 0;
+}
+
+static void editorCloseMenu(void) {
+    E.menu_active = 0;
+    E.menu_open = 0;
+    editorFreeMenuFiles();
+}
+
+static void editorSelectMenuFile(int direction) {
+    if (E.menu_file_count == 0)
+        return;
+    int next = E.menu_file_index + direction;
+    if (next < 0)
+        next = 0;
+    if (next >= E.menu_file_count)
+        next = E.menu_file_count - 1;
+    E.menu_file_index = next;
+}
+
+static int editorHandleMenuKeypress(int c) {
+    if (!E.menu_active && !E.menu_open && c == '\x1b') {
+        E.menu_active = 1;
+        return 1;
+    }
+    if (!E.menu_active && !E.menu_open)
+        return 0;
+    if (c == '\x1b') {
+        editorCloseMenu();
+        return 1;
+    }
+    if (E.menu_open) {
+        switch (c) {
+            case ARROW_UP:
+                editorSelectMenuFile(-1);
+                return 1;
+            case ARROW_DOWN:
+                editorSelectMenuFile(1);
+                return 1;
+            case PGUP_KEY:
+                editorSelectMenuFile(-E.textrows);
+                return 1;
+            case PGDN_KEY:
+                editorSelectMenuFile(E.textrows);
+                return 1;
+            case '\r': {
+                if (E.menu_file_count == 0) {
+                    editorCloseMenu();
+                    snprintf(E.status_message, sizeof(E.status_message), "No files available");
+                    return 1;
+                }
+                char path[PATH_MAX];
+                if (E.menu_dir && strcmp(E.menu_dir, ".") != 0) {
+                    snprintf(path, sizeof(path), "%s/%s", E.menu_dir, E.menu_files[E.menu_file_index]);
+                } else {
+                    snprintf(path, sizeof(path), "%s", E.menu_files[E.menu_file_index]);
+                }
+                editorCloseMenu();
+                editorSwitchFile(path);
+                return 1;
+            }
+            default:
+                return 1;
+        }
+    }
+    if (E.menu_active) {
+        if (c == '\r' || c == ARROW_DOWN) {
+            editorOpenFileMenu();
+            return 1;
+        }
+        return 1;
+    }
+    return 0;
+}
+
 /*** Input Processing ***/
 void editorProcessKeypress(void) {
     int c = editorReadKey();
     static int last_key_was_vertical = 0;
+
+    if (editorHandleMenuKeypress(c))
+        return;
 
     if (c == CTRL_KEY('t')) {
         if (E.selecting) {
@@ -1750,6 +2054,21 @@ void editorOpen(const char *filename) {
         editorAppendLine("", 0);
 }
 
+void editorSwitchFile(const char *filename) {
+    editorClearUndoHistory();
+    editorClearRows();
+    E.cx = 0;
+    E.cy = 0;
+    E.rowoff = 0;
+    E.coloff = 0;
+    E.preferred_cx = 0;
+    E.selecting = 0;
+    E.sel_anchor_x = 0;
+    E.sel_anchor_y = 0;
+    editorOpen(filename);
+    snprintf(E.status_message, sizeof(E.status_message), "Opened %s", filename);
+}
+
 void editorSave(void) {
     if (E.filename == NULL)
         return;
@@ -1849,6 +2168,13 @@ int main(int argc, char *argv[]) {
     E.status_message[0] = '\0';
     E.selecting = 0; E.sel_anchor_x = 0; E.sel_anchor_y = 0;
     E.preferred_cx = 0;
+    E.menu_active = 0;
+    E.menu_open = 0;
+    E.menu_files = NULL;
+    E.menu_file_count = 0;
+    E.menu_file_index = 0;
+    E.menu_file_scroll = 0;
+    E.menu_dir = NULL;
 
     if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
         E.screenrows = budostack_get_target_rows();

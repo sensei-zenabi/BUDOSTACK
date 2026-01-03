@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 #define BOARD_SIZE 17
-#define WIN_CONDITION 4
+#define WIN_CONDITION 5
 #define MAX_LINE 128
 #define INF 1000000000
 

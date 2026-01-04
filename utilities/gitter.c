@@ -42,6 +42,11 @@ int main() {
          "\n"
          "  git fetch origin\n"
          "  git reset --hard origin/HEAD\n"
+         "\n"
+         "                              : restore file to specific commit\n"
+         "\n"
+         "  git restore --source <commit_hash> -- path/to/file\n"
+         "\n"
          "\n");
                 
   return 0;

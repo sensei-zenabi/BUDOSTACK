@@ -15,6 +15,7 @@ SET $RESOLUTION = "LOW"
 SET $SELECTION = 0
 SET $SCHEME = "c64"
 SET $SHADERS = "enable"
+SET $INTRO = "enable"
 SET $LOAD = 0
 
 # Set default resolution to low mode
@@ -76,8 +77,8 @@ RUN _TERM_SHADER $SHADERS
 
 PRINT "\n"
 PRINT "\nSelect terminal resolution mode:"
-PRINT "\n[0] Low (640x360)"
 PRINT "\n[1] High (800x450)"
+PRINT "\n[0] Low (640x360)"
 PRINT "\nEnter Selection: "
 INPUT $SELECTION
 IF ($SELECTION == 1):
@@ -94,38 +95,54 @@ PRINT "\n"
 PRINT "\n  _TERM_RESOLUTION LOW  = sets the low resolution mode"
 PRINT "\n  _TERM_RESOLUTION HIGH = sets the high resolution mode"
 PRINT "\n"
-PRINT "\nPress ENTER to continue"
+PRINT "\n"
+
+# Select whether INTRO is displayed
+
+PRINT "\n"
+PRINT "\nShow Intro?"
+PRINT "\n[1] Yes"
+PRINT "\n[0] No"
+PRINT "\nEnter Selection: "
 INPUT $SELECTION
+IF ($SELECTION == 0):
+  SET $INTRO = "disable"
+END
+
 RUN cls
 
-# Display "simulated" loading screen and play related sound effects
+IF ($INTRO == "enable"):
 
-RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-@LOADING
-RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
-IF ($LOAD == 50):
-  RUN _TERM_SOUND_PLAY 2 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+  # Display "simulated" loading screen and play related sound effects
+
+  RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+  @LOADING
+  RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
+  IF ($LOAD == 50):
+    RUN _TERM_SOUND_PLAY 2 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+  END
+  IF ($LOAD < 100):
+    SET $LOAD = $LOAD + 10
+    RUN _WAIT 250
+    GOTO LOADING
+  END
+
+  # Display intro logo and play starting tune
+
+  @INTRO
+  RUN clear
+  RUN _WAIT 200
+  RUN _DISPLAY -x 0 -y 15 -file assets/login_logo.png
+  RUN _TERM_SOUND_PLAY 2 ../sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
+  RUN _WAIT 1500
+  RUN _TEXT -x 27 -y 31 -text "...WELCOME BACK TO 1980s..."
+  RUN _WAIT 1000
+  RUN _TEXT -x 2 -y 43 -text "Created by: Ville Suoranta"
+  RUN _TEXT -x 2 -y 44 -text "email: ville.m.suoranta(at)gmail.com"
+  RUN _WAIT 1600                                                                                                                      
+ 
 END
-IF ($LOAD < 100):
-  SET $LOAD = $LOAD + 10
-  RUN _WAIT 250
-  GOTO LOADING
-END
-
-# Display intro logo and play starting tune
-
-@INTRO
-RUN clear
-RUN _WAIT 200
-RUN _DISPLAY -x 0 -y 15 -file assets/login_logo.png
-RUN _TERM_SOUND_PLAY 2 ../sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
-RUN _WAIT 1500
-RUN _TEXT -x 27 -y 31 -text "...WELCOME BACK TO 1980s..."
-RUN _WAIT 1000
-RUN _TEXT -x 2 -y 43 -text "Created by: Ville Suoranta"
-RUN _TEXT -x 2 -y 44 -text "email: ville.m.suoranta(at)gmail.com"
-RUN _WAIT 1600                                                                                                                      
-            
+                                              
 # Apply the selected resolution
 
 IF ($RESOLUTION == "HIGH"):

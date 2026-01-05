@@ -196,6 +196,10 @@ static int terminal_custom_pixels_dirty = 0;
 static uint16_t terminal_custom_pixels_pending_layers = 0u;
 static int terminal_custom_pixels_active = 0;
 static uint64_t terminal_custom_layer_versions[17] = {0};
+static uint32_t *terminal_custom_pixel_raster[17] = {0};
+static uint16_t terminal_custom_pixel_raster_active = 0u;
+static int terminal_custom_pixel_raster_width = 0;
+static int terminal_custom_pixel_raster_height = 0;
 
 struct terminal_custom_clear_request {
     int x;
@@ -395,6 +399,8 @@ static void terminal_custom_pixels_mark_pending(uint8_t layer);
 static int terminal_custom_pixels_apply_pending_clears(uint8_t layer);
 static void terminal_custom_pixels_clear_pending_requests(void);
 static void terminal_custom_pixels_shutdown(void);
+static void terminal_custom_pixels_reset_rasters(void);
+static int terminal_custom_pixels_activate_raster(uint8_t layer, int width, int height);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
@@ -1658,6 +1664,49 @@ static void terminal_custom_pixels_clear_pending_requests(void) {
     terminal_custom_pending_clear_count = 0u;
 }
 
+static void terminal_custom_pixels_reset_rasters(void) {
+    for (size_t i = 1u; i <= 16u; i++) {
+        free(terminal_custom_pixel_raster[i]);
+        terminal_custom_pixel_raster[i] = NULL;
+    }
+    terminal_custom_pixel_raster_active = 0u;
+    terminal_custom_pixel_raster_width = 0;
+    terminal_custom_pixel_raster_height = 0;
+}
+
+static int terminal_custom_pixels_activate_raster(uint8_t layer, int width, int height) {
+    if (layer < 1u || layer > 16u) {
+        return -1;
+    }
+    if (width <= 0 || height <= 0) {
+        return -1;
+    }
+
+    if (terminal_custom_pixel_raster_width != width || terminal_custom_pixel_raster_height != height) {
+        terminal_custom_pixels_reset_rasters();
+    }
+
+    if (terminal_custom_pixel_raster_width == 0 || terminal_custom_pixel_raster_height == 0) {
+        terminal_custom_pixel_raster_width = width;
+        terminal_custom_pixel_raster_height = height;
+    }
+
+    if (!terminal_custom_pixel_raster[layer]) {
+        size_t total_pixels = (size_t)width * (size_t)height;
+        if (total_pixels > SIZE_MAX / sizeof(uint32_t)) {
+            return -1;
+        }
+        uint32_t *raster = calloc(total_pixels, sizeof(uint32_t));
+        if (!raster) {
+            return -1;
+        }
+        terminal_custom_pixel_raster[layer] = raster;
+        terminal_custom_pixel_raster_active |= terminal_custom_layer_mask(layer);
+    }
+
+    return 0;
+}
+
 static void terminal_custom_pixels_shutdown(void) {
     free(terminal_custom_pixels);
     terminal_custom_pixels = NULL;
@@ -1673,6 +1722,7 @@ static void terminal_custom_pixels_shutdown(void) {
     for (size_t i = 0u; i < sizeof(terminal_custom_layer_versions) / sizeof(terminal_custom_layer_versions[0]); i++) {
         terminal_custom_layer_versions[i] = 0u;
     }
+    terminal_custom_pixels_reset_rasters();
 }
 
 static void terminal_custom_pixels_clear(void) {
@@ -1683,6 +1733,7 @@ static void terminal_custom_pixels_clear(void) {
     for (size_t i = 0u; i < sizeof(terminal_custom_layer_versions) / sizeof(terminal_custom_layer_versions[0]); i++) {
         terminal_custom_layer_versions[i] = 0u;
     }
+    terminal_custom_pixels_reset_rasters();
     terminal_mark_full_redraw();
 }
 
@@ -1735,6 +1786,45 @@ static int terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int wid
 
     if (origin_x > INT_MAX - width || origin_y > INT_MAX - height) {
         return -1;
+    }
+
+    uint16_t layer_mask = terminal_custom_layer_mask(layer);
+    if ((terminal_custom_pixel_raster_active & layer_mask) != 0u) {
+        if (terminal_custom_pixels_activate_raster(layer, terminal_framebuffer_width, terminal_framebuffer_height) != 0) {
+            return -1;
+        }
+        int raster_width = terminal_custom_pixel_raster_width;
+        int raster_height = terminal_custom_pixel_raster_height;
+        if (raster_width > 0 && raster_height > 0) {
+            int start_x = origin_x;
+            int start_y = origin_y;
+            int end_x = origin_x + width;
+            int end_y = origin_y + height;
+            if (start_x < 0) {
+                start_x = 0;
+            }
+            if (start_y < 0) {
+                start_y = 0;
+            }
+            if (end_x > raster_width) {
+                end_x = raster_width;
+            }
+            if (end_y > raster_height) {
+                end_y = raster_height;
+            }
+            if (start_x < end_x && start_y < end_y) {
+                size_t raster_width_sz = (size_t)raster_width;
+                for (int y = start_y; y < end_y; y++) {
+                    size_t row_offset = (size_t)y * raster_width_sz;
+                    for (int x = start_x; x < end_x; x++) {
+                        terminal_custom_pixel_raster[layer][row_offset + (size_t)x] = 0u;
+                    }
+                }
+            }
+        }
+        terminal_custom_pixels_mark_pending(layer);
+        terminal_custom_pixels_active = 1;
+        return 0;
     }
 
     if (terminal_custom_pixels_reserve_clear_requests(1u) != 0) {
@@ -1795,7 +1885,8 @@ static int terminal_custom_pixels_apply_clear_request(const struct terminal_cust
     }
 
     terminal_custom_pixel_count = write_idx;
-    terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+    terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u) ||
+        (terminal_custom_pixel_raster_active != 0u);
     return 1;
 }
 
@@ -1856,6 +1947,47 @@ static int terminal_custom_pixels_reserve(size_t additional) {
     return 0;
 }
 
+static int terminal_custom_pixels_move_layer_to_raster(uint8_t layer, int width, int height) {
+    if (layer < 1u || layer > 16u) {
+        return -1;
+    }
+    if (terminal_custom_pixels_activate_raster(layer, width, height) != 0) {
+        return -1;
+    }
+
+    uint32_t *raster = terminal_custom_pixel_raster[layer];
+    if (!raster) {
+        return -1;
+    }
+
+    size_t write_idx = 0u;
+    size_t raster_width = (size_t)terminal_custom_pixel_raster_width;
+    size_t raster_height = (size_t)terminal_custom_pixel_raster_height;
+    for (size_t read_idx = 0u; read_idx < terminal_custom_pixel_count; read_idx++) {
+        struct terminal_custom_pixel *entry = &terminal_custom_pixels[read_idx];
+        if (entry->layer == layer) {
+            if (entry->x >= 0 && entry->y >= 0 &&
+                entry->x < terminal_custom_pixel_raster_width &&
+                entry->y < terminal_custom_pixel_raster_height) {
+                size_t offset = (size_t)entry->y * raster_width + (size_t)entry->x;
+                if (offset < raster_width * raster_height) {
+                    raster[offset] = terminal_rgba_from_components(entry->r, entry->g, entry->b);
+                }
+            }
+            continue;
+        }
+        if (write_idx != read_idx) {
+            terminal_custom_pixels[write_idx] = *entry;
+        }
+        write_idx++;
+    }
+
+    terminal_custom_pixel_count = write_idx;
+    terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u) ||
+        (terminal_custom_pixel_raster_active != 0u);
+    return 0;
+}
+
 static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t layer) {
     if (x < 0 || y < 0) {
         return -1;
@@ -1863,6 +1995,26 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
 
     if (layer < 1u || layer > 16u) {
         return -1;
+    }
+
+    uint16_t layer_mask = terminal_custom_layer_mask(layer);
+    if ((terminal_custom_pixel_raster_active & layer_mask) != 0u) {
+        if (terminal_custom_pixels_activate_raster(layer, terminal_framebuffer_width, terminal_framebuffer_height) != 0) {
+            return -1;
+        }
+        if (x >= 0 && y >= 0 &&
+            x < terminal_custom_pixel_raster_width &&
+            y < terminal_custom_pixel_raster_height) {
+            size_t offset = (size_t)y * (size_t)terminal_custom_pixel_raster_width + (size_t)x;
+            size_t raster_size = (size_t)terminal_custom_pixel_raster_width *
+                (size_t)terminal_custom_pixel_raster_height;
+            if (offset < raster_size) {
+                terminal_custom_pixel_raster[layer][offset] = terminal_rgba_from_components(r, g, b);
+            }
+        }
+        terminal_custom_pixels_mark_pending(layer);
+        terminal_custom_pixels_active = 1;
+        return 0;
     }
 
     if (terminal_custom_pixel_count < TERMINAL_CUSTOM_PIXEL_DEDUP_LIMIT) {
@@ -1882,6 +2034,27 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
         }
     }
 
+    if (terminal_custom_pixel_count >= TERMINAL_CUSTOM_PIXEL_DEDUP_LIMIT &&
+        terminal_framebuffer_width > 0 && terminal_framebuffer_height > 0) {
+        if (terminal_custom_pixels_move_layer_to_raster(layer,
+                                                        terminal_framebuffer_width,
+                                                        terminal_framebuffer_height) == 0) {
+            if (x >= 0 && y >= 0 &&
+                x < terminal_custom_pixel_raster_width &&
+                y < terminal_custom_pixel_raster_height) {
+                size_t offset = (size_t)y * (size_t)terminal_custom_pixel_raster_width + (size_t)x;
+                size_t raster_size = (size_t)terminal_custom_pixel_raster_width *
+                    (size_t)terminal_custom_pixel_raster_height;
+                if (offset < raster_size) {
+                    terminal_custom_pixel_raster[layer][offset] = terminal_rgba_from_components(r, g, b);
+                }
+            }
+            terminal_custom_pixels_mark_pending(layer);
+            terminal_custom_pixels_active = 1;
+            return 0;
+        }
+    }
+
     if (terminal_custom_pixels_reserve(1u) != 0) {
         return -1;
     }
@@ -1895,6 +2068,7 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
     entry->layer = layer;
     entry->version = terminal_custom_layer_versions[layer];
     terminal_custom_pixels_mark_pending(layer);
+    terminal_custom_pixels_active = 1;
     return 0;
 }
 
@@ -1975,6 +2149,28 @@ static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int he
     size_t frame_pitch = (size_t)width * 4u;
     uint16_t pending_mask = terminal_custom_pixels_pending_layers;
     for (int layer = 16; layer >= 1; layer--) {
+        uint16_t layer_mask = terminal_custom_layer_mask((uint8_t)layer);
+        if ((terminal_custom_pixel_raster_active & layer_mask) != 0u &&
+            (pending_mask & layer_mask) == 0u) {
+            uint32_t *raster = terminal_custom_pixel_raster[layer];
+            if (raster) {
+                size_t raster_width = (size_t)terminal_custom_pixel_raster_width;
+                size_t raster_height = (size_t)terminal_custom_pixel_raster_height;
+                size_t apply_width = raster_width < (size_t)width ? raster_width : (size_t)width;
+                size_t apply_height = raster_height < (size_t)height ? raster_height : (size_t)height;
+                for (size_t y = 0u; y < apply_height; y++) {
+                    const uint32_t *src_row = raster + y * raster_width;
+                    uint32_t *dst_row = (uint32_t *)(framebuffer + y * frame_pitch);
+                    for (size_t x = 0u; x < apply_width; x++) {
+                        uint32_t value = src_row[x];
+                        if (value == 0u) {
+                            continue;
+                        }
+                        dst_row[x] = value;
+                    }
+                }
+            }
+        }
         for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
             const struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
             if (entry->layer != (uint8_t)layer) {
@@ -3117,6 +3313,9 @@ static int terminal_resize_render_targets(int width, int height) {
     terminal_framebuffer_height = height;
     if (terminal_framebuffer_pixels) {
         memset(terminal_framebuffer_pixels, 0, required_size);
+    }
+    if (terminal_custom_pixel_raster_width != width || terminal_custom_pixel_raster_height != height) {
+        terminal_custom_pixels_reset_rasters();
     }
 
     terminal_mark_background_dirty();
@@ -5667,10 +5866,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     modified = terminal_custom_pixels_apply_pending_clears(0u);
                     if (terminal_custom_pixels_pending_layers != 0u) {
                         terminal_custom_pixels_pending_layers = 0u;
-                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u) ||
+                            (terminal_custom_pixel_raster_active != 0u);
                         terminal_custom_pixels_dirty = 1;
                     } else if (modified) {
-                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u) ||
+                            (terminal_custom_pixel_raster_active != 0u);
                         terminal_custom_pixels_dirty = 1;
                     }
                 } else if (pixel_layer >= 1 && pixel_layer <= 16) {
@@ -5678,10 +5879,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     uint16_t layer_mask = terminal_custom_layer_mask((uint8_t)pixel_layer);
                     if ((terminal_custom_pixels_pending_layers & layer_mask) != 0u) {
                         terminal_custom_pixels_pending_layers &= (uint16_t)(~layer_mask);
-                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u) ||
+                            (terminal_custom_pixel_raster_active != 0u);
                         terminal_custom_pixels_dirty = 1;
                     } else if (modified) {
-                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u) ||
+                            (terminal_custom_pixel_raster_active != 0u);
                         terminal_custom_pixels_dirty = 1;
                     }
                 }
@@ -8205,7 +8408,9 @@ int main(int argc, char **argv) {
             }
         }
 
-        if (terminal_custom_pixel_count > 0u &&
+        int has_custom_pixels = (terminal_custom_pixel_count > 0u) ||
+            (terminal_custom_pixel_raster_active != 0u);
+        if (has_custom_pixels &&
             (terminal_custom_pixels_dirty ||
              (terminal_custom_pixels_active && frame_dirty))) {
             terminal_custom_pixels_apply(framebuffer, frame_width, frame_height);

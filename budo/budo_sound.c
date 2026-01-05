@@ -2,14 +2,33 @@
 
 #include "budo_sound.h"
 
-#include "budo_sdl.h"
-
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 
-#if BUDO_HAVE_SDL2
+#if defined(BUDOSTACK_HAVE_SDL2)
+#if BUDOSTACK_HAVE_SDL2
+#include <SDL2/SDL.h>
+#define BUDO_SOUND_HAVE_SDL2 1
+#else
+#define BUDO_SOUND_HAVE_SDL2 0
+#endif
+#elif defined(__has_include)
+#if __has_include(<SDL2/SDL.h>)
+#include <SDL2/SDL.h>
+#define BUDO_SOUND_HAVE_SDL2 1
+#elif __has_include(<SDL.h>)
+#include <SDL.h>
+#define BUDO_SOUND_HAVE_SDL2 1
+#else
+#define BUDO_SOUND_HAVE_SDL2 0
+#endif
+#else
+#define BUDO_SOUND_HAVE_SDL2 0
+#endif
+
+#if BUDO_SOUND_HAVE_SDL2
 static SDL_AudioDeviceID budo_audio_device = 0;
 static int budo_sample_rate = 44100;
 #endif
@@ -41,7 +60,7 @@ void budo_sound_beep(int count, int delay_ms) {
 }
 
 int budo_sound_init(int sample_rate) {
-#if !BUDO_HAVE_SDL2
+#if !BUDO_SOUND_HAVE_SDL2
     (void)sample_rate;
     fprintf(stderr, "budo_sound_init: SDL2 not available.\n");
     return -1;
@@ -87,7 +106,7 @@ void budo_sound_shutdown(void) {
 }
 
 int budo_sound_play_tone(int frequency_hz, int duration_ms, int volume) {
-#if !BUDO_HAVE_SDL2
+#if !BUDO_SOUND_HAVE_SDL2
     (void)frequency_hz;
     (void)duration_ms;
     (void)volume;

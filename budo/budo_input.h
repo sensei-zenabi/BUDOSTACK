@@ -31,9 +31,8 @@ typedef struct {
 int budo_input_init(void);
 void budo_input_shutdown(void);
 int budo_input_poll(budo_key_t *out_key);
-int budo_input_sdl_init(void);
-void budo_input_sdl_shutdown(void);
-int budo_input_sdl_poll(budo_input_state_t *state);
+void budo_input_enable_mouse(int enable);
+int budo_input_poll_state(budo_input_state_t *state);
 
 #ifdef __cplusplus
 }

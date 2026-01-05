@@ -2,8 +2,6 @@
 
 #include "budo_input.h"
 
-#include "budo_sdl.h"
-
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -14,10 +12,6 @@
 static struct termios g_saved_termios;
 static int g_saved_flags = -1;
 static int g_input_ready = 0;
-
-#if BUDO_HAVE_SDL2
-static int g_sdl_input_ready = 0;
-#endif
 
 int budo_input_init(void) {
     struct termios raw;
@@ -130,91 +124,101 @@ int budo_input_poll(budo_key_t *out_key) {
     return 0;
 }
 
-int budo_input_sdl_init(void) {
-#if !BUDO_HAVE_SDL2
-    fprintf(stderr, "budo_input_sdl_init: SDL2 not available.\n");
-    return -1;
-#else
-    if (SDL_WasInit(SDL_INIT_EVENTS) == 0) {
-        if (SDL_InitSubSystem(SDL_INIT_EVENTS) != 0) {
-            fprintf(stderr, "budo_input_sdl_init: SDL events init failed: %s\n", SDL_GetError());
-            return -1;
-        }
+void budo_input_enable_mouse(int enable) {
+    if (enable) {
+        printf("\033[?1000h\033[?1006h");
+    } else {
+        printf("\033[?1000l\033[?1006l");
     }
-    g_sdl_input_ready = 1;
+    fflush(stdout);
+}
+
+static int parse_mouse_event(const unsigned char *buffer, int count, budo_input_state_t *state) {
+    char text[32];
+    int button = 0;
+    int x = 0;
+    int y = 0;
+    char action = '\0';
+
+    if (!state || count <= 0) {
+        return 0;
+    }
+    if (count >= (int)sizeof(text)) {
+        count = (int)sizeof(text) - 1;
+    }
+    memcpy(text, buffer, (size_t)count);
+    text[count] = '\0';
+
+    if (sscanf(text, "\033[<%d;%d;%d%c", &button, &x, &y, &action) == 4) {
+        state->mouse_x = x;
+        state->mouse_y = y;
+        if (action == 'M') {
+            state->mouse_buttons = button;
+        } else {
+            state->mouse_buttons = 0;
+        }
+        return 1;
+    }
+
     return 0;
-#endif
 }
 
-void budo_input_sdl_shutdown(void) {
-#if BUDO_HAVE_SDL2
-    g_sdl_input_ready = 0;
-#endif
-}
+int budo_input_poll_state(budo_input_state_t *state) {
+    unsigned char buffer[32];
+    int count;
 
-int budo_input_sdl_poll(budo_input_state_t *state) {
-#if !BUDO_HAVE_SDL2
-    (void)state;
-    fprintf(stderr, "budo_input_sdl_poll: SDL2 not available.\n");
-    return -1;
-#else
-    SDL_Event event;
-    int had_event = 0;
-
-    if (!state || !g_sdl_input_ready) {
+    if (!state) {
         return 0;
     }
 
+    state->quit_requested = 0;
     state->key_up = 0;
     state->key_down = 0;
     state->key_left = 0;
     state->key_right = 0;
     state->key_space = 0;
-    state->quit_requested = 0;
     state->mouse_x = 0;
     state->mouse_y = 0;
     state->mouse_buttons = 0;
 
-    while (SDL_PollEvent(&event)) {
-        had_event = 1;
-        switch (event.type) {
-        case SDL_QUIT:
-            state->quit_requested = 1;
-            break;
-        case SDL_KEYDOWN:
-            switch (event.key.keysym.sym) {
-            case SDLK_UP:
-                state->key_up = 1;
-                break;
-            case SDLK_DOWN:
-                state->key_down = 1;
-                break;
-            case SDLK_LEFT:
-                state->key_left = 1;
-                break;
-            case SDLK_RIGHT:
-                state->key_right = 1;
-                break;
-            case SDLK_SPACE:
-                state->key_space = 1;
-                break;
-            default:
-                break;
-            }
-            break;
-        case SDL_MOUSEMOTION:
-            state->mouse_x = event.motion.x;
-            state->mouse_y = event.motion.y;
-            break;
-        case SDL_MOUSEBUTTONDOWN:
-        case SDL_MOUSEBUTTONUP:
-            state->mouse_buttons = SDL_GetMouseState(&state->mouse_x, &state->mouse_y);
-            break;
+    count = read_input(buffer, sizeof(buffer));
+    if (count == 0) {
+        return 0;
+    }
+
+    if (buffer[0] == 0x1b && count >= 3 && buffer[1] == '[') {
+        if (buffer[2] == '<') {
+            return parse_mouse_event(buffer, count, state);
+        }
+        switch (buffer[2]) {
+        case 'A':
+            state->key_up = 1;
+            return 1;
+        case 'B':
+            state->key_down = 1;
+            return 1;
+        case 'C':
+            state->key_right = 1;
+            return 1;
+        case 'D':
+            state->key_left = 1;
+            return 1;
         default:
-            break;
+            return 0;
         }
     }
 
-    return had_event;
-#endif
+    if (buffer[0] == '\n' || buffer[0] == '\r') {
+        return 1;
+    }
+    if (buffer[0] == ' ') {
+        state->key_space = 1;
+        return 1;
+    }
+    if (buffer[0] == 'q' || buffer[0] == 'Q') {
+        state->quit_requested = 1;
+        return 1;
+    }
+
+    return 0;
 }

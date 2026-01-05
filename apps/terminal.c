@@ -68,6 +68,9 @@
 #ifndef TERMINAL_SHADER_TARGET_FPS
 #define TERMINAL_SHADER_TARGET_FPS 30u
 #endif
+#ifndef TERMINAL_CUSTOM_PIXEL_DEDUP_LIMIT
+#define TERMINAL_CUSTOM_PIXEL_DEDUP_LIMIT 8192u
+#endif
 
 #define TERMINAL_CURSOR_SPRITE_PATH "./tasks/assets/cursor.png"
 
@@ -1862,18 +1865,20 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
         return -1;
     }
 
-    for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
-        struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
-        if (entry->x == x && entry->y == y && entry->layer == layer) {
-            if (entry->r == r && entry->g == g && entry->b == b) {
+    if (terminal_custom_pixel_count < TERMINAL_CUSTOM_PIXEL_DEDUP_LIMIT) {
+        for (size_t i = 0u; i < terminal_custom_pixel_count; i++) {
+            struct terminal_custom_pixel *entry = &terminal_custom_pixels[i];
+            if (entry->x == x && entry->y == y && entry->layer == layer) {
+                if (entry->r == r && entry->g == g && entry->b == b) {
+                    return 0;
+                }
+                entry->r = r;
+                entry->g = g;
+                entry->b = b;
+                entry->version = terminal_custom_layer_versions[layer];
+                terminal_custom_pixels_mark_pending(layer);
                 return 0;
             }
-            entry->r = r;
-            entry->g = g;
-            entry->b = b;
-            entry->version = terminal_custom_layer_versions[layer];
-            terminal_custom_pixels_mark_pending(layer);
-            return 0;
         }
     }
 

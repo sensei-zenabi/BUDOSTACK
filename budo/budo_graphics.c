@@ -82,9 +82,13 @@ static int budo_send_command(const char *format, ...) {
     return 0;
 }
 
-int budo_graphics_set_resolution(int width, int height) {
+int budo_graphics_set_resolution(int width, int height, int layer) {
     if (width < 0 || height < 0 || width > INT_MAX || height > INT_MAX) {
         fprintf(stderr, "budo_graphics_set_resolution: invalid dimensions\n");
+        return -1;
+    }
+    if (layer < 0 || layer > 16) {
+        fprintf(stderr, "budo_graphics_set_resolution: layer must be 0-16\n");
         return -1;
     }
 
@@ -96,29 +100,57 @@ int budo_graphics_set_resolution(int width, int height) {
     return 0;
 }
 
-int budo_graphics_draw_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+int budo_graphics_draw_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b, int layer) {
     if (x < 0 || y < 0) {
         fprintf(stderr, "budo_graphics_draw_pixel: invalid coordinates\n");
         return -1;
     }
-
-    if (budo_send_command("\x1b]777;pixel=draw;pixel_x=%d;pixel_y=%d;pixel_r=%u;pixel_g=%u;pixel_b=%u\a",
-                          x,
-                          y,
-                          (unsigned int)r,
-                          (unsigned int)g,
-                          (unsigned int)b) != 0) {
-        perror("budo_graphics_draw_pixel: printf");
+    if (layer < 0 || layer > 16) {
+        fprintf(stderr, "budo_graphics_draw_pixel: layer must be 0-16\n");
         return -1;
+    }
+
+    if (layer == 0) {
+        if (budo_send_command("\x1b]777;pixel=draw;pixel_x=%d;pixel_y=%d;pixel_r=%u;pixel_g=%u;pixel_b=%u\a",
+                              x,
+                              y,
+                              (unsigned int)r,
+                              (unsigned int)g,
+                              (unsigned int)b) != 0) {
+            perror("budo_graphics_draw_pixel: printf");
+            return -1;
+        }
+    } else {
+        if (budo_send_command("\x1b]777;pixel=draw;pixel_x=%d;pixel_y=%d;pixel_layer=%d;pixel_r=%u;pixel_g=%u;pixel_b=%u\a",
+                              x,
+                              y,
+                              layer,
+                              (unsigned int)r,
+                              (unsigned int)g,
+                              (unsigned int)b) != 0) {
+            perror("budo_graphics_draw_pixel: printf");
+            return -1;
+        }
     }
 
     return 0;
 }
 
-int budo_graphics_clear_pixels(void) {
-    if (budo_send_command("\x1b]777;pixel=clear\a") != 0) {
-        perror("budo_graphics_clear_pixels: printf");
+int budo_graphics_clear_pixels(int layer) {
+    if (layer < 0 || layer > 16) {
+        fprintf(stderr, "budo_graphics_clear_pixels: layer must be 0-16\n");
         return -1;
+    }
+    if (layer == 0) {
+        if (budo_send_command("\x1b]777;pixel=clear\a") != 0) {
+            perror("budo_graphics_clear_pixels: printf");
+            return -1;
+        }
+    } else {
+        if (budo_send_command("\x1b]777;pixel=clear;pixel_layer=%d\a", layer) != 0) {
+            perror("budo_graphics_clear_pixels: printf");
+            return -1;
+        }
     }
 
     return 0;

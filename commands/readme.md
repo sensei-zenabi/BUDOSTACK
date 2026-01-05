@@ -4,7 +4,7 @@ Commands with prefix _TERM*:
 
 - Intended to be used only in TASK scripts that are ran inside 
   apps/terminal terminal emulator.
-- Are optimized for SDL2 using a resolution of 640x360.
+- Access apps/terminal rendered and SDL backend APIs.
   
 Commands without prefix _TERM*: 
 

@@ -61,8 +61,10 @@ SDL2_ENABLED = 0
 endif
 
 ifeq ($(SDL2_ENABLED),1)
-apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
-apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
+CFLAGS += $(SDL2_CFLAGS) -DBUDOSTACK_HAVE_SDL2=1
+LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
+else
+CFLAGS += -DBUDOSTACK_HAVE_SDL2=0
 endif
 
 # --------------------------------------------------------------------

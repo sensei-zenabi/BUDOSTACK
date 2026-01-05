@@ -16,9 +16,24 @@ typedef enum {
     BUDO_KEY_QUIT
 } budo_key_t;
 
+typedef struct {
+    int quit_requested;
+    int key_up;
+    int key_down;
+    int key_left;
+    int key_right;
+    int key_space;
+    int mouse_x;
+    int mouse_y;
+    int mouse_buttons;
+} budo_input_state_t;
+
 int budo_input_init(void);
 void budo_input_shutdown(void);
 int budo_input_poll(budo_key_t *out_key);
+int budo_input_sdl_init(void);
+void budo_input_sdl_shutdown(void);
+int budo_input_sdl_poll(budo_input_state_t *state);
 
 #ifdef __cplusplus
 }

@@ -10,8 +10,12 @@ int main(void) {
   budo_graphics_set_resolution(BUDO_SCREEN_WIDTH, BUDO_SCREEN_HEIGHT);
 
   // Let's measure the drawing speed in comparison to TASK scripts
-  for (int i=0; i<100; i++) {
-    budo_graphics_draw_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b);
+  for (int x=1; x<10; x++) {
+    for (int y=1; y<10; y++) {
+      budo_graphics_draw_pixel(x, y, 255, 200, 100);
+    }
   }
+
+  return 0;
 
 }

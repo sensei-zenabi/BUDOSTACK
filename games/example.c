@@ -10,8 +10,8 @@
 #include "../budo/budo_graphics.h"
 #include "../budo/budo_input.h"
 
-#define BUDO_SCREEN_WIDTH 320
-#define BUDO_SCREEN_HEIGHT 200
+#define BUDO_SCREEN_WIDTH 640
+#define BUDO_SCREEN_HEIGHT 360
 #define BUDO_LAYER 8
 #define PLAYER_SIZE 10
 #define TARGET_SIZE 8

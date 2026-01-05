@@ -18,6 +18,15 @@ Screenshots from BUDOSTACK built-in retro terminal emulator (apps/terminal).
 | ![shot1](screenshots/login.png) | ![shot2](screenshots/demo.png) | ![shot3](screenshots/help.png) | ![shot4](screenshots/paint.png) |
 |:---------------------------:|:---------------------------:|:---------------------------:|:---------------------------:|
 
+## Folder Layout Highlights
+* `./apps/` - System applications that do not use paging.
+* `./budo/` - Libraries exposing MS-DOS style graphics, sound, and input for apps and games in `apps/`/`games/`.
+* `./commands/` - Stand-alone TASK scripting commands.
+* `./documents/` - Documents provided by BUDOSTACK.
+* `./games/` - Games (developers can use `./budo/` for graphics, sound, and input).
+* `./lib/` - System libraries linked into every executable.
+* `./tasks/` - TASK scripts (examples included).
+* `./utilities/` - System utilities that may use paging.
 
 ## How to Install and Run?
 1. Checkout the repo
@@ -45,4 +54,3 @@ code.
 
 Are not distributed using the GLP-2.0 license. Instead, these folders 
 contain their own LICENSE.txt files indicating their licensing conditions.
-

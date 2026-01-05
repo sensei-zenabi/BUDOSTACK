@@ -18,7 +18,7 @@ static void print_help(const char *progname) {
     printf("  %s ./games/example.c ./games/example\n", progname);
     printf("\n");
     printf("Builds the given C source into an executable linked against the\n");
-    printf("BUDOSTACK libraries in ./lib using gcc.\n");
+    printf("BUDOSTACK libraries in ./lib and ./budo using gcc.\n");
 }
 
 static int get_repo_root(char *buffer, size_t size) {
@@ -104,6 +104,21 @@ static int gather_lib_sources(const char *repo_root, glob_t *out_glob) {
     }
     if (rc != 0) {
         fprintf(stderr, "Error: Failed to enumerate library sources.\n");
+        return -1;
+    }
+
+    if (snprintf(pattern, sizeof(pattern), "%s/budo/*.c", repo_root) >= (int)sizeof(pattern)) {
+        fprintf(stderr, "Error: BUDO library path is too long.\n");
+        return -1;
+    }
+
+    rc = glob(pattern, GLOB_APPEND, NULL, out_glob);
+    if (rc == GLOB_NOMATCH) {
+        fprintf(stderr, "Error: No BUDO library sources found in '%s/budo'.\n", repo_root);
+        return -1;
+    }
+    if (rc != 0) {
+        fprintf(stderr, "Error: Failed to enumerate BUDO library sources.\n");
         return -1;
     }
     return 0;

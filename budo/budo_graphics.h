@@ -15,6 +15,7 @@ int budo_graphics_draw_sprite_rgba(int x,
                                    int height,
                                    const uint8_t *rgba,
                                    int layer);
+int budo_graphics_draw_frame_rgba(int width, int height, const uint8_t *rgba);
 int budo_graphics_draw_text(int x, int y, const char *text, int color, int layer);
 int budo_graphics_render_layer(int layer);
 

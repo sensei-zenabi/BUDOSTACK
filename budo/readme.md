@@ -5,7 +5,7 @@ BUDO provides small C11 helper libraries for apps and games targeting
 terminal emulator listens to for graphics, sound, and input.
 
 ## Graphics
-* `budo_graphics_set_resolution(width, height, layer)`
+* `budo_graphics_set_resolution(width, height)`
 * `budo_graphics_draw_pixel(x, y, r, g, b, layer)`
 * `budo_graphics_draw_sprite_rgba(x, y, width, height, rgba, layer)`
 * `budo_graphics_draw_text(x, y, text, color, layer)`

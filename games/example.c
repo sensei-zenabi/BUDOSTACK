@@ -7,7 +7,7 @@
 int main(void) {
 
   // Set resolution
-  budo_graphics_set_resolution(BUDO_SCREEN_WIDTH, BUDO_SCREEN_HEIGHT, 0);
+  budo_graphics_set_resolution(BUDO_SCREEN_WIDTH, BUDO_SCREEN_HEIGHT);
 
   // Let's measure the drawing speed in comparison to TASK scripts
   for (int x=1; x<10; x++) {

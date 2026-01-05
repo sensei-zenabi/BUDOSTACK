@@ -82,13 +82,9 @@ static int budo_send_command(const char *format, ...) {
     return 0;
 }
 
-int budo_graphics_set_resolution(int width, int height, int layer) {
+int budo_graphics_set_resolution(int width, int height) {
     if (width < 0 || height < 0 || width > INT_MAX || height > INT_MAX) {
         fprintf(stderr, "budo_graphics_set_resolution: invalid dimensions\n");
-        return -1;
-    }
-    if (layer < 0 || layer > 16) {
-        fprintf(stderr, "budo_graphics_set_resolution: layer must be 0-16\n");
         return -1;
     }
 

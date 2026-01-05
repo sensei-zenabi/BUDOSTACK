@@ -147,6 +147,10 @@ int budo_graphics_clear_rect(int x, int y, int width, int height, int layer) {
     return 0;
 }
 
+int budo_graphics_clear_screen(int width, int height, int layer) {
+    return budo_graphics_clear_rect(0, 0, width, height, layer);
+}
+
 int budo_graphics_draw_sprite_rgba(int x,
                                    int y,
                                    int width,

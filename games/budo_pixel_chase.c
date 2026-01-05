@@ -79,6 +79,14 @@ int main(void) {
         fprintf(stderr, "budo_pixel_chase: failed to set resolution\n");
         return EXIT_FAILURE;
     }
+    if (budo_graphics_clear_screen(BUDO_SCREEN_WIDTH, BUDO_SCREEN_HEIGHT, BUDO_LAYER) != 0) {
+        fprintf(stderr, "budo_pixel_chase: failed to clear screen\n");
+        return EXIT_FAILURE;
+    }
+    if (budo_graphics_render_layer(BUDO_LAYER) != 0) {
+        fprintf(stderr, "budo_pixel_chase: failed to render clear\n");
+        return EXIT_FAILURE;
+    }
 
     uint8_t player_sprite[PLAYER_SIZE * PLAYER_SIZE * 4u];
     uint8_t target_sprite[TARGET_SIZE * TARGET_SIZE * 4u];

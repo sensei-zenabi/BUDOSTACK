@@ -1,8 +1,6 @@
 #include "../budo/budo_graphics.h"
 #include "../budo/budo_input.h"
 
-#include <stdlib.h>
-
 #define WIDTH 320
 #define HEIGHT 200
 
@@ -11,25 +9,16 @@ int main(void) {
   // Set resolution
   budo_graphics_set_resolution(WIDTH, HEIGHT);
 
-  size_t pixel_count = (size_t)WIDTH * (size_t)HEIGHT;
-  size_t buffer_size = pixel_count * 4u;
-  uint8_t *pixels = malloc(buffer_size);
-  if (!pixels) {
-    return 1;
-  }
-
-  for (int y = 0; y < HEIGHT; y++) {
-    for (int x = 0; x < WIDTH; x++) {
-      size_t index = ((size_t)y * (size_t)WIDTH + (size_t)x) * 4u;
-      pixels[index + 0u] = (uint8_t)((x * 255) / (WIDTH - 1));
-      pixels[index + 1u] = (uint8_t)((y * 255) / (HEIGHT - 1));
-      pixels[index + 2u] = 100u;
-      pixels[index + 3u] = 255u;
+  // Let's measure the drawing speed in comparison to TASK scripts
+  for (int x=1; x<WIDTH; x++) {
+    for (int y=1; y<HEIGHT; y++) {
+      budo_graphics_draw_pixel(x, y, 255, 200, 100, 1);
     }
   }
+  
+  budo_graphics_render_layer(1);
 
-  budo_graphics_draw_frame_rgba(WIDTH, HEIGHT, pixels);
-  free(pixels);
+  //budo_graphics_clear_screen(640, 360, 1);
 
   return 0;
 

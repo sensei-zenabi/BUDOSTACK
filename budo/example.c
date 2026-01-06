@@ -7,9 +7,12 @@
 
 #include <SDL.h>
 
-#define WINDOW_WIDTH 320
-#define WINDOW_HEIGHT 200
+#define GAME_WIDTH 320
+#define GAME_HEIGHT 200
 #define TARGET_FPS 30
+
+//--------------------------------------------------------------------------------------------
+/* DEFINE STRUCTS */
 
 struct point3 {
     float x;
@@ -22,6 +25,9 @@ struct point2 {
     float y;
 };
 
+//--------------------------------------------------------------------------------------------
+/* HELPER FUNCTIONS */
+
 static void clear_buffer(uint32_t *pixels, int width, int height, uint32_t color) {
     if (!pixels || width <= 0 || height <= 0) {
         return;
@@ -32,6 +38,7 @@ static void clear_buffer(uint32_t *pixels, int width, int height, uint32_t color
     }
 }
 
+/* Helper function to draw pixels */
 static void put_pixel(uint32_t *pixels, int width, int height, int x, int y, uint32_t color) {
     if (!pixels || x < 0 || y < 0 || x >= width || y >= height) {
         return;
@@ -39,6 +46,7 @@ static void put_pixel(uint32_t *pixels, int width, int height, int x, int y, uin
     pixels[(size_t)y * (size_t)width + (size_t)x] = color;
 }
 
+/* Draw a line using put_pixel */
 static void draw_line(uint32_t *pixels, int width, int height,
                       int x0, int y0, int x1, int y1, uint32_t color) {
     int dx = abs(x1 - x0);
@@ -91,6 +99,10 @@ static struct point2 project_point(struct point3 p, int width, int height, float
     return out;
 }
 
+
+//--------------------------------------------------------------------------------------------
+/* MAIN LOOP */
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -104,13 +116,23 @@ int main(int argc, char **argv) {
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-
+    
+    /* Added */
+    SDL_DisplayMode desktop_mode;
+    if (SDL_GetCurrentDisplayMode(0, &desktop_mode) != 0) {
+      fprintf(stderr, "Failed to query desktop display mode: %s\n", SDL_GetError());
+      SDL_Quit();
+      return 1;
+    }
+  
+    /* Modified */
     SDL_Window *window = SDL_CreateWindow("Budo Shader Stack Demo",
                                           SDL_WINDOWPOS_CENTERED,
                                           SDL_WINDOWPOS_CENTERED,
-                                          WINDOW_WIDTH,
-                                          WINDOW_HEIGHT,
-                                          SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+                                          desktop_mode.w,
+                                          desktop_mode.h,
+                                          SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_ALLOW_HIGHDPI);
+    
     if (!window) {
         fprintf(stderr, "Failed to create window: %s\n", SDL_GetError());
         SDL_Quit();
@@ -123,6 +145,14 @@ int main(int argc, char **argv) {
         SDL_DestroyWindow(window);
         SDL_Quit();
         return 1;
+    }
+    
+    /* Added */
+    int drawable_width = 0;
+    int drawable_height = 0;
+    SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
+    if (drawable_width <= 0 || drawable_height <= 0) {
+      SDL_GetWindowSize(window, &drawable_width, &drawable_height);
     }
 
     SDL_GL_SetSwapInterval(1);
@@ -142,11 +172,11 @@ int main(int argc, char **argv) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, WINDOW_WIDTH, WINDOW_HEIGHT,
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, GAME_WIDTH, GAME_HEIGHT,
                  0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     glBindTexture(GL_TEXTURE_2D, 0);
 
-    uint32_t *pixels = malloc((size_t)WINDOW_WIDTH * (size_t)WINDOW_HEIGHT * sizeof(uint32_t));
+    uint32_t *pixels = malloc((size_t)GAME_WIDTH * (size_t)GAME_HEIGHT * sizeof(uint32_t));
     if (!pixels) {
         fprintf(stderr, "Failed to allocate pixel buffer.\n");
         glDeleteTextures(1, &texture);
@@ -168,11 +198,11 @@ int main(int argc, char **argv) {
     }
 
     const char *shader_paths[] = {
+        "../shaders/crtscreen.glsl",
         "../shaders/noise.glsl",
-        "../shaders/effects.glsl",
-        "../shaders/crtscreen.glsl"
+        "../shaders/effects.glsl"
     };
-    if (budo_shader_stack_load(stack, shader_paths, 2u) != 0) {
+    if (budo_shader_stack_load(stack, shader_paths, 3u) != 0) {
         fprintf(stderr, "Failed to load shaders.\n");
         budo_shader_stack_destroy(stack);
         free(pixels);
@@ -206,32 +236,50 @@ int main(int argc, char **argv) {
     int frame_value = 0;
 
     while (running) {
+    
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_QUIT) {
-                running = 0;
-            }
+          switch (event.type) {
+            case SDL_QUIT:
+              running = 0;
+              break;
+
+            case SDL_WINDOWEVENT:
+              if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+                  event.window.event == SDL_WINDOWEVENT_RESIZED) {
+
+                SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
+                if (drawable_width <= 0 || drawable_height <= 0) {
+                      SDL_GetWindowSize(window, &drawable_width, &drawable_height);
+                }
+              }
+              break;
+
+            default:
+              break;
+          }
         }
+
 
         Uint32 now = SDL_GetTicks();
         float delta = (float)(now - last_tick) / 1000.0f;
         last_tick = now;
         angle += delta;
 
-        clear_buffer(pixels, WINDOW_WIDTH, WINDOW_HEIGHT, 0x00101010u);
+        clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00101010u);
 
         struct point2 projected[8];
         for (size_t i = 0; i < 8; i++) {
             struct point3 rotated = rotate_point(cube_vertices[i], angle * 0.7f, angle);
-            projected[i] = project_point(rotated, WINDOW_WIDTH, WINDOW_HEIGHT, 120.0f);
+            projected[i] = project_point(rotated, GAME_WIDTH, GAME_HEIGHT, 120.0f);
         }
 
         for (size_t i = 0; i < 12; i++) {
             int a = edges[i][0];
             int b = edges[i][1];
             draw_line(pixels,
-                      WINDOW_WIDTH,
-                      WINDOW_HEIGHT,
+                      GAME_WIDTH,
+                      GAME_HEIGHT,
                       (int)projected[a].x,
                       (int)projected[a].y,
                       (int)projected[b].x,
@@ -241,17 +289,17 @@ int main(int argc, char **argv) {
 
         glBindTexture(GL_TEXTURE_2D, texture);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT,
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GAME_WIDTH, GAME_HEIGHT,
                         GL_RGBA, GL_UNSIGNED_BYTE, pixels);
         glBindTexture(GL_TEXTURE_2D, 0);
 
         glClear(GL_COLOR_BUFFER_BIT);
         if (budo_shader_stack_render(stack,
                                      texture,
-                                     WINDOW_WIDTH,
-                                     WINDOW_HEIGHT,
-                                     WINDOW_WIDTH,
-                                     WINDOW_HEIGHT,
+                                     GAME_WIDTH,
+                                     GAME_HEIGHT,
+                                     drawable_width,
+                                     drawable_height,
                                      0,
                                      frame_value) != 0) {
             fprintf(stderr, "Shader stack render failed.\n");

@@ -33,6 +33,7 @@
 #define GRID_ROWS 30
 #define MAX_SNAKE_CELLS (GRID_COLUMNS * GRID_ROWS)
 #define MOVE_INTERVAL_MS 100u
+#define WINDOW_SCALE 4
 
 struct snake_cell {
     int x;
@@ -141,11 +142,19 @@ static void place_food(struct snake_cell *food, const struct snake_cell *snake, 
     food->y = GRID_ROWS / 2;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    int use_fifo = 0;
     const char *fifo_path = getenv("BUDOSTACK_FRAMEBUFFER");
-    if (!fifo_path || fifo_path[0] == '\0') {
-        fprintf(stderr, "sdlsnake: missing BUDOSTACK_FRAMEBUFFER path.\n");
-        return EXIT_FAILURE;
+    if (fifo_path && fifo_path[0] != '\0') {
+        use_fifo = 1;
+    }
+
+    if (argc > 1 && strcmp(argv[1], "--help") == 0) {
+        printf("Usage: %s [--help]\n", argv[0] ? argv[0] : "sdlsnake");
+        printf("Runs a low-resolution snake game.\n");
+        printf("When launched via apps/terminal --external, renders into the FIFO framebuffer.\n");
+        printf("Otherwise, opens a local SDL window.\n");
+        return EXIT_SUCCESS;
     }
 
     int width = parse_env_int(getenv("BUDOSTACK_FRAMEBUFFER_WIDTH"), DEFAULT_WIDTH);
@@ -157,45 +166,106 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
-    int fd = open(fifo_path, O_WRONLY);
-    if (fd < 0) {
-        perror("sdlsnake: open framebuffer");
-        return EXIT_FAILURE;
+    int fd = -1;
+    if (use_fifo) {
+        fd = open(fifo_path, O_WRONLY);
+        if (fd < 0) {
+            perror("sdlsnake: open framebuffer");
+            return EXIT_FAILURE;
+        }
     }
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_EVENTS) != 0) {
         fprintf(stderr, "sdlsnake: SDL_Init failed: %s\n", SDL_GetError());
-        close(fd);
+        if (fd >= 0) {
+            close(fd);
+        }
         return EXIT_FAILURE;
+    }
+
+    int window_width = width * WINDOW_SCALE;
+    int window_height = height * WINDOW_SCALE;
+    if (window_width <= 0 || window_height <= 0) {
+        window_width = DEFAULT_WIDTH * WINDOW_SCALE;
+        window_height = DEFAULT_HEIGHT * WINDOW_SCALE;
     }
 
     SDL_Window *window = SDL_CreateWindow("sdlsnake",
                                           SDL_WINDOWPOS_CENTERED,
                                           SDL_WINDOWPOS_CENTERED,
-                                          320,
-                                          240,
-                                          SDL_WINDOW_HIDDEN);
+                                          window_width,
+                                          window_height,
+                                          use_fifo ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN);
     if (!window) {
         fprintf(stderr, "sdlsnake: SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
-        close(fd);
+        if (fd >= 0) {
+            close(fd);
+        }
         return EXIT_FAILURE;
+    }
+
+    SDL_Renderer *renderer = NULL;
+    SDL_Texture *texture = NULL;
+    if (!use_fifo) {
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+        renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
+        if (!renderer) {
+            fprintf(stderr, "sdlsnake: SDL_CreateRenderer failed: %s\n", SDL_GetError());
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            if (fd >= 0) {
+                close(fd);
+            }
+            return EXIT_FAILURE;
+        }
+        if (SDL_RenderSetLogicalSize(renderer, width, height) != 0) {
+            fprintf(stderr, "sdlsnake: SDL_RenderSetLogicalSize failed: %s\n", SDL_GetError());
+        }
+        texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+                                    SDL_TEXTUREACCESS_STREAMING, width, height);
+        if (!texture) {
+            fprintf(stderr, "sdlsnake: SDL_CreateTexture failed: %s\n", SDL_GetError());
+            SDL_DestroyRenderer(renderer);
+            SDL_DestroyWindow(window);
+            SDL_Quit();
+            if (fd >= 0) {
+                close(fd);
+            }
+            return EXIT_FAILURE;
+        }
     }
 
     if ((size_t)height > SIZE_MAX / (size_t)stride) {
         fprintf(stderr, "sdlsnake: framebuffer size overflow.\n");
+        if (texture) {
+            SDL_DestroyTexture(texture);
+        }
+        if (renderer) {
+            SDL_DestroyRenderer(renderer);
+        }
         SDL_DestroyWindow(window);
         SDL_Quit();
-        close(fd);
+        if (fd >= 0) {
+            close(fd);
+        }
         return EXIT_FAILURE;
     }
     size_t buffer_size = (size_t)height * (size_t)stride;
     uint8_t *buffer = malloc(buffer_size);
     if (!buffer) {
         fprintf(stderr, "sdlsnake: failed to allocate framebuffer.\n");
+        if (texture) {
+            SDL_DestroyTexture(texture);
+        }
+        if (renderer) {
+            SDL_DestroyRenderer(renderer);
+        }
         SDL_DestroyWindow(window);
         SDL_Quit();
-        close(fd);
+        if (fd >= 0) {
+            close(fd);
+        }
         return EXIT_FAILURE;
     }
 
@@ -320,17 +390,36 @@ int main(void) {
                       90u);
         }
 
-        if (write_frame(fd, buffer, buffer_size) != 0) {
-            running = 0;
+        if (use_fifo) {
+            if (write_frame(fd, buffer, buffer_size) != 0) {
+                running = 0;
+            }
+        } else {
+            if (SDL_UpdateTexture(texture, NULL, buffer, stride) != 0) {
+                fprintf(stderr, "sdlsnake: SDL_UpdateTexture failed: %s\n", SDL_GetError());
+                running = 0;
+            } else {
+                SDL_RenderClear(renderer);
+                SDL_RenderCopy(renderer, texture, NULL, NULL);
+                SDL_RenderPresent(renderer);
+            }
         }
 
         SDL_Delay(10);
     }
 
     free(buffer);
+    if (texture) {
+        SDL_DestroyTexture(texture);
+    }
+    if (renderer) {
+        SDL_DestroyRenderer(renderer);
+    }
     SDL_DestroyWindow(window);
     SDL_Quit();
-    close(fd);
+    if (fd >= 0) {
+        close(fd);
+    }
     return EXIT_SUCCESS;
 }
 

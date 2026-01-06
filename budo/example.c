@@ -5,7 +5,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/ioctl.h>
 #include <time.h>
+#include <unistd.h>
 
 #define EXAMPLE_WIDTH 640
 #define EXAMPLE_HEIGHT 360
@@ -20,9 +22,42 @@ static uint64_t monotonic_ms(void) {
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000L);
 }
 
+static void resolve_terminal_size(int *out_width, int *out_height) {
+    if (!out_width || !out_height) {
+        return;
+    }
+
+    int width = EXAMPLE_WIDTH;
+    int height = EXAMPLE_HEIGHT;
+
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+        if (ws.ws_xpixel > 0 && ws.ws_ypixel > 0) {
+            width = ws.ws_xpixel;
+            height = ws.ws_ypixel;
+        } else if (ws.ws_col > 0 && ws.ws_row > 0) {
+            width = (int)ws.ws_col * 8;
+            height = (int)ws.ws_row * 8;
+        }
+    }
+
+    if (width <= 0) {
+        width = EXAMPLE_WIDTH;
+    }
+    if (height <= 0) {
+        height = EXAMPLE_HEIGHT;
+    }
+
+    *out_width = width;
+    *out_height = height;
+}
+
 int main(void) {
     int width = EXAMPLE_WIDTH;
     int height = EXAMPLE_HEIGHT;
+
+    resolve_terminal_size(&width, &height);
+    setvbuf(stdout, NULL, _IONBF, 0);
 
     budo_graphics_init(width, height, 0, 0, 0);
 

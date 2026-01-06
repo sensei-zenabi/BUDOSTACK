@@ -21,3 +21,12 @@ General Guidelines for Commands:
 - Write their output to stdout excluding _TERM* commands.
 - Print help when command is written to command line without any arguments.
 - 
+
+Recent terminal pixel helpers:
+
+- `_TERM_PIXELS`: Uploads a block of RGBA pixels (base64) to the terminal surface.
+- `_TERM_SPRITE_CACHE`: Caches sprites for fast repeated drawing.
+- `_TERM_SPRITE_DRAW`: Draws cached sprites by id.
+- `_TERM_SPRITE_FREE`: Frees cached sprites.
+- `_TERM_FAST`: Toggles fast render mode (disables shaders and frame limiting).
+- `_TERM_BENCH`: Toggles benchmark logging for pixel throughput.

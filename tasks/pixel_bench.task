@@ -1,0 +1,30 @@
+# pixel_bench.task
+
+# Benchmark bulk sprite drawing in the terminal pixel surface.
+
+ECHO OFF
+RUN _CLEAR
+RUN _TERM_RESOLUTION 320 200
+RUN _TERM_FAST --enable
+RUN _TERM_BENCH --enable
+
+# Cache a sprite for repeated draws.
+RUN _TERM_SPRITE_CACHE -id 1 -file ./assets/tile001.png
+
+SET $FRAMES = 60
+SET $STEP = 20
+
+FOR ($frame=0; $frame<$FRAMES; $frame++):
+  FOR ($x=0; $x<320; $x=$x+$STEP):
+    FOR ($y=0; $y<200; $y=$y+$STEP):
+      RUN _TERM_SPRITE_DRAW -id 1 -x $x -y $y -layer 1
+    END
+  END
+  RUN _TERM_RENDER -layer 1
+END
+
+RUN _TERM_BENCH --disable
+RUN _TERM_FAST --disable
+RUN _TERM_SPRITE_FREE -id 1
+
+PRINT "\nPixel benchmark completed.\n"

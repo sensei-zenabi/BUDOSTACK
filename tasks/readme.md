@@ -1,5 +1,9 @@
 This folder is reserved for TASK scripts.
 
+Notable scripts:
+
+- `pixel_bench.task`: exercises cached sprite drawing and reports pixel throughput.
+
 Preferred folder structure:
 
 ./tasks/
@@ -11,6 +15,5 @@ Preferred folder structure:
 |--./script2.task
 
 Each task script should have it's own folder to store assets used by the script.
-
 
 

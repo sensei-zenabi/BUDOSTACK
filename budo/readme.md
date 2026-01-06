@@ -71,7 +71,24 @@ ESC ] 777 ; pixel=render ; pixel_layer=<0|1-16> BEL
 > - `pixel=draw` currently draws into **layer 1**.
 > - Use **sprites** (below) for multi-layer graphics or for bulk pixels.
 
-### 1.2 Sprite drawing (raw RGBA)
+### 1.2 Frame drawing (raw RGBA)
+
+Frames are supplied as **base64-encoded raw RGBA** data with size
+`width * height * 4` bytes. Use this for **full-screen redraws** or large
+rectangles to reach DOS-era pixel throughput.
+
+**Draw a frame region:**
+
+```
+ESC ] 777 ; frame=draw ; frame_x=<x> ; frame_y=<y> ; frame_w=<w> ; frame_h=<h> ; frame_data=<base64> BEL
+```
+
+> Notes:
+> - Frame data is composited **after text** and before custom pixel layers.
+> - For best performance, send full-frame updates (`frame_x=0`, `frame_y=0`)
+>   sized to the current framebuffer resolution.
+
+### 1.3 Sprite drawing (raw RGBA)
 
 Sprites are supplied as **base64-encoded raw RGBA** data with size
 `width * height * 4` bytes.
@@ -88,7 +105,7 @@ ESC ] 777 ; sprite=draw ; sprite_x=<x> ; sprite_y=<y> ; sprite_w=<w> ; sprite_h=
 ESC ] 777 ; sprite=clear ; sprite_x=<x> ; sprite_y=<y> ; sprite_w=<w> ; sprite_h=<h> ; sprite_layer=<1-16> BEL
 ```
 
-### 1.3 Text sprites (font rendered to pixels)
+### 1.4 Text sprites (font rendered to pixels)
 
 The terminal can render text to the pixel layers using the system PSF font
 (`./fonts/system.psf`) and then composite it like a sprite.
@@ -104,7 +121,7 @@ ESC ] 777 ; text=draw ; text_x=<x> ; text_y=<y> ; text_layer=<1-16> ; text_color
 - **17**: default foreground
 - **18**: default background
 
-### 1.4 Resolution, scale, and margin
+### 1.5 Resolution, scale, and margin
 
 You can reconfigure the terminal's render layout at runtime:
 

@@ -155,6 +155,16 @@ static size_t terminal_framebuffer_capacity = 0u;
 static int terminal_framebuffer_width = 0;
 static int terminal_framebuffer_height = 0;
 static GLuint terminal_gl_framebuffer = 0;
+static uint8_t *terminal_frame_layer_pixels = NULL;
+static size_t terminal_frame_layer_capacity = 0u;
+static int terminal_frame_layer_width = 0;
+static int terminal_frame_layer_height = 0;
+static int terminal_frame_layer_active = 0;
+static int terminal_frame_layer_dirty = 0;
+static int terminal_frame_layer_dirty_x = 0;
+static int terminal_frame_layer_dirty_y = 0;
+static int terminal_frame_layer_dirty_w = 0;
+static int terminal_frame_layer_dirty_h = 0;
 static GLuint terminal_gl_intermediate_textures[2] = {0u, 0u};
 static int terminal_intermediate_width = 0;
 static int terminal_intermediate_height = 0;
@@ -392,6 +402,10 @@ static void terminal_custom_pixels_mark_pending(uint8_t layer);
 static int terminal_custom_pixels_apply_pending_clears(uint8_t layer);
 static void terminal_custom_pixels_clear_pending_requests(void);
 static void terminal_custom_pixels_shutdown(void);
+static int terminal_frame_layer_resize(int width, int height);
+static int terminal_frame_layer_draw(int origin_x, int origin_y, const uint8_t *rgba, int width, int height);
+static void terminal_frame_layer_apply(uint8_t *framebuffer, int width, int height, int force);
+static void terminal_frame_layer_shutdown(void);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
 static char *terminal_read_text_file(const char *path, size_t *out_size);
@@ -1962,6 +1976,168 @@ static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const 
     return 0;
 }
 
+static int terminal_frame_layer_resize(int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return -1;
+    }
+    if (width > INT_MAX / 4 || height > INT_MAX / 4) {
+        return -1;
+    }
+    size_t pixel_count = (size_t)width * (size_t)height;
+    if (pixel_count > SIZE_MAX / 4u) {
+        return -1;
+    }
+    size_t required = pixel_count * 4u;
+    if (required > terminal_frame_layer_capacity) {
+        uint8_t *new_pixels = realloc(terminal_frame_layer_pixels, required);
+        if (!new_pixels) {
+            return -1;
+        }
+        terminal_frame_layer_pixels = new_pixels;
+        terminal_frame_layer_capacity = required;
+    }
+    terminal_frame_layer_width = width;
+    terminal_frame_layer_height = height;
+    if (terminal_frame_layer_pixels) {
+        memset(terminal_frame_layer_pixels, 0, required);
+    }
+    terminal_frame_layer_active = 0;
+    terminal_frame_layer_dirty = 1;
+    terminal_frame_layer_dirty_x = 0;
+    terminal_frame_layer_dirty_y = 0;
+    terminal_frame_layer_dirty_w = width;
+    terminal_frame_layer_dirty_h = height;
+    return 0;
+}
+
+static int terminal_frame_layer_draw(int origin_x, int origin_y, const uint8_t *rgba, int width, int height) {
+    if (!rgba || width <= 0 || height <= 0) {
+        return -1;
+    }
+    if (origin_x < 0 || origin_y < 0) {
+        return -1;
+    }
+    if (width > INT_MAX - origin_x || height > INT_MAX - origin_y) {
+        return -1;
+    }
+    if (terminal_frame_layer_width <= 0 || terminal_frame_layer_height <= 0) {
+        return -1;
+    }
+    if (origin_x + width > terminal_frame_layer_width || origin_y + height > terminal_frame_layer_height) {
+        return -1;
+    }
+
+    size_t row_bytes = (size_t)width * 4u;
+    size_t frame_pitch = (size_t)terminal_frame_layer_width * 4u;
+    for (int row = 0; row < height; row++) {
+        uint8_t *dst = terminal_frame_layer_pixels +
+            (size_t)(origin_y + row) * frame_pitch + (size_t)origin_x * 4u;
+        const uint8_t *src = rgba + (size_t)row * row_bytes;
+        memcpy(dst, src, row_bytes);
+    }
+
+    if (!terminal_frame_layer_dirty) {
+        terminal_frame_layer_dirty_x = origin_x;
+        terminal_frame_layer_dirty_y = origin_y;
+        terminal_frame_layer_dirty_w = width;
+        terminal_frame_layer_dirty_h = height;
+    } else {
+        int min_x = terminal_frame_layer_dirty_x;
+        int min_y = terminal_frame_layer_dirty_y;
+        int max_x = terminal_frame_layer_dirty_x + terminal_frame_layer_dirty_w;
+        int max_y = terminal_frame_layer_dirty_y + terminal_frame_layer_dirty_h;
+        if (origin_x < min_x) {
+            min_x = origin_x;
+        }
+        if (origin_y < min_y) {
+            min_y = origin_y;
+        }
+        if (origin_x + width > max_x) {
+            max_x = origin_x + width;
+        }
+        if (origin_y + height > max_y) {
+            max_y = origin_y + height;
+        }
+        terminal_frame_layer_dirty_x = min_x;
+        terminal_frame_layer_dirty_y = min_y;
+        terminal_frame_layer_dirty_w = max_x - min_x;
+        terminal_frame_layer_dirty_h = max_y - min_y;
+    }
+    terminal_frame_layer_dirty = 1;
+    terminal_frame_layer_active = 1;
+    return 0;
+}
+
+static void terminal_frame_layer_apply(uint8_t *framebuffer, int width, int height, int force) {
+    if (!framebuffer || !terminal_frame_layer_pixels) {
+        return;
+    }
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+    if (!terminal_frame_layer_active) {
+        return;
+    }
+    if (!terminal_frame_layer_dirty && !force) {
+        return;
+    }
+
+    int apply_x = terminal_frame_layer_dirty_x;
+    int apply_y = terminal_frame_layer_dirty_y;
+    int apply_w = terminal_frame_layer_dirty_w;
+    int apply_h = terminal_frame_layer_dirty_h;
+    if (force && !terminal_frame_layer_dirty) {
+        apply_x = 0;
+        apply_y = 0;
+        apply_w = width;
+        apply_h = height;
+    }
+    if (apply_w <= 0 || apply_h <= 0) {
+        return;
+    }
+    if (apply_x < 0) {
+        apply_x = 0;
+    }
+    if (apply_y < 0) {
+        apply_y = 0;
+    }
+    if (apply_x + apply_w > width) {
+        apply_w = width - apply_x;
+    }
+    if (apply_y + apply_h > height) {
+        apply_h = height - apply_y;
+    }
+    if (apply_w <= 0 || apply_h <= 0) {
+        return;
+    }
+
+    size_t frame_pitch = (size_t)width * 4u;
+    size_t layer_pitch = (size_t)terminal_frame_layer_width * 4u;
+    size_t row_bytes = (size_t)apply_w * 4u;
+    for (int row = 0; row < apply_h; row++) {
+        uint8_t *dst = framebuffer + (size_t)(apply_y + row) * frame_pitch + (size_t)apply_x * 4u;
+        const uint8_t *src = terminal_frame_layer_pixels +
+            (size_t)(apply_y + row) * layer_pitch + (size_t)apply_x * 4u;
+        memcpy(dst, src, row_bytes);
+    }
+
+    terminal_frame_layer_dirty = 0;
+}
+
+static void terminal_frame_layer_shutdown(void) {
+    free(terminal_frame_layer_pixels);
+    terminal_frame_layer_pixels = NULL;
+    terminal_frame_layer_capacity = 0u;
+    terminal_frame_layer_width = 0;
+    terminal_frame_layer_height = 0;
+    terminal_frame_layer_active = 0;
+    terminal_frame_layer_dirty = 0;
+    terminal_frame_layer_dirty_x = 0;
+    terminal_frame_layer_dirty_y = 0;
+    terminal_frame_layer_dirty_w = 0;
+    terminal_frame_layer_dirty_h = 0;
+}
+
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height) {
     if (!framebuffer || width <= 0 || height <= 0) {
         return;
@@ -3113,6 +3289,10 @@ static int terminal_resize_render_targets(int width, int height) {
     if (terminal_framebuffer_pixels) {
         memset(terminal_framebuffer_pixels, 0, required_size);
     }
+    if (terminal_frame_layer_resize(width, height) != 0) {
+        fprintf(stderr, "Failed to allocate frame layer buffer.\n");
+        return -1;
+    }
 
     terminal_mark_background_dirty();
     terminal_mark_full_redraw();
@@ -3462,6 +3642,7 @@ static void terminal_release_gl_resources(void) {
     terminal_framebuffer_capacity = 0u;
     terminal_framebuffer_width = 0;
     terminal_framebuffer_height = 0;
+    terminal_frame_layer_shutdown();
     terminal_texture_width = 0;
     terminal_texture_height = 0;
     terminal_bind_texture(0);
@@ -5250,6 +5431,11 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_TEXT_ACTION_DRAW = 1
             };
             enum terminal_text_action text_action = TERMINAL_TEXT_ACTION_NONE;
+            enum terminal_frame_action {
+                TERMINAL_FRAME_ACTION_NONE = 0,
+                TERMINAL_FRAME_ACTION_DRAW = 1
+            };
+            enum terminal_frame_action frame_action = TERMINAL_FRAME_ACTION_NONE;
             long pixel_x = -1;
             long pixel_y = -1;
             long pixel_r = -1;
@@ -5265,12 +5451,19 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long text_y = -1;
             long text_layer = 1;
             long text_color = -1;
+            long frame_x = 0;
+            long frame_y = 0;
+            long frame_w = -1;
+            long frame_h = -1;
             char *sprite_data_value = NULL;
             char *text_data_value = NULL;
+            char *frame_data_value = NULL;
             uint8_t *sprite_pixels = NULL;
             size_t sprite_bytes = 0u;
             uint8_t *text_bytes = NULL;
             size_t text_length = 0u;
+            uint8_t *frame_pixels = NULL;
+            size_t frame_bytes = 0u;
             while (token) {
                 char *value = strchr(token, '=');
                 char *key = token;
@@ -5493,6 +5686,40 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         }
                     } else if (strcmp(key, "text_data") == 0 && value) {
                         text_data_value = value;
+                    } else if (strcmp(key, "frame") == 0 && value && *value != '\0') {
+                        if (strcmp(value, "draw") == 0) {
+                            frame_action = TERMINAL_FRAME_ACTION_DRAW;
+                        }
+                    } else if (strcmp(key, "frame_x") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            frame_x = parsed;
+                        }
+                    } else if (strcmp(key, "frame_y") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            frame_y = parsed;
+                        }
+                    } else if (strcmp(key, "frame_w") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            frame_w = parsed;
+                        }
+                    } else if (strcmp(key, "frame_h") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            frame_h = parsed;
+                        }
+                    } else if (strcmp(key, "frame_data") == 0 && value) {
+                        frame_data_value = value;
                     } else if (strcmp(key, "mouse") == 0 && value && *value != '\0') {
                         if (strcmp(value, "query") == 0) {
                             mouse_query_requested = 1;
@@ -5617,6 +5844,44 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             }
 
             free(text_bytes);
+
+            if (frame_action == TERMINAL_FRAME_ACTION_DRAW) {
+                if (frame_x < 0 || frame_y < 0 || frame_w <= 0 || frame_h <= 0 ||
+                    frame_x > INT_MAX || frame_y > INT_MAX || frame_w > INT_MAX || frame_h > INT_MAX) {
+                    fprintf(stderr, "terminal: Invalid frame parameters.\n");
+                } else if (!frame_data_value) {
+                    fprintf(stderr, "terminal: Missing frame data.\n");
+                } else if (!terminal_framebuffer_pixels || terminal_framebuffer_width <= 0 ||
+                           terminal_framebuffer_height <= 0) {
+                    fprintf(stderr, "terminal: Frame buffer is not initialized.\n");
+                } else if (frame_x + frame_w > terminal_framebuffer_width ||
+                           frame_y + frame_h > terminal_framebuffer_height) {
+                    fprintf(stderr, "terminal: Frame dimensions exceed framebuffer.\n");
+                } else if (terminal_base64_decode(frame_data_value, &frame_pixels, &frame_bytes) != 0) {
+                    fprintf(stderr, "terminal: Failed to decode frame data.\n");
+                } else {
+                    size_t width_sz = (size_t)frame_w;
+                    size_t height_sz = (size_t)frame_h;
+                    if (width_sz != 0u && height_sz > SIZE_MAX / width_sz) {
+                        fprintf(stderr, "terminal: Frame dimensions overflow.\n");
+                    } else if (width_sz * height_sz > SIZE_MAX / 4u) {
+                        fprintf(stderr, "terminal: Frame dimensions too large.\n");
+                    } else {
+                        size_t expected_bytes = width_sz * height_sz * 4u;
+                        if (expected_bytes != frame_bytes) {
+                            fprintf(stderr, "terminal: Frame data size mismatch.\n");
+                        } else if (terminal_frame_layer_draw((int)frame_x,
+                                                             (int)frame_y,
+                                                             frame_pixels,
+                                                             (int)frame_w,
+                                                             (int)frame_h) != 0) {
+                            fprintf(stderr, "terminal: Failed to draw frame.\n");
+                        }
+                    }
+                }
+            }
+
+            free(frame_pixels);
 
             if (mouse_query_requested) {
 #if BUDOSTACK_HAVE_SDL2
@@ -8197,6 +8462,14 @@ int main(int argc, char **argv) {
                         }
                     }
                 }
+            }
+        }
+
+        if (terminal_frame_layer_active) {
+            int force_frame_layer = full_redraw || frame_dirty;
+            if (terminal_frame_layer_dirty || force_frame_layer) {
+                terminal_frame_layer_apply(framebuffer, frame_width, frame_height, force_frame_layer);
+                frame_dirty = 1;
             }
         }
 

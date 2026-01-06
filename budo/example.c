@@ -10,24 +10,12 @@
 #define GAME_WIDTH 640
 #define GAME_HEIGHT 360
 #define TARGET_FPS 30
+#define CUBE_SIZE 220.0f
 
-//--------------------------------------------------------------------------------------------
-/* DEFINE STRUCTS */
-
-struct point3 {
-    float x;
-    float y;
-    float z;
-};
-
-struct point2 {
-    float x;
-    float y;
-};
-
-//--------------------------------------------------------------------------------------------
-// PSF FONT (PSF1 / PSF2) LOADER + CPU BLITTER
-// Renders monochrome glyphs directly into your uint32_t framebuffer.
+/*--------------------------------------------------------------------------------------------
+ * PSF FONT (PSF1 / PSF2) LOADER + CPU BLITTER
+ * Renders monochrome glyphs directly into your uint32_t framebuffer.
+*/
 
 #pragma pack(push, 1)
 typedef struct {
@@ -206,9 +194,35 @@ static void psf_draw_text(const psf_font_t *f,
     }
 }
 
+/*--------------------------------------------------------------------------------------------
+ * DEFINE STRUCTS 
+*/
 
-//--------------------------------------------------------------------------------------------
-/* HELPER FUNCTIONS */
+struct point3 {
+    float x;
+    float y;
+    float z;
+};
+
+struct point2 {
+    float x;
+    float y;
+};
+
+
+/*--------------------------------------------------------------------------------------------
+ * HELPER FUNCTIONS 
+*/
+
+
+/* Clear a linear 32-bit pixel buffer to a single color.
+ *
+ * The buffer is assumed to contain width × height pixels, stored
+ * contiguously in row-major order. Each pixel is a packed uint32_t
+ * value compatible with SDL/OpenGL 32bpp formats.
+ *
+ * Invalid input parameters are treated as a no-op.
+*/
 
 static void clear_buffer(uint32_t *pixels, int width, int height, uint32_t color) {
     if (!pixels || width <= 0 || height <= 0) {
@@ -220,7 +234,16 @@ static void clear_buffer(uint32_t *pixels, int width, int height, uint32_t color
     }
 }
 
-/* Helper function to draw pixels */
+
+/* Write a single pixel into a linear 32-bit framebuffer.
+ *
+ * The buffer is assumed to be a width × height image stored in
+ * row-major order. Pixel coordinates are specified in screen space,
+ * with (0,0) at the top-left corner.
+ *
+ * Out-of-bounds coordinates or a NULL buffer are safely ignored.
+*/
+ 
 static void put_pixel(uint32_t *pixels, int width, int height, int x, int y, uint32_t color) {
     if (!pixels || x < 0 || y < 0 || x >= width || y >= height) {
         return;
@@ -228,7 +251,18 @@ static void put_pixel(uint32_t *pixels, int width, int height, int x, int y, uin
     pixels[(size_t)y * (size_t)width + (size_t)x] = color;
 }
 
-/* Draw a line using put_pixel */
+
+/* Draw a straight line between two points using an integer-based
+ * Bresenham rasterization algorithm.
+ *
+ * The line is drawn in screen space into a linear 32-bit framebuffer.
+ * Both endpoints are included. Pixel writes are bounds-checked via
+ * put_pixel(), so drawing outside the framebuffer is safely clipped.
+ *
+ * The algorithm operates entirely in integer arithmetic and produces
+ * consistent, gap-free lines for all octants.
+*/
+
 static void draw_line(uint32_t *pixels, int width, int height,
                       int x0, int y0, int x1, int y1, uint32_t color) {
     int dx = abs(x1 - x0);
@@ -254,36 +288,79 @@ static void draw_line(uint32_t *pixels, int width, int height,
     }
 }
 
+
+/* Rotate a 3D point around the X and Y axes.
+ *
+ * Rotations are applied in the following order:
+ *   1) Rotation around the X axis (pitch)
+ *   2) Rotation around the Y axis (yaw)
+ *
+ * Angles are specified in radians and follow the right-handed
+ * coordinate system convention.
+ *
+ * The rotation is performed about the origin.
+*/
+
 static struct point3 rotate_point(struct point3 p, float angle_x, float angle_y) {
+    
+    /* Precompute sine/cosine for efficiency */
+    
     float cx = cosf(angle_x);
     float sx = sinf(angle_x);
     float cy = cosf(angle_y);
     float sy = sinf(angle_y);
 
+    /* Rotate around X axis */
+    
     float y = p.y * cx - p.z * sx;
     float z = p.y * sx + p.z * cx;
     p.y = y;
     p.z = z;
 
+    /* Rotate around Y axis */
+
     float x = p.x * cy + p.z * sy;
     z = -p.x * sy + p.z * cy;
     p.x = x;
     p.z = z;
+
     return p;
 }
 
+
+/* Project a 3D point into 2D screen space using a simple perspective model.
+ *
+ * The camera is assumed to be at the origin looking down the +Z axis.
+ * A constant Z-offset is applied to avoid division by zero and to place
+ * geometry in front of the camera.
+ *
+ * The resulting coordinates are centered in the viewport, with +Y pointing
+ * upward in world space and downward in screen space.
+*/
+
 static struct point2 project_point(struct point3 p, int width, int height, float scale) {
+
+    /* Shift depth to keep points in front of the camera */
+    
     float depth = p.z + 3.0f;
+    
+    /* Perspective divide (safe against zero depth) */
+    
     float inv = depth != 0.0f ? (1.0f / depth) : 1.0f;
+    
+    /* Map projected coordinates to screen space */
+    
     struct point2 out;
     out.x = (float)width * 0.5f + p.x * scale * inv;
     out.y = (float)height * 0.5f - p.y * scale * inv;
+    
     return out;
 }
 
 
-//--------------------------------------------------------------------------------------------
-/* MAIN LOOP */
+/*--------------------------------------------------------------------------------------------
+ * MAIN LOOP 
+*/
 
 int main(int argc, char **argv) {
     (void)argc;
@@ -360,14 +437,27 @@ int main(int argc, char **argv) {
     if (drawable_width <= 0 || drawable_height <= 0) {
       SDL_GetWindowSize(window, &drawable_width, &drawable_height);
     }
-
+    
+    
+    /* Define VSync:
+     *
+     *   SDL_GL_SetSwapInterval(0);   // uncapped framerate
+     *   SDL_GL_SetSwapInterval(1);   // standard VSync
+     *   SDL_GL_SetSwapInterval(-1);  // adaptive VSync 
+    */
+    
     SDL_GL_SetSwapInterval(1);
 
 
-    /* Create and Configure SDL GL texture */
+    /* Create and initialize the main RGBA texture used as the game framebuffer.
+     * This texture will be updated each frame and rendered to the screen. 
+    */
 
     GLuint texture = 0;
     glGenTextures(1, &texture);
+    
+    /* Texture creation failure is fatal: rendering cannot continue */
+    
     if (texture == 0) {
         fprintf(stderr, "Failed to create GL texture.\n");
         SDL_GL_DeleteContext(context);
@@ -376,21 +466,38 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+
+    /* Configure texture for pixel-perfect rendering:
+     * - Nearest filtering avoids smoothing (important for low-res / retro visuals)
+     * - Clamp-to-edge prevents sampling artifacts at borders
+    */ 
+    
     glBindTexture(GL_TEXTURE_2D, texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, GAME_WIDTH, GAME_HEIGHT,
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    
+    
+    /* Allocate GPU storage for the framebuffer texture.
+     * Data is provided later via glTexSubImage2D.
+    */
+    
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, GAME_WIDTH, GAME_HEIGHT, 0, 
+                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     glBindTexture(GL_TEXTURE_2D, 0);
 
 
-    /* Allocate pixel buffer */
+    /* Allocate CPU-side pixel buffer matching the game resolution.
+     * This buffer is used to compose each frame before uploading to the GPU texture.
+     * Allocation failure is fatal, as rendering cannot proceed without it.
+    */
 
     uint32_t *pixels = malloc((size_t)GAME_WIDTH * (size_t)GAME_HEIGHT * sizeof(uint32_t));
     if (!pixels) {
         fprintf(stderr, "Failed to allocate pixel buffer.\n");
+        
+        /* Clean up previously acquired graphics resources */
         glDeleteTextures(1, &texture);
         SDL_GL_DeleteContext(context);
         SDL_DestroyWindow(window);
@@ -413,14 +520,14 @@ int main(int argc, char **argv) {
     }
 
     
-    /* Define shader paths */
+    /* Define BUDOSTACK shader paths */
 
     const char *shader_paths[] = {
       "../shaders/crtscreen.glsl"
     };
     
     
-    /* Load shaders */
+    /* Load BUDOSTACK shaders */
     
     if (budo_shader_stack_load(stack, shader_paths, 1u) != 0) {
         fprintf(stderr, "Failed to load shaders.\n");
@@ -470,9 +577,17 @@ int main(int argc, char **argv) {
         
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+          
           switch (event.type) {
+            
             case SDL_QUIT:
               running = 0;
+              break;
+              
+            case SDL_KEYDOWN:
+              if (event.key.keysym.sym == SDLK_ESCAPE) {
+                running = 0;
+              }
               break;
 
             case SDL_WINDOWEVENT:
@@ -488,6 +603,7 @@ int main(int argc, char **argv) {
 
             default:
               break;
+          
           }
         }
 
@@ -500,19 +616,29 @@ int main(int argc, char **argv) {
         angle += delta;
 
 
-        /* Clear frame buffer */
+        /* Clear the CPU framebuffer with a packed 32-bit RGBA color.
+         * Each pixel is stored as a uint32_t, matching SDL/OpenGL 32bpp formats
+         * (one byte per channel). Channel interpretation is defined by the
+         * GL_RGBA / GL_UNSIGNED_BYTE upload.
+        */
         
         clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00101010u);
 
         
-        /* Rotate cube */
+        /* Transform and render the cube:
+         *  - Rotate each 3D vertex in model space
+         *  - Project rotated vertices into 2D screen space
+         *  - Rasterize cube edges as screen-space lines
+        */
 
         struct point2 projected[8];
         for (size_t i = 0; i < 8; i++) {
             struct point3 rotated = rotate_point(cube_vertices[i], angle * 0.7f, angle);
-            projected[i] = project_point(rotated, GAME_WIDTH, GAME_HEIGHT, 120.0f);
+            projected[i] = project_point(rotated, GAME_WIDTH, GAME_HEIGHT, CUBE_SIZE); //120.0f
         }
 
+        /* Draw all cube edges using the projected vertices */
+        
         for (size_t i = 0; i < 12; i++) {
             int a = edges[i][0];
             int b = edges[i][1];
@@ -526,16 +652,21 @@ int main(int argc, char **argv) {
                       0x00f0d060u);
         }
 
+        
         /* Text overlay (draw AFTER cube, BEFORE uploading pixels to GL) */
+        
         char hud[128];
-        snprintf(hud, sizeof(hud), "BUDOSTACK DEMO  FPS:%d  frame:%d", TARGET_FPS, frame_value);
+        snprintf(hud, sizeof(hud), "ROTATING CUBE DEMO  FPS:%d  frame:%d", TARGET_FPS, frame_value);
         psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8, hud, 0x00FFFFFFu);
         psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8 + (int)font.height,
-                      "system.psf overlay", 0x00A0E0FFu);
+                      "Exit with ESC", 0x00A0E0FFu);
 
 
         
-        /* Draw cube */
+        /* Upload the CPU-side framebuffer to the GPU texture.
+         * Pixel data is tightly packed (1-byte alignment) and matches the
+         * GL_RGBA / GL_UNSIGNED_BYTE texture format.
+        */
         
         glBindTexture(GL_TEXTURE_2D, texture);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -543,6 +674,8 @@ int main(int argc, char **argv) {
                         GL_RGBA, GL_UNSIGNED_BYTE, pixels);
         glBindTexture(GL_TEXTURE_2D, 0);
 
+        /* Clear the default framebuffer before rendering the textured quad */
+        
         glClear(GL_COLOR_BUFFER_BIT);
         
         
@@ -560,12 +693,20 @@ int main(int argc, char **argv) {
             running = 0;
         }
 
+        
+        /* Present the rendered frame by swapping the back buffer to the screen.
+         * Swap timing is controlled by the configured swap interval (VSync).
+        */
+        
         SDL_GL_SwapWindow(window);
+        
+        
+        /* Frame value is used by BUDOSTACK noise shader */
         
         frame_value++;
 
 
-        /* Cap frame rate (FPS) */
+        /* Cap the frame rate (FPS) */
         
         Uint32 frame_ms = SDL_GetTicks() - now;
         Uint32 target_ms = 1000u / TARGET_FPS;

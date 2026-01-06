@@ -142,6 +142,33 @@ static void place_food(struct snake_cell *food, const struct snake_cell *snake, 
     food->y = GRID_ROWS / 2;
 }
 
+static const char *sdlsnake_external_command(const char *argv0) {
+    static char command[PATH_MAX];
+    const char *fallback = "./games/sdlsnake";
+    const char *source = argv0 && argv0[0] != '\0' ? argv0 : fallback;
+    if (strchr(source, ';')) {
+        source = fallback;
+    }
+    if (snprintf(command, sizeof(command), "%s", source) >= (int)sizeof(command)) {
+        snprintf(command, sizeof(command), "%s", fallback);
+    }
+    return command;
+}
+
+static void sdlsnake_request_external(const char *command, int width, int height) {
+    char sequence[256];
+    int written = snprintf(sequence,
+                           sizeof(sequence),
+                           "\x1b]777;external=%s;external_size=%dx%d\x07",
+                           command,
+                           width,
+                           height);
+    if (written <= 0 || (size_t)written >= sizeof(sequence)) {
+        return;
+    }
+    (void)write(STDOUT_FILENO, sequence, (size_t)written);
+}
+
 int main(int argc, char **argv) {
     int use_fifo = 0;
     const char *fifo_path = getenv("BUDOSTACK_FRAMEBUFFER");
@@ -160,6 +187,14 @@ int main(int argc, char **argv) {
     int width = parse_env_int(getenv("BUDOSTACK_FRAMEBUFFER_WIDTH"), DEFAULT_WIDTH);
     int height = parse_env_int(getenv("BUDOSTACK_FRAMEBUFFER_HEIGHT"), DEFAULT_HEIGHT);
     int stride = parse_env_int(getenv("BUDOSTACK_FRAMEBUFFER_STRIDE"), width * 4);
+
+    if (!use_fifo) {
+        const char *external_capable = getenv("BUDOSTACK_EXTERNAL_CAPABLE");
+        if (external_capable && external_capable[0] != '\0') {
+            sdlsnake_request_external(sdlsnake_external_command(argv[0]), width, height);
+            return EXIT_SUCCESS;
+        }
+    }
 
     if (width <= 0 || height <= 0 || stride < width * 4) {
         fprintf(stderr, "sdlsnake: invalid framebuffer dimensions.\n");

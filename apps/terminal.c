@@ -100,6 +100,10 @@ static Uint32 terminal_render_last_frame_tick = 0u;
 static Uint32 terminal_render_frame_interval_ms = 0u;
 static int terminal_shaders_enabled = 1;
 static int terminal_vsync_enabled = 0;
+static int terminal_external_request_pending = 0;
+static int terminal_external_request_width = 0;
+static int terminal_external_request_height = 0;
+static char terminal_external_request_command[PATH_MAX];
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -5385,12 +5389,16 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int mouse_query_requested = 0;
     int shader_toggle_requested = 0;
     int shader_enable_requested = 0;
+    int external_size_set = 0;
+    int external_width = 0;
+    int external_height = 0;
 
     if (args && args[0] != '\0') {
         char *copy = strdup(args);
         if (copy) {
             char *saveptr = NULL;
             char *token = strtok_r(copy, ";", &saveptr);
+            char *external_command = NULL;
 #if BUDOSTACK_HAVE_SDL2
             char *sound_action = NULL;
             char *sound_path = NULL;
@@ -5510,6 +5518,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         } else if (strcmp(value, "disable") == 0) {
                             shader_toggle_requested = 1;
                             shader_enable_requested = 0;
+                        }
+                    } else if (strcmp(key, "external") == 0 && value && *value != '\0') {
+                        external_command = value;
+                    } else if (strcmp(key, "external_size") == 0 && value && *value != '\0') {
+                        if (terminal_parse_dimensions(value, &external_width, &external_height) == 0) {
+                            external_size_set = 1;
                         }
 #if BUDOSTACK_HAVE_SDL2
                     } else if (strcmp(key, "sound") == 0 && value && *value != '\0') {
@@ -5857,6 +5871,24 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     terminal_disable_shaders();
                 }
                 terminal_mark_full_redraw();
+            }
+
+            if (external_command) {
+                if (snprintf(terminal_external_request_command,
+                             sizeof(terminal_external_request_command),
+                             "%s",
+                             external_command) >= (int)sizeof(terminal_external_request_command)) {
+                    fprintf(stderr, "terminal: External command too long.\n");
+                } else {
+                    terminal_external_request_pending = 1;
+                    if (external_size_set) {
+                        terminal_external_request_width = external_width;
+                        terminal_external_request_height = external_height;
+                    } else {
+                        terminal_external_request_width = 0;
+                        terminal_external_request_height = 0;
+                    }
+                }
             }
 
             free(copy);
@@ -6870,6 +6902,7 @@ static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
         if (!term_value || term_value[0] == '\0') {
             setenv("TERM", "xterm-256color", 1);
         }
+        setenv("BUDOSTACK_EXTERNAL_CAPABLE", "1", 1);
 
         execl(exe_path, exe_path, (char *)NULL);
         perror("execl");
@@ -7010,6 +7043,10 @@ int main(int argc, char **argv) {
     int external_width = 0;
     int external_height = 0;
     int external_size_specified = 0;
+    const char *external_command_active = NULL;
+    int external_command_width = 0;
+    int external_command_height = 0;
+    int external_command_size_specified = 0;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -7452,6 +7489,10 @@ int main(int argc, char **argv) {
     int status = 0;
     int child_exited = 0;
     int external_exited = 0;
+    external_command_active = external_command;
+    external_command_width = external_width;
+    external_command_height = external_height;
+    external_command_size_specified = external_size_specified;
     unsigned char input_buffer[512];
     int running = 1;
     const Uint32 cursor_blink_interval = TERMINAL_CURSOR_BLINK_INTERVAL;
@@ -8787,18 +8828,26 @@ int main(int argc, char **argv) {
             terminal_shader_last_frame_tick = now;
         }
 
+        if (terminal_external_request_pending) {
+            terminal_external_request_pending = 0;
+            external_command_active = terminal_external_request_command;
+            external_command_width = terminal_external_request_width;
+            external_command_height = terminal_external_request_height;
+            external_command_size_specified = (external_command_width > 0 && external_command_height > 0);
+        }
+
         if (child_exited) {
-            if (external_command && !external_active) {
-                int target_width = external_width;
-                int target_height = external_height;
-                if (!external_size_specified || target_width <= 0 || target_height <= 0) {
+            if (external_command_active && !external_active) {
+                int target_width = external_command_width;
+                int target_height = external_command_height;
+                if (!external_command_size_specified || target_width <= 0 || target_height <= 0) {
                     target_width = frame_width;
                     target_height = frame_height;
                 }
                 if (terminal_update_render_pixels(target_width, target_height) != 0) {
                     fprintf(stderr, "Failed to resize framebuffer for external content.\n");
                     running = 0;
-                } else if (terminal_start_external(external_command,
+                } else if (terminal_start_external(external_command_active,
                                                    target_width,
                                                    target_height,
                                                    external_fifo_path,

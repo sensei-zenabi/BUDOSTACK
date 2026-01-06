@@ -9,7 +9,7 @@
 
 #define WINDOW_WIDTH 320
 #define WINDOW_HEIGHT 200
-#define TARGET_FPS 60
+#define TARGET_FPS 30
 
 struct point3 {
     float x;
@@ -168,8 +168,9 @@ int main(int argc, char **argv) {
     }
 
     const char *shader_paths[] = {
-        "../shaders/crt-geom.glsl",
-        "../shaders/crt-guest.glsl"
+        "../shaders/noise.glsl",
+        "../shaders/effects.glsl",
+        "../shaders/crtscreen.glsl"
     };
     if (budo_shader_stack_load(stack, shader_paths, 2u) != 0) {
         fprintf(stderr, "Failed to load shaders.\n");

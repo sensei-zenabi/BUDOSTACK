@@ -560,6 +560,8 @@ int main(int argc, char **argv) {
         {0, 4}, {1, 5}, {2, 6}, {3, 7}
     };
     
+    float cube_size = CUBE_SIZE;
+    
     
     /* Initialize Demo */
 
@@ -587,6 +589,12 @@ int main(int argc, char **argv) {
             case SDL_KEYDOWN:
               if (event.key.keysym.sym == SDLK_ESCAPE) {
                 running = 0;
+              }
+              if (event.key.keysym.sym == SDLK_UP) {
+                cube_size = cube_size + 1.0f;
+              }
+              if (event.key.keysym.sym == SDLK_DOWN) {
+                cube_size = cube_size - 1.0f;
               }
               break;
 
@@ -634,7 +642,7 @@ int main(int argc, char **argv) {
         struct point2 projected[8];
         for (size_t i = 0; i < 8; i++) {
             struct point3 rotated = rotate_point(cube_vertices[i], angle * 0.7f, angle);
-            projected[i] = project_point(rotated, GAME_WIDTH, GAME_HEIGHT, CUBE_SIZE); //120.0f
+            projected[i] = project_point(rotated, GAME_WIDTH, GAME_HEIGHT, cube_size); //120.0f
         }
 
         /* Draw all cube edges using the projected vertices */

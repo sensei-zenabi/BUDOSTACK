@@ -26,6 +26,188 @@ struct point2 {
 };
 
 //--------------------------------------------------------------------------------------------
+// PSF FONT (PSF1 / PSF2) LOADER + CPU BLITTER
+// Renders monochrome glyphs directly into your uint32_t framebuffer.
+
+#pragma pack(push, 1)
+typedef struct {
+    uint16_t magic;     // 0x0436 (little-endian)
+    uint8_t  mode;
+    uint8_t  charsize;  // bytes per glyph (== height for PSF1, width fixed 8)
+} psf1_header_t;
+
+typedef struct {
+    uint32_t magic;      // 0x864ab572 (little-endian)
+    uint32_t version;    // 0
+    uint32_t headersize; // typically 32
+    uint32_t flags;
+    uint32_t length;     // glyph count
+    uint32_t charsize;   // bytes per glyph
+    uint32_t height;
+    uint32_t width;
+} psf2_header_t;
+#pragma pack(pop)
+
+typedef struct {
+    uint8_t *file_buf;       // owned
+    size_t   file_size;
+
+    uint32_t glyph_count;
+    uint32_t width;
+    uint32_t height;
+    uint32_t bytes_per_glyph;
+
+    const uint8_t *glyphs;   // points into file_buf
+} psf_font_t;
+
+static uint8_t *read_file_all(const char *path, size_t *out_size) {
+    FILE *fp = fopen(path, "rb");
+    if (!fp) return NULL;
+
+    fseek(fp, 0, SEEK_END);
+    long sz = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+    if (sz <= 0) { fclose(fp); return NULL; }
+
+    uint8_t *buf = (uint8_t*)malloc((size_t)sz);
+    if (!buf) { fclose(fp); return NULL; }
+
+    if (fread(buf, 1, (size_t)sz, fp) != (size_t)sz) {
+        fclose(fp);
+        free(buf);
+        return NULL;
+    }
+
+    fclose(fp);
+    *out_size = (size_t)sz;
+    return buf;
+}
+
+static void psf_font_destroy(psf_font_t *f) {
+    if (!f) return;
+    free(f->file_buf);
+    memset(f, 0, sizeof(*f));
+}
+
+static int psf_font_load(psf_font_t *f, const char *path) {
+    if (!f || !path) return -1;
+    memset(f, 0, sizeof(*f));
+
+    f->file_buf = read_file_all(path, &f->file_size);
+    if (!f->file_buf || f->file_size < 4) return -1;
+
+    // Try PSF1
+    if (f->file_size >= sizeof(psf1_header_t)) {
+        const psf1_header_t *h1 = (const psf1_header_t*)f->file_buf;
+        if (h1->magic == 0x0436) {
+            f->width = 8;
+            f->height = (uint32_t)h1->charsize;
+            f->bytes_per_glyph = (uint32_t)h1->charsize;
+            f->glyph_count = (h1->mode & 0x01) ? 512u : 256u;
+
+            size_t header_sz = sizeof(psf1_header_t);
+            size_t glyph_bytes = (size_t)f->glyph_count * (size_t)f->bytes_per_glyph;
+            if (f->file_size < header_sz + glyph_bytes) {
+                psf_font_destroy(f);
+                return -1;
+            }
+
+            f->glyphs = f->file_buf + header_sz;
+            return 0;
+        }
+    }
+
+    // Try PSF2
+    if (f->file_size >= sizeof(psf2_header_t)) {
+        const psf2_header_t *h2 = (const psf2_header_t*)f->file_buf;
+        if (h2->magic == 0x864ab572u) {
+            f->glyph_count = h2->length;
+            f->width = h2->width;
+            f->height = h2->height;
+            f->bytes_per_glyph = h2->charsize;
+
+            size_t header_sz = (size_t)h2->headersize;
+            size_t glyph_bytes = (size_t)f->glyph_count * (size_t)f->bytes_per_glyph;
+            if (f->file_size < header_sz + glyph_bytes) {
+                psf_font_destroy(f);
+                return -1;
+            }
+
+            f->glyphs = f->file_buf + header_sz;
+            return 0;
+        }
+    }
+
+    psf_font_destroy(f);
+    return -1;
+}
+
+// Draw a single glyph at (x,y) into RGBA8888 pixels.
+// color is 0x00RRGGBB in your codebase (alpha ignored).
+static void psf_draw_glyph(const psf_font_t *f,
+                           uint32_t *pixels, int fb_w, int fb_h,
+                           int x, int y, uint8_t glyph_index, uint32_t color) {
+    if (!f || !f->glyphs || !pixels) return;
+    if (fb_w <= 0 || fb_h <= 0) return;
+
+    uint32_t gi = (uint32_t)glyph_index;
+    if (gi >= f->glyph_count) gi = (uint32_t)'?';
+
+    const uint8_t *glyph = f->glyphs + (size_t)gi * (size_t)f->bytes_per_glyph;
+
+    uint32_t bytes_per_row = (f->width + 7u) / 8u;
+
+    for (uint32_t row = 0; row < f->height; row++) {
+        int py = y + (int)row;
+        if (py < 0 || py >= fb_h) continue;
+
+        const uint8_t *rowbits = glyph + row * bytes_per_row;
+
+        for (uint32_t col = 0; col < f->width; col++) {
+            int px = x + (int)col;
+            if (px < 0 || px >= fb_w) continue;
+
+            uint32_t byte_i = col / 8u;
+            uint32_t bit_i  = 7u - (col % 8u); // PSF bit order (MSB first) is common
+            uint8_t on = (rowbits[byte_i] >> bit_i) & 1u;
+
+            if (on) {
+                pixels[(size_t)py * (size_t)fb_w + (size_t)px] = color;
+            }
+        }
+    }
+}
+
+static void psf_draw_text(const psf_font_t *f,
+                          uint32_t *pixels, int fb_w, int fb_h,
+                          int x, int y, const char *text, uint32_t color) {
+    if (!f || !text) return;
+
+    int pen_x = x;
+    int pen_y = y;
+
+    for (const unsigned char *p = (const unsigned char*)text; *p; p++) {
+        unsigned char ch = *p;
+
+        if (ch == '\n') {
+            pen_x = x;
+            pen_y += (int)f->height;
+            continue;
+        } else if (ch == '\r') {
+            pen_x = x;
+            continue;
+        } else if (ch == '\t') {
+            pen_x += (int)f->width * 4;
+            continue;
+        }
+
+        psf_draw_glyph(f, pixels, fb_w, fb_h, pen_x, pen_y, ch, color);
+        pen_x += (int)f->width;
+    }
+}
+
+
+//--------------------------------------------------------------------------------------------
 /* HELPER FUNCTIONS */
 
 static void clear_buffer(uint32_t *pixels, int width, int height, uint32_t color) {
@@ -112,6 +294,16 @@ int main(int argc, char **argv) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         fprintf(stderr, "SDL init failed: %s\n", SDL_GetError());
         return 1;
+    }
+    
+
+    /* Initialize Font */
+    
+    psf_font_t font;
+    if (psf_font_load(&font, "../fonts/system.psf") != 0) {
+      fprintf(stderr, "Failed to load PSF font: %s\n", "../fonts/system.psf");
+      SDL_Quit();
+      return 1;
     }
 
 
@@ -336,6 +528,14 @@ int main(int argc, char **argv) {
                       0x00f0d060u);
         }
 
+        /* Text overlay (draw AFTER cube, BEFORE uploading pixels to GL) */
+        char hud[128];
+        snprintf(hud, sizeof(hud), "BUDOSTACK DEMO  FPS:%d  frame:%d", TARGET_FPS, frame_value);
+        psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8, hud, 0x00FFFFFFu);
+        psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8 + (int)font.height,
+                      "system.psf overlay", 0x00A0E0FFu);
+
+
         
         /* Draw cube */
         
@@ -384,6 +584,7 @@ int main(int argc, char **argv) {
     glDeleteTextures(1, &texture);
     SDL_GL_DeleteContext(context);
     SDL_DestroyWindow(window);
+    psf_font_destroy(&font);
     SDL_Quit();
     
     return 0;

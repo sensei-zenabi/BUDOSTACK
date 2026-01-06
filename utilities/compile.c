@@ -106,11 +106,15 @@ static int get_repo_root(char *buffer, size_t size) {
 }
 
 static path_list_t *g_collect_list = NULL;
+static const char *g_skip_path = NULL;
 
 static int collect_callback(const char *fpath, const struct stat *sb, int typeflag, struct FTW *ftwbuf) {
     (void)sb;
     (void)ftwbuf;
     if (typeflag == FTW_F && has_suffix(fpath, ".c")) {
+        if (g_skip_path && strcmp(fpath, g_skip_path) == 0) {
+            return 0;
+        }
         if (!g_collect_list) {
             return 1;
         }
@@ -121,7 +125,7 @@ static int collect_callback(const char *fpath, const struct stat *sb, int typefl
     return 0;
 }
 
-static int collect_budo_sources(const char *repo_root, path_list_t *list) {
+static int collect_budo_sources(const char *repo_root, const char *skip_path, path_list_t *list) {
     if (!repo_root || !list) {
         return -1;
     }
@@ -136,8 +140,10 @@ static int collect_budo_sources(const char *repo_root, path_list_t *list) {
     }
 
     g_collect_list = list;
+    g_skip_path = skip_path;
     int rc = nftw(budo_path, collect_callback, 16, FTW_PHYS);
     g_collect_list = NULL;
+    g_skip_path = NULL;
     if (rc != 0) {
         fprintf(stderr, "Error: Failed to scan budo sources under '%s'.\n", budo_path);
         return -1;
@@ -253,7 +259,7 @@ int main(int argc, char *argv[]) {
     }
 
     path_list_t sources = {0};
-    if (collect_budo_sources(repo_root, &sources) != 0) {
+    if (collect_budo_sources(repo_root, input_path, &sources) != 0) {
         free_path_list(&sources);
         return EXIT_FAILURE;
     }

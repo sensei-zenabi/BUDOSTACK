@@ -77,7 +77,7 @@ LIB_OBJS = $(LIB_SRCS:.c=.o)
 ALL_SOURCES = $(shell find . -type f -name '*.c' -not -path "./users/*" -not -path "*/.git/*")
 
 # Exclude command, app, and lib sources from the main executable sources.
-NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./games/% ./lib/% ./utilities/%, $(ALL_SOURCES))
+NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./games/% ./lib/% ./budo/% ./utilities/%, $(ALL_SOURCES))
 NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)
 TARGET = budostack
 

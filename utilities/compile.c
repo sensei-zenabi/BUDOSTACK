@@ -12,18 +12,28 @@
 static void print_help(const char *progname) {
     printf("Usage:\n");
     printf("  %s <task-file>\n", progname);
+    printf("  %s <source.c> <output>\n", progname);
     printf("\nExamples:\n");
     printf("  %s demo.task\n", progname);
     printf("  %s demo\n", progname);
+    printf("  %s ./example.c ./example\n", progname);
     printf("\n");
     printf("Creates a standalone executable that embeds the given TASK script\n");
     printf("from './tasks/'. The resulting binary bundles the runtime so it can\n");
     printf("run outside BUDOSTACK while still using the project's assets.\n");
+    printf("\n");
+    printf("When given a C source and output path, compiles the source and\n");
+    printf("automatically links against the budo libraries.\n");
 }
 
 static int has_task_extension(const char *name) {
     size_t len = strlen(name);
     return len > 5 && strcmp(name + len - 5, ".task") == 0;
+}
+
+static int has_c_extension(const char *name) {
+    size_t len = strlen(name);
+    return len > 2 && strcmp(name + len - 2, ".c") == 0;
 }
 
 static int ensure_task_extension(char *buffer, size_t size) {
@@ -349,15 +359,103 @@ static int run_compiler(const char *stub_path, const char *output_path) {
     return 0;
 }
 
+static int run_c_compiler(const char *source_path, const char *output_path, const char *repo_root) {
+    if (!source_path || !output_path || !repo_root) {
+        return -1;
+    }
+
+    char include_path[PATH_MAX];
+    if (snprintf(include_path, sizeof(include_path), "%s/budo", repo_root) >= (int)sizeof(include_path)) {
+        fprintf(stderr, "Error: Include path is too long.\n");
+        return -1;
+    }
+
+    char budo_graphics_path[PATH_MAX];
+    if (snprintf(budo_graphics_path,
+                 sizeof(budo_graphics_path),
+                 "%s/budo/budo_graphics.c",
+                 repo_root) >= (int)sizeof(budo_graphics_path)) {
+        fprintf(stderr, "Error: budo_graphics.c path is too long.\n");
+        return -1;
+    }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        return -1;
+    }
+
+    if (pid == 0) {
+        char *const args[] = {
+            "gcc",
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-Wpedantic",
+            "-pthread",
+            "-I",
+            include_path,
+            "-o",
+            (char *)output_path,
+            (char *)source_path,
+            budo_graphics_path,
+            "-lm",
+            NULL
+        };
+        execvp("gcc", args);
+        perror("execvp");
+        _exit(127);
+    }
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        perror("waitpid");
+        return -1;
+    }
+
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fprintf(stderr, "gcc failed with status %d\n", status);
+        return -1;
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        fprintf(stderr, "Error: No TASK script specified.\n");
+        fprintf(stderr, "Error: No input specified.\n");
         print_help(argv[0]);
         return EXIT_FAILURE;
     }
 
     if (strcmp(argv[1], "-help") == 0 || strcmp(argv[1], "--help") == 0) {
         print_help(argv[0]);
+        return EXIT_SUCCESS;
+    }
+
+    char repo_root[PATH_MAX];
+    if (get_repo_root(repo_root, sizeof(repo_root)) != 0) {
+        fprintf(stderr, "Error: Failed to determine repository root.\n");
+        return EXIT_FAILURE;
+    }
+
+    if (argc >= 3 && has_c_extension(argv[1])) {
+        char source_path[PATH_MAX];
+        if (!realpath(argv[1], source_path)) {
+            fprintf(stderr, "Error: Could not locate source '%s': %s\n", argv[1], strerror(errno));
+            return EXIT_FAILURE;
+        }
+
+        if (access(source_path, R_OK) != 0) {
+            fprintf(stderr, "Error: Cannot read source '%s'.\n", source_path);
+            return EXIT_FAILURE;
+        }
+
+        if (run_c_compiler(source_path, argv[2], repo_root) != 0) {
+            return EXIT_FAILURE;
+        }
+
+        printf("Built executable '%s' from %s\n", argv[2], source_path);
         return EXIT_SUCCESS;
     }
 
@@ -381,12 +479,6 @@ int main(int argc, char *argv[]) {
     char resolved_script[PATH_MAX];
     if (!realpath(script_path, resolved_script)) {
         fprintf(stderr, "Error: Could not locate script '%s': %s\n", script_path, strerror(errno));
-        return EXIT_FAILURE;
-    }
-
-    char repo_root[PATH_MAX];
-    if (get_repo_root(repo_root, sizeof(repo_root)) != 0) {
-        fprintf(stderr, "Error: Failed to determine repository root.\n");
         return EXIT_FAILURE;
     }
 

@@ -9,7 +9,7 @@ RUN _TERM_FAST --enable
 RUN _TERM_BENCH --enable
 
 # Cache a sprite for repeated draws.
-RUN _TERM_SPRITE_CACHE -id 1 -file ./assets/tile001.png
+RUN _TERM_SPRITE_CACHE -id 1 -file ./tasks/assets/tile001.png
 
 SET $FRAMES = 60
 SET $STEP = 20

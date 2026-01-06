@@ -74,6 +74,8 @@ endif
 ifeq ($(SDL2_ENABLED),1)
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
+games/sdlsnake.o: CFLAGS += $(SDL2_CFLAGS)
+games/sdlsnake: LDFLAGS += $(SDL2_LIBS)
 endif
 
 # --------------------------------------------------------------------
@@ -111,6 +113,8 @@ APPS_EXES = $(APPS_SRCS:.c=)
 ifeq ($(SDL2_ENABLED),0)
 APPS_SRCS := $(filter-out ./apps/terminal.c, $(APPS_SRCS))
 APPS_EXES := $(filter-out ./apps/terminal, $(APPS_EXES))
+GAMES_SRCS := $(filter-out ./games/sdlsnake.c, $(GAMES_SRCS))
+GAMES_EXES := $(filter-out ./games/sdlsnake, $(GAMES_EXES))
 endif
 
 # Find all .c files in the games folder

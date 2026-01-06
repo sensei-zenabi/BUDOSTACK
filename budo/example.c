@@ -205,12 +205,30 @@ int main(int argc, char **argv) {
     Uint32 last_tick = SDL_GetTicks();
     float angle = 0.0f;
     int frame_value = 0;
+    int output_width = 0;
+    int output_height = 0;
+
+    SDL_GL_GetDrawableSize(window, &output_width, &output_height);
+    if (output_width <= 0 || output_height <= 0) {
+        fprintf(stderr, "Failed to query drawable size.\n");
+        budo_shader_stack_destroy(stack);
+        free(pixels);
+        glDeleteTextures(1, &texture);
+        SDL_GL_DeleteContext(context);
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return 1;
+    }
 
     while (running) {
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = 0;
+            }
+            if (event.type == SDL_WINDOWEVENT
+                && event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+                SDL_GL_GetDrawableSize(window, &output_width, &output_height);
             }
         }
 
@@ -251,8 +269,8 @@ int main(int argc, char **argv) {
                                      texture,
                                      WINDOW_WIDTH,
                                      WINDOW_HEIGHT,
-                                     WINDOW_WIDTH,
-                                     WINDOW_HEIGHT,
+                                     output_width,
+                                     output_height,
                                      0,
                                      frame_value) != 0) {
             fprintf(stderr, "Shader stack render failed.\n");

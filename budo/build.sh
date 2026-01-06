@@ -15,7 +15,7 @@ fi
 
 cd "$BUILD_DIR"
 
-cc -std=c11 -Wall -Wextra -Werror -Wpedantic \
+cc -std=c11 -Wall -Wextra -Werror -Wpedantic -DGL_GLEXT_PROTOTYPES \
     $SDL_CFLAGS \
     -I"$SCRIPT_DIR" \
     budo_shader_stack.c \

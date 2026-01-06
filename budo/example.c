@@ -7,8 +7,8 @@
 
 #include <SDL.h>
 
-#define GAME_WIDTH 320
-#define GAME_HEIGHT 200
+#define GAME_WIDTH 640
+#define GAME_HEIGHT 360
 #define TARGET_FPS 30
 
 //--------------------------------------------------------------------------------------------

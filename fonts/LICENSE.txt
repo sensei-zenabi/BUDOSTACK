@@ -9,6 +9,7 @@ It is licensed under the same license as BUDOSTACK.
 Font: ModernDOS8x8.ttf
 ===========================
 Source: https://notabug.org/HarvettFox96/ttf-moderndos
+Alt.Source: https://github.com/notpeter/ttf-moderndos
 License: Creative Commons Zero (CC0) 1.0.
 Date: 5th of October, 2025 
 

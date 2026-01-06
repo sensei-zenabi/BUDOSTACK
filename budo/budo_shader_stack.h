@@ -2,7 +2,6 @@
 #define BUDO_SHADER_STACK_H
 
 #include <stddef.h>
-
 #include <SDL_opengl.h>
 
 #ifdef __cplusplus

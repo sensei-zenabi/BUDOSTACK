@@ -1,7 +1,19 @@
+# --------------------------------------------------------------------
+# Configuration (override on the command line if needed)
+# --------------------------------------------------------------------
+
 # Compiler and flags
 CC = gcc
 CFLAGS = -std=c11 -Wall -Wextra -Werror -Wpedantic
 LDFLAGS = -lm -pthread
+
+# Choose which executable groups are built. Override BUILD_DIRS on the command
+# line, e.g. `make BUILD_DIRS="commands utilities"`, to limit the build.
+BUILD_DIRS ?= commands apps games utilities
+
+# --------------------------------------------------------------------
+# Optional dependency detection
+# --------------------------------------------------------------------
 
 # Detect optional ALSA development files so ALSA-dependent tools can be built
 # when the system provides them while keeping the build warning/error free when
@@ -65,28 +77,35 @@ apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
 endif
 
 # --------------------------------------------------------------------
+# Build logic
+# --------------------------------------------------------------------
+
 # Design principle: Separate compilation of library sources from main sources.
 # All .c files in lib/ are compiled into object files and linked with every target.
-# --------------------------------------------------------------------
 
 # Find all .c files in the lib folder (library function sources)
 LIB_SRCS = $(shell find ./lib -type f -name '*.c')
 LIB_OBJS = $(LIB_SRCS:.c=.o)
 
-# Find all .c files recursively (all sources, except user folders and .git)
-ALL_SOURCES = $(shell find . -type f -name '*.c' -not -path "./users/*" -not -path "*/.git/*")
+# Find all .c files in the repository root (main executable sources).
+ROOT_SOURCES = $(shell find . -maxdepth 1 -type f -name '*.c')
 
-# Exclude command, app, and lib sources from the main executable sources.
-NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./games/% ./lib/% ./utilities/%, $(ALL_SOURCES))
+# Main executable sources live only in the repository root.
+NON_COMMAND_SOURCES = $(ROOT_SOURCES)
 NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)
 TARGET = budostack
 
+COMMANDS_ENABLED = $(filter commands, $(BUILD_DIRS))
+APPS_ENABLED = $(filter apps, $(BUILD_DIRS))
+GAMES_ENABLED = $(filter games, $(BUILD_DIRS))
+UTILITIES_ENABLED = $(filter utilities, $(BUILD_DIRS))
+
 # Find all .c files in the commands folder
-COMMANDS_SRCS = $(shell find ./commands -type f -name '*.c')
+COMMANDS_SRCS = $(if $(COMMANDS_ENABLED),$(shell find ./commands -type f -name '*.c'))
 COMMANDS_EXES = $(COMMANDS_SRCS:.c=)
 
 # Find all .c files in the apps folder
-APPS_SRCS = $(shell find ./apps -type f -name '*.c')
+APPS_SRCS = $(if $(APPS_ENABLED),$(shell find ./apps -type f -name '*.c'))
 APPS_EXES = $(APPS_SRCS:.c=)
 
 ifeq ($(SDL2_ENABLED),0)
@@ -95,11 +114,11 @@ APPS_EXES := $(filter-out ./apps/terminal, $(APPS_EXES))
 endif
 
 # Find all .c files in the games folder
-GAMES_SRCS = $(shell find ./games -type f -name '*.c')
+GAMES_SRCS = $(if $(GAMES_ENABLED),$(shell find ./games -type f -name '*.c'))
 GAMES_EXES = $(GAMES_SRCS:.c=)
 
 # Find all .c files in the utilities folder
-UTILITIES_SRCS = $(shell find ./utilities -type f -name '*.c')
+UTILITIES_SRCS = $(if $(UTILITIES_ENABLED),$(shell find ./utilities -type f -name '*.c'))
 UTILITIES_EXES = $(UTILITIES_SRCS:.c=)
 
 # Define all targets (main, commands, and apps)

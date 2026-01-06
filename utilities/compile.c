@@ -73,7 +73,9 @@ static int has_extension(const char *name, const char *ext) {
     return strcmp(name + name_len - ext_len, ext) == 0;
 }
 
-static int collect_budo_sources(const char *dir_path, StringList *sources) {
+static int collect_budo_sources(const char *dir_path,
+                                StringList *sources,
+                                const char *exclude_path) {
     DIR *dir = opendir(dir_path);
     if (!dir) {
         perror("opendir");
@@ -100,12 +102,21 @@ static int collect_budo_sources(const char *dir_path, StringList *sources) {
         }
 
         if (S_ISDIR(st.st_mode)) {
-            if (collect_budo_sources(path, sources) != 0) {
+            if (collect_budo_sources(path, sources, exclude_path) != 0) {
                 closedir(dir);
                 return -1;
             }
         } else if (S_ISREG(st.st_mode) && has_extension(entry->d_name, ".c")) {
-            if (string_list_append(sources, path) != 0) {
+            char resolved[PATH_MAX];
+            if (!realpath(path, resolved)) {
+                perror("realpath");
+                closedir(dir);
+                return -1;
+            }
+            if (exclude_path && strcmp(resolved, exclude_path) == 0) {
+                continue;
+            }
+            if (string_list_append(sources, resolved) != 0) {
                 closedir(dir);
                 return -1;
             }
@@ -237,6 +248,12 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
+    char resolved_source[PATH_MAX];
+    if (!realpath(source_path, resolved_source)) {
+        fprintf(stderr, "Error: Could not resolve source '%s': %s\n", source_path, strerror(errno));
+        return EXIT_FAILURE;
+    }
+
     char repo_root[PATH_MAX];
     if (get_repo_root(repo_root, sizeof(repo_root)) != 0) {
         fprintf(stderr, "Error: Failed to determine repository root.\n");
@@ -256,7 +273,7 @@ int main(int argc, char *argv[]) {
     }
 
     StringList budo_sources = {0};
-    if (collect_budo_sources(budo_dir, &budo_sources) != 0) {
+    if (collect_budo_sources(budo_dir, &budo_sources, resolved_source) != 0) {
         string_list_free(&budo_sources);
         return EXIT_FAILURE;
     }

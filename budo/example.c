@@ -107,17 +107,24 @@ int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
 
+    /* Initialize SDL */
+    
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         fprintf(stderr, "SDL init failed: %s\n", SDL_GetError());
         return 1;
     }
 
+
+    /* Configure SDL GL */
+    
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     
-    /* Added */
+    
+    /* Query desktop display mode */
+    
     SDL_DisplayMode desktop_mode;
     if (SDL_GetCurrentDisplayMode(0, &desktop_mode) != 0) {
       fprintf(stderr, "Failed to query desktop display mode: %s\n", SDL_GetError());
@@ -125,7 +132,9 @@ int main(int argc, char **argv) {
       return 1;
     }
   
-    /* Modified */
+    
+    /* Create the Application Window */
+
     SDL_Window *window = SDL_CreateWindow("Budo Shader Stack Demo",
                                           SDL_WINDOWPOS_CENTERED,
                                           SDL_WINDOWPOS_CENTERED,
@@ -139,6 +148,9 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    
+    /* Create SDL GL context */
+    
     SDL_GLContext context = SDL_GL_CreateContext(window);
     if (!context) {
         fprintf(stderr, "Failed to create GL context: %s\n", SDL_GetError());
@@ -147,7 +159,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     
-    /* Added */
+    
+    /* Query window drawable size */
+    
     int drawable_width = 0;
     int drawable_height = 0;
     SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
@@ -156,6 +170,9 @@ int main(int argc, char **argv) {
     }
 
     SDL_GL_SetSwapInterval(1);
+
+
+    /* Create and Configure SDL GL texture */
 
     GLuint texture = 0;
     glGenTextures(1, &texture);
@@ -176,6 +193,9 @@ int main(int argc, char **argv) {
                  0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+
+    /* Allocate pixel buffer */
+
     uint32_t *pixels = malloc((size_t)GAME_WIDTH * (size_t)GAME_HEIGHT * sizeof(uint32_t));
     if (!pixels) {
         fprintf(stderr, "Failed to allocate pixel buffer.\n");
@@ -185,6 +205,9 @@ int main(int argc, char **argv) {
         SDL_Quit();
         return 1;
     }
+    
+    
+    /* Initialize BUDOSTACK shader stack */
 
     struct budo_shader_stack *stack = NULL;
     if (budo_shader_stack_init(&stack) != 0) {
@@ -197,11 +220,18 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    
+    /* Define shader paths */
+
     const char *shader_paths[] = {
         "../shaders/crtscreen.glsl",
         "../shaders/noise.glsl",
         "../shaders/effects.glsl"
     };
+    
+    
+    /* Load shaders */
+    
     if (budo_shader_stack_load(stack, shader_paths, 3u) != 0) {
         fprintf(stderr, "Failed to load shaders.\n");
         budo_shader_stack_destroy(stack);
@@ -212,6 +242,9 @@ int main(int argc, char **argv) {
         SDL_Quit();
         return 1;
     }
+    
+    
+    /* Create the Cube */ 
 
     struct point3 cube_vertices[8] = {
         { -1.0f, -1.0f, -1.0f },
@@ -229,14 +262,22 @@ int main(int argc, char **argv) {
         {4, 5}, {5, 6}, {6, 7}, {7, 4},
         {0, 4}, {1, 5}, {2, 6}, {3, 7}
     };
+    
+    
+    /* Initialize Demo */
 
     int running = 1;
     Uint32 last_tick = SDL_GetTicks();
     float angle = 0.0f;
     int frame_value = 0;
+    
+    
+    /* Demo Loop */
 
     while (running) {
     
+        /* Handle SDL events */
+        
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
           switch (event.type) {
@@ -260,13 +301,21 @@ int main(int argc, char **argv) {
           }
         }
 
-
+        
+        /* Calculate delta time for FPS */
+        
         Uint32 now = SDL_GetTicks();
         float delta = (float)(now - last_tick) / 1000.0f;
         last_tick = now;
         angle += delta;
 
+
+        /* Clear frame buffer */
+        
         clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00101010u);
+
+        
+        /* Rotate cube */
 
         struct point2 projected[8];
         for (size_t i = 0; i < 8; i++) {
@@ -287,6 +336,9 @@ int main(int argc, char **argv) {
                       0x00f0d060u);
         }
 
+        
+        /* Draw cube */
+        
         glBindTexture(GL_TEXTURE_2D, texture);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GAME_WIDTH, GAME_HEIGHT,
@@ -294,6 +346,10 @@ int main(int argc, char **argv) {
         glBindTexture(GL_TEXTURE_2D, 0);
 
         glClear(GL_COLOR_BUFFER_BIT);
+        
+        
+        /* Render shaders */
+        
         if (budo_shader_stack_render(stack,
                                      texture,
                                      GAME_WIDTH,
@@ -307,8 +363,12 @@ int main(int argc, char **argv) {
         }
 
         SDL_GL_SwapWindow(window);
+        
         frame_value++;
 
+
+        /* Cap frame rate (FPS) */
+        
         Uint32 frame_ms = SDL_GetTicks() - now;
         Uint32 target_ms = 1000u / TARGET_FPS;
         if (frame_ms < target_ms) {
@@ -316,11 +376,15 @@ int main(int argc, char **argv) {
         }
     }
 
+
+    /* Clean-Up before Exit */
+     
     budo_shader_stack_destroy(stack);
     free(pixels);
     glDeleteTextures(1, &texture);
     SDL_GL_DeleteContext(context);
     SDL_DestroyWindow(window);
     SDL_Quit();
+    
     return 0;
 }

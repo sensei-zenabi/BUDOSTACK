@@ -9,8 +9,8 @@
 #pragma parameter wiggle "Wiggle" 0.0 0.0 0.0 0.0
 #pragma parameter smear "Chroma Smear" 0.25 0.0 0.5 0.025
 #pragma parameter phosphor_decay_enable "Phosphor Decay" 1.0 0.0 1.0 1.0
-#pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 200.0 1.0 2000.0 1.0
-#pragma parameter phosphor_decay_threshold "Phosphor Decay Threshold (%)" 20.0 0.0 100.0 1.0
+#pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 250.0 1.0 2000.0 1.0
+#pragma parameter phosphor_decay_threshold "Phosphor Decay Threshold (%)" 7.5 0.0 100.0 1.0
 
 #if defined(VERTEX)
 
@@ -102,7 +102,7 @@ uniform COMPAT_PRECISION float phosphor_decay_enable;
 uniform COMPAT_PRECISION float phosphor_decay_time_ms;
 uniform COMPAT_PRECISION float phosphor_decay_threshold;
 #else
-#define wiggle 3.0
+#define wiggle 0.0
 #define smear 1.0
 #define phosphor_decay_enable 0.0
 #define phosphor_decay_time_ms 250.0

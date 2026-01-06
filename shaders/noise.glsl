@@ -11,18 +11,10 @@
 #pragma parameter y_off_g "Y Offset Green" -0.01 -1.0 1.0 0.01
 #pragma parameter x_off_b "X Offset Blue" -0.01 -1.0 1.0 0.01
 #pragma parameter y_off_b "Y Offset Blue" 0.01 -1.0 1.0 0.01
-
-//#pragma parameter grain_str "Grain Strength" 12.0 0.0 16.0 1.0
 #pragma parameter grain_str "Grain Strength" 1.0 0.0 16.0 1.0
 #pragma parameter grain_intensity "Grain Intensity" 0.05 0.0 1.0 0.01
-
 #pragma parameter hotspot "Hotspot Toggle" 1.0 0.0 1.0 1.0
-//#pragma parameter hotspot "Hotspot Toggle" 0.0 0.0 0.0 0.0
-
 #pragma parameter vignette "Vignette Toggle" 1.0 0.0 1.0 1.0
-//#pragma parameter vignette "Vignette Toggle" 0.0 0.0 0.0 0.0
-
-//#pragma parameter noise_toggle "Film Scratches" 1.0 0.0 1.0 1.0
 #pragma parameter noise_toggle "Film Scratches" 0.0 0.0 0.0 0.0
 
 #if defined(VERTEX)
@@ -128,7 +120,6 @@ uniform COMPAT_PRECISION float noise_toggle;
 #define y_off_b 0.05
 #define grain_str 12.0
 #define grain_intensity 0.35
-//#define hotspot 0.25
 #define hotspot 0.5
 #define vignette 1.0
 #define noise_toggle 1.0
@@ -154,38 +145,38 @@ float filmGrain(vec2 uv, float strength, float timer ){
 
 void main()
 {
-	// a simple calculation for the vignette/hotspot effects
-    vec2 middle = TEX0.xy - 0.5;
-    float len = length(middle);
-    float vig = smoothstep(0.3, 1.25, len);
-	float hot = smoothstep(0.15, 1.25, len); // NEW: own region for hotspot
+  // a simple calculation for the vignette/hotspot effects
+  vec2 middle = TEX0.xy - 0.5;
+  float len = length(middle);
+  float vig = smoothstep(0.3, 1.25, len);
+  float hot = smoothstep(0.15, 1.25, len); // NEW: own region for hotspot
 
-	// create the noise effects from a LUT of actual film noise
-    vec4 film_noise1 = COMPAT_TEXTURE(noise1, vTexCoord.xy * 2.0 *
-        sin(hash(mod(float(FrameCount), 47.0))));
-    vec4 film_noise2 = COMPAT_TEXTURE(noise1, vTexCoord.xy * 2.0 *
-        cos(hash(mod(float(FrameCount), 92.0))));
+  // create the noise effects from a LUT of actual film noise
+  vec4 film_noise1 = COMPAT_TEXTURE(noise1, vTexCoord.xy * 2.0 *
+       sin(hash(mod(float(FrameCount), 47.0))));
+  vec4 film_noise2 = COMPAT_TEXTURE(noise1, vTexCoord.xy * 2.0 *
+       cos(hash(mod(float(FrameCount), 92.0))));
 
-    vec2 red_coord = vTexCoord + 0.01 * vec2(x_off_r, y_off_r);
-    vec3 red_light = COMPAT_TEXTURE(Source, red_coord).rgb;
-    vec2 green_coord = vTexCoord + 0.01 * vec2(x_off_g, y_off_g);
-    vec3 green_light = COMPAT_TEXTURE(Source, green_coord).rgb;
-    vec2 blue_coord = vTexCoord + 0.01 * vec2(x_off_b, y_off_b);
-    vec3 blue_light = COMPAT_TEXTURE(Source, blue_coord).rgb;
+  vec2 red_coord = vTexCoord + 0.01 * vec2(x_off_r, y_off_r);
+  vec3 red_light = COMPAT_TEXTURE(Source, red_coord).rgb;
+  vec2 green_coord = vTexCoord + 0.01 * vec2(x_off_g, y_off_g);
+  vec3 green_light = COMPAT_TEXTURE(Source, green_coord).rgb;
+  vec2 blue_coord = vTexCoord + 0.01 * vec2(x_off_b, y_off_b);
+  vec3 blue_light = COMPAT_TEXTURE(Source, blue_coord).rgb;
 
-    vec3 film = vec3(red_light.r, green_light.g, blue_light.b);
-    float grain = filmGrain(vTexCoord.xy, grain_str, float(FrameCount));
-    film = mix(film, film + grain, grain_intensity); // Film grain
+  vec3 film = vec3(red_light.r, green_light.g, blue_light.b);
+  float grain = filmGrain(vTexCoord.xy, grain_str, float(FrameCount));
+  film = mix(film, film + grain, grain_intensity); // Film grain
 
-    film *= (vignette > 0.5) ? (1.0 - vig) : 1.0; // Vignette
-    film += ((1.0 - hot) * 0.2) * hotspot; // Hotspot
+  film *= (vignette > 0.5) ? (1.0 - vig) : 1.0; // Vignette
+  film += ((1.0 - hot) * 0.1) * hotspot; // Hotspot ( * 0.2 )
 
-	// Apply noise effects (or not)
-    if (hash(float(FrameCount)) > 0.99 && noise_toggle > 0.5)
-        FragColor = vec4(mix(film, film_noise1.rgb, film_noise1.a), 1.0);
-    else if (hash(float(FrameCount)) < 0.01 && noise_toggle > 0.5)
-        FragColor = vec4(mix(film, film_noise2.rgb, film_noise2.a), 1.0);
-    else
-        FragColor = vec4(film, 1.0);
+  // Apply noise effects (or not)
+  if (hash(float(FrameCount)) > 0.99 && noise_toggle > 0.5)
+      FragColor = vec4(mix(film, film_noise1.rgb, film_noise1.a), 1.0);
+  else if (hash(float(FrameCount)) < 0.01 && noise_toggle > 0.5)
+      FragColor = vec4(mix(film, film_noise2.rgb, film_noise2.a), 1.0);
+  else
+      FragColor = vec4(film, 1.0);
 } 
 #endif

@@ -87,11 +87,11 @@ endif
 LIB_SRCS = $(shell find ./lib -type f -name '*.c')
 LIB_OBJS = $(LIB_SRCS:.c=.o)
 
-# Find all .c files recursively (all sources, except user folders and .git)
-ALL_SOURCES = $(shell find . -type f -name '*.c' -not -path "./users/*" -not -path "*/.git/*")
+# Find all .c files in the repository root (main executable sources).
+ROOT_SOURCES = $(shell find . -maxdepth 1 -type f -name '*.c')
 
-# Exclude command, app, and lib sources from the main executable sources.
-NON_COMMAND_SOURCES = $(filter-out ./commands/% ./apps/% ./games/% ./lib/% ./utilities/%, $(ALL_SOURCES))
+# Main executable sources live only in the repository root.
+NON_COMMAND_SOURCES = $(ROOT_SOURCES)
 NON_COMMAND_OBJECTS = $(NON_COMMAND_SOURCES:.c=.o)
 TARGET = budostack
 

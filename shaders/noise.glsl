@@ -5,17 +5,17 @@
 // Modified by BUDOSTACK contributors (parameter tuning).
 
 // Parameter lines go here:
-#pragma parameter x_off_r "X Offset Red" 0.01 -1.0 1.0 0.01
-#pragma parameter y_off_r "Y Offset Red" 0.01 -1.0 1.0 0.01
-#pragma parameter x_off_g "X Offset Green" -0.01 -1.0 1.0 0.01
-#pragma parameter y_off_g "Y Offset Green" -0.01 -1.0 1.0 0.01
-#pragma parameter x_off_b "X Offset Blue" -0.01 -1.0 1.0 0.01
-#pragma parameter y_off_b "Y Offset Blue" 0.01 -1.0 1.0 0.01
+#pragma parameter x_off_r "X Offset Red" 0.03 -1.0 1.0 0.01
+#pragma parameter y_off_r "Y Offset Red" 0.03 -1.0 1.0 0.01
+#pragma parameter x_off_g "X Offset Green" -0.03 -1.0 1.0 0.01
+#pragma parameter y_off_g "Y Offset Green" -0.03 -1.0 1.0 0.01
+#pragma parameter x_off_b "X Offset Blue" -0.03 -1.0 1.0 0.01
+#pragma parameter y_off_b "Y Offset Blue" 0.03 -1.0 1.0 0.01
 #pragma parameter grain_str "Grain Strength" 0.6 0.0 16.0 1.0
 #pragma parameter grain_intensity "Grain Intensity" 0.1 0.0 1.0 0.01
 #pragma parameter hotspot "Hotspot Toggle" 1.0 0.0 1.0 1.0
 #pragma parameter vignette "Vignette Toggle" 1.0 0.0 1.0 1.0
-#pragma parameter noise_toggle "Film Scratches" 0.0 0.0 0.0 0.0
+#pragma parameter noise_toggle "Film Scratches" 0.0 0.0 1.0 1.0
 
 #if defined(VERTEX)
 

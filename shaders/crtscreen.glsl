@@ -12,7 +12,7 @@
 /////  comment these lines to disable effects and gain speed  //////
 ////////////////////////////////////////////////////////////////////
 
-#define MASK // fancy, expensive phosphor mask effect
+//#define MASK // fancy, expensive phosphor mask effect
 #define CURVATURE // applies barrel distortion to the screen
 //#define SCANLINES  // applies horizontal scanline effect
 //#define ROTATE_SCANLINES // for TATE games; also disables the mask effects, which look bad with it

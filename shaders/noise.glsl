@@ -120,7 +120,7 @@ uniform COMPAT_PRECISION float noise_toggle;
 #define y_off_b 0.05
 #define grain_str 12.0
 #define grain_intensity 0.35
-#define hotspot 0.5
+#define hotspot 1.0
 #define vignette 1.0
 #define noise_toggle 1.0
 #endif
@@ -148,8 +148,8 @@ void main()
   // a simple calculation for the vignette/hotspot effects
   vec2 middle = TEX0.xy - 0.5;
   float len = length(middle);
-  float vig = smoothstep(0.3, 1.25, len);
-  float hot = smoothstep(0.15, 1.25, len); // NEW: own region for hotspot
+  float vig = smoothstep(0.15, 1.25, len); // 0.3, 1.25
+  float hot = smoothstep(0.3, 1.25, len); // NEW: own region for hotspot
 
   // create the noise effects from a LUT of actual film noise
   vec4 film_noise1 = COMPAT_TEXTURE(noise1, vTexCoord.xy * 2.0 *
@@ -169,7 +169,7 @@ void main()
   film = mix(film, film + grain, grain_intensity); // Film grain
 
   film *= (vignette > 0.5) ? (1.0 - vig) : 1.0; // Vignette
-  film += ((1.0 - hot) * 0.2) * hotspot; // Hotspot ( * 0.2 )
+  film += ((1.0 - hot) * 0.09) * hotspot; // Hotspot ( * 0.2 )
 
   // Apply noise effects (or not)
   if (hash(float(FrameCount)) > 0.99 && noise_toggle > 0.5)

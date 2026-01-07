@@ -12,7 +12,7 @@
 /////  comment these lines to disable effects and gain speed  //////
 ////////////////////////////////////////////////////////////////////
 
-//#define MASK // fancy, expensive phosphor mask effect
+#define MASK // fancy, expensive phosphor mask effect
 #define CURVATURE // applies barrel distortion to the screen
 //#define SCANLINES  // applies horizontal scanline effect
 //#define ROTATE_SCANLINES // for TATE games; also disables the mask effects, which look bad with it
@@ -27,8 +27,8 @@
 #pragma parameter shadowMask "shadowMask" 2.0 0.0 4.0 1.0
 #pragma parameter warpX "warpX" 0.02 0.0 0.125 0.01
 #pragma parameter warpY "warpY" 0.02 0.0 0.125 0.01
-#pragma parameter maskDark "maskDark" 1.0 0.0 2.0 0.1
-#pragma parameter maskLight "maskLight" 1.0 0.0 2.0 0.1
+#pragma parameter maskDark "maskDark" 0.8 0.0 2.0 0.1
+#pragma parameter maskLight "maskLight" 1.8 0.0 2.0 0.1
 #pragma parameter crt_gamma "CRT Gamma" 2.5 1.0 4.0 0.05
 #pragma parameter monitor_gamma "Monitor Gamma" 2.5 1.0 4.0 0.05
 #pragma parameter SCANLINE_SINE_COMP_A "Scanline Sine Comp A" 0.05 0.0 0.10 0.01

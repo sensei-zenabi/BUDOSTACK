@@ -169,7 +169,7 @@ void main()
   film = mix(film, film + grain, grain_intensity); // Film grain
 
   film *= (vignette > 0.5) ? (1.0 - vig) : 1.0; // Vignette
-  film += ((1.0 - hot) * 0.1) * hotspot; // Hotspot ( * 0.2 )
+  film += ((1.0 - hot) * 0.2) * hotspot; // Hotspot ( * 0.2 )
 
   // Apply noise effects (or not)
   if (hash(float(FrameCount)) > 0.99 && noise_toggle > 0.5)

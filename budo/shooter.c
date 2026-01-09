@@ -962,20 +962,39 @@ int main(int argc, char **argv) {
 
         budo_clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00060a0fu);
         int horizon = GAME_HEIGHT / 2;
-        for (int y = 0; y < horizon; y++) {
-            int ty = (y / 4) % CEIL_TEX_SIZE;
-            for (int x = 0; x < GAME_WIDTH; x++) {
-                int tx = (x / 4) % CEIL_TEX_SIZE;
-                pixels[(size_t)y * (size_t)GAME_WIDTH + (size_t)x] =
-                    ceil_tex[ty * CEIL_TEX_SIZE + tx];
-            }
-        }
+        float left_angle = player.angle - FOV_RADIANS * 0.5f;
+        float right_angle = player.angle + FOV_RADIANS * 0.5f;
+        struct vec2 left_ray = { cosf(left_angle), sinf(left_angle) };
+        struct vec2 right_ray = { cosf(right_angle), sinf(right_angle) };
         for (int y = horizon; y < GAME_HEIGHT; y++) {
-            int ty = ((y - horizon) / 4) % FLOOR_TEX_SIZE;
+            float row_pos = (float)y - (float)horizon;
+            if (row_pos <= 0.0f) {
+                row_pos = 1.0f;
+            }
+            float row_dist = ((float)GAME_HEIGHT * 0.5f) / row_pos;
+            float step_x = row_dist * (right_ray.x - left_ray.x) / (float)GAME_WIDTH;
+            float step_y = row_dist * (right_ray.y - left_ray.y) / (float)GAME_WIDTH;
+            float floor_x = player.position.x + row_dist * left_ray.x;
+            float floor_y = player.position.y + row_dist * left_ray.y;
+
             for (int x = 0; x < GAME_WIDTH; x++) {
-                int tx = (x / 4) % FLOOR_TEX_SIZE;
+                int cell_x = (int)floorf(floor_x);
+                int cell_y = (int)floorf(floor_y);
+                float frac_x = floor_x - (float)cell_x;
+                float frac_y = floor_y - (float)cell_y;
+                int tex_x = (int)(frac_x * (float)FLOOR_TEX_SIZE) & (FLOOR_TEX_SIZE - 1);
+                int tex_y = (int)(frac_y * (float)FLOOR_TEX_SIZE) & (FLOOR_TEX_SIZE - 1);
                 pixels[(size_t)y * (size_t)GAME_WIDTH + (size_t)x] =
-                    floor_tex[ty * FLOOR_TEX_SIZE + tx];
+                    floor_tex[tex_y * FLOOR_TEX_SIZE + tex_x];
+
+                int ceil_y = GAME_HEIGHT - y - 1;
+                int ceil_tx = (int)(frac_x * (float)CEIL_TEX_SIZE) & (CEIL_TEX_SIZE - 1);
+                int ceil_ty = (int)(frac_y * (float)CEIL_TEX_SIZE) & (CEIL_TEX_SIZE - 1);
+                pixels[(size_t)ceil_y * (size_t)GAME_WIDTH + (size_t)x] =
+                    ceil_tex[ceil_ty * CEIL_TEX_SIZE + ceil_tx];
+
+                floor_x += step_x;
+                floor_y += step_y;
             }
         }
 

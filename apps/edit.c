@@ -885,6 +885,58 @@ void editorRenderRow(EditorLine *row, int avail, struct abuf *ab) {
     abAppend(ab, buffer, buf_index);
 }
 
+static void editorGetSelectionBounds(int *start_line, int *start_x,
+                                     int *end_line, int *end_x) {
+    int anchor_line = E.sel_anchor_y;
+    int anchor_x = E.sel_anchor_x;
+    int cursor_line = E.cy;
+    int cursor_x = E.cx;
+
+    if (anchor_line < cursor_line ||
+        (anchor_line == cursor_line && anchor_x <= cursor_x)) {
+        *start_line = anchor_line;
+        *start_x = anchor_x;
+        *end_line = cursor_line;
+        *end_x = cursor_x;
+    } else {
+        *start_line = cursor_line;
+        *start_x = cursor_x;
+        *end_line = anchor_line;
+        *end_x = anchor_x;
+    }
+}
+
+static void editorGetSelectionRangeForLine(int line, int start_line, int start_x,
+                                           int end_line, int end_x,
+                                           int *sel_start, int *sel_end) {
+    int line_width = editorDisplayWidth(E.row[line].chars);
+
+    if (start_line == end_line) {
+        *sel_start = start_x;
+        *sel_end = end_x;
+    } else if (line == start_line) {
+        *sel_start = start_x;
+        *sel_end = line_width;
+    } else if (line == end_line) {
+        *sel_start = 0;
+        *sel_end = end_x;
+    } else {
+        *sel_start = 0;
+        *sel_end = line_width;
+    }
+
+    if (*sel_start < 0)
+        *sel_start = 0;
+    if (*sel_end < 0)
+        *sel_end = 0;
+    if (*sel_start > line_width)
+        *sel_start = line_width;
+    if (*sel_end > line_width)
+        *sel_end = line_width;
+    if (*sel_end < *sel_start)
+        *sel_end = *sel_start;
+}
+
 void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab) {
     int logical_width = 0;
     int byte_index = editorRowCxToByteIndex(row, E.coloff);
@@ -893,33 +945,16 @@ void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, stru
     int current_disp = 0;
     int selection_active_for_row = 0, sel_local_start = 0, sel_local_end = 0;
     if (E.selecting) {
-        int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
-        int end_line = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
+        int start_line = 0;
+        int start_x = 0;
+        int end_line = 0;
+        int end_x = 0;
+        editorGetSelectionBounds(&start_line, &start_x, &end_line, &end_x);
         if (file_row >= start_line && file_row <= end_line) {
             selection_active_for_row = 1;
-            if (start_line == end_line) {
-                sel_local_start = (E.sel_anchor_x < E.cx ? E.sel_anchor_x : E.cx);
-                sel_local_end   = (E.sel_anchor_x < E.cx ? E.cx   : E.sel_anchor_x);
-            } else if (file_row == start_line) {
-                if (E.sel_anchor_y < E.cy) {
-                    sel_local_start = E.sel_anchor_x;
-                    sel_local_end = editorDisplayWidth(row->chars);
-                } else {
-                    sel_local_start = E.cx;
-                    sel_local_end = editorDisplayWidth(row->chars);
-                }
-            } else if (file_row == end_line) {
-                if (E.sel_anchor_y < E.cy) {
-                    sel_local_start = 0;
-                    sel_local_end = E.cx;
-                } else {
-                    sel_local_start = 0;
-                    sel_local_end = E.sel_anchor_x;
-                }
-            } else {
-                sel_local_start = 0;
-                sel_local_end = editorDisplayWidth(row->chars);
-            }
+            editorGetSelectionRangeForLine(file_row, start_line, start_x,
+                                           end_line, end_x,
+                                           &sel_local_start, &sel_local_end);
         }
     }
     int eff_sel_start = 0, eff_sel_end = 0;
@@ -1578,26 +1613,16 @@ void editorProcessKeypress(void) {
 void editorDeleteSelection(void) {
     if (!E.selecting)
         return;
-    int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
-    int end_line = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
-    int anchor_x = (E.sel_anchor_y <= E.cy ? E.sel_anchor_x : E.cx);
-    int current_x = (E.sel_anchor_y <= E.cy ? E.cx : E.sel_anchor_x);
+    int start_line = 0;
+    int start_x = 0;
+    int end_line = 0;
+    int end_x = 0;
+    editorGetSelectionBounds(&start_line, &start_x, &end_line, &end_x);
     for (int i = start_line; i <= end_line; i++) {
-        int line_width = editorDisplayWidth(E.row[i].chars);
-        int sel_start, sel_end;
-        if (start_line == end_line) {
-            sel_start = (anchor_x < current_x ? anchor_x : current_x);
-            sel_end   = (anchor_x < current_x ? current_x : anchor_x);
-        } else if (i == start_line) {
-            sel_start = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : 0);
-            sel_end = line_width;
-        } else if (i == end_line) {
-            sel_start = 0;
-            sel_end = (E.sel_anchor_y < E.cy ? E.cx : E.sel_anchor_x);
-        } else {
-            sel_start = 0;
-            sel_end = line_width;
-        }
+        int sel_start = 0;
+        int sel_end = 0;
+        editorGetSelectionRangeForLine(i, start_line, start_x, end_line, end_x,
+                                       &sel_start, &sel_end);
         int start_byte = editorRowCxToByteIndex(&E.row[i], sel_start);
         int end_byte = editorRowCxToByteIndex(&E.row[i], sel_end);
         if (i == start_line && i == end_line) {
@@ -1634,8 +1659,13 @@ void editorDeleteSelection(void) {
             E.numrows--;
         }
     }
-    E.cx = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : E.cx);
+    E.cx = start_x;
     E.cy = start_line;
+    if (E.cy >= 0 && E.cy < E.numrows) {
+        int row_width = editorDisplayWidth(E.row[E.cy].chars);
+        if (E.cx > row_width)
+            E.cx = row_width;
+    }
     E.selecting = 0;
     E.dirty = 1;
     snprintf(E.status_message, sizeof(E.status_message), "Deleted selection");
@@ -1674,28 +1704,18 @@ void editorSearch(void) {
     char query[256] = "";
     int from_selection = E.selecting;
     if (from_selection) {
-        int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
-        int end_line   = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
-        int anchor_x   = (E.sel_anchor_y <= E.cy ? E.sel_anchor_x : E.cx);
-        int current_x  = (E.sel_anchor_y <= E.cy ? E.cx : E.sel_anchor_x);
+        int start_line = 0;
+        int start_x = 0;
+        int end_line = 0;
+        int end_x = 0;
+        editorGetSelectionBounds(&start_line, &start_x, &end_line, &end_x);
         int pos = 0;
         for (int i = start_line; i <= end_line && pos < (int)sizeof(query) - 1; i++) {
             EditorLine *row = &E.row[i];
-            int line_width = editorDisplayWidth(row->chars);
-            int sel_start, sel_end;
-            if (start_line == end_line) {
-                sel_start = (anchor_x < current_x ? anchor_x : current_x);
-                sel_end   = (anchor_x < current_x ? current_x  : anchor_x);
-            } else if (i == start_line) {
-                sel_start = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : 0);
-                sel_end   = line_width;
-            } else if (i == end_line) {
-                sel_start = 0;
-                sel_end   = (E.sel_anchor_y < E.cy ? E.cx : E.sel_anchor_x);
-            } else {
-                sel_start = 0;
-                sel_end   = line_width;
-            }
+            int sel_start = 0;
+            int sel_end = 0;
+            editorGetSelectionRangeForLine(i, start_line, start_x, end_line, end_x,
+                                           &sel_start, &sel_end);
             int start_byte = editorRowCxToByteIndex(row, sel_start);
             int end_byte   = editorRowCxToByteIndex(row, sel_end);
             int chunk = end_byte - start_byte;
@@ -1978,31 +1998,21 @@ void editorReplace(void) {
 void editorCopySelection(void) {
     if (!E.selecting)
         return;
-    int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
-    int end_line = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
-    int anchor_x = (E.sel_anchor_y <= E.cy ? E.sel_anchor_x : E.cx);
-    int current_x = (E.sel_anchor_y <= E.cy ? E.cx : E.sel_anchor_x);
+    int start_line = 0;
+    int start_x = 0;
+    int end_line = 0;
+    int end_x = 0;
+    editorGetSelectionBounds(&start_line, &start_x, &end_line, &end_x);
     size_t bufsize = 1024;
     char *buf = malloc(bufsize);
     if (!buf) die("malloc clipboard");
     buf[0] = '\0';
     size_t len = 0;
     for (int i = start_line; i <= end_line; i++) {
-        int line_width = editorDisplayWidth(E.row[i].chars);
-        int sel_start, sel_end;
-        if (start_line == end_line) {
-            sel_start = (anchor_x < current_x ? anchor_x : current_x);
-            sel_end   = (anchor_x < current_x ? current_x : anchor_x);
-        } else if (i == start_line) {
-            sel_start = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : 0);
-            sel_end = line_width;
-        } else if (i == end_line) {
-            sel_start = 0;
-            sel_end = (E.sel_anchor_y < E.cy ? E.cx : E.sel_anchor_x);
-        } else {
-            sel_start = 0;
-            sel_end = line_width;
-        }
+        int sel_start = 0;
+        int sel_end = 0;
+        editorGetSelectionRangeForLine(i, start_line, start_x, end_line, end_x,
+                                       &sel_start, &sel_end);
         int start_byte = editorRowCxToByteIndex(&E.row[i], sel_start);
         int end_byte = editorRowCxToByteIndex(&E.row[i], sel_end);
         int chunk_len = end_byte - start_byte;
@@ -2029,13 +2039,14 @@ void editorCutSelection(void) {
     if (!E.selecting)
         return;
     editorCopySelection();
-    int start_line = (E.sel_anchor_y < E.cy ? E.sel_anchor_y : E.cy);
-    int end_line = (E.sel_anchor_y > E.cy ? E.sel_anchor_y : E.cy);
-    int anchor_x = (E.sel_anchor_y <= E.cy ? E.sel_anchor_x : E.cx);
-    int current_x = (E.sel_anchor_y <= E.cy ? E.cx : E.sel_anchor_x);
+    int start_line = 0;
+    int start_x = 0;
+    int end_line = 0;
+    int end_x = 0;
+    editorGetSelectionBounds(&start_line, &start_x, &end_line, &end_x);
     if (start_line == end_line) {
-        int sel_start = (anchor_x < current_x ? anchor_x : current_x);
-        int sel_end   = (anchor_x < current_x ? current_x : anchor_x);
+        int sel_start = start_x;
+        int sel_end = end_x;
         int start_byte = editorRowCxToByteIndex(&E.row[start_line], sel_start);
         int end_byte = editorRowCxToByteIndex(&E.row[start_line], sel_end);
         int new_size = E.row[start_line].size - (end_byte - start_byte);
@@ -2044,8 +2055,8 @@ void editorCutSelection(void) {
                 E.row[start_line].size - end_byte + 1);
         E.row[start_line].size = new_size;
     } else {
-        int first_sel_start = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : 0);
-        int last_sel_end = (E.sel_anchor_y < E.cy ? E.cx : E.sel_anchor_x);
+        int first_sel_start = start_x;
+        int last_sel_end = end_x;
         int first_byte = editorRowCxToByteIndex(&E.row[start_line], first_sel_start);
         E.row[start_line].chars[first_byte] = '\0';
         E.row[start_line].size = first_byte;
@@ -2067,8 +2078,13 @@ void editorCutSelection(void) {
             E.numrows--;
         }
     }
-    E.cx = (E.sel_anchor_y < E.cy ? E.sel_anchor_x : E.cx);
+    E.cx = start_x;
     E.cy = start_line;
+    if (E.cy >= 0 && E.cy < E.numrows) {
+        int row_width = editorDisplayWidth(E.row[E.cy].chars);
+        if (E.cx > row_width)
+            E.cx = row_width;
+    }
     E.selecting = 0;
     E.dirty = 1;
     snprintf(E.status_message, sizeof(E.status_message), "Cut selection");

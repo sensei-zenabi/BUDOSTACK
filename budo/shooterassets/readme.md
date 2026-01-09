@@ -5,7 +5,7 @@ When a file is missing or invalid, the demo keeps the fallback sprite.
 
 ## Format
 
-- **BMP, 24-bit (no alpha), uncompressed (BI_RGB)**.
+- **BMP, 24-bit or 32-bit, uncompressed (BI_RGB)**.
 - Exact dimensions are required.
 - For `enemy.bmp`, `weapon_idle.bmp`, and `weapon_fire.bmp`, pure black (0,0,0)
   is treated as transparent.

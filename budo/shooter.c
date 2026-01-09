@@ -158,7 +158,7 @@ static int load_bmp_sprite(const char *path, int expected_w, int expected_h,
     bpp = read_le16(info_header + 14);
     compression = read_le32(info_header + 16);
 
-    if (planes != 1 || bpp != 24 || compression != 0) {
+    if (planes != 1 || (bpp != 24 && bpp != 32) || compression != 0) {
         fclose(fp);
         return 0;
     }
@@ -178,7 +178,8 @@ static int load_bmp_sprite(const char *path, int expected_w, int expected_h,
         return 0;
     }
 
-    size_t row_stride = ((size_t)width * 3u + 3u) & ~3u;
+    size_t bytes_per_pixel = bpp == 32 ? 4u : 3u;
+    size_t row_stride = ((size_t)width * bytes_per_pixel + 3u) & ~3u;
     unsigned char *row = malloc(row_stride);
     if (!row) {
         fclose(fp);
@@ -194,9 +195,9 @@ static int load_bmp_sprite(const char *path, int expected_w, int expected_h,
         int dest_y = top_down ? y : (height - 1 - y);
         for (int x = 0; x < width; x++) {
             size_t idx = (size_t)dest_y * (size_t)width + (size_t)x;
-            unsigned char b = row[x * 3 + 0];
-            unsigned char g = row[x * 3 + 1];
-            unsigned char r = row[x * 3 + 2];
+            unsigned char b = row[x * bytes_per_pixel + 0];
+            unsigned char g = row[x * bytes_per_pixel + 1];
+            unsigned char r = row[x * bytes_per_pixel + 2];
             uint32_t color = make_color(r, g, b);
             if (allow_transparent && r == 0 && g == 0 && b == 0) {
                 color = 0;
@@ -211,14 +212,26 @@ static int load_bmp_sprite(const char *path, int expected_w, int expected_h,
 }
 
 static void try_load_sprites(void) {
-    load_bmp_sprite("budo/shooterassets/wall.bmp", WALL_TEX_SIZE, WALL_TEX_SIZE, wall_tex, 0);
-    load_bmp_sprite("budo/shooterassets/floor.bmp", FLOOR_TEX_SIZE, FLOOR_TEX_SIZE, floor_tex, 0);
-    load_bmp_sprite("budo/shooterassets/ceiling.bmp", CEIL_TEX_SIZE, CEIL_TEX_SIZE, ceil_tex, 0);
-    load_bmp_sprite("budo/shooterassets/enemy.bmp", ENEMY_TEX_W, ENEMY_TEX_H, enemy_tex, 1);
-    load_bmp_sprite("budo/shooterassets/weapon_idle.bmp", WEAPON_TEX_W, WEAPON_TEX_H,
-                    weapon_idle_tex, 1);
-    load_bmp_sprite("budo/shooterassets/weapon_fire.bmp", WEAPON_TEX_W, WEAPON_TEX_H,
-                    weapon_fire_tex, 1);
+    const char *paths[] = {
+        "budo/shooterassets",
+        "shooterassets",
+        "../budo/shooterassets"
+    };
+    for (size_t i = 0; i < sizeof(paths) / sizeof(paths[0]); i++) {
+        char path[256];
+        snprintf(path, sizeof(path), "%s/wall.bmp", paths[i]);
+        load_bmp_sprite(path, WALL_TEX_SIZE, WALL_TEX_SIZE, wall_tex, 0);
+        snprintf(path, sizeof(path), "%s/floor.bmp", paths[i]);
+        load_bmp_sprite(path, FLOOR_TEX_SIZE, FLOOR_TEX_SIZE, floor_tex, 0);
+        snprintf(path, sizeof(path), "%s/ceiling.bmp", paths[i]);
+        load_bmp_sprite(path, CEIL_TEX_SIZE, CEIL_TEX_SIZE, ceil_tex, 0);
+        snprintf(path, sizeof(path), "%s/enemy.bmp", paths[i]);
+        load_bmp_sprite(path, ENEMY_TEX_W, ENEMY_TEX_H, enemy_tex, 1);
+        snprintf(path, sizeof(path), "%s/weapon_idle.bmp", paths[i]);
+        load_bmp_sprite(path, WEAPON_TEX_W, WEAPON_TEX_H, weapon_idle_tex, 1);
+        snprintf(path, sizeof(path), "%s/weapon_fire.bmp", paths[i]);
+        load_bmp_sprite(path, WEAPON_TEX_W, WEAPON_TEX_H, weapon_fire_tex, 1);
+    }
 }
 
 static void build_textures(void) {

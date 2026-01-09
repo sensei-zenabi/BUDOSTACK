@@ -326,8 +326,8 @@ static void spawn_enemy(struct enemy *enemy, struct vec2 spawn) {
 }
 
 static void reset_player(struct player_state *player) {
-    player->position.x = 2.5f;
-    player->position.y = 2.5f;
+    player->position.x = 1.5f;
+    player->position.y = 1.5f;
     player->angle = 1.57f;
     player->health = 100;
 }
@@ -509,9 +509,9 @@ int main(int argc, char **argv) {
     memset(enemies, 0, sizeof(enemies));
 
     struct vec2 spawn_points[] = {
-        { 12.5f, 2.5f },
+        { 12.5f, 1.5f },
         { 13.5f, 12.5f },
-        { 2.5f, 12.5f },
+        { 1.5f, 12.5f },
         { 8.5f, 8.5f },
         { 4.5f, 10.5f },
         { 10.5f, 4.5f }

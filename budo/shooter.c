@@ -1,7 +1,6 @@
 #include "budo_graphics.h"
 #include "budo_shader_stack.h"
 
-#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -102,46 +101,29 @@ static uint32_t make_color(uint8_t r, uint8_t g, uint8_t b) {
     return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
 }
 
-static int read_ppm_token(FILE *fp, char *buffer, size_t buffer_size) {
-    int c = 0;
-    size_t idx = 0;
-
-    if (!fp || !buffer || buffer_size == 0) {
-        return 0;
-    }
-
-    do {
-        c = fgetc(fp);
-        if (c == '#') {
-            while (c != '\n' && c != EOF) {
-                c = fgetc(fp);
-            }
-        }
-    } while (c != EOF && isspace(c));
-
-    if (c == EOF) {
-        return 0;
-    }
-
-    buffer[idx++] = (char)c;
-    while (idx + 1 < buffer_size) {
-        c = fgetc(fp);
-        if (c == EOF || isspace(c)) {
-            break;
-        }
-        buffer[idx++] = (char)c;
-    }
-    buffer[idx] = '\0';
-    return 1;
+static uint16_t read_le16(const unsigned char *buf) {
+    return (uint16_t)buf[0] | (uint16_t)((uint16_t)buf[1] << 8);
 }
 
-static int load_ppm_sprite(const char *path, int expected_w, int expected_h,
+static uint32_t read_le32(const unsigned char *buf) {
+    return (uint32_t)buf[0] |
+           ((uint32_t)buf[1] << 8) |
+           ((uint32_t)buf[2] << 16) |
+           ((uint32_t)buf[3] << 24);
+}
+
+static int load_bmp_sprite(const char *path, int expected_w, int expected_h,
                            uint32_t *dest, int allow_transparent) {
     FILE *fp = NULL;
-    char token[64];
-    int width = 0;
-    int height = 0;
-    int maxval = 0;
+    unsigned char file_header[14];
+    unsigned char info_header[40];
+    uint32_t data_offset = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+    int top_down = 0;
+    uint16_t planes = 0;
+    uint16_t bpp = 0;
+    uint32_t compression = 0;
 
     if (!path || !dest) {
         return 0;
@@ -152,55 +134,91 @@ static int load_ppm_sprite(const char *path, int expected_w, int expected_h,
         return 0;
     }
 
-    if (!read_ppm_token(fp, token, sizeof(token)) || strcmp(token, "P6") != 0) {
+    if (fread(file_header, 1, sizeof(file_header), fp) != sizeof(file_header)) {
         fclose(fp);
         return 0;
     }
-    if (!read_ppm_token(fp, token, sizeof(token))) {
+    if (file_header[0] != 'B' || file_header[1] != 'M') {
         fclose(fp);
         return 0;
     }
-    width = atoi(token);
-    if (!read_ppm_token(fp, token, sizeof(token))) {
+    data_offset = read_le32(file_header + 10);
+
+    if (fread(info_header, 1, sizeof(info_header), fp) != sizeof(info_header)) {
         fclose(fp);
         return 0;
     }
-    height = atoi(token);
-    if (!read_ppm_token(fp, token, sizeof(token))) {
+    if (read_le32(info_header) < sizeof(info_header)) {
         fclose(fp);
         return 0;
     }
-    maxval = atoi(token);
-    if (width != expected_w || height != expected_h || maxval != 255) {
+    width = (int32_t)read_le32(info_header + 4);
+    height = (int32_t)read_le32(info_header + 8);
+    planes = read_le16(info_header + 12);
+    bpp = read_le16(info_header + 14);
+    compression = read_le32(info_header + 16);
+
+    if (planes != 1 || bpp != 24 || compression != 0) {
         fclose(fp);
         return 0;
     }
 
-    size_t pixels = (size_t)width * (size_t)height;
-    for (size_t i = 0; i < pixels; i++) {
-        unsigned char rgb[3];
-        if (fread(rgb, 1, sizeof(rgb), fp) != sizeof(rgb)) {
+    if (height < 0) {
+        top_down = 1;
+        height = -height;
+    }
+
+    if (width != expected_w || height != expected_h || width <= 0 || height <= 0) {
+        fclose(fp);
+        return 0;
+    }
+
+    if (fseek(fp, (long)data_offset, SEEK_SET) != 0) {
+        fclose(fp);
+        return 0;
+    }
+
+    size_t row_stride = ((size_t)width * 3u + 3u) & ~3u;
+    unsigned char *row = malloc(row_stride);
+    if (!row) {
+        fclose(fp);
+        return 0;
+    }
+
+    for (int y = 0; y < height; y++) {
+        if (fread(row, 1, row_stride, fp) != row_stride) {
+            free(row);
             fclose(fp);
             return 0;
         }
-        uint32_t color = make_color(rgb[0], rgb[1], rgb[2]);
-        if (allow_transparent && rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 0) {
-            color = 0;
+        int dest_y = top_down ? y : (height - 1 - y);
+        for (int x = 0; x < width; x++) {
+            size_t idx = (size_t)dest_y * (size_t)width + (size_t)x;
+            unsigned char b = row[x * 3 + 0];
+            unsigned char g = row[x * 3 + 1];
+            unsigned char r = row[x * 3 + 2];
+            uint32_t color = make_color(r, g, b);
+            if (allow_transparent && r == 0 && g == 0 && b == 0) {
+                color = 0;
+            }
+            dest[idx] = color;
         }
-        dest[i] = color;
     }
 
+    free(row);
     fclose(fp);
     return 1;
 }
 
 static void try_load_sprites(void) {
-    load_ppm_sprite("budo/shooter/wall.ppm", WALL_TEX_SIZE, WALL_TEX_SIZE, wall_tex, 0);
-    load_ppm_sprite("budo/shooter/floor.ppm", FLOOR_TEX_SIZE, FLOOR_TEX_SIZE, floor_tex, 0);
-    load_ppm_sprite("budo/shooter/ceiling.ppm", CEIL_TEX_SIZE, CEIL_TEX_SIZE, ceil_tex, 0);
-    load_ppm_sprite("budo/shooter/enemy.ppm", ENEMY_TEX_W, ENEMY_TEX_H, enemy_tex, 1);
-    load_ppm_sprite("budo/shooter/weapon_idle.ppm", WEAPON_TEX_W, WEAPON_TEX_H, weapon_idle_tex, 1);
-    load_ppm_sprite("budo/shooter/weapon_fire.ppm", WEAPON_TEX_W, WEAPON_TEX_H, weapon_fire_tex, 1);
+    load_bmp_sprite("budo/shooterassets/wall.bmp", WALL_TEX_SIZE, WALL_TEX_SIZE, wall_tex, 0);
+    load_bmp_sprite("budo/shooterassets/floor.bmp", FLOOR_TEX_SIZE, FLOOR_TEX_SIZE, floor_tex, 0);
+    load_bmp_sprite("budo/shooterassets/ceiling.bmp", CEIL_TEX_SIZE, CEIL_TEX_SIZE, ceil_tex, 0);
+    load_bmp_sprite("budo/shooterassets/enemy.bmp", ENEMY_TEX_W, ENEMY_TEX_H, enemy_tex, 1);
+    load_bmp_sprite("budo/shooterassets/weapon_idle.bmp", WEAPON_TEX_W, WEAPON_TEX_H,
+                    weapon_idle_tex, 1);
+    load_bmp_sprite("budo/shooterassets/weapon_fire.bmp", WEAPON_TEX_W, WEAPON_TEX_H,
+                    weapon_fire_tex, 1);
 }
 
 static void build_textures(void) {

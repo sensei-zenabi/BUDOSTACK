@@ -199,3 +199,47 @@ void psf_draw_text(const psf_font_t *font,
         pen_x += (int)font->width;
     }
 }
+
+void budo_clear_buffer(uint32_t *pixels, int width, int height, uint32_t color) {
+    if (!pixels || width <= 0 || height <= 0) {
+        return;
+    }
+
+    size_t total = (size_t)width * (size_t)height;
+    for (size_t i = 0; i < total; i++) {
+        pixels[i] = color;
+    }
+}
+
+void budo_put_pixel(uint32_t *pixels, int width, int height, int x, int y, uint32_t color) {
+    if (!pixels || x < 0 || y < 0 || x >= width || y >= height) {
+        return;
+    }
+
+    pixels[(size_t)y * (size_t)width + (size_t)x] = color;
+}
+
+void budo_draw_line(uint32_t *pixels, int width, int height,
+                    int x0, int y0, int x1, int y1, uint32_t color) {
+    int dx = abs(x1 - x0);
+    int sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0);
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+
+    for (;;) {
+        budo_put_pixel(pixels, width, height, x0, y0, color);
+        if (x0 == x1 && y0 == y1) {
+            break;
+        }
+        int e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}

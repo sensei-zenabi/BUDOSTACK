@@ -26,4 +26,9 @@ void psf_draw_text(const psf_font_t *font,
                    uint32_t *pixels, int fb_w, int fb_h,
                    int x, int y, const char *text, uint32_t color);
 
+void budo_clear_buffer(uint32_t *pixels, int width, int height, uint32_t color);
+void budo_put_pixel(uint32_t *pixels, int width, int height, int x, int y, uint32_t color);
+void budo_draw_line(uint32_t *pixels, int width, int height,
+                    int x0, int y0, int x1, int y1, uint32_t color);
+
 #endif

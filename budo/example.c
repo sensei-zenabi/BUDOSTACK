@@ -28,85 +28,6 @@ struct point2 {
 };
 
 
-/*--------------------------------------------------------------------------------------------
- * HELPER FUNCTIONS 
-*/
-
-
-/* Clear a linear 32-bit pixel buffer to a single color.
- *
- * The buffer is assumed to contain width × height pixels, stored
- * contiguously in row-major order. Each pixel is a packed uint32_t
- * value compatible with SDL/OpenGL 32bpp formats.
- *
- * Invalid input parameters are treated as a no-op.
-*/
-
-static void clear_buffer(uint32_t *pixels, int width, int height, uint32_t color) {
-    if (!pixels || width <= 0 || height <= 0) {
-        return;
-    }
-    size_t total = (size_t)width * (size_t)height;
-    for (size_t i = 0; i < total; i++) {
-        pixels[i] = color;
-    }
-}
-
-
-/* Write a single pixel into a linear 32-bit framebuffer.
- *
- * The buffer is assumed to be a width × height image stored in
- * row-major order. Pixel coordinates are specified in screen space,
- * with (0,0) at the top-left corner.
- *
- * Out-of-bounds coordinates or a NULL buffer are safely ignored.
-*/
- 
-static void put_pixel(uint32_t *pixels, int width, int height, int x, int y, uint32_t color) {
-    if (!pixels || x < 0 || y < 0 || x >= width || y >= height) {
-        return;
-    }
-    pixels[(size_t)y * (size_t)width + (size_t)x] = color;
-}
-
-
-/* Draw a straight line between two points using an integer-based
- * Bresenham rasterization algorithm.
- *
- * The line is drawn in screen space into a linear 32-bit framebuffer.
- * Both endpoints are included. Pixel writes are bounds-checked via
- * put_pixel(), so drawing outside the framebuffer is safely clipped.
- *
- * The algorithm operates entirely in integer arithmetic and produces
- * consistent, gap-free lines for all octants.
-*/
-
-static void draw_line(uint32_t *pixels, int width, int height,
-                      int x0, int y0, int x1, int y1, uint32_t color) {
-    int dx = abs(x1 - x0);
-    int sx = x0 < x1 ? 1 : -1;
-    int dy = -abs(y1 - y0);
-    int sy = y0 < y1 ? 1 : -1;
-    int err = dx + dy;
-
-    for (;;) {
-        put_pixel(pixels, width, height, x0, y0, color);
-        if (x0 == x1 && y0 == y1) {
-            break;
-        }
-        int e2 = 2 * err;
-        if (e2 >= dy) {
-            err += dy;
-            x0 += sx;
-        }
-        if (e2 <= dx) {
-            err += dx;
-            y0 += sy;
-        }
-    }
-}
-
-
 /* Rotate a 3D point around the X and Y axes.
  *
  * Rotations are applied in the following order:
@@ -448,7 +369,7 @@ int main(int argc, char **argv) {
          * GL_RGBA / GL_UNSIGNED_BYTE upload.
         */
         
-        clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00101010u);
+        budo_clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00101010u);
 
         
         /* Transform and render the cube:
@@ -468,14 +389,14 @@ int main(int argc, char **argv) {
         for (size_t i = 0; i < 12; i++) {
             int a = edges[i][0];
             int b = edges[i][1];
-            draw_line(pixels,
-                      GAME_WIDTH,
-                      GAME_HEIGHT,
-                      (int)projected[a].x,
-                      (int)projected[a].y,
-                      (int)projected[b].x,
-                      (int)projected[b].y,
-                      0x00f0d060u);
+            budo_draw_line(pixels,
+                           GAME_WIDTH,
+                           GAME_HEIGHT,
+                           (int)projected[a].x,
+                           (int)projected[a].y,
+                           (int)projected[b].x,
+                           (int)projected[b].y,
+                           0x00f0d060u);
         }
 
         

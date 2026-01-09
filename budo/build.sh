@@ -15,13 +15,21 @@ fi
 
 cd "$BUILD_DIR"
 
-cc -std=c11 -Wall -Wextra -Werror -Wpedantic -DGL_GLEXT_PROTOTYPES \
-    $SDL_CFLAGS \
-    -I"$SCRIPT_DIR" \
-    budo_graphics.c \
-    budo_shader_stack.c \
-    example.c \
-    -o example \
-    $SDL_LIBS $GL_LIBS -lm
+build_demo() {
+    local source="$1"
+    local output="$2"
 
-echo "Built $BUILD_DIR/example"
+    cc -std=c11 -Wall -Wextra -Werror -Wpedantic -DGL_GLEXT_PROTOTYPES \
+        $SDL_CFLAGS \
+        -I"$SCRIPT_DIR" \
+        budo_graphics.c \
+        budo_shader_stack.c \
+        "$source" \
+        -o "$output" \
+        $SDL_LIBS $GL_LIBS -lm
+
+    echo "Built $BUILD_DIR/$output"
+}
+
+build_demo example.c example
+build_demo rocket.c rocket

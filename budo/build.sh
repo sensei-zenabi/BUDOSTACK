@@ -33,3 +33,4 @@ build_demo() {
 
 build_demo example.c example
 build_demo rocket.c rocket
+build_demo shooter.c shooter

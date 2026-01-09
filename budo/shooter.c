@@ -27,6 +27,9 @@
 #define ENEMY_ATTACK_COOLDOWN 0.8f
 
 #define FIRE_COOLDOWN 0.25f
+#define RELOAD_TIME 1.2f
+#define MUZZLE_FLASH_TIME 0.12f
+#define AMMO_CAPACITY 12
 #define HIT_DAMAGE 40
 #define VIEW_SAMPLE_STEP 6
 
@@ -39,6 +42,7 @@ struct player_state {
     struct vec2 position;
     float angle;
     int health;
+    int ammo;
 };
 
 struct enemy {
@@ -192,7 +196,8 @@ static struct raycast_hit raycast(struct vec2 pos, struct vec2 dir) {
     return hit;
 }
 
-static void draw_weapon(uint32_t *pixels, int width, int height, int frame) {
+static void draw_weapon(uint32_t *pixels, int width, int height, int frame,
+                        float muzzle_timer, int ammo) {
     int cx = width / 2;
     int base_y = height - 24;
     int bob = (frame / 8) % 2;
@@ -200,57 +205,87 @@ static void draw_weapon(uint32_t *pixels, int width, int height, int frame) {
 
     uint32_t outline = 0x00f4d27au;
     uint32_t accent = 0x00b0d0ffu;
+    uint32_t flash = 0x00fff2b0u;
 
     budo_draw_line(pixels, width, height,
-                   cx - 42, gun_y + 14,
-                   cx - 18, gun_y - 2,
+                   cx - 54, gun_y + 18,
+                   cx - 30, gun_y + 2,
                    outline);
     budo_draw_line(pixels, width, height,
-                   cx - 18, gun_y - 2,
-                   cx - 6, gun_y - 2,
+                   cx - 30, gun_y + 2,
+                   cx - 16, gun_y + 2,
                    outline);
     budo_draw_line(pixels, width, height,
-                   cx - 6, gun_y - 2,
-                   cx - 2, gun_y + 12,
+                   cx - 16, gun_y + 2,
+                   cx - 6, gun_y + 14,
                    outline);
     budo_draw_line(pixels, width, height,
-                   cx - 2, gun_y + 12,
-                   cx - 30, gun_y + 20,
+                   cx - 6, gun_y + 14,
+                   cx - 32, gun_y + 24,
                    outline);
     budo_draw_line(pixels, width, height,
-                   cx - 30, gun_y + 20,
-                   cx - 42, gun_y + 14,
+                   cx - 32, gun_y + 24,
+                   cx - 54, gun_y + 18,
                    outline);
 
     budo_draw_line(pixels, width, height,
-                   cx - 6, gun_y - 6,
-                   cx + 30, gun_y - 10,
+                   cx - 2, gun_y - 6,
+                   cx + 40, gun_y - 12,
                    accent);
     budo_draw_line(pixels, width, height,
-                   cx + 30, gun_y - 10,
-                   cx + 44, gun_y + 2,
+                   cx + 40, gun_y - 12,
+                   cx + 62, gun_y - 2,
                    accent);
     budo_draw_line(pixels, width, height,
-                   cx + 44, gun_y + 2,
-                   cx + 8, gun_y + 8,
+                   cx + 62, gun_y - 2,
+                   cx + 10, gun_y + 10,
                    accent);
     budo_draw_line(pixels, width, height,
-                   cx + 8, gun_y + 8,
-                   cx - 6, gun_y - 6,
+                   cx + 10, gun_y + 10,
+                   cx - 2, gun_y - 6,
                    accent);
 
     budo_draw_line(pixels, width, height,
-                   cx + 18, gun_y - 4,
-                   cx + 36, gun_y - 2,
+                   cx + 20, gun_y - 4,
+                   cx + 48, gun_y - 4,
                    accent);
     budo_draw_line(pixels, width, height,
-                   cx + 36, gun_y - 2,
-                   cx + 40, gun_y + 4,
+                   cx + 48, gun_y - 4,
+                   cx + 58, gun_y + 4,
                    accent);
     budo_draw_line(pixels, width, height,
-                   cx + 40, gun_y + 4,
-                   cx + 22, gun_y + 6,
+                   cx + 58, gun_y + 4,
+                   cx + 26, gun_y + 6,
                    accent);
+
+    budo_draw_line(pixels, width, height,
+                   cx - 8, gun_y + 10,
+                   cx + 6, gun_y + 10,
+                   outline);
+    budo_draw_line(pixels, width, height,
+                   cx + 6, gun_y + 10,
+                   cx + 2, gun_y + 18,
+                   outline);
+
+    int ammo_ticks = ammo;
+    if (ammo_ticks > AMMO_CAPACITY) {
+        ammo_ticks = AMMO_CAPACITY;
+    }
+    for (int i = 0; i < ammo_ticks; i++) {
+        int ax = cx + 12 + i * 3;
+        budo_draw_line(pixels, width, height,
+                       ax, gun_y + 12,
+                       ax, gun_y + 16,
+                       accent);
+    }
+
+    if (muzzle_timer > 0.0f) {
+        int mx = cx + 62;
+        int my = gun_y - 2;
+        budo_draw_line(pixels, width, height, mx, my, mx + 10, my, flash);
+        budo_draw_line(pixels, width, height, mx, my, mx + 6, my - 6, flash);
+        budo_draw_line(pixels, width, height, mx, my, mx + 6, my + 6, flash);
+    }
 }
 
 static void draw_minimap(uint32_t *pixels, int width, int height,
@@ -330,6 +365,7 @@ static void reset_player(struct player_state *player) {
     player->position.y = 1.5f;
     player->angle = 1.57f;
     player->health = 100;
+    player->ammo = AMMO_CAPACITY;
 }
 
 static void update_enemy(struct enemy *enemy, const struct player_state *player, float delta) {
@@ -367,6 +403,38 @@ static int apply_enemy_damage(struct enemy *enemy, int damage) {
         return 1;
     }
     return 0;
+}
+
+static void draw_enemy_character(uint32_t *pixels, int width, int height,
+                                 int x, int y0, int y1, uint32_t color) {
+    int h = y1 - y0;
+    if (h < 6) {
+        budo_draw_line(pixels, width, height, x, y0, x, y1, color);
+        return;
+    }
+
+    int head_h = h / 4;
+    int head_w = head_h / 2 + 2;
+    int head_y0 = y0;
+    int head_y1 = y0 + head_h;
+    int head_x0 = x - head_w;
+    int head_x1 = x + head_w;
+
+    budo_draw_line(pixels, width, height, head_x0, head_y0, head_x1, head_y0, color);
+    budo_draw_line(pixels, width, height, head_x1, head_y0, head_x1, head_y1, color);
+    budo_draw_line(pixels, width, height, head_x1, head_y1, head_x0, head_y1, color);
+    budo_draw_line(pixels, width, height, head_x0, head_y1, head_x0, head_y0, color);
+
+    int body_y0 = head_y1;
+    int body_y1 = y1 - head_h / 2;
+    budo_draw_line(pixels, width, height, x, body_y0, x, body_y1, color);
+
+    int arm_y = body_y0 + head_h / 2;
+    budo_draw_line(pixels, width, height, x, arm_y, x - head_w - 2, arm_y + 2, color);
+    budo_draw_line(pixels, width, height, x, arm_y, x + head_w + 2, arm_y + 2, color);
+
+    budo_draw_line(pixels, width, height, x, body_y1, x - head_w, y1, color);
+    budo_draw_line(pixels, width, height, x, body_y1, x + head_w, y1, color);
 }
 
 static float angle_diff(float a, float b) {
@@ -524,6 +592,8 @@ int main(int argc, char **argv) {
     int running = 1;
     Uint32 last_tick = SDL_GetTicks();
     float fire_timer = 0.0f;
+    float muzzle_timer = 0.0f;
+    float reload_timer = 0.0f;
     int score = 0;
     int frame_value = 0;
 
@@ -612,10 +682,25 @@ int main(int argc, char **argv) {
         if (fire_timer < 0.0f) {
             fire_timer = 0.0f;
         }
+        muzzle_timer -= delta;
+        if (muzzle_timer < 0.0f) {
+            muzzle_timer = 0.0f;
+        }
+        if (player.ammo <= 0) {
+            reload_timer -= delta;
+            if (reload_timer <= 0.0f) {
+                player.ammo = AMMO_CAPACITY;
+            }
+        }
 
         int did_fire = 0;
-        if (keys[SDL_SCANCODE_SPACE] && fire_timer <= 0.0f) {
+        if (keys[SDL_SCANCODE_SPACE] && fire_timer <= 0.0f && player.ammo > 0) {
             fire_timer = FIRE_COOLDOWN;
+            player.ammo--;
+            muzzle_timer = MUZZLE_FLASH_TIME;
+            if (player.ammo == 0) {
+                reload_timer = RELOAD_TIME;
+            }
             did_fire = 1;
         }
 
@@ -719,8 +804,6 @@ int main(int argc, char **argv) {
                                prev_x, prev_top, x, y0, color);
                 budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT,
                                prev_x, prev_bot, x, y1, color);
-                budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT,
-                               x, y0, x, y1, color);
             }
             prev_x = x;
             prev_top = y0;
@@ -757,8 +840,7 @@ int main(int argc, char **argv) {
             if (y1 >= GAME_HEIGHT) {
                 y1 = GAME_HEIGHT - 1;
             }
-            budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT, x, y0, x, y1, 0x00ff7070u);
-            budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT, x - 1, y0 + 2, x + 1, y0 + 2, 0x00ff7070u);
+            draw_enemy_character(pixels, GAME_WIDTH, GAME_HEIGHT, x, y0, y1, 0x00ff7070u);
         }
 
         budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT,
@@ -770,11 +852,12 @@ int main(int argc, char **argv) {
                        GAME_WIDTH / 2, GAME_HEIGHT / 2 + 4,
                        0x00f0f0f0u);
 
-        draw_weapon(pixels, GAME_WIDTH, GAME_HEIGHT, frame_value);
+        draw_weapon(pixels, GAME_WIDTH, GAME_HEIGHT, frame_value, muzzle_timer, player.ammo);
         draw_minimap(pixels, GAME_WIDTH, GAME_HEIGHT, &player, enemies, ENEMY_COUNT);
 
         char hud[160];
-        snprintf(hud, sizeof(hud), "VECTOR DOOM  HP:%d  SCORE:%d", player.health, score);
+        snprintf(hud, sizeof(hud), "VECTOR DOOM  HP:%d  SCORE:%d  AMMO:%d",
+                 player.health, score, player.ammo);
         psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, GAME_HEIGHT - 2 * (int)font.height - 4,
                       hud, 0x00ffffffu);
         psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, GAME_HEIGHT - (int)font.height - 2,

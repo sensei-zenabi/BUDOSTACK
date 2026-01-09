@@ -77,6 +77,7 @@ int main(int argc, char *argv[]) {
         " /* Folder Structure */\n" 
         "\n" 
         "  ./apps/        - System applications that do not use paging.\n" 
+        "  ./budo/        - Examples for SDL game development using budo libs.\n"
         "  ./commands/    - BUDOSTACK (BS) programming commands for developers.\n" 
         "  ./documents/   - Documents provided by BUDOSTACK.\n" 
         "  ./fonts/       - Folder for built-in .ttf and .psf fonts\n" 

@@ -171,6 +171,7 @@ struct EditorConfig {
 #define MENU_FILES 0
 #define MENU_COUNT 3
 #define MENU_LABEL_FILES "FILES"
+#define MENU_LABEL_NEW_FILE "<New File>"
 #define MENU_TITLE_MAX 10
 
 /* Undo state structure */
@@ -479,9 +480,40 @@ static int editorFileEntryCompare(const void *a, const void *b) {
         return -1;
     if (strcmp(right->name, "..") == 0)
         return 1;
+    if (strcmp(left->name, MENU_LABEL_NEW_FILE) == 0)
+        return -1;
+    if (strcmp(right->name, MENU_LABEL_NEW_FILE) == 0)
+        return 1;
     if (left->is_dir != right->is_dir)
         return right->is_dir - left->is_dir;
     return strcasecmp(left->name, right->name);
+}
+
+static int editorPromptNewFileName(char *buffer, size_t buffer_size) {
+    if (!buffer || buffer_size == 0)
+        return 0;
+    buffer[0] = '\0';
+    printf("\033[?1049h");
+    printf("\033[H");
+    fflush(stdout);
+    disableRawMode();
+    printf("New file name: ");
+    fflush(stdout);
+    if (fgets(buffer, buffer_size, stdin) == NULL) {
+        enableRawMode();
+        printf("\033[?1049l");
+        fflush(stdout);
+        return 0;
+    }
+    buffer[strcspn(buffer, "\n")] = '\0';
+    enableRawMode();
+    printf("\033[?1049l");
+    fflush(stdout);
+    return buffer[0] != '\0';
+}
+
+static int editorIsNewFileEntry(const FileEntry *entry) {
+    return entry && strcmp(entry->name, MENU_LABEL_NEW_FILE) == 0;
 }
 
 static int editorFilesMenuMaxRows(void) {
@@ -554,14 +586,18 @@ void editorMenuLoadFiles(void) {
         return;
     }
 
-    E.files = realloc(E.files, sizeof(FileEntry));
+    E.files = realloc(E.files, sizeof(FileEntry) * 2);
     if (!E.files)
         die("realloc");
     E.files[0].name = strdup("..");
     if (!E.files[0].name)
         die("strdup");
     E.files[0].is_dir = 1;
-    E.files_count = 1;
+    E.files[1].name = strdup(MENU_LABEL_NEW_FILE);
+    if (!E.files[1].name)
+        die("strdup");
+    E.files[1].is_dir = 0;
+    E.files_count = 2;
 
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
@@ -673,6 +709,41 @@ void editorProcessMenuKeypress(int c) {
     }
     if (c == '\r' && E.files_menu_open && E.files_count > 0) {
         FileEntry *entry = &E.files[E.files_selected];
+        if (editorIsNewFileEntry(entry)) {
+            char input[PATH_MAX];
+            if (!editorPromptNewFileName(input, sizeof(input))) {
+                snprintf(E.status_message, sizeof(E.status_message), "New file canceled");
+                return;
+            }
+            char path[PATH_MAX];
+            if (input[0] == '/') {
+                int len = snprintf(path, sizeof(path), "%s", input);
+                if (len < 0 || (size_t)len >= sizeof(path)) {
+                    snprintf(E.status_message, sizeof(E.status_message),
+                             "New file name too long");
+                    return;
+                }
+            } else if (strcmp(E.menu_dir, "/") == 0) {
+                int len = snprintf(path, sizeof(path), "/%s", input);
+                if (len < 0 || (size_t)len >= sizeof(path)) {
+                    snprintf(E.status_message, sizeof(E.status_message),
+                             "New file name too long");
+                    return;
+                }
+            } else {
+                int len = snprintf(path, sizeof(path), "%s/%s", E.menu_dir, input);
+                if (len < 0 || (size_t)len >= sizeof(path)) {
+                    snprintf(E.status_message, sizeof(E.status_message),
+                             "New file name too long");
+                    return;
+                }
+            }
+            editorSwitchToSlot(E.menu_index);
+            editorSwitchToFile(path);
+            E.menu_active = 0;
+            E.files_menu_open = 0;
+            return;
+        }
         if (entry->is_dir) {
             char target[PATH_MAX];
             if (strcmp(entry->name, "..") == 0) {

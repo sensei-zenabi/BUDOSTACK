@@ -22,13 +22,13 @@
 
 #define ENEMY_COUNT 6
 #define ENEMY_SPEED 1.2f
-#define ENEMY_HIT_RADIUS 0.25f
 #define ENEMY_RESPAWN_TIME 2.5f
 #define ENEMY_ATTACK_RANGE 0.7f
 #define ENEMY_ATTACK_COOLDOWN 0.8f
 
 #define FIRE_COOLDOWN 0.25f
 #define HIT_DAMAGE 40
+#define VIEW_SAMPLE_STEP 6
 
 struct vec2 {
     float x;
@@ -190,6 +190,67 @@ static struct raycast_hit raycast(struct vec2 pos, struct vec2 dir) {
     }
 
     return hit;
+}
+
+static void draw_weapon(uint32_t *pixels, int width, int height, int frame) {
+    int cx = width / 2;
+    int base_y = height - 24;
+    int bob = (frame / 8) % 2;
+    int gun_y = base_y + bob;
+
+    uint32_t outline = 0x00f4d27au;
+    uint32_t accent = 0x00b0d0ffu;
+
+    budo_draw_line(pixels, width, height,
+                   cx - 42, gun_y + 14,
+                   cx - 18, gun_y - 2,
+                   outline);
+    budo_draw_line(pixels, width, height,
+                   cx - 18, gun_y - 2,
+                   cx - 6, gun_y - 2,
+                   outline);
+    budo_draw_line(pixels, width, height,
+                   cx - 6, gun_y - 2,
+                   cx - 2, gun_y + 12,
+                   outline);
+    budo_draw_line(pixels, width, height,
+                   cx - 2, gun_y + 12,
+                   cx - 30, gun_y + 20,
+                   outline);
+    budo_draw_line(pixels, width, height,
+                   cx - 30, gun_y + 20,
+                   cx - 42, gun_y + 14,
+                   outline);
+
+    budo_draw_line(pixels, width, height,
+                   cx - 6, gun_y - 6,
+                   cx + 30, gun_y - 10,
+                   accent);
+    budo_draw_line(pixels, width, height,
+                   cx + 30, gun_y - 10,
+                   cx + 44, gun_y + 2,
+                   accent);
+    budo_draw_line(pixels, width, height,
+                   cx + 44, gun_y + 2,
+                   cx + 8, gun_y + 8,
+                   accent);
+    budo_draw_line(pixels, width, height,
+                   cx + 8, gun_y + 8,
+                   cx - 6, gun_y - 6,
+                   accent);
+
+    budo_draw_line(pixels, width, height,
+                   cx + 18, gun_y - 4,
+                   cx + 36, gun_y - 2,
+                   accent);
+    budo_draw_line(pixels, width, height,
+                   cx + 36, gun_y - 2,
+                   cx + 40, gun_y + 4,
+                   accent);
+    budo_draw_line(pixels, width, height,
+                   cx + 40, gun_y + 4,
+                   cx + 22, gun_y + 6,
+                   accent);
 }
 
 static void draw_minimap(uint32_t *pixels, int width, int height,
@@ -494,10 +555,10 @@ int main(int argc, char **argv) {
         last_tick = now;
 
         const Uint8 *keys = SDL_GetKeyboardState(NULL);
-        if (keys[SDL_SCANCODE_LEFT]) {
+        if (keys[SDL_SCANCODE_LEFT] || keys[SDL_SCANCODE_Q]) {
             player.angle -= PLAYER_TURN_SPEED * delta;
         }
-        if (keys[SDL_SCANCODE_RIGHT]) {
+        if (keys[SDL_SCANCODE_RIGHT] || keys[SDL_SCANCODE_E]) {
             player.angle += PLAYER_TURN_SPEED * delta;
         }
         player.angle = clamp_angle(player.angle);
@@ -506,10 +567,10 @@ int main(int argc, char **argv) {
         struct vec2 right = { cosf(player.angle + 1.57079632679f), sinf(player.angle + 1.57079632679f) };
 
         struct vec2 movement = { 0.0f, 0.0f };
-        if (keys[SDL_SCANCODE_W]) {
+        if (keys[SDL_SCANCODE_W] || keys[SDL_SCANCODE_UP]) {
             movement = vec2_add(movement, forward);
         }
-        if (keys[SDL_SCANCODE_S]) {
+        if (keys[SDL_SCANCODE_S] || keys[SDL_SCANCODE_DOWN]) {
             movement = vec2_sub(movement, forward);
         }
         if (keys[SDL_SCANCODE_A]) {
@@ -623,9 +684,14 @@ int main(int argc, char **argv) {
         budo_clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00060a0fu);
 
         float proj_plane = ((float)GAME_WIDTH * 0.5f) / tanf(FOV_RADIANS * 0.5f);
-        int step = 2;
+        int step = VIEW_SAMPLE_STEP;
+        int sample_count = (GAME_WIDTH + step - 1) / step;
+        int prev_top = -1;
+        int prev_bot = -1;
+        int prev_x = -1;
 
-        for (int x = 0; x < GAME_WIDTH; x += step) {
+        for (int s = 0; s < sample_count; s++) {
+            int x = s * step;
             float ray_angle = player.angle - FOV_RADIANS * 0.5f +
                               ((float)x / (float)GAME_WIDTH) * FOV_RADIANS;
             struct vec2 ray_dir = { cosf(ray_angle), sinf(ray_angle) };
@@ -648,7 +714,17 @@ int main(int argc, char **argv) {
                 y1 = GAME_HEIGHT - 1;
             }
             uint32_t color = hit.side ? 0x00b0d0ffu : 0x00d0f0ffu;
-            budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT, x, y0, x, y1, color);
+            if (prev_x >= 0) {
+                budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT,
+                               prev_x, prev_top, x, y0, color);
+                budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT,
+                               prev_x, prev_bot, x, y1, color);
+                budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT,
+                               x, y0, x, y1, color);
+            }
+            prev_x = x;
+            prev_top = y0;
+            prev_bot = y1;
         }
 
         for (int i = 0; i < ENEMY_COUNT; i++) {
@@ -694,6 +770,7 @@ int main(int argc, char **argv) {
                        GAME_WIDTH / 2, GAME_HEIGHT / 2 + 4,
                        0x00f0f0f0u);
 
+        draw_weapon(pixels, GAME_WIDTH, GAME_HEIGHT, frame_value);
         draw_minimap(pixels, GAME_WIDTH, GAME_HEIGHT, &player, enemies, ENEMY_COUNT);
 
         char hud[160];
@@ -701,7 +778,7 @@ int main(int argc, char **argv) {
         psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, GAME_HEIGHT - 2 * (int)font.height - 4,
                       hud, 0x00ffffffu);
         psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, GAME_HEIGHT - (int)font.height - 2,
-                      "WASD MOVE  ARROWS TURN  SPACE FIRE  ESC QUIT", 0x0080c0ffu);
+                      "WASD/ARROWS MOVE  QE/ARROWS TURN  SPACE FIRE  ESC QUIT", 0x0080c0ffu);
 
         glBindTexture(GL_TEXTURE_2D, texture);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);

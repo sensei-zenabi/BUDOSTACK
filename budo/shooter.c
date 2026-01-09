@@ -33,6 +33,14 @@
 #define HIT_DAMAGE 40
 #define VIEW_SAMPLE_STEP 6
 
+#define WALL_TEX_SIZE 16
+#define FLOOR_TEX_SIZE 16
+#define CEIL_TEX_SIZE 16
+#define ENEMY_TEX_W 16
+#define ENEMY_TEX_H 32
+#define WEAPON_TEX_W 64
+#define WEAPON_TEX_H 32
+
 struct vec2 {
     float x;
     float y;
@@ -80,6 +88,103 @@ static const char *level_map[MAP_HEIGHT] = {
     "1000000000000001",
     "1111111111111111"
 };
+
+static uint32_t wall_tex[WALL_TEX_SIZE * WALL_TEX_SIZE];
+static uint32_t floor_tex[FLOOR_TEX_SIZE * FLOOR_TEX_SIZE];
+static uint32_t ceil_tex[CEIL_TEX_SIZE * CEIL_TEX_SIZE];
+static uint32_t enemy_tex[ENEMY_TEX_W * ENEMY_TEX_H];
+static uint32_t weapon_idle_tex[WEAPON_TEX_W * WEAPON_TEX_H];
+static uint32_t weapon_fire_tex[WEAPON_TEX_W * WEAPON_TEX_H];
+static int textures_ready = 0;
+
+static uint32_t make_color(uint8_t r, uint8_t g, uint8_t b) {
+    return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+}
+
+static void build_textures(void) {
+    if (textures_ready) {
+        return;
+    }
+
+    for (int y = 0; y < WALL_TEX_SIZE; y++) {
+        for (int x = 0; x < WALL_TEX_SIZE; x++) {
+            int mortar = (y % 4 == 0) || (x % 8 == 0);
+            uint32_t color = mortar ? make_color(40, 60, 70) : make_color(80, 140, 170);
+            wall_tex[y * WALL_TEX_SIZE + x] = color;
+        }
+    }
+
+    for (int y = 0; y < FLOOR_TEX_SIZE; y++) {
+        for (int x = 0; x < FLOOR_TEX_SIZE; x++) {
+            int checker = ((x / 4) + (y / 4)) % 2;
+            uint32_t color = checker ? make_color(30, 30, 40) : make_color(50, 50, 70);
+            floor_tex[y * FLOOR_TEX_SIZE + x] = color;
+        }
+    }
+
+    for (int y = 0; y < CEIL_TEX_SIZE; y++) {
+        for (int x = 0; x < CEIL_TEX_SIZE; x++) {
+            int grid = (x % 4 == 0) || (y % 4 == 0);
+            uint32_t color = grid ? make_color(20, 30, 40) : make_color(15, 20, 30);
+            ceil_tex[y * CEIL_TEX_SIZE + x] = color;
+        }
+    }
+
+    for (int y = 0; y < ENEMY_TEX_H; y++) {
+        for (int x = 0; x < ENEMY_TEX_W; x++) {
+            uint32_t color = 0;
+            int cx = ENEMY_TEX_W / 2;
+            if (y < 6) {
+                int dx = x - cx;
+                if (dx * dx + (y - 3) * (y - 3) <= 6) {
+                    color = make_color(180, 60, 60);
+                }
+            } else if (y < 22) {
+                if (abs(x - cx) <= 3) {
+                    color = make_color(200, 90, 90);
+                }
+                if (y == 12 && abs(x - cx) <= 6) {
+                    color = make_color(200, 90, 90);
+                }
+            } else {
+                if ((x == cx - 2 || x == cx + 2) && y < ENEMY_TEX_H - 1) {
+                    color = make_color(180, 60, 60);
+                }
+            }
+            enemy_tex[y * ENEMY_TEX_W + x] = color;
+        }
+    }
+
+    for (int y = 0; y < WEAPON_TEX_H; y++) {
+        for (int x = 0; x < WEAPON_TEX_W; x++) {
+            uint32_t color = 0;
+            if (y > 16 && x > 2 && x < 20 && y < 30) {
+                color = make_color(150, 120, 90);
+            }
+            if (y > 10 && y < 20 && x > 22 && x < 60) {
+                color = make_color(100, 140, 170);
+            }
+            if (y > 6 && y < 12 && x > 34 && x < 62) {
+                color = make_color(140, 170, 200);
+            }
+            weapon_idle_tex[y * WEAPON_TEX_W + x] = color;
+        }
+    }
+
+    memcpy(weapon_fire_tex, weapon_idle_tex, sizeof(weapon_idle_tex));
+    for (int y = 0; y < WEAPON_TEX_H; y++) {
+        for (int x = 0; x < WEAPON_TEX_W; x++) {
+            if (x > 56 && y > 6 && y < 18) {
+                weapon_fire_tex[y * WEAPON_TEX_W + x] = make_color(255, 220, 140);
+            }
+            if (x > 58 && y > 8 && y < 16) {
+                weapon_fire_tex[y * WEAPON_TEX_W + x] = make_color(255, 240, 200);
+            }
+        }
+    }
+
+    textures_ready = 1;
+}
 
 static float clamp_angle(float angle) {
     const float two_pi = 6.28318530718f;
@@ -131,6 +236,56 @@ static int can_move_to(struct vec2 pos) {
     int cx = (int)floorf(pos.x);
     int cy = (int)floorf(pos.y);
     return !map_cell(cx, cy);
+}
+
+static void ensure_open_position(struct vec2 *pos) {
+    if (!pos) {
+        return;
+    }
+    int cx = (int)floorf(pos->x);
+    int cy = (int)floorf(pos->y);
+    if (!map_cell(cx, cy)) {
+        return;
+    }
+    for (int radius = 1; radius < 6; radius++) {
+        for (int dy = -radius; dy <= radius; dy++) {
+            for (int dx = -radius; dx <= radius; dx++) {
+                int nx = cx + dx;
+                int ny = cy + dy;
+                if (!map_cell(nx, ny)) {
+                    pos->x = (float)nx + 0.5f;
+                    pos->y = (float)ny + 0.5f;
+                    return;
+                }
+            }
+        }
+    }
+}
+
+static void draw_sprite(uint32_t *pixels, int width, int height,
+                        const uint32_t *sprite, int sw, int sh,
+                        int x, int y, int w, int h) {
+    if (!pixels || !sprite || w <= 0 || h <= 0) {
+        return;
+    }
+    for (int sy = 0; sy < h; sy++) {
+        int py = y + sy;
+        if (py < 0 || py >= height) {
+            continue;
+        }
+        int src_y = (sy * sh) / h;
+        for (int sx = 0; sx < w; sx++) {
+            int px = x + sx;
+            if (px < 0 || px >= width) {
+                continue;
+            }
+            int src_x = (sx * sw) / w;
+            uint32_t color = sprite[src_y * sw + src_x];
+            if (color != 0u) {
+                pixels[(size_t)py * (size_t)width + (size_t)px] = color;
+            }
+        }
+    }
 }
 
 static struct raycast_hit raycast(struct vec2 pos, struct vec2 dir) {
@@ -199,92 +354,25 @@ static struct raycast_hit raycast(struct vec2 pos, struct vec2 dir) {
 static void draw_weapon(uint32_t *pixels, int width, int height, int frame,
                         float muzzle_timer, int ammo) {
     int cx = width / 2;
-    int base_y = height - 24;
+    int base_y = height - WEAPON_TEX_H - 8;
     int bob = (frame / 8) % 2;
     int gun_y = base_y + bob;
+    int gun_x = cx - WEAPON_TEX_W / 2;
 
-    uint32_t outline = 0x00f4d27au;
-    uint32_t accent = 0x00b0d0ffu;
-    uint32_t flash = 0x00fff2b0u;
-
-    budo_draw_line(pixels, width, height,
-                   cx - 54, gun_y + 18,
-                   cx - 30, gun_y + 2,
-                   outline);
-    budo_draw_line(pixels, width, height,
-                   cx - 30, gun_y + 2,
-                   cx - 16, gun_y + 2,
-                   outline);
-    budo_draw_line(pixels, width, height,
-                   cx - 16, gun_y + 2,
-                   cx - 6, gun_y + 14,
-                   outline);
-    budo_draw_line(pixels, width, height,
-                   cx - 6, gun_y + 14,
-                   cx - 32, gun_y + 24,
-                   outline);
-    budo_draw_line(pixels, width, height,
-                   cx - 32, gun_y + 24,
-                   cx - 54, gun_y + 18,
-                   outline);
-
-    budo_draw_line(pixels, width, height,
-                   cx - 2, gun_y - 6,
-                   cx + 40, gun_y - 12,
-                   accent);
-    budo_draw_line(pixels, width, height,
-                   cx + 40, gun_y - 12,
-                   cx + 62, gun_y - 2,
-                   accent);
-    budo_draw_line(pixels, width, height,
-                   cx + 62, gun_y - 2,
-                   cx + 10, gun_y + 10,
-                   accent);
-    budo_draw_line(pixels, width, height,
-                   cx + 10, gun_y + 10,
-                   cx - 2, gun_y - 6,
-                   accent);
-
-    budo_draw_line(pixels, width, height,
-                   cx + 20, gun_y - 4,
-                   cx + 48, gun_y - 4,
-                   accent);
-    budo_draw_line(pixels, width, height,
-                   cx + 48, gun_y - 4,
-                   cx + 58, gun_y + 4,
-                   accent);
-    budo_draw_line(pixels, width, height,
-                   cx + 58, gun_y + 4,
-                   cx + 26, gun_y + 6,
-                   accent);
-
-    budo_draw_line(pixels, width, height,
-                   cx - 8, gun_y + 10,
-                   cx + 6, gun_y + 10,
-                   outline);
-    budo_draw_line(pixels, width, height,
-                   cx + 6, gun_y + 10,
-                   cx + 2, gun_y + 18,
-                   outline);
+    const uint32_t *sprite = muzzle_timer > 0.0f ? weapon_fire_tex : weapon_idle_tex;
+    draw_sprite(pixels, width, height, sprite, WEAPON_TEX_W, WEAPON_TEX_H,
+                gun_x, gun_y, WEAPON_TEX_W, WEAPON_TEX_H);
 
     int ammo_ticks = ammo;
     if (ammo_ticks > AMMO_CAPACITY) {
         ammo_ticks = AMMO_CAPACITY;
     }
     for (int i = 0; i < ammo_ticks; i++) {
-        int ax = cx + 12 + i * 3;
+        int ax = gun_x + 24 + i * 3;
         budo_draw_line(pixels, width, height,
-                       ax, gun_y + 12,
-                       ax, gun_y + 16,
-                       accent);
-    }
-
-    if (muzzle_timer > 0.0f) {
-        int mx = cx + 62;
-        int my = gun_y - 2;
-        budo_draw_line(pixels, width, height, mx, my, mx + 10, my, flash);
-        budo_draw_line(pixels, width, height, mx, my, mx + 6, my - 6, flash);
-        budo_draw_line(pixels, width, height, mx, my, mx + 6, my + 6, flash);
+                       ax, gun_y + 24,
+                       ax, gun_y + 28,
+                       0x00b0d0ffu);
     }
 }
 
@@ -351,6 +439,7 @@ static void spawn_enemy(struct enemy *enemy, struct vec2 spawn) {
     }
     enemy->active = 1;
     enemy->position = spawn;
+    ensure_open_position(&enemy->position);
     enemy->health = 100.0f;
     enemy->respawn_timer = 0.0f;
     enemy->attack_timer = 0.0f;
@@ -363,6 +452,7 @@ static void spawn_enemy(struct enemy *enemy, struct vec2 spawn) {
 static void reset_player(struct player_state *player) {
     player->position.x = 1.5f;
     player->position.y = 1.5f;
+    ensure_open_position(&player->position);
     player->angle = 1.57f;
     player->health = 100;
     player->ammo = AMMO_CAPACITY;
@@ -403,38 +493,6 @@ static int apply_enemy_damage(struct enemy *enemy, int damage) {
         return 1;
     }
     return 0;
-}
-
-static void draw_enemy_character(uint32_t *pixels, int width, int height,
-                                 int x, int y0, int y1, uint32_t color) {
-    int h = y1 - y0;
-    if (h < 6) {
-        budo_draw_line(pixels, width, height, x, y0, x, y1, color);
-        return;
-    }
-
-    int head_h = h / 4;
-    int head_w = head_h / 2 + 2;
-    int head_y0 = y0;
-    int head_y1 = y0 + head_h;
-    int head_x0 = x - head_w;
-    int head_x1 = x + head_w;
-
-    budo_draw_line(pixels, width, height, head_x0, head_y0, head_x1, head_y0, color);
-    budo_draw_line(pixels, width, height, head_x1, head_y0, head_x1, head_y1, color);
-    budo_draw_line(pixels, width, height, head_x1, head_y1, head_x0, head_y1, color);
-    budo_draw_line(pixels, width, height, head_x0, head_y1, head_x0, head_y0, color);
-
-    int body_y0 = head_y1;
-    int body_y1 = y1 - head_h / 2;
-    budo_draw_line(pixels, width, height, x, body_y0, x, body_y1, color);
-
-    int arm_y = body_y0 + head_h / 2;
-    budo_draw_line(pixels, width, height, x, arm_y, x - head_w - 2, arm_y + 2, color);
-    budo_draw_line(pixels, width, height, x, arm_y, x + head_w + 2, arm_y + 2, color);
-
-    budo_draw_line(pixels, width, height, x, body_y1, x - head_w, y1, color);
-    budo_draw_line(pixels, width, height, x, body_y1, x + head_w, y1, color);
 }
 
 static float angle_diff(float a, float b) {
@@ -569,6 +627,7 @@ int main(int argc, char **argv) {
     }
 
     srand((unsigned int)SDL_GetTicks());
+    build_textures();
 
     struct player_state player;
     reset_player(&player);
@@ -767,6 +826,23 @@ int main(int argc, char **argv) {
         }
 
         budo_clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00060a0fu);
+        int horizon = GAME_HEIGHT / 2;
+        for (int y = 0; y < horizon; y++) {
+            int ty = (y / 4) % CEIL_TEX_SIZE;
+            for (int x = 0; x < GAME_WIDTH; x++) {
+                int tx = (x / 4) % CEIL_TEX_SIZE;
+                pixels[(size_t)y * (size_t)GAME_WIDTH + (size_t)x] =
+                    ceil_tex[ty * CEIL_TEX_SIZE + tx];
+            }
+        }
+        for (int y = horizon; y < GAME_HEIGHT; y++) {
+            int ty = ((y - horizon) / 4) % FLOOR_TEX_SIZE;
+            for (int x = 0; x < GAME_WIDTH; x++) {
+                int tx = (x / 4) % FLOOR_TEX_SIZE;
+                pixels[(size_t)y * (size_t)GAME_WIDTH + (size_t)x] =
+                    floor_tex[ty * FLOOR_TEX_SIZE + tx];
+            }
+        }
 
         float proj_plane = ((float)GAME_WIDTH * 0.5f) / tanf(FOV_RADIANS * 0.5f);
         int step = VIEW_SAMPLE_STEP;
@@ -797,6 +873,19 @@ int main(int argc, char **argv) {
             }
             if (y1 >= GAME_HEIGHT) {
                 y1 = GAME_HEIGHT - 1;
+            }
+            float hit_x = player.position.x + ray_dir.x * hit.distance;
+            float hit_y = player.position.y + ray_dir.y * hit.distance;
+            float tex_u = hit.side ? (hit_x - floorf(hit_x)) : (hit_y - floorf(hit_y));
+            if (tex_u < 0.0f) {
+                tex_u += 1.0f;
+            }
+            int tex_x = (int)(tex_u * (float)WALL_TEX_SIZE) % WALL_TEX_SIZE;
+            int line_h = y1 - y0 + 1;
+            for (int y = y0; y <= y1; y++) {
+                int tex_y = ((y - y0) * WALL_TEX_SIZE) / line_h;
+                uint32_t tex_color = wall_tex[tex_y * WALL_TEX_SIZE + tex_x];
+                pixels[(size_t)y * (size_t)GAME_WIDTH + (size_t)x] = tex_color;
             }
             uint32_t color = hit.side ? 0x00b0d0ffu : 0x00d0f0ffu;
             if (prev_x >= 0) {
@@ -840,7 +929,11 @@ int main(int argc, char **argv) {
             if (y1 >= GAME_HEIGHT) {
                 y1 = GAME_HEIGHT - 1;
             }
-            draw_enemy_character(pixels, GAME_WIDTH, GAME_HEIGHT, x, y0, y1, 0x00ff7070u);
+            int sprite_h = y1 - y0 + 1;
+            int sprite_w = (sprite_h * ENEMY_TEX_W) / ENEMY_TEX_H;
+            draw_sprite(pixels, GAME_WIDTH, GAME_HEIGHT,
+                        enemy_tex, ENEMY_TEX_W, ENEMY_TEX_H,
+                        x - sprite_w / 2, y0, sprite_w, sprite_h);
         }
 
         budo_draw_line(pixels, GAME_WIDTH, GAME_HEIGHT,

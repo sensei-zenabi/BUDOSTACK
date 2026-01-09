@@ -9,7 +9,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <stdarg.h>
 
 #if defined(__GNUC__)
@@ -30,49 +29,7 @@ typedef struct {
     uint8_t a;
 } Pixel;
 
-typedef struct {
-    uint8_t r;
-    uint8_t g;
-    uint8_t b;
-    char letter;
-    int term256;
-} Color;
-
-#define PALETTE_VARIANTS 5
-#define PALETTE_COLORS 26
-#define TOTAL_COLORS (PALETTE_VARIANTS * PALETTE_COLORS)
-
-static const Color base_palette[PALETTE_COLORS] = {
-    {  0,  0,  0,'A', 16},
-    {255,255,255,'B',231},
-    {128,128,128,'C',244},
-    {255,  0,  0,'D',196},
-    {  0,255,  0,'E', 46},
-    {  0,  0,255,'F', 21},
-    {  0,255,255,'G', 51},
-    {255,  0,255,'H',201},
-    {255,255,  0,'I',226},
-    {255,165,  0,'J',214},
-    {165, 42, 42,'K', 94},
-    {128,  0,128,'L',129},
-    {255,192,203,'M',218},
-    {135,206,235,'N',117},
-    {144,238,144,'O',120},
-    {139,  0,  0,'P', 88},
-    {  0,100,  0,'Q', 22},
-    {  0,  0,139,'R', 19},
-    {  0,128,128,'S', 30},
-    {128,128,  0,'T', 58},
-    {  0,  0, 75,'U', 17},
-    {210,105, 30,'V',166},
-    {173,216,230,'W',153},
-    { 75,  0,130,'X', 55},
-    { 47, 79, 79,'Y', 23},
-    {112,128,144,'Z',102}
-};
-
-static Color palettes[PALETTE_VARIANTS][PALETTE_COLORS];
-static int palettes_initialized = 0;
+typedef void (*RenderPixelsFn)(const Pixel *pixels, int width, int height, int origin_x, int origin_y);
 
 static char g_last_error[256];
 
@@ -114,126 +71,79 @@ static int has_extension(const char *path, const char *ext) {
     return 1;
 }
 
-static uint8_t clamp_u8(int v) {
-    if (v < 0) {
+static void output_truecolor_bg(uint8_t r, uint8_t g, uint8_t b) {
+    char seq[32];
+    int len = snprintf(seq, sizeof(seq), "\x1b[48;2;%u;%u;%um",
+                       (unsigned int)r, (unsigned int)g, (unsigned int)b);
+    if (len > 0) {
+        fwrite(seq, 1, (size_t)len, stdout);
+    }
+}
+
+static int ansi256_to_rgb(int color, uint8_t *r_out, uint8_t *g_out, uint8_t *b_out) {
+    if (color < 0 || color > 255) {
         return 0;
     }
-    if (v > 255) {
-        return 255;
+
+    static const uint8_t ansi16[16][3] = {
+        {  0,   0,   0}, {128,   0,   0}, {  0, 128,   0}, {128, 128,   0},
+        {  0,   0, 128}, {128,   0, 128}, {  0, 128, 128}, {192, 192, 192},
+        {128, 128, 128}, {255,   0,   0}, {  0, 255,   0}, {255, 255,   0},
+        {  0,   0, 255}, {255,   0, 255}, {  0, 255, 255}, {255, 255, 255}
+    };
+
+    if (color < 16) {
+        if (r_out)
+            *r_out = ansi16[color][0];
+        if (g_out)
+            *g_out = ansi16[color][1];
+        if (b_out)
+            *b_out = ansi16[color][2];
+        return 1;
     }
-    return (uint8_t)v;
+
+    if (color <= 231) {
+        int idx = color - 16;
+        int r = idx / 36;
+        int g = (idx / 6) % 6;
+        int b = idx % 6;
+        static const uint8_t steps[6] = {0, 95, 135, 175, 215, 255};
+        if (r_out)
+            *r_out = steps[r];
+        if (g_out)
+            *g_out = steps[g];
+        if (b_out)
+            *b_out = steps[b];
+        return 1;
+    }
+
+    int gray = (color - 232) * 10 + 8;
+    if (gray < 0)
+        gray = 0;
+    if (gray > 255)
+        gray = 255;
+    if (r_out)
+        *r_out = (uint8_t)gray;
+    if (g_out)
+        *g_out = (uint8_t)gray;
+    if (b_out)
+        *b_out = (uint8_t)gray;
+    return 1;
 }
 
-static int component_to_level(uint8_t v) {
-    int level = (v * 5 + 127) / 255;
-    if (level < 0) {
-        level = 0;
-    }
-    if (level > 5) {
-        level = 5;
-    }
-    return level;
-}
-
-static int rgb_to_ansi256(uint8_t r, uint8_t g, uint8_t b) {
-    if (r == g && g == b) {
-        if (r < 8) {
-            return 16;
-        }
-        if (r > 248) {
-            return 231;
-        }
-        int gray = (r - 8) / 10;
-        if (gray > 23) {
-            gray = 23;
-        }
-        if (gray < 0) {
-            gray = 0;
-        }
-        return 232 + gray;
-    }
-    int ri = component_to_level(r);
-    int gi = component_to_level(g);
-    int bi = component_to_level(b);
-    return 16 + 36 * ri + 6 * gi + bi;
-}
-
-static uint8_t apply_brightness(uint8_t value, float factor) {
-    int adjusted = (int)(value * factor + 0.5f);
-    return clamp_u8(adjusted);
-}
-
-static void init_palettes(void) {
-    if (palettes_initialized) {
-        return;
-    }
-    const float factors[PALETTE_VARIANTS] = {0.6f, 0.8f, 1.0f, 1.2f, 1.4f};
-    for (int variant = 0; variant < PALETTE_VARIANTS; ++variant) {
-        for (int i = 0; i < PALETTE_COLORS; ++i) {
-            Color c = base_palette[i];
-            if (variant != 2) {
-                c.r = apply_brightness(base_palette[i].r, factors[variant]);
-                c.g = apply_brightness(base_palette[i].g, factors[variant]);
-                c.b = apply_brightness(base_palette[i].b, factors[variant]);
-                c.term256 = rgb_to_ansi256(c.r, c.g, c.b);
-            }
-            palettes[variant][i] = c;
-        }
-    }
-    palettes_initialized = 1;
-}
-
-static const Color *color_from_variant(int variant, int index) {
-    init_palettes();
-    if (variant < 0 || variant >= PALETTE_VARIANTS) {
-        return NULL;
-    }
-    if (index < 0 || index >= PALETTE_COLORS) {
-        return NULL;
-    }
-    return &palettes[variant][index];
-}
-
-static const Color *color_from_index(int idx) {
-    init_palettes();
-    if (idx < 0 || idx >= TOTAL_COLORS) {
-        return NULL;
-    }
-    int variant = idx / PALETTE_COLORS;
-    int color_index = idx % PALETTE_COLORS;
-    return color_from_variant(variant, color_index);
-}
-
-static int best_palette_match(uint8_t r, uint8_t g, uint8_t b) {
-    init_palettes();
-    int best_index = -1;
-    int best_distance = INT_MAX;
-    for (int i = 0; i < TOTAL_COLORS; ++i) {
-        const Color *c = color_from_index(i);
-        if (c == NULL) {
-            continue;
-        }
-        int dr = (int)r - (int)c->r;
-        int dg = (int)g - (int)c->g;
-        int db = (int)b - (int)c->b;
-        int distance = dr * dr + dg * dg + db * db;
-        if (distance < best_distance) {
-            best_distance = distance;
-            best_index = i;
-            if (distance == 0) {
-                break;
-            }
-        }
-    }
-    return best_index;
+static void blend_over(uint8_t *r, uint8_t *g, uint8_t *b,
+                       uint8_t a, uint8_t bg_r, uint8_t bg_g, uint8_t bg_b) {
+    uint32_t alpha = a;
+    uint32_t inv = 255U - alpha;
+    *r = (uint8_t)((((uint32_t)(*r) * alpha) + ((uint32_t)bg_r * inv) + 127U) / 255U);
+    *g = (uint8_t)((((uint32_t)(*g) * alpha) + ((uint32_t)bg_g * inv) + 127U) / 255U);
+    *b = (uint8_t)((((uint32_t)(*b) * alpha) + ((uint32_t)bg_b * inv) + 127U) / 255U);
 }
 
 static void render_pixels_at(const Pixel *pixels, int width, int height, int origin_x, int origin_y) {
     if (pixels == NULL || width <= 0 || height <= 0) {
         return;
     }
-
-    init_palettes();
 
     if (origin_x < 0 || origin_y < 0) {
         return;
@@ -256,21 +166,19 @@ static void render_pixels_at(const Pixel *pixels, int width, int height, int ori
 
         for (int x = 0; x < width; ++x) {
             const Pixel *p = &pixels[(size_t)y * (size_t)width + (size_t)x];
-            if (p->a < 16) {
-                int bg_color = -1;
+            int bg_color = -1;
+            if (p->a < 16U) {
                 if (termbg_get(origin_x + x, origin_y + y, &bg_color) != 0 && bg_color >= 0) {
                     if (termbg_is_truecolor(bg_color)) {
                         int r, g, b;
                         termbg_decode_truecolor(bg_color, &r, &g, &b);
-                        char seq[32];
-                        int len = snprintf(seq, sizeof(seq), "\x1b[48;2;%d;%d;%dm", r, g, b);
-                        if (len > 0)
-                            fwrite(seq, 1, (size_t)len, stdout);
+                        output_truecolor_bg((uint8_t)r, (uint8_t)g, (uint8_t)b);
                     } else {
-                        char seq[32];
-                        int len = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", bg_color);
-                        if (len > 0)
-                            fwrite(seq, 1, (size_t)len, stdout);
+                        uint8_t bg_r = 0;
+                        uint8_t bg_g = 0;
+                        uint8_t bg_b = 0;
+                        ansi256_to_rgb(bg_color, &bg_r, &bg_g, &bg_b);
+                        output_truecolor_bg(bg_r, bg_g, bg_b);
                     }
                     fputs("\x1b[39m ", stdout);
                     fputs("\x1b[49m", stdout);
@@ -279,24 +187,121 @@ static void render_pixels_at(const Pixel *pixels, int width, int height, int ori
                 }
                 continue;
             }
-            int palette_index = best_palette_match(p->r, p->g, p->b);
-            const Color *color = color_from_index(palette_index);
-            if (color != NULL) {
-                char seq[32];
-                int len = snprintf(seq, sizeof(seq), "\x1b[48;5;%dm", color->term256);
-                if (len > 0) {
-                    fwrite(seq, 1, (size_t)len, stdout);
+
+            uint8_t out_r = p->r;
+            uint8_t out_g = p->g;
+            uint8_t out_b = p->b;
+            if (p->a < 255U) {
+                if (termbg_get(origin_x + x, origin_y + y, &bg_color) != 0 && bg_color >= 0) {
+                    uint8_t bg_r = 0;
+                    uint8_t bg_g = 0;
+                    uint8_t bg_b = 0;
+                    if (termbg_is_truecolor(bg_color)) {
+                        int r, g, b;
+                        termbg_decode_truecolor(bg_color, &r, &g, &b);
+                        bg_r = (uint8_t)r;
+                        bg_g = (uint8_t)g;
+                        bg_b = (uint8_t)b;
+                    } else {
+                        ansi256_to_rgb(bg_color, &bg_r, &bg_g, &bg_b);
+                    }
+                    blend_over(&out_r, &out_g, &out_b, p->a, bg_r, bg_g, bg_b);
+                } else {
+                    blend_over(&out_r, &out_g, &out_b, p->a, 0, 0, 0);
                 }
-                fputs("\x1b[39m", stdout);
-                fputc(' ', stdout);
-                fputs("\x1b[49m", stdout);
-                termbg_set(origin_x + x, origin_y + y, color->term256);
-            } else {
-                fputs("\x1b[49m\x1b[39m.", stdout);
-                termbg_set(origin_x + x, origin_y + y, -1);
             }
+
+            output_truecolor_bg(out_r, out_g, out_b);
+            fputs("\x1b[39m", stdout);
+            fputc(' ', stdout);
+            fputs("\x1b[49m", stdout);
+            termbg_set(origin_x + x, origin_y + y,
+                       termbg_encode_truecolor(out_r, out_g, out_b));
         }
         fputs("\x1b[49m\x1b[39m", stdout);
+    }
+    fputs("\x1b[49m\x1b[39m", stdout);
+    fflush(stdout);
+}
+
+static void render_pixels_streamed(const Pixel *pixels, int width, int height, int origin_x, int origin_y) {
+    if (pixels == NULL || width <= 0 || height <= 0) {
+        return;
+    }
+
+    if (origin_x < 0 || origin_y < 0) {
+        return;
+    }
+
+    for (int y = 0; y < height; ++y) {
+        fputc('\r', stdout);
+        if (origin_x > 0) {
+            char move_seq[32];
+            int move_len = snprintf(move_seq, sizeof(move_seq), "\x1b[%dC", origin_x);
+            if (move_len > 0) {
+                fwrite(move_seq, 1, (size_t)move_len, stdout);
+            }
+        }
+
+        for (int x = 0; x < width; ++x) {
+            const Pixel *p = &pixels[(size_t)y * (size_t)width + (size_t)x];
+            int bg_color = -1;
+            int abs_x = origin_x + x;
+            int abs_y = origin_y + y;
+            if (p->a < 16U) {
+                if (termbg_get(abs_x, abs_y, &bg_color) != 0 && bg_color >= 0) {
+                    if (termbg_is_truecolor(bg_color)) {
+                        int r, g, b;
+                        termbg_decode_truecolor(bg_color, &r, &g, &b);
+                        output_truecolor_bg((uint8_t)r, (uint8_t)g, (uint8_t)b);
+                    } else {
+                        uint8_t bg_r = 0;
+                        uint8_t bg_g = 0;
+                        uint8_t bg_b = 0;
+                        ansi256_to_rgb(bg_color, &bg_r, &bg_g, &bg_b);
+                        output_truecolor_bg(bg_r, bg_g, bg_b);
+                    }
+                    fputs("\x1b[39m ", stdout);
+                    fputs("\x1b[49m", stdout);
+                } else {
+                    fputs("\x1b[49m\x1b[39m ", stdout);
+                }
+                continue;
+            }
+
+            uint8_t out_r = p->r;
+            uint8_t out_g = p->g;
+            uint8_t out_b = p->b;
+            if (p->a < 255U) {
+                if (termbg_get(abs_x, abs_y, &bg_color) != 0 && bg_color >= 0) {
+                    uint8_t bg_r = 0;
+                    uint8_t bg_g = 0;
+                    uint8_t bg_b = 0;
+                    if (termbg_is_truecolor(bg_color)) {
+                        int r, g, b;
+                        termbg_decode_truecolor(bg_color, &r, &g, &b);
+                        bg_r = (uint8_t)r;
+                        bg_g = (uint8_t)g;
+                        bg_b = (uint8_t)b;
+                    } else {
+                        ansi256_to_rgb(bg_color, &bg_r, &bg_g, &bg_b);
+                    }
+                    blend_over(&out_r, &out_g, &out_b, p->a, bg_r, bg_g, bg_b);
+                } else {
+                    blend_over(&out_r, &out_g, &out_b, p->a, 0, 0, 0);
+                }
+            }
+
+            output_truecolor_bg(out_r, out_g, out_b);
+            fputs("\x1b[39m", stdout);
+            fputc(' ', stdout);
+            fputs("\x1b[49m", stdout);
+            termbg_set(abs_x, abs_y, termbg_encode_truecolor(out_r, out_g, out_b));
+        }
+        fputs("\x1b[49m\x1b[39m", stdout);
+        if (y + 1 < height) {
+            fputc('\n', stdout);
+        }
     }
     fputs("\x1b[49m\x1b[39m", stdout);
     fflush(stdout);
@@ -326,7 +331,7 @@ typedef struct {
 } BMPINFOHEADER;
 #pragma pack(pop)
 
-static LibImageResult render_bmp(const char *path, int origin_x, int origin_y) {
+static LibImageResult render_bmp(const char *path, int origin_x, int origin_y, RenderPixelsFn render_pixels) {
     FILE *fp = fopen(path, "rb");
     if (fp == NULL) {
         set_error("Unable to open '%s': %s", path, strerror(errno));
@@ -432,7 +437,9 @@ static LibImageResult render_bmp(const char *path, int origin_x, int origin_y) {
 
     fclose(fp);
 
-    render_pixels_at(pixels, width, height, origin_x, origin_y);
+    if (render_pixels != NULL) {
+        render_pixels(pixels, width, height, origin_x, origin_y);
+    }
     free(pixels);
     set_error(NULL);
     return LIBIMAGE_SUCCESS;
@@ -482,7 +489,7 @@ static int read_ppm_token(FILE *fp, char *buffer, size_t buffer_size) {
     return len > 0 ? 1 : 0;
 }
 
-static LibImageResult render_ppm(const char *path, int origin_x, int origin_y) {
+static LibImageResult render_ppm(const char *path, int origin_x, int origin_y, RenderPixelsFn render_pixels) {
     FILE *fp = fopen(path, "rb");
     if (fp == NULL) {
         set_error("Unable to open '%s': %s", path, strerror(errno));
@@ -600,13 +607,86 @@ static LibImageResult render_ppm(const char *path, int origin_x, int origin_y) {
         }
     }
 
-    render_pixels_at(pixels, width, height, origin_x, origin_y);
+    if (render_pixels != NULL) {
+        render_pixels(pixels, width, height, origin_x, origin_y);
+    }
     free(pixels);
     set_error(NULL);
     return LIBIMAGE_SUCCESS;
 }
 
-static LibImageResult render_png(const char *path, int origin_x, int origin_y) {
+static LibImageResult render_stbi_image(const char *path, const char *label, int origin_x, int origin_y,
+                                        RenderPixelsFn render_pixels) {
+    int width = 0;
+    int height = 0;
+    stbi_uc *raw = stbi_load(path, &width, &height, NULL, 4);
+    if (raw == NULL) {
+        const char *reason = stbi_failure_reason();
+        if (reason != NULL && reason[0] != '\0') {
+            set_error("Failed to decode %s '%s': %s", label, path, reason);
+        } else {
+            set_error("Failed to decode %s '%s'", label, path);
+        }
+        return LIBIMAGE_DATA_ERROR;
+    }
+
+    if (width <= 0 || height <= 0) {
+        stbi_image_free(raw);
+        set_error("Invalid %s dimensions in '%s'", label, path);
+        return LIBIMAGE_DATA_ERROR;
+    }
+
+    if (origin_x > INT_MAX - width || origin_y > INT_MAX - height) {
+        stbi_image_free(raw);
+        set_error("Image dimensions exceed terminal limits");
+        return LIBIMAGE_INVALID_ARGUMENT;
+    }
+
+    size_t width_sz = (size_t)width;
+    size_t height_sz = (size_t)height;
+    if (width_sz != 0 && height_sz > SIZE_MAX / width_sz) {
+        stbi_image_free(raw);
+        set_error("%s dimensions overflow in '%s'", label, path);
+        return LIBIMAGE_DATA_ERROR;
+    }
+
+    size_t pixel_count = width_sz * height_sz;
+    if (pixel_count > SIZE_MAX / sizeof(Pixel)) {
+        stbi_image_free(raw);
+        set_error("%s image too large in '%s'", label, path);
+        return LIBIMAGE_OUT_OF_MEMORY;
+    }
+
+    Pixel *pixels = malloc(pixel_count * sizeof(*pixels));
+    if (pixels == NULL) {
+        stbi_image_free(raw);
+        set_error("Failed to allocate memory for %s '%s'", label, path);
+        return LIBIMAGE_OUT_OF_MEMORY;
+    }
+
+    for (size_t i = 0; i < pixel_count; ++i) {
+        size_t idx = i * 4U;
+        uint8_t r = raw[idx + 0];
+        uint8_t g = raw[idx + 1];
+        uint8_t b = raw[idx + 2];
+        uint8_t a = raw[idx + 3];
+        pixels[i].r = r;
+        pixels[i].g = g;
+        pixels[i].b = b;
+        pixels[i].a = a;
+    }
+
+    stbi_image_free(raw);
+
+    if (render_pixels != NULL) {
+        render_pixels(pixels, width, height, origin_x, origin_y);
+    }
+    free(pixels);
+    set_error(NULL);
+    return LIBIMAGE_SUCCESS;
+}
+
+static LibImageResult render_png(const char *path, int origin_x, int origin_y, RenderPixelsFn render_pixels) {
     if (!has_extension(path, ".png")) {
         return LIBIMAGE_UNSUPPORTED_FORMAT;
     }
@@ -638,76 +718,15 @@ static LibImageResult render_png(const char *path, int origin_x, int origin_y) {
         return LIBIMAGE_UNSUPPORTED_FORMAT;
     }
 
-    int width = 0;
-    int height = 0;
-    stbi_uc *raw = stbi_load(path, &width, &height, NULL, 4);
-    if (raw == NULL) {
-        const char *reason = stbi_failure_reason();
-        if (reason != NULL && reason[0] != '\0') {
-            set_error("Failed to decode PNG '%s': %s", path, reason);
-        } else {
-            set_error("Failed to decode PNG '%s'", path);
-        }
-        return LIBIMAGE_DATA_ERROR;
+    return render_stbi_image(path, "PNG", origin_x, origin_y, render_pixels);
+}
+
+static LibImageResult render_jpeg(const char *path, int origin_x, int origin_y, RenderPixelsFn render_pixels) {
+    if (!has_extension(path, ".jpg") && !has_extension(path, ".jpeg")) {
+        return LIBIMAGE_UNSUPPORTED_FORMAT;
     }
 
-    if (width <= 0 || height <= 0) {
-        stbi_image_free(raw);
-        set_error("Invalid PNG dimensions in '%s'", path);
-        return LIBIMAGE_DATA_ERROR;
-    }
-
-    if (origin_x > INT_MAX - width || origin_y > INT_MAX - height) {
-        stbi_image_free(raw);
-        set_error("Image dimensions exceed terminal limits");
-        return LIBIMAGE_INVALID_ARGUMENT;
-    }
-
-    size_t width_sz = (size_t)width;
-    size_t height_sz = (size_t)height;
-    if (width_sz != 0 && height_sz > SIZE_MAX / width_sz) {
-        stbi_image_free(raw);
-        set_error("PNG dimensions overflow in '%s'", path);
-        return LIBIMAGE_DATA_ERROR;
-    }
-
-    size_t pixel_count = width_sz * height_sz;
-    if (pixel_count > SIZE_MAX / sizeof(Pixel)) {
-        stbi_image_free(raw);
-        set_error("PNG image too large in '%s'", path);
-        return LIBIMAGE_OUT_OF_MEMORY;
-    }
-
-    Pixel *pixels = malloc(pixel_count * sizeof(*pixels));
-    if (pixels == NULL) {
-        stbi_image_free(raw);
-        set_error("Failed to allocate memory for PNG '%s'", path);
-        return LIBIMAGE_OUT_OF_MEMORY;
-    }
-
-    for (size_t i = 0; i < pixel_count; ++i) {
-        size_t idx = i * 4U;
-        uint8_t r = raw[idx + 0];
-        uint8_t g = raw[idx + 1];
-        uint8_t b = raw[idx + 2];
-        uint8_t a = raw[idx + 3];
-        if (a < 255U) {
-            r = (uint8_t)((((uint32_t)r) * (uint32_t)a + 127U) / 255U);
-            g = (uint8_t)((((uint32_t)g) * (uint32_t)a + 127U) / 255U);
-            b = (uint8_t)((((uint32_t)b) * (uint32_t)a + 127U) / 255U);
-        }
-        pixels[i].r = r;
-        pixels[i].g = g;
-        pixels[i].b = b;
-        pixels[i].a = a;
-    }
-
-    stbi_image_free(raw);
-
-    render_pixels_at(pixels, width, height, origin_x, origin_y);
-    free(pixels);
-    set_error(NULL);
-    return LIBIMAGE_SUCCESS;
+    return render_stbi_image(path, "JPEG", origin_x, origin_y, render_pixels);
 }
 
 LibImageResult libimage_render_file_at(const char *path, int origin_x, int origin_y) {
@@ -720,7 +739,7 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return LIBIMAGE_INVALID_ARGUMENT;
     }
 
-    LibImageResult result = render_png(path, origin_x, origin_y);
+    LibImageResult result = render_png(path, origin_x, origin_y, render_pixels_at);
     if (result == LIBIMAGE_SUCCESS) {
         return LIBIMAGE_SUCCESS;
     }
@@ -728,7 +747,7 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return result;
     }
 
-    result = render_bmp(path, origin_x, origin_y);
+    result = render_bmp(path, origin_x, origin_y, render_pixels_at);
     if (result == LIBIMAGE_SUCCESS) {
         return LIBIMAGE_SUCCESS;
     }
@@ -736,7 +755,7 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return result;
     }
 
-    result = render_ppm(path, origin_x, origin_y);
+    result = render_jpeg(path, origin_x, origin_y, render_pixels_at);
     if (result == LIBIMAGE_SUCCESS) {
         return LIBIMAGE_SUCCESS;
     }
@@ -744,6 +763,60 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return result;
     }
 
-    set_error("File '%s' is not a supported PNG, BMP, or PPM image", path);
+    result = render_ppm(path, origin_x, origin_y, render_pixels_at);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    set_error("File '%s' is not a supported PNG, BMP, JPEG, or PPM image", path);
+    return LIBIMAGE_UNSUPPORTED_FORMAT;
+}
+
+LibImageResult libimage_render_file_streamed_at(const char *path, int origin_x, int origin_y) {
+    if (path == NULL) {
+        set_error("Image path is NULL");
+        return LIBIMAGE_INVALID_ARGUMENT;
+    }
+    if (origin_x < 0 || origin_y < 0) {
+        set_error("Image coordinates must be non-negative");
+        return LIBIMAGE_INVALID_ARGUMENT;
+    }
+
+    LibImageResult result = render_png(path, origin_x, origin_y, render_pixels_streamed);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    result = render_bmp(path, origin_x, origin_y, render_pixels_streamed);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    result = render_jpeg(path, origin_x, origin_y, render_pixels_streamed);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    result = render_ppm(path, origin_x, origin_y, render_pixels_streamed);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    set_error("File '%s' is not a supported PNG, BMP, JPEG, or PPM image", path);
     return LIBIMAGE_UNSUPPORTED_FORMAT;
 }

@@ -1,6 +1,7 @@
 #include "budo_graphics.h"
 #include "budo_shader_stack.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -101,6 +102,107 @@ static uint32_t make_color(uint8_t r, uint8_t g, uint8_t b) {
     return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
 }
 
+static int read_ppm_token(FILE *fp, char *buffer, size_t buffer_size) {
+    int c = 0;
+    size_t idx = 0;
+
+    if (!fp || !buffer || buffer_size == 0) {
+        return 0;
+    }
+
+    do {
+        c = fgetc(fp);
+        if (c == '#') {
+            while (c != '\n' && c != EOF) {
+                c = fgetc(fp);
+            }
+        }
+    } while (c != EOF && isspace(c));
+
+    if (c == EOF) {
+        return 0;
+    }
+
+    buffer[idx++] = (char)c;
+    while (idx + 1 < buffer_size) {
+        c = fgetc(fp);
+        if (c == EOF || isspace(c)) {
+            break;
+        }
+        buffer[idx++] = (char)c;
+    }
+    buffer[idx] = '\0';
+    return 1;
+}
+
+static int load_ppm_sprite(const char *path, int expected_w, int expected_h,
+                           uint32_t *dest, int allow_transparent) {
+    FILE *fp = NULL;
+    char token[64];
+    int width = 0;
+    int height = 0;
+    int maxval = 0;
+
+    if (!path || !dest) {
+        return 0;
+    }
+
+    fp = fopen(path, "rb");
+    if (!fp) {
+        return 0;
+    }
+
+    if (!read_ppm_token(fp, token, sizeof(token)) || strcmp(token, "P6") != 0) {
+        fclose(fp);
+        return 0;
+    }
+    if (!read_ppm_token(fp, token, sizeof(token))) {
+        fclose(fp);
+        return 0;
+    }
+    width = atoi(token);
+    if (!read_ppm_token(fp, token, sizeof(token))) {
+        fclose(fp);
+        return 0;
+    }
+    height = atoi(token);
+    if (!read_ppm_token(fp, token, sizeof(token))) {
+        fclose(fp);
+        return 0;
+    }
+    maxval = atoi(token);
+    if (width != expected_w || height != expected_h || maxval != 255) {
+        fclose(fp);
+        return 0;
+    }
+
+    size_t pixels = (size_t)width * (size_t)height;
+    for (size_t i = 0; i < pixels; i++) {
+        unsigned char rgb[3];
+        if (fread(rgb, 1, sizeof(rgb), fp) != sizeof(rgb)) {
+            fclose(fp);
+            return 0;
+        }
+        uint32_t color = make_color(rgb[0], rgb[1], rgb[2]);
+        if (allow_transparent && rgb[0] == 0 && rgb[1] == 0 && rgb[2] == 0) {
+            color = 0;
+        }
+        dest[i] = color;
+    }
+
+    fclose(fp);
+    return 1;
+}
+
+static void try_load_sprites(void) {
+    load_ppm_sprite("budo/shooter/wall.ppm", WALL_TEX_SIZE, WALL_TEX_SIZE, wall_tex, 0);
+    load_ppm_sprite("budo/shooter/floor.ppm", FLOOR_TEX_SIZE, FLOOR_TEX_SIZE, floor_tex, 0);
+    load_ppm_sprite("budo/shooter/ceiling.ppm", CEIL_TEX_SIZE, CEIL_TEX_SIZE, ceil_tex, 0);
+    load_ppm_sprite("budo/shooter/enemy.ppm", ENEMY_TEX_W, ENEMY_TEX_H, enemy_tex, 1);
+    load_ppm_sprite("budo/shooter/weapon_idle.ppm", WEAPON_TEX_W, WEAPON_TEX_H, weapon_idle_tex, 1);
+    load_ppm_sprite("budo/shooter/weapon_fire.ppm", WEAPON_TEX_W, WEAPON_TEX_H, weapon_fire_tex, 1);
+}
+
 static void build_textures(void) {
     if (textures_ready) {
         return;
@@ -182,6 +284,8 @@ static void build_textures(void) {
             }
         }
     }
+
+    try_load_sprites();
 
     textures_ready = 1;
 }
@@ -881,9 +985,9 @@ int main(int argc, char **argv) {
                 tex_u += 1.0f;
             }
             int tex_x = (int)(tex_u * (float)WALL_TEX_SIZE) % WALL_TEX_SIZE;
-            int line_h = y1 - y0 + 1;
+            int tex_h = y1 - y0 + 1;
             for (int y = y0; y <= y1; y++) {
-                int tex_y = ((y - y0) * WALL_TEX_SIZE) / line_h;
+                int tex_y = ((y - y0) * WALL_TEX_SIZE) / tex_h;
                 uint32_t tex_color = wall_tex[tex_y * WALL_TEX_SIZE + tex_x];
                 pixels[(size_t)y * (size_t)GAME_WIDTH + (size_t)x] = tex_color;
             }

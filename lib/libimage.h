@@ -11,6 +11,7 @@ typedef enum {
 } LibImageResult;
 
 LibImageResult libimage_render_file_at(const char *path, int origin_x, int origin_y);
+LibImageResult libimage_render_file_streamed_at(const char *path, int origin_x, int origin_y);
 const char *libimage_last_error(void);
 
 #endif /* LIBIMAGE_H */

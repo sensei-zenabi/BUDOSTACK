@@ -29,6 +29,8 @@ typedef struct {
     uint8_t a;
 } Pixel;
 
+typedef void (*RenderPixelsFn)(const Pixel *pixels, int width, int height, int origin_x, int origin_y);
+
 static char g_last_error[256];
 
 static void set_error(const char *fmt, ...) {
@@ -222,6 +224,89 @@ static void render_pixels_at(const Pixel *pixels, int width, int height, int ori
     fflush(stdout);
 }
 
+static void render_pixels_streamed(const Pixel *pixels, int width, int height, int origin_x, int origin_y) {
+    if (pixels == NULL || width <= 0 || height <= 0) {
+        return;
+    }
+
+    if (origin_x < 0 || origin_y < 0) {
+        return;
+    }
+
+    for (int y = 0; y < height; ++y) {
+        fputc('\r', stdout);
+        if (origin_x > 0) {
+            char move_seq[32];
+            int move_len = snprintf(move_seq, sizeof(move_seq), "\x1b[%dC", origin_x);
+            if (move_len > 0) {
+                fwrite(move_seq, 1, (size_t)move_len, stdout);
+            }
+        }
+
+        for (int x = 0; x < width; ++x) {
+            const Pixel *p = &pixels[(size_t)y * (size_t)width + (size_t)x];
+            int bg_color = -1;
+            int abs_x = origin_x + x;
+            int abs_y = origin_y + y;
+            if (p->a < 16U) {
+                if (termbg_get(abs_x, abs_y, &bg_color) != 0 && bg_color >= 0) {
+                    if (termbg_is_truecolor(bg_color)) {
+                        int r, g, b;
+                        termbg_decode_truecolor(bg_color, &r, &g, &b);
+                        output_truecolor_bg((uint8_t)r, (uint8_t)g, (uint8_t)b);
+                    } else {
+                        uint8_t bg_r = 0;
+                        uint8_t bg_g = 0;
+                        uint8_t bg_b = 0;
+                        ansi256_to_rgb(bg_color, &bg_r, &bg_g, &bg_b);
+                        output_truecolor_bg(bg_r, bg_g, bg_b);
+                    }
+                    fputs("\x1b[39m ", stdout);
+                    fputs("\x1b[49m", stdout);
+                } else {
+                    fputs("\x1b[49m\x1b[39m ", stdout);
+                }
+                continue;
+            }
+
+            uint8_t out_r = p->r;
+            uint8_t out_g = p->g;
+            uint8_t out_b = p->b;
+            if (p->a < 255U) {
+                if (termbg_get(abs_x, abs_y, &bg_color) != 0 && bg_color >= 0) {
+                    uint8_t bg_r = 0;
+                    uint8_t bg_g = 0;
+                    uint8_t bg_b = 0;
+                    if (termbg_is_truecolor(bg_color)) {
+                        int r, g, b;
+                        termbg_decode_truecolor(bg_color, &r, &g, &b);
+                        bg_r = (uint8_t)r;
+                        bg_g = (uint8_t)g;
+                        bg_b = (uint8_t)b;
+                    } else {
+                        ansi256_to_rgb(bg_color, &bg_r, &bg_g, &bg_b);
+                    }
+                    blend_over(&out_r, &out_g, &out_b, p->a, bg_r, bg_g, bg_b);
+                } else {
+                    blend_over(&out_r, &out_g, &out_b, p->a, 0, 0, 0);
+                }
+            }
+
+            output_truecolor_bg(out_r, out_g, out_b);
+            fputs("\x1b[39m", stdout);
+            fputc(' ', stdout);
+            fputs("\x1b[49m", stdout);
+            termbg_set(abs_x, abs_y, termbg_encode_truecolor(out_r, out_g, out_b));
+        }
+        fputs("\x1b[49m\x1b[39m", stdout);
+        if (y + 1 < height) {
+            fputc('\n', stdout);
+        }
+    }
+    fputs("\x1b[49m\x1b[39m", stdout);
+    fflush(stdout);
+}
+
 #pragma pack(push, 1)
 typedef struct {
     uint16_t bfType;
@@ -246,7 +331,7 @@ typedef struct {
 } BMPINFOHEADER;
 #pragma pack(pop)
 
-static LibImageResult render_bmp(const char *path, int origin_x, int origin_y) {
+static LibImageResult render_bmp(const char *path, int origin_x, int origin_y, RenderPixelsFn render_pixels) {
     FILE *fp = fopen(path, "rb");
     if (fp == NULL) {
         set_error("Unable to open '%s': %s", path, strerror(errno));
@@ -352,7 +437,9 @@ static LibImageResult render_bmp(const char *path, int origin_x, int origin_y) {
 
     fclose(fp);
 
-    render_pixels_at(pixels, width, height, origin_x, origin_y);
+    if (render_pixels != NULL) {
+        render_pixels(pixels, width, height, origin_x, origin_y);
+    }
     free(pixels);
     set_error(NULL);
     return LIBIMAGE_SUCCESS;
@@ -402,7 +489,7 @@ static int read_ppm_token(FILE *fp, char *buffer, size_t buffer_size) {
     return len > 0 ? 1 : 0;
 }
 
-static LibImageResult render_ppm(const char *path, int origin_x, int origin_y) {
+static LibImageResult render_ppm(const char *path, int origin_x, int origin_y, RenderPixelsFn render_pixels) {
     FILE *fp = fopen(path, "rb");
     if (fp == NULL) {
         set_error("Unable to open '%s': %s", path, strerror(errno));
@@ -520,13 +607,16 @@ static LibImageResult render_ppm(const char *path, int origin_x, int origin_y) {
         }
     }
 
-    render_pixels_at(pixels, width, height, origin_x, origin_y);
+    if (render_pixels != NULL) {
+        render_pixels(pixels, width, height, origin_x, origin_y);
+    }
     free(pixels);
     set_error(NULL);
     return LIBIMAGE_SUCCESS;
 }
 
-static LibImageResult render_stbi_image(const char *path, const char *label, int origin_x, int origin_y) {
+static LibImageResult render_stbi_image(const char *path, const char *label, int origin_x, int origin_y,
+                                        RenderPixelsFn render_pixels) {
     int width = 0;
     int height = 0;
     stbi_uc *raw = stbi_load(path, &width, &height, NULL, 4);
@@ -588,13 +678,15 @@ static LibImageResult render_stbi_image(const char *path, const char *label, int
 
     stbi_image_free(raw);
 
-    render_pixels_at(pixels, width, height, origin_x, origin_y);
+    if (render_pixels != NULL) {
+        render_pixels(pixels, width, height, origin_x, origin_y);
+    }
     free(pixels);
     set_error(NULL);
     return LIBIMAGE_SUCCESS;
 }
 
-static LibImageResult render_png(const char *path, int origin_x, int origin_y) {
+static LibImageResult render_png(const char *path, int origin_x, int origin_y, RenderPixelsFn render_pixels) {
     if (!has_extension(path, ".png")) {
         return LIBIMAGE_UNSUPPORTED_FORMAT;
     }
@@ -626,15 +718,15 @@ static LibImageResult render_png(const char *path, int origin_x, int origin_y) {
         return LIBIMAGE_UNSUPPORTED_FORMAT;
     }
 
-    return render_stbi_image(path, "PNG", origin_x, origin_y);
+    return render_stbi_image(path, "PNG", origin_x, origin_y, render_pixels);
 }
 
-static LibImageResult render_jpeg(const char *path, int origin_x, int origin_y) {
+static LibImageResult render_jpeg(const char *path, int origin_x, int origin_y, RenderPixelsFn render_pixels) {
     if (!has_extension(path, ".jpg") && !has_extension(path, ".jpeg")) {
         return LIBIMAGE_UNSUPPORTED_FORMAT;
     }
 
-    return render_stbi_image(path, "JPEG", origin_x, origin_y);
+    return render_stbi_image(path, "JPEG", origin_x, origin_y, render_pixels);
 }
 
 LibImageResult libimage_render_file_at(const char *path, int origin_x, int origin_y) {
@@ -647,7 +739,7 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return LIBIMAGE_INVALID_ARGUMENT;
     }
 
-    LibImageResult result = render_png(path, origin_x, origin_y);
+    LibImageResult result = render_png(path, origin_x, origin_y, render_pixels_at);
     if (result == LIBIMAGE_SUCCESS) {
         return LIBIMAGE_SUCCESS;
     }
@@ -655,7 +747,7 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return result;
     }
 
-    result = render_bmp(path, origin_x, origin_y);
+    result = render_bmp(path, origin_x, origin_y, render_pixels_at);
     if (result == LIBIMAGE_SUCCESS) {
         return LIBIMAGE_SUCCESS;
     }
@@ -663,7 +755,7 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return result;
     }
 
-    result = render_jpeg(path, origin_x, origin_y);
+    result = render_jpeg(path, origin_x, origin_y, render_pixels_at);
     if (result == LIBIMAGE_SUCCESS) {
         return LIBIMAGE_SUCCESS;
     }
@@ -671,7 +763,53 @@ LibImageResult libimage_render_file_at(const char *path, int origin_x, int origi
         return result;
     }
 
-    result = render_ppm(path, origin_x, origin_y);
+    result = render_ppm(path, origin_x, origin_y, render_pixels_at);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    set_error("File '%s' is not a supported PNG, BMP, JPEG, or PPM image", path);
+    return LIBIMAGE_UNSUPPORTED_FORMAT;
+}
+
+LibImageResult libimage_render_file_streamed_at(const char *path, int origin_x, int origin_y) {
+    if (path == NULL) {
+        set_error("Image path is NULL");
+        return LIBIMAGE_INVALID_ARGUMENT;
+    }
+    if (origin_x < 0 || origin_y < 0) {
+        set_error("Image coordinates must be non-negative");
+        return LIBIMAGE_INVALID_ARGUMENT;
+    }
+
+    LibImageResult result = render_png(path, origin_x, origin_y, render_pixels_streamed);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    result = render_bmp(path, origin_x, origin_y, render_pixels_streamed);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    result = render_jpeg(path, origin_x, origin_y, render_pixels_streamed);
+    if (result == LIBIMAGE_SUCCESS) {
+        return LIBIMAGE_SUCCESS;
+    }
+    if (result != LIBIMAGE_UNSUPPORTED_FORMAT) {
+        return result;
+    }
+
+    result = render_ppm(path, origin_x, origin_y, render_pixels_streamed);
     if (result == LIBIMAGE_SUCCESS) {
         return LIBIMAGE_SUCCESS;
     }

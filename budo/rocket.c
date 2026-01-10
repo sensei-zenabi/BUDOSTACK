@@ -4,6 +4,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <SDL.h>
 
@@ -14,6 +15,7 @@
 #define MAX_ASTEROIDS 16
 #define MAX_BULLETS 32
 #define ASTEROID_VERTS_MAX 12
+#define MAX_LEVEL 10
 
 #define SHIP_TURN_SPEED 3.5f
 #define SHIP_THRUST 110.0f
@@ -23,6 +25,12 @@
 #define BULLET_SPEED 220.0f
 #define BULLET_LIFE 1.4f
 #define FIRE_COOLDOWN 0.18f
+
+#define BONUS_LIFE_SCORE 5000
+#define LEVEL_BANNER_TIME 2.0f
+
+#define MENU_ITEM_COUNT 3
+#define OPTIONS_ITEM_COUNT 3
 
 struct vec2 {
     float x;
@@ -51,6 +59,28 @@ struct asteroid {
     float radius;
     int vertex_count;
     float radius_scale[ASTEROID_VERTS_MAX];
+};
+
+struct level_config {
+    int asteroid_count;
+    float speed_min;
+    float speed_max;
+    float radius_min;
+    float radius_max;
+    float fragment_scale;
+};
+
+struct game_settings {
+    int difficulty;
+    int starting_lives;
+};
+
+enum game_state {
+    STATE_MENU = 0,
+    STATE_OPTIONS,
+    STATE_PLAY,
+    STATE_GAME_OVER,
+    STATE_VICTORY
 };
 
 static float clamp_angle(float angle) {
@@ -114,19 +144,23 @@ static void build_asteroid_shape(struct asteroid *a) {
     }
 }
 
-static void spawn_asteroid(struct asteroid *a, float radius, struct vec2 position) {
+static void spawn_asteroid(struct asteroid *a, float radius, struct vec2 position,
+                           float speed_min, float speed_max) {
     if (!a) {
         return;
     }
     a->active = 1;
     a->position = position;
     a->radius = radius;
-    a->velocity.x = frand_range(-40.0f, 40.0f);
-    a->velocity.y = frand_range(-40.0f, 40.0f);
+    float angle = frand_range(0.0f, 6.28318530718f);
+    float speed = frand_range(speed_min, speed_max);
+    a->velocity.x = cosf(angle) * speed;
+    a->velocity.y = sinf(angle) * speed;
     build_asteroid_shape(a);
 }
 
-static void spawn_random_asteroid(struct asteroid *a, float radius, struct vec2 avoid) {
+static void spawn_random_asteroid(struct asteroid *a, float radius, struct vec2 avoid,
+                                  float speed_min, float speed_max) {
     if (!a) {
         return;
     }
@@ -138,7 +172,7 @@ static void spawn_random_asteroid(struct asteroid *a, float radius, struct vec2 
         pos.x = fmodf(pos.x + (float)GAME_WIDTH * 0.5f, (float)GAME_WIDTH);
         pos.y = fmodf(pos.y + (float)GAME_HEIGHT * 0.5f, (float)GAME_HEIGHT);
     }
-    spawn_asteroid(a, radius, pos);
+    spawn_asteroid(a, radius, pos, speed_min, speed_max);
 }
 
 static void draw_polyline(uint32_t *pixels, int width, int height,
@@ -234,20 +268,91 @@ static int count_active_asteroids(const struct asteroid *asteroids) {
     return count;
 }
 
-static void spawn_wave(struct asteroid *asteroids, int count, struct vec2 avoid) {
+static void get_level_config(int level, int difficulty, struct level_config *out) {
+    if (!out) {
+        return;
+    }
+    if (level < 1) {
+        level = 1;
+    } else if (level > MAX_LEVEL) {
+        level = MAX_LEVEL;
+    }
+    if (difficulty < 0) {
+        difficulty = 0;
+    } else if (difficulty > 2) {
+        difficulty = 2;
+    }
+
+    int base_count = 4 + level * 2;
+    if (difficulty == 0) {
+        base_count -= 1;
+    } else if (difficulty == 2) {
+        base_count += 2;
+    }
+    if (base_count < 3) {
+        base_count = 3;
+    } else if (base_count > MAX_ASTEROIDS) {
+        base_count = MAX_ASTEROIDS;
+    }
+    out->asteroid_count = base_count;
+
+    float speed_base = 20.0f + (float)level * 6.0f;
+    float speed_var = 15.0f + (float)level * 2.5f;
+    float speed_mult = 1.0f + (float)difficulty * 0.15f;
+    out->speed_min = speed_base * speed_mult;
+    out->speed_max = (speed_base + speed_var) * speed_mult;
+
+    float radius_max = 34.0f - (float)level * 1.4f;
+    if (radius_max < 18.0f) {
+        radius_max = 18.0f;
+    }
+    float radius_min = radius_max * 0.65f;
+    if (radius_min < 12.0f) {
+        radius_min = 12.0f;
+    }
+    out->radius_max = radius_max;
+    out->radius_min = radius_min;
+
+    out->fragment_scale = 0.62f - (float)level * 0.01f;
+    if (out->fragment_scale < 0.45f) {
+        out->fragment_scale = 0.45f;
+    }
+}
+
+static float level_radius_roll(const struct level_config *config) {
+    if (!config) {
+        return 20.0f;
+    }
+    return frand_range(config->radius_min, config->radius_max);
+}
+
+static void spawn_wave(struct asteroid *asteroids, const struct level_config *config,
+                       struct vec2 avoid) {
+    if (!config) {
+        return;
+    }
     int spawned = 0;
-    for (int i = 0; i < MAX_ASTEROIDS && spawned < count; i++) {
+    for (int i = 0; i < MAX_ASTEROIDS && spawned < config->asteroid_count; i++) {
         if (!asteroids[i].active) {
-            spawn_random_asteroid(&asteroids[i], frand_range(18.0f, 32.0f), avoid);
+            float radius = level_radius_roll(config);
+            spawn_random_asteroid(&asteroids[i], radius, avoid,
+                                  config->speed_min, config->speed_max);
             spawned++;
         }
     }
 }
 
-static void spawn_fragment(struct asteroid *asteroids, struct vec2 position, float radius) {
+static void spawn_fragment(struct asteroid *asteroids, struct vec2 position, float radius,
+                           const struct level_config *config) {
+    if (!config) {
+        return;
+    }
     for (int i = 0; i < MAX_ASTEROIDS; i++) {
         if (!asteroids[i].active) {
-            spawn_asteroid(&asteroids[i], radius, position);
+            float speed_boost = 12.0f;
+            spawn_asteroid(&asteroids[i], radius, position,
+                           config->speed_min + speed_boost,
+                           config->speed_max + speed_boost);
             return;
         }
     }
@@ -255,7 +360,8 @@ static void spawn_fragment(struct asteroid *asteroids, struct vec2 position, flo
 
 static void handle_bullet_hits(struct bullet *bullets,
                                struct asteroid *asteroids,
-                               int *score) {
+                               int *score,
+                               const struct level_config *config) {
     for (int b = 0; b < MAX_BULLETS; b++) {
         if (!bullets[b].active) {
             continue;
@@ -271,13 +377,42 @@ static void handle_bullet_hits(struct bullet *bullets,
                 if (score) {
                     *score += (int)radius;
                 }
-                if (radius > 18.0f) {
-                    spawn_fragment(asteroids, asteroids[a].position, radius * 0.65f);
-                    spawn_fragment(asteroids, asteroids[a].position, radius * 0.65f);
+                if (config && radius > config->radius_min * 0.95f) {
+                    float fragment_radius = radius * config->fragment_scale;
+                    spawn_fragment(asteroids, asteroids[a].position, fragment_radius, config);
+                    spawn_fragment(asteroids, asteroids[a].position, fragment_radius, config);
                 }
                 break;
             }
         }
+    }
+}
+
+static void draw_centered_text(const psf_font_t *font, uint32_t *pixels,
+                               int width, int height, int y,
+                               const char *text, uint32_t color) {
+    if (!font || !pixels || !text) {
+        return;
+    }
+    (void)height;
+    size_t len = strlen(text);
+    int text_width = (int)(len * (size_t)font->width);
+    int x = (width - text_width) / 2;
+    psf_draw_text(font, pixels, width, height, x, y, text, color);
+}
+
+static void reset_game_state(struct ship_state *ship, struct bullet *bullets,
+                             struct asteroid *asteroids, int lives) {
+    if (!ship || !bullets || !asteroids) {
+        return;
+    }
+    ship->lives = lives;
+    reset_ship(ship);
+    for (int i = 0; i < MAX_BULLETS; i++) {
+        bullets[i].active = 0;
+    }
+    for (int i = 0; i < MAX_ASTEROIDS; i++) {
+        asteroids[i].active = 0;
     }
 }
 
@@ -413,12 +548,23 @@ int main(int argc, char **argv) {
     struct bullet bullets[MAX_BULLETS] = { 0 };
     struct asteroid asteroids[MAX_ASTEROIDS] = { 0 };
 
-    spawn_wave(asteroids, 6, ship.position);
+    struct game_settings settings = {
+        .difficulty = 1,
+        .starting_lives = 3
+    };
+
+    struct level_config level_config = { 0 };
+    int level = 1;
+    int score = 0;
+    int next_bonus = BONUS_LIFE_SCORE;
+    float level_banner = 0.0f;
+    enum game_state state = STATE_MENU;
+    int menu_index = 0;
+    int options_index = 0;
 
     int running = 1;
     Uint32 last_tick = SDL_GetTicks();
     float fire_cooldown = 0.0f;
-    int score = 0;
     int frame_value = 0;
 
     while (running) {
@@ -426,9 +572,67 @@ int main(int argc, char **argv) {
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
                 running = 0;
-            } else if (event.type == SDL_KEYDOWN) {
-                if (event.key.keysym.sym == SDLK_ESCAPE) {
-                    running = 0;
+            } else if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
+                if (state == STATE_MENU) {
+                    if (event.key.keysym.sym == SDLK_UP) {
+                        menu_index = (menu_index + MENU_ITEM_COUNT - 1) % MENU_ITEM_COUNT;
+                    } else if (event.key.keysym.sym == SDLK_DOWN) {
+                        menu_index = (menu_index + 1) % MENU_ITEM_COUNT;
+                    } else if (event.key.keysym.sym == SDLK_RETURN ||
+                               event.key.keysym.sym == SDLK_KP_ENTER) {
+                        if (menu_index == 0) {
+                            level = 1;
+                            score = 0;
+                            next_bonus = BONUS_LIFE_SCORE;
+                            get_level_config(level, settings.difficulty, &level_config);
+                            reset_game_state(&ship, bullets, asteroids, settings.starting_lives);
+                            spawn_wave(asteroids, &level_config, ship.position);
+                            level_banner = LEVEL_BANNER_TIME;
+                            fire_cooldown = 0.0f;
+                            state = STATE_PLAY;
+                        } else if (menu_index == 1) {
+                            state = STATE_OPTIONS;
+                        } else {
+                            running = 0;
+                        }
+                    } else if (event.key.keysym.sym == SDLK_ESCAPE) {
+                        running = 0;
+                    }
+                } else if (state == STATE_OPTIONS) {
+                    if (event.key.keysym.sym == SDLK_ESCAPE) {
+                        state = STATE_MENU;
+                    } else if (event.key.keysym.sym == SDLK_UP) {
+                        options_index = (options_index + OPTIONS_ITEM_COUNT - 1) % OPTIONS_ITEM_COUNT;
+                    } else if (event.key.keysym.sym == SDLK_DOWN) {
+                        options_index = (options_index + 1) % OPTIONS_ITEM_COUNT;
+                    } else if (event.key.keysym.sym == SDLK_LEFT) {
+                        if (options_index == 0 && settings.difficulty > 0) {
+                            settings.difficulty--;
+                        } else if (options_index == 1 && settings.starting_lives > 1) {
+                            settings.starting_lives--;
+                        }
+                    } else if (event.key.keysym.sym == SDLK_RIGHT) {
+                        if (options_index == 0 && settings.difficulty < 2) {
+                            settings.difficulty++;
+                        } else if (options_index == 1 && settings.starting_lives < 5) {
+                            settings.starting_lives++;
+                        }
+                    } else if (event.key.keysym.sym == SDLK_RETURN ||
+                               event.key.keysym.sym == SDLK_KP_ENTER) {
+                        if (options_index == 2) {
+                            state = STATE_MENU;
+                        }
+                    }
+                } else if (state == STATE_PLAY) {
+                    if (event.key.keysym.sym == SDLK_ESCAPE) {
+                        state = STATE_MENU;
+                    }
+                } else if (state == STATE_GAME_OVER || state == STATE_VICTORY) {
+                    if (event.key.keysym.sym == SDLK_RETURN ||
+                        event.key.keysym.sym == SDLK_KP_ENTER ||
+                        event.key.keysym.sym == SDLK_ESCAPE) {
+                        state = STATE_MENU;
+                    }
                 }
             } else if (event.type == SDL_WINDOWEVENT) {
                 if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
@@ -448,127 +652,208 @@ int main(int argc, char **argv) {
         }
         last_tick = now;
 
-        const Uint8 *keys = SDL_GetKeyboardState(NULL);
-        if (keys[SDL_SCANCODE_LEFT]) {
-            ship.angle -= SHIP_TURN_SPEED * delta;
-        }
-        if (keys[SDL_SCANCODE_RIGHT]) {
-            ship.angle += SHIP_TURN_SPEED * delta;
-        }
-        ship.angle = clamp_angle(ship.angle);
-
-        if (keys[SDL_SCANCODE_UP]) {
-            struct vec2 thrust_dir = { cosf(ship.angle - 1.57079632679f),
-                                       sinf(ship.angle - 1.57079632679f) };
-            ship.velocity = vec2_add(ship.velocity, vec2_scale(thrust_dir, SHIP_THRUST * delta));
-        }
-
-        ship.velocity = vec2_scale(ship.velocity, SHIP_FRICTION);
-        ship.position = vec2_add(ship.position, vec2_scale(ship.velocity, delta));
-        wrap_position(&ship.position, (float)GAME_WIDTH, (float)GAME_HEIGHT);
-
-        if (ship.invulnerable > 0.0f) {
-            ship.invulnerable -= delta;
-            if (ship.invulnerable < 0.0f) {
-                ship.invulnerable = 0.0f;
+        if (state == STATE_PLAY) {
+            const Uint8 *keys = SDL_GetKeyboardState(NULL);
+            if (keys[SDL_SCANCODE_LEFT]) {
+                ship.angle -= SHIP_TURN_SPEED * delta;
             }
-        }
+            if (keys[SDL_SCANCODE_RIGHT]) {
+                ship.angle += SHIP_TURN_SPEED * delta;
+            }
+            ship.angle = clamp_angle(ship.angle);
 
-        fire_cooldown -= delta;
-        if (fire_cooldown < 0.0f) {
-            fire_cooldown = 0.0f;
-        }
+            if (keys[SDL_SCANCODE_UP]) {
+                struct vec2 thrust_dir = { cosf(ship.angle - 1.57079632679f),
+                                           sinf(ship.angle - 1.57079632679f) };
+                ship.velocity = vec2_add(ship.velocity, vec2_scale(thrust_dir, SHIP_THRUST * delta));
+            }
 
-        if (keys[SDL_SCANCODE_SPACE] && fire_cooldown <= 0.0f) {
-            for (int i = 0; i < MAX_BULLETS; i++) {
-                if (!bullets[i].active) {
-                    struct vec2 dir = { cosf(ship.angle - 1.57079632679f),
-                                        sinf(ship.angle - 1.57079632679f) };
-                    bullets[i].active = 1;
-                    bullets[i].position = ship.position;
-                    bullets[i].velocity = vec2_scale(dir, BULLET_SPEED);
-                    bullets[i].life = BULLET_LIFE;
-                    fire_cooldown = FIRE_COOLDOWN;
-                    break;
+            ship.velocity = vec2_scale(ship.velocity, SHIP_FRICTION);
+            ship.position = vec2_add(ship.position, vec2_scale(ship.velocity, delta));
+            wrap_position(&ship.position, (float)GAME_WIDTH, (float)GAME_HEIGHT);
+
+            if (ship.invulnerable > 0.0f) {
+                ship.invulnerable -= delta;
+                if (ship.invulnerable < 0.0f) {
+                    ship.invulnerable = 0.0f;
                 }
             }
-        }
 
-        for (int i = 0; i < MAX_BULLETS; i++) {
-            if (!bullets[i].active) {
-                continue;
+            fire_cooldown -= delta;
+            if (fire_cooldown < 0.0f) {
+                fire_cooldown = 0.0f;
             }
-            bullets[i].position = vec2_add(bullets[i].position, vec2_scale(bullets[i].velocity, delta));
-            wrap_position(&bullets[i].position, (float)GAME_WIDTH, (float)GAME_HEIGHT);
-            bullets[i].life -= delta;
-            if (bullets[i].life <= 0.0f) {
-                bullets[i].active = 0;
+
+            if (keys[SDL_SCANCODE_SPACE] && fire_cooldown <= 0.0f) {
+                for (int i = 0; i < MAX_BULLETS; i++) {
+                    if (!bullets[i].active) {
+                        struct vec2 dir = { cosf(ship.angle - 1.57079632679f),
+                                            sinf(ship.angle - 1.57079632679f) };
+                        bullets[i].active = 1;
+                        bullets[i].position = ship.position;
+                        bullets[i].velocity = vec2_scale(dir, BULLET_SPEED);
+                        bullets[i].life = BULLET_LIFE;
+                        fire_cooldown = FIRE_COOLDOWN;
+                        break;
+                    }
+                }
             }
-        }
 
-        for (int i = 0; i < MAX_ASTEROIDS; i++) {
-            if (!asteroids[i].active) {
-                continue;
+            for (int i = 0; i < MAX_BULLETS; i++) {
+                if (!bullets[i].active) {
+                    continue;
+                }
+                bullets[i].position = vec2_add(bullets[i].position,
+                                               vec2_scale(bullets[i].velocity, delta));
+                wrap_position(&bullets[i].position, (float)GAME_WIDTH, (float)GAME_HEIGHT);
+                bullets[i].life -= delta;
+                if (bullets[i].life <= 0.0f) {
+                    bullets[i].active = 0;
+                }
             }
-            asteroids[i].position = vec2_add(asteroids[i].position,
-                                             vec2_scale(asteroids[i].velocity, delta));
-            wrap_position(&asteroids[i].position, (float)GAME_WIDTH, (float)GAME_HEIGHT);
-        }
 
-        handle_bullet_hits(bullets, asteroids, &score);
-
-        if (ship.invulnerable <= 0.0f) {
             for (int i = 0; i < MAX_ASTEROIDS; i++) {
                 if (!asteroids[i].active) {
                     continue;
                 }
-                float radius = asteroids[i].radius + SHIP_RADIUS;
-                if (dist_sq(ship.position, asteroids[i].position) <= radius * radius) {
-                    ship.lives--;
-                    reset_ship(&ship);
-                    break;
+                asteroids[i].position = vec2_add(asteroids[i].position,
+                                                 vec2_scale(asteroids[i].velocity, delta));
+                wrap_position(&asteroids[i].position, (float)GAME_WIDTH, (float)GAME_HEIGHT);
+            }
+
+            handle_bullet_hits(bullets, asteroids, &score, &level_config);
+
+            if (score >= next_bonus) {
+                ship.lives++;
+                next_bonus += BONUS_LIFE_SCORE;
+            }
+
+            if (ship.invulnerable <= 0.0f) {
+                for (int i = 0; i < MAX_ASTEROIDS; i++) {
+                    if (!asteroids[i].active) {
+                        continue;
+                    }
+                    float radius = asteroids[i].radius + SHIP_RADIUS;
+                    if (dist_sq(ship.position, asteroids[i].position) <= radius * radius) {
+                        ship.lives--;
+                        reset_ship(&ship);
+                        break;
+                    }
+                }
+            }
+
+            if (ship.lives <= 0) {
+                state = STATE_GAME_OVER;
+            }
+
+            if (count_active_asteroids(asteroids) == 0 && state == STATE_PLAY) {
+                if (level >= MAX_LEVEL) {
+                    state = STATE_VICTORY;
+                } else {
+                    level++;
+                    get_level_config(level, settings.difficulty, &level_config);
+                    spawn_wave(asteroids, &level_config, ship.position);
+                    level_banner = LEVEL_BANNER_TIME;
+                }
+            }
+
+            if (level_banner > 0.0f) {
+                level_banner -= delta;
+                if (level_banner < 0.0f) {
+                    level_banner = 0.0f;
                 }
             }
         }
 
-        if (ship.lives <= 0) {
-            ship.lives = 3;
-            score = 0;
-            for (int i = 0; i < MAX_ASTEROIDS; i++) {
-                asteroids[i].active = 0;
-            }
-            spawn_wave(asteroids, 6, ship.position);
-        }
-
-        if (count_active_asteroids(asteroids) == 0) {
-            spawn_wave(asteroids, 8, ship.position);
-        }
-
         budo_clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00090f13u);
 
-        for (int i = 0; i < MAX_ASTEROIDS; i++) {
-            draw_asteroid(pixels, GAME_WIDTH, GAME_HEIGHT, &asteroids[i], 0x00c0c0c0u);
-        }
-
-        for (int i = 0; i < MAX_BULLETS; i++) {
-            if (!bullets[i].active) {
-                continue;
+        if (state == STATE_PLAY) {
+            for (int i = 0; i < MAX_ASTEROIDS; i++) {
+                draw_asteroid(pixels, GAME_WIDTH, GAME_HEIGHT, &asteroids[i], 0x00c0c0c0u);
             }
-            budo_put_pixel(pixels, GAME_WIDTH, GAME_HEIGHT,
-                           (int)lroundf(bullets[i].position.x),
-                           (int)lroundf(bullets[i].position.y),
-                           0x00f0f0f0u);
+
+            for (int i = 0; i < MAX_BULLETS; i++) {
+                if (!bullets[i].active) {
+                    continue;
+                }
+                budo_put_pixel(pixels, GAME_WIDTH, GAME_HEIGHT,
+                               (int)lroundf(bullets[i].position.x),
+                               (int)lroundf(bullets[i].position.y),
+                               0x00f0f0f0u);
+            }
         }
 
-        if (ship.invulnerable <= 0.0f || ((frame_value / 6) % 2 == 0)) {
+        if (state == STATE_PLAY &&
+            (ship.invulnerable <= 0.0f || ((frame_value / 6) % 2 == 0))) {
             draw_ship(pixels, GAME_WIDTH, GAME_HEIGHT, &ship, 0x00ffd070u);
         }
 
-        char hud[128];
-        snprintf(hud, sizeof(hud), "ROCKET ASTEROIDS  SCORE:%d  LIVES:%d", score, ship.lives);
-        psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8, hud, 0x00ffffffu);
-        psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8 + (int)font.height,
-                      "ARROWS MOVE  SPACE FIRE  ESC QUIT", 0x0080c0ffu);
+        if (state == STATE_PLAY) {
+            char hud[128];
+            snprintf(hud, sizeof(hud), "ROCKET ASTEROIDS  SCORE:%d  LIVES:%d  LEVEL:%d",
+                     score, ship.lives, level);
+            psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8, hud, 0x00ffffffu);
+            psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8,
+                          8 + (int)font.height,
+                          "ARROWS MOVE  SPACE FIRE  ESC MENU",
+                          0x0080c0ffu);
+            if (level_banner > 0.0f) {
+                char banner[64];
+                snprintf(banner, sizeof(banner), "LEVEL %d", level);
+                draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT,
+                                   (int)(GAME_HEIGHT * 0.35f),
+                                   banner, 0x00ffd070u);
+            }
+        } else if (state == STATE_MENU) {
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 72,
+                               "ROCKET ASTEROIDS", 0x00ffd070u);
+            const char *menu_items[MENU_ITEM_COUNT] = {
+                "NEW GAME",
+                "OPTIONS",
+                "EXIT"
+            };
+            for (int i = 0; i < MENU_ITEM_COUNT; i++) {
+                uint32_t color = (i == menu_index) ? 0x00ffffffu : 0x0080c0ffu;
+                draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT,
+                                   140 + i * ((int)font.height + 8),
+                                   menu_items[i], color);
+            }
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 300,
+                               "USE ARROWS + ENTER", 0x0080c0ffu);
+        } else if (state == STATE_OPTIONS) {
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 72,
+                               "OPTIONS", 0x00ffd070u);
+            const char *difficulty_names[] = { "CADET", "CLASSIC", "ACE" };
+            char line[64];
+            uint32_t color = (options_index == 0) ? 0x00ffffffu : 0x0080c0ffu;
+            snprintf(line, sizeof(line), "DIFFICULTY: %s", difficulty_names[settings.difficulty]);
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 140, line, color);
+            color = (options_index == 1) ? 0x00ffffffu : 0x0080c0ffu;
+            snprintf(line, sizeof(line), "STARTING LIVES: %d", settings.starting_lives);
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 170, line, color);
+            color = (options_index == 2) ? 0x00ffffffu : 0x0080c0ffu;
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 210, "BACK", color);
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 300,
+                               "LEFT/RIGHT TO ADJUST", 0x0080c0ffu);
+        } else if (state == STATE_GAME_OVER) {
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 120,
+                               "GAME OVER", 0x00ff6060u);
+            char line[64];
+            snprintf(line, sizeof(line), "FINAL SCORE: %d", score);
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 160, line, 0x00ffffffu);
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 210,
+                               "PRESS ENTER", 0x0080c0ffu);
+        } else if (state == STATE_VICTORY) {
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 110,
+                               "MISSION COMPLETE", 0x00ffd070u);
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 145,
+                               "YOU REACHED LEVEL 10", 0x00ffffffu);
+            char line[64];
+            snprintf(line, sizeof(line), "FINAL SCORE: %d", score);
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 180, line, 0x00ffffffu);
+            draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 230,
+                               "PRESS ENTER", 0x0080c0ffu);
+        }
 
         glBindTexture(GL_TEXTURE_2D, texture);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);

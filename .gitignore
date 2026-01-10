@@ -12,6 +12,7 @@ apps/*
 commands/*
 !commands/*.c
 !commands/*.h
+!commands/*.md
 games/*
 !games/*.c
 !games/*.h

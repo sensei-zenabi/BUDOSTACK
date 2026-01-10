@@ -372,6 +372,7 @@ static int terminal_prepare_history_texture(int width, int height);
 static void terminal_update_history_texture(int width, int height);
 static int terminal_load_cursor_sprite(const char *path);
 static void terminal_destroy_cursor_sprite(void);
+static void terminal_set_mouse_cursor_visible(int visible);
 static void terminal_cursor_update_position(int window_x, int window_y);
 static void terminal_cursor_render(int framebuffer_width, int framebuffer_height, int drawable_width, int drawable_height);
 static int psf_unicode_map_compare(const void *a, const void *b);
@@ -3337,6 +3338,35 @@ static void terminal_destroy_cursor_sprite(void) {
     terminal_cursor_dirty = 0;
 }
 
+static void terminal_set_mouse_cursor_visible(int visible) {
+#if BUDOSTACK_HAVE_SDL2
+    if (visible) {
+        if (terminal_cursor_texture != 0) {
+            terminal_cursor_enabled = 1;
+            terminal_cursor_dirty = 1;
+            SDL_ShowCursor(SDL_DISABLE);
+            int mouse_x = 0;
+            int mouse_y = 0;
+            SDL_GetMouseState(&mouse_x, &mouse_y);
+            terminal_cursor_update_position(mouse_x, mouse_y);
+        } else {
+            terminal_cursor_enabled = 0;
+            terminal_cursor_position_valid = 0;
+            terminal_cursor_dirty = 0;
+            SDL_ShowCursor(SDL_ENABLE);
+        }
+    } else {
+        terminal_cursor_enabled = 0;
+        terminal_cursor_position_valid = 0;
+        terminal_cursor_dirty = 1;
+        SDL_ShowCursor(SDL_DISABLE);
+    }
+    terminal_mark_full_redraw();
+#else
+    (void)visible;
+#endif
+}
+
 static void terminal_cursor_update_position(int window_x, int window_y) {
     int framebuffer_x = 0;
     int framebuffer_y = 0;
@@ -5217,6 +5247,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int resolution_height_set = 0;
     int resolution_requested = 0;
     int mouse_query_requested = 0;
+    int mouse_visibility_requested = 0;
+    int mouse_visibility_show = 0;
     int shader_toggle_requested = 0;
     int shader_enable_requested = 0;
 
@@ -5496,6 +5528,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     } else if (strcmp(key, "mouse") == 0 && value && *value != '\0') {
                         if (strcmp(value, "query") == 0) {
                             mouse_query_requested = 1;
+                        } else if (strcmp(value, "show") == 0) {
+                            mouse_visibility_requested = 1;
+                            mouse_visibility_show = 1;
+                        } else if (strcmp(value, "hide") == 0) {
+                            mouse_visibility_requested = 1;
+                            mouse_visibility_show = 0;
                         }
                     }
                 }
@@ -5638,6 +5676,10 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 }
                 terminal_mouse_left_clicks = 0u;
                 terminal_mouse_right_clicks = 0u;
+            }
+
+            if (mouse_visibility_requested) {
+                terminal_set_mouse_cursor_visible(mouse_visibility_show);
             }
 
             if (pixel_action == TERMINAL_PIXEL_ACTION_DRAW) {

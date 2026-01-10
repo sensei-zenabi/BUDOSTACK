@@ -5,10 +5,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(BUDO_USE_SDL_IMAGE) && BUDO_USE_SDL_IMAGE
 #if defined(__has_include)
 #if __has_include(<SDL_image.h>)
 #include <SDL_image.h>
 #define BUDO_HAVE_SDL_IMAGE 1
+#else
+#define BUDO_HAVE_SDL_IMAGE 0
+#endif
 #else
 #define BUDO_HAVE_SDL_IMAGE 0
 #endif

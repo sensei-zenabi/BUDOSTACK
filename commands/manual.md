@@ -199,6 +199,12 @@ Event names:
 and returns a TASK array literal: `{X, Y, LEFT, RIGHT}`. `X`/`Y` are pixel positions
 from the top-left corner; `LEFT`/`RIGHT` are button press counts since the last call.
 
+### `_TERM_MOUSE_SHOW`
+**Usage:** `_TERM_MOUSE_SHOW <enable|disable>`
+
+**Description:** Shows (`enable`) or hides (`disable`) the mouse cursor in the
+terminal emulator.
+
 ### `_TERM_RENDER`
 **Usage:** `_TERM_RENDER [--render] [-layer <1-16>]`
 

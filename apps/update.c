@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -13,44 +14,44 @@
 #define PATH_MAX 4096
 #endif
 
-struct BranchList {
-    char **names;
+struct StringList {
+    char **items;
     size_t count;
 };
 
-static void free_branch_list(struct BranchList *list) {
-    if (list == NULL || list->names == NULL) {
+static void free_string_list(struct StringList *list) {
+    if (list == NULL || list->items == NULL) {
         return;
     }
 
     for (size_t i = 0; i < list->count; ++i) {
-        free(list->names[i]);
+        free(list->items[i]);
     }
-    free(list->names);
-    list->names = NULL;
+    free(list->items);
+    list->items = NULL;
     list->count = 0;
 }
 
-static int append_branch(struct BranchList *list, const char *name) {
-    if (list == NULL || name == NULL) {
+static int append_string(struct StringList *list, const char *value) {
+    if (list == NULL || value == NULL) {
         return -1;
     }
 
-    char **new_items = realloc(list->names, (list->count + 1) * sizeof(*new_items));
+    char **new_items = realloc(list->items, (list->count + 1) * sizeof(*new_items));
     if (new_items == NULL) {
         perror("realloc");
         return -1;
     }
-    list->names = new_items;
+    list->items = new_items;
 
-    size_t length = strlen(name);
-    list->names[list->count] = malloc(length + 1);
-    if (list->names[list->count] == NULL) {
+    size_t length = strlen(value);
+    list->items[list->count] = malloc(length + 1);
+    if (list->items[list->count] == NULL) {
         perror("malloc");
         return -1;
     }
 
-    memcpy(list->names[list->count], name, length + 1);
+    memcpy(list->items[list->count], value, length + 1);
     list->count += 1;
     return 0;
 }
@@ -129,36 +130,6 @@ static int detect_repository_root(char *buffer, size_t size) {
     return 0;
 }
 
-static int check_worktree_clean(bool *dirty) {
-    if (dirty == NULL) {
-        return -1;
-    }
-    *dirty = false;
-
-    FILE *pipe = popen("git status --porcelain", "r");
-    if (pipe == NULL) {
-        perror("popen");
-        return -1;
-    }
-
-    char line[256];
-    if (fgets(line, sizeof(line), pipe) != NULL) {
-        *dirty = true;
-    }
-
-    int status = pclose(pipe);
-    if (status == -1) {
-        perror("pclose");
-        return -1;
-    }
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fprintf(stderr, "Unable to inspect repository status.\n");
-        return -1;
-    }
-
-    return 0;
-}
-
 static bool ask_yes_no(const char *question) {
     char answer[16];
 
@@ -187,12 +158,45 @@ static bool ask_yes_no(const char *question) {
     }
 }
 
-static int fetch_release_branches(struct BranchList *list) {
-    if (list == NULL) {
+static int read_first_line(const char *command, char *buffer, size_t size) {
+    if (command == NULL || buffer == NULL || size == 0) {
         return -1;
     }
 
-    FILE *pipe = popen("git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/release*' 2>/dev/null", "r");
+    FILE *pipe = popen(command, "r");
+    if (pipe == NULL) {
+        perror("popen");
+        return -1;
+    }
+
+    if (fgets(buffer, (int)size, pipe) == NULL) {
+        buffer[0] = '\0';
+    } else {
+        size_t len = strlen(buffer);
+        while (len > 0 && (buffer[len - 1] == '\n' || buffer[len - 1] == '\r')) {
+            buffer[len - 1] = '\0';
+            len -= 1;
+        }
+    }
+
+    int status = pclose(pipe);
+    if (status == -1) {
+        perror("pclose");
+        return -1;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static int load_tags(struct StringList *tags) {
+    if (tags == NULL) {
+        return -1;
+    }
+
+    FILE *pipe = popen("git tag --sort=version:refname", "r");
     if (pipe == NULL) {
         perror("popen");
         return -1;
@@ -208,15 +212,7 @@ static int fetch_release_branches(struct BranchList *list) {
         if (len == 0) {
             continue;
         }
-
-        const char *name = line;
-        const char prefix[] = "origin/";
-        size_t prefix_len = sizeof(prefix) - 1;
-        if (strncmp(line, prefix, prefix_len) == 0) {
-            name = line + prefix_len;
-        }
-
-        if (append_branch(list, name) != 0) {
+        if (append_string(tags, line) != 0) {
             pclose(pipe);
             return -1;
         }
@@ -228,118 +224,178 @@ static int fetch_release_branches(struct BranchList *list) {
         return -1;
     }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fprintf(stderr, "Unable to read release branches from the remote repository.\n");
+        fprintf(stderr, "Unable to read release tags from the remote repository.\n");
         return -1;
     }
 
     return 0;
 }
 
-static int prompt_main_choice(bool have_release) {
-    char input[32];
-
-    while (true) {
-        printf("\nPlease choose how you would like to update BUDOSTACK:\n");
-        printf("  1) Latest features (main branch)\n");
-        if (have_release) {
-            printf("  2) Stable release (pick from official release branches)\n");
-        }
-        printf("  q) Cancel and return to the previous menu\n");
-        printf("Your choice: ");
-        fflush(stdout);
-
-        if (fgets(input, sizeof(input), stdin) == NULL) {
-            return 0;
-        }
-        size_t len = strlen(input);
-        if (len > 0 && input[len - 1] == '\n') {
-            input[len - 1] = '\0';
-        }
-
-        if (strcmp(input, "1") == 0) {
-            return 1;
-        }
-        if (have_release && strcmp(input, "2") == 0) {
-            return 2;
-        }
-        if (strcmp(input, "q") == 0 || strcmp(input, "Q") == 0) {
-            return 0;
-        }
-
-        printf("I did not understand that choice. Please try again.\n");
-    }
-}
-
-static int prompt_release_selection(const struct BranchList *list) {
-    if (list == NULL || list->count == 0) {
+static int load_tracked_files(struct StringList *files) {
+    if (files == NULL) {
         return -1;
     }
 
-    char input[32];
-    while (true) {
-        printf("\nAvailable release branches:\n");
-        for (size_t i = 0; i < list->count; ++i) {
-            printf("  %zu) %s\n", i + 1, list->names[i]);
-        }
-        printf("  0) Go back\n");
-        printf("Enter the number of the release you want to use: ");
-        fflush(stdout);
+    FILE *pipe = popen("git ls-files -z", "r");
+    if (pipe == NULL) {
+        perror("popen");
+        return -1;
+    }
 
-        if (fgets(input, sizeof(input), stdin) == NULL) {
+    char path[PATH_MAX];
+    size_t index = 0;
+    int ch;
+    while ((ch = fgetc(pipe)) != EOF) {
+        if (ch == '\0') {
+            if (index > 0) {
+                path[index] = '\0';
+                if (append_string(files, path) != 0) {
+                    pclose(pipe);
+                    return -1;
+                }
+                index = 0;
+            }
+            continue;
+        }
+        if (index + 1 >= sizeof(path)) {
+            fprintf(stderr, "Tracked file path is too long.\n");
+            pclose(pipe);
             return -1;
         }
-        size_t len = strlen(input);
-        if (len > 0 && input[len - 1] == '\n') {
-            input[len - 1] = '\0';
-        }
-        if (len == 0) {
-            continue;
-        }
+        path[index++] = (char)ch;
+    }
 
-        char *endptr = NULL;
-        errno = 0;
-        long value = strtol(input, &endptr, 10);
-        if (errno != 0 || endptr == input || *endptr != '\0') {
-            printf("Please enter a valid number from the list.\n");
-            continue;
-        }
-        if (value == 0) {
+    if (index > 0) {
+        path[index] = '\0';
+        if (append_string(files, path) != 0) {
+            pclose(pipe);
             return -1;
         }
-        if (value < 0 || value > (long)list->count) {
-            printf("That number is not in the list.\n");
-            continue;
-        }
-        return (int)(value - 1);
     }
+
+    int status = pclose(pipe);
+    if (status == -1) {
+        perror("pclose");
+        return -1;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fprintf(stderr, "Unable to read the list of tracked files.\n");
+        return -1;
+    }
+
+    return 0;
 }
 
-static int checkout_main_branch(void) {
-    if (run_system_command("git checkout main 2>&1", "Switching to the main branch...") != 0) {
-        fprintf(stderr, "Unable to switch to the main branch.\n");
+static int ensure_parent_dirs(const char *path) {
+    char buffer[PATH_MAX];
+    size_t len = strlen(path);
+    if (len >= sizeof(buffer)) {
+        fprintf(stderr, "Path is too long.\n");
         return -1;
     }
-    if (run_system_command("git pull --ff-only origin main 2>&1", "Downloading the latest main branch changes...") != 0) {
-        fprintf(stderr, "Unable to update the main branch.\n");
-        return -1;
+
+    memcpy(buffer, path, len + 1);
+    for (size_t i = 1; i < len; ++i) {
+        if (buffer[i] == '/') {
+            buffer[i] = '\0';
+            if (mkdir(buffer, 0755) != 0 && errno != EEXIST) {
+                perror("mkdir");
+                return -1;
+            }
+            buffer[i] = '/';
+        }
     }
     return 0;
 }
 
-static int checkout_release_branch(const char *branch) {
-    if (branch == NULL) {
+static int copy_file(const char *source, const char *destination) {
+    FILE *src = fopen(source, "rb");
+    if (src == NULL) {
+        perror("fopen");
+        fprintf(stderr, "Unable to read '%s'.\n", source);
         return -1;
     }
 
-    char command[PATH_MAX];
-    int written = snprintf(command, sizeof(command), "git checkout -B %s origin/%s 2>&1", branch, branch);
-    if (written < 0 || written >= (int)sizeof(command)) {
-        fprintf(stderr, "Branch name '%s' is too long.\n", branch);
+    if (ensure_parent_dirs(destination) != 0) {
+        fclose(src);
         return -1;
     }
-    if (run_system_command(command, "Preparing the selected release branch...") != 0) {
-        fprintf(stderr, "Unable to switch to release branch '%s'.\n", branch);
+
+    FILE *dst = fopen(destination, "wb");
+    if (dst == NULL) {
+        perror("fopen");
+        fprintf(stderr, "Unable to write '%s'.\n", destination);
+        fclose(src);
         return -1;
+    }
+
+    char buffer[8192];
+    size_t read_size;
+    while ((read_size = fread(buffer, 1, sizeof(buffer), src)) > 0) {
+        if (fwrite(buffer, 1, read_size, dst) != read_size) {
+            perror("fwrite");
+            fclose(src);
+            fclose(dst);
+            return -1;
+        }
+    }
+    if (ferror(src)) {
+        perror("fread");
+        fclose(src);
+        fclose(dst);
+        return -1;
+    }
+
+    struct stat info;
+    if (stat(source, &info) == 0) {
+        if (chmod(destination, info.st_mode) != 0) {
+            perror("chmod");
+            fclose(src);
+            fclose(dst);
+            return -1;
+        }
+    }
+
+    fclose(src);
+    fclose(dst);
+    return 0;
+}
+
+static int backup_tracked_files(const struct StringList *files, const char *backup_dir) {
+    if (files == NULL || backup_dir == NULL) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < files->count; ++i) {
+        char destination[PATH_MAX];
+        int written = snprintf(destination, sizeof(destination), "%s/%s", backup_dir, files->items[i]);
+        if (written < 0 || written >= (int)sizeof(destination)) {
+            fprintf(stderr, "Backup path for '%s' is too long.\n", files->items[i]);
+            return -1;
+        }
+        if (copy_file(files->items[i], destination) != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int restore_tracked_files(const struct StringList *files, const char *backup_dir) {
+    if (files == NULL || backup_dir == NULL) {
+        return -1;
+    }
+
+    for (size_t i = 0; i < files->count; ++i) {
+        char source[PATH_MAX];
+        int written = snprintf(source, sizeof(source), "%s/%s", backup_dir, files->items[i]);
+        if (written < 0 || written >= (int)sizeof(source)) {
+            fprintf(stderr, "Restore path for '%s' is too long.\n", files->items[i]);
+            return -1;
+        }
+        if (copy_file(source, files->items[i]) != 0) {
+            return -1;
+        }
     }
 
     return 0;
@@ -349,8 +405,8 @@ static void print_intro(void) {
     printf("==============================================\n");
     printf(" Welcome to the BUDOSTACK Update Assistant\n");
     printf("==============================================\n\n");
-    printf("This helper will guide you through updating BUDOSTACK\n");
-    printf("without needing any Git knowledge.\n\n");
+    printf("This helper checks for new official releases and\n");
+    printf("guides you through applying updates safely.\n\n");
 }
 
 int main(void) {
@@ -367,82 +423,117 @@ int main(void) {
 
     printf("Using repository at: %s\n", repo_root);
 
-    if (run_system_command("git fetch --tags --prune origin 2>&1", "Checking GitHub for available updates...") != 0) {
+    if (run_system_command("git fetch --tags --prune origin 2>&1", "Checking GitHub for available releases...") != 0) {
         return EXIT_FAILURE;
     }
 
-    bool dirty = false;
-    if (check_worktree_clean(&dirty) != 0) {
+    struct StringList tags = {0};
+    if (load_tags(&tags) != 0) {
+        free_string_list(&tags);
         return EXIT_FAILURE;
     }
 
-    if (dirty) {
-        printf("\n⚠️  You have local changes that are not committed.\n");
-        printf("These changes could be overwritten by the update.\n");
-        if (!ask_yes_no("Do you want to continue anyway")) {
-            printf("Update cancelled. Your files were left untouched.\n");
-            return EXIT_SUCCESS;
-        }
-    }
-
-    struct BranchList releases = {0};
-    if (fetch_release_branches(&releases) != 0) {
-        free_branch_list(&releases);
-        return EXIT_FAILURE;
-    }
-
-    if (releases.count == 0U) {
-        printf("\nNo release branches were found on the remote. You can still update to the main branch.\n");
-    }
-
-    int choice = prompt_main_choice(releases.count > 0U);
-    if (choice == 0) {
-        printf("No changes were made.\n");
-        free_branch_list(&releases);
+    if (tags.count == 0U) {
+        printf("\nNo release tags were found on the remote repository.\n");
+        free_string_list(&tags);
         return EXIT_SUCCESS;
     }
 
-    if (choice == 1) {
-        printf("\nYou chose to update to the newest features from the main branch.\n");
-        if (checkout_main_branch() != 0) {
-            free_branch_list(&releases);
-            return EXIT_FAILURE;
-        }
-    } else if (choice == 2) {
-        int index = prompt_release_selection(&releases);
-        if (index < 0) {
-            printf("No changes were made.\n");
-            free_branch_list(&releases);
-            return EXIT_SUCCESS;
-        }
-        printf("\nYou chose release branch: %s\n", releases.names[index]);
-        if (checkout_release_branch(releases.names[index]) != 0) {
-            free_branch_list(&releases);
-            return EXIT_FAILURE;
-        }
+    const char *latest_tag = tags.items[tags.count - 1];
+
+    char current_tag[256];
+    bool have_current_tag = true;
+    if (read_first_line("git describe --tags --abbrev=0 2>/dev/null", current_tag, sizeof(current_tag)) != 0 ||
+        current_tag[0] == '\0') {
+        have_current_tag = false;
+        snprintf(current_tag, sizeof(current_tag), "unknown");
     }
 
-    free_branch_list(&releases);
+    printf("\nCurrent version: %s\n", current_tag);
+    printf("Latest release: %s\n", latest_tag);
 
-    printf("\nUpdating build files...\n");
-    if (run_system_command("make clean 2>&1", "Cleaning old build artifacts...") != 0) {
-        fprintf(stderr, "Please resolve the issue above and run 'make clean' manually if needed.\n");
+    if (have_current_tag && strcmp(current_tag, latest_tag) == 0) {
+        printf("\nYour BUDOSTACK is already up to date.\n");
+        free_string_list(&tags);
+        return EXIT_SUCCESS;
+    }
+
+    if (!ask_yes_no("\nA newer release is available. Do you want to update now")) {
+        printf("Update cancelled. Your files were left untouched.\n");
+        free_string_list(&tags);
+        return EXIT_SUCCESS;
+    }
+
+    printf("\nPreparing a safety backup of tracked files...\n");
+    struct StringList tracked_files = {0};
+    if (load_tracked_files(&tracked_files) != 0) {
+        free_string_list(&tags);
+        free_string_list(&tracked_files);
         return EXIT_FAILURE;
     }
 
-    printf("\nTriggering the official restart command so BUDOSTACK can rebuild itself.\n");
-    int restart_status = run_system_command("restart", "Restarting BUDOSTACK (this may take a few moments)...");
-    if (restart_status != 0) {
-        printf("\nThe automatic 'restart' command did not finish correctly.\n");
-        printf("Attempting a fallback method to rebuild using the BUDOSTACK shell...\n");
-        restart_status = run_system_command("printf 'restart\n' | ./budostack -f 2>&1", "Fallback restart in progress...");
-    }
-
-    if (restart_status != 0) {
-        printf("\nManual action required: please run 'make' followed by './budostack' to start the updated system.\n");
+    char backup_dir[PATH_MAX] = "/tmp/budostack_backup_XXXXXX";
+    if (mkdtemp(backup_dir) == NULL) {
+        perror("mkdtemp");
+        free_string_list(&tags);
+        free_string_list(&tracked_files);
         return EXIT_FAILURE;
     }
 
-    printf("\nAll done! BUDOSTACK is rebuilding now. Once the restart completes, you can continue using the system.\n");
+    printf("Backing up %zu tracked files...\n", tracked_files.count);
+    if (backup_tracked_files(&tracked_files, backup_dir) != 0) {
+        fprintf(stderr, "Backup failed. Aborting the update.\n");
+        free_string_list(&tags);
+        free_string_list(&tracked_files);
+        return EXIT_FAILURE;
+    }
+
+    char previous_head[256];
+    if (read_first_line("git rev-parse HEAD 2>/dev/null", previous_head, sizeof(previous_head)) != 0 ||
+        previous_head[0] == '\0') {
+        fprintf(stderr, "Unable to read the current commit hash.\n");
+        free_string_list(&tags);
+        free_string_list(&tracked_files);
+        return EXIT_FAILURE;
+    }
+
+    char checkout_command[PATH_MAX];
+    int written = snprintf(checkout_command, sizeof(checkout_command), "git checkout -f %s 2>&1", latest_tag);
+    if (written < 0 || written >= (int)sizeof(checkout_command)) {
+        fprintf(stderr, "Release tag '%s' is too long.\n", latest_tag);
+        free_string_list(&tags);
+        free_string_list(&tracked_files);
+        return EXIT_FAILURE;
+    }
+
+    printf("\nUpdating to %s...\n", latest_tag);
+    if (run_system_command(checkout_command, "Applying the new release...") != 0) {
+        fprintf(stderr, "Update failed. Restoring your previous version...\n");
+        char rollback_command[PATH_MAX];
+        int rollback_written = snprintf(rollback_command, sizeof(rollback_command), "git checkout -f %s 2>&1", previous_head);
+        if (rollback_written > 0 && rollback_written < (int)sizeof(rollback_command)) {
+            run_system_command(rollback_command, "Rolling back Git state...");
+        }
+        if (restore_tracked_files(&tracked_files, backup_dir) != 0) {
+            fprintf(stderr, "Rollback failed. Please restore from %s manually.\n", backup_dir);
+        } else {
+            printf("Rollback completed. Your previous files have been restored.\n");
+        }
+        free_string_list(&tags);
+        free_string_list(&tracked_files);
+        return EXIT_FAILURE;
+    }
+
+    char cleanup_command[PATH_MAX];
+    int cleanup_written = snprintf(cleanup_command, sizeof(cleanup_command), "rm -rf '%s'", backup_dir);
+    if (cleanup_written > 0 && cleanup_written < (int)sizeof(cleanup_command)) {
+        run_system_command(cleanup_command, "Removing temporary backup...");
+    }
+
+    printf("\nUpdate complete! You are now on release %s.\n", latest_tag);
+    printf("Untracked files were left untouched.\n");
+
+    free_string_list(&tags);
+    free_string_list(&tracked_files);
     return EXIT_SUCCESS;
 }

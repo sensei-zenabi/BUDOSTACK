@@ -23,6 +23,7 @@ static void budo_audio_warn_no_mixer(const char *action) {
     fprintf(stderr, "SDL_mixer not available for %s.\n", action);
 }
 
+#if BUDO_HAVE_SDL_MIXER
 static void budo_audio_clear_sound(budo_sound_t *sound) {
     if (!sound) {
         return;
@@ -36,6 +37,7 @@ static void budo_audio_clear_music(budo_music_t *music) {
     }
     memset(music, 0, sizeof(*music));
 }
+#endif
 
 int budo_audio_init(int frequency, uint16_t format, int channels, int chunk_size) {
 #if !BUDO_HAVE_SDL_MIXER

@@ -1,16 +1,18 @@
 ### WHAT IS BUDOSTACK? ###
 
 BUDOSTACK is a framework built on top of Debian Linux that allows
-users to enjoy the focus provided by the simplicity of 1980s personal
-computers.
+users to convert their PC into a retro-machine from the Golden Era of
+Computing by providing a set of in-built capabilities and libraries
+to create your own content and share it with you fellow BUDOSTACKERS.
 
 ### CAPABILITIES: ###
 
 - Terminal Emulator with CRT simulation.
-- Powerful TASK Scripting Language for building Apps and Games.
+- Powerful TASK Scripting Language similar to BASIC.
+- BUDO libraries and Shader Stack to build your own SDL based apps.
 - Office tools from Text Editors to Presentations and Spreadsheets.
 - File manipulation and System Utilities.
-- Math capabilities.
+- Built-In Math Capabilities that enable Scientific Calculation.
 - Connection Management and Messaging Tool.
 - RSS News Reader.
 - Linux command passthrough.
@@ -32,7 +34,7 @@ Tested distributions:
 
 Note! Internet connection is required.
 
-### LATEST RELEASE: v0.9.47 ###
+### LATEST RELEASE: v0.9.48 ###
 
 PROJECT STATUS: EARLY ACCESS from v0.8.0 to v1.0.0
 

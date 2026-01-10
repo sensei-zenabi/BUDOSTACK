@@ -63,9 +63,9 @@ RUN _WAIT 1000
 # Select whether shaders are used
 
 PRINT "\n"
-PRINT "\nEnable CRT Simulation?"
-PRINT "\n[1] Yes"
-PRINT "\n[0] No"
+PRINT "\n_TERM_SHADERS:"
+PRINT "\n[1] enable"
+PRINT "\n[0] disable"
 PRINT "\nEnter Selection: "
 INPUT $SELECTION
 IF ($SELECTION == 0):
@@ -76,9 +76,9 @@ RUN _TERM_SHADER $SHADERS
 # Select terminal resolution mode
 
 PRINT "\n"
-PRINT "\nSelect terminal resolution mode:"
-PRINT "\n[1] High (800x450)"
-PRINT "\n[0] Low (640x360)"
+PRINT "\n_TERM_RESOLUTION:"
+PRINT "\n[1] HIGH (800x450)"
+PRINT "\n[0] LOW (640x360)"
 PRINT "\nEnter Selection: "
 INPUT $SELECTION
 IF ($SELECTION == 1):
@@ -96,6 +96,19 @@ PRINT "\n  _TERM_RESOLUTION LOW  = sets the low resolution mode"
 PRINT "\n  _TERM_RESOLUTION HIGH = sets the high resolution mode"
 PRINT "\n"
 PRINT "\n"
+
+PRINT "\n"
+PRINT "\n_TERM_MOUSE_SHOW:"
+PRINT "\n[1] enable"
+PRINT "\n[0] disable"
+PRINT "\nEnter Selection: "
+INPUT $SELECTION
+IF ($SELECTION == 1):
+  RUN _TERM_MOUSE_SHOW enable
+END
+IF ($SELECTION == 0):
+  RUN _TERM_MOUSE_SHOW disable
+END
 
 # Select whether INTRO is displayed
 

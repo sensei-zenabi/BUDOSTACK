@@ -1,3 +1,4 @@
+#include "budo_audio.h"
 #include "budo_graphics.h"
 #include "budo_shader_stack.h"
 
@@ -416,6 +417,15 @@ static void reset_game_state(struct ship_state *ship, struct bullet *bullets,
     }
 }
 
+static void shutdown_audio(budo_music_t *music, int music_loaded, int audio_ready) {
+    if (music_loaded && music) {
+        budo_music_destroy(music);
+    }
+    if (audio_ready) {
+        budo_audio_shutdown();
+    }
+}
+
 int main(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -425,9 +435,29 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    budo_music_t music = { 0 };
+    int audio_ready = 0;
+    int music_loaded = 0;
+    const char *music_path = "ROCKET/SUORAN~1.S3M";
+
+    if (budo_audio_init(0, 0, 0, 0) == 0) {
+        audio_ready = 1;
+        if (budo_music_load(&music, music_path) == 0) {
+            music_loaded = 1;
+            if (budo_music_play(&music, -1) != 0) {
+                fprintf(stderr, "Failed to start music: %s\n", music_path);
+            }
+        } else {
+            fprintf(stderr, "Failed to load music: %s\n", music_path);
+            budo_audio_shutdown();
+            audio_ready = 0;
+        }
+    }
+
     psf_font_t font;
     if (psf_font_load(&font, "../fonts/system.psf") != 0) {
         fprintf(stderr, "Failed to load PSF font: %s\n", "../fonts/system.psf");
+        shutdown_audio(&music, music_loaded, audio_ready);
         SDL_Quit();
         return 1;
     }
@@ -441,6 +471,7 @@ int main(int argc, char **argv) {
     if (SDL_GetCurrentDisplayMode(0, &desktop_mode) != 0) {
         fprintf(stderr, "Failed to query desktop display mode: %s\n", SDL_GetError());
         psf_font_destroy(&font);
+        shutdown_audio(&music, music_loaded, audio_ready);
         SDL_Quit();
         return 1;
     }
@@ -454,6 +485,7 @@ int main(int argc, char **argv) {
     if (!window) {
         fprintf(stderr, "Failed to create window: %s\n", SDL_GetError());
         psf_font_destroy(&font);
+        shutdown_audio(&music, music_loaded, audio_ready);
         SDL_Quit();
         return 1;
     }
@@ -463,6 +495,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to create GL context: %s\n", SDL_GetError());
         SDL_DestroyWindow(window);
         psf_font_destroy(&font);
+        shutdown_audio(&music, music_loaded, audio_ready);
         SDL_Quit();
         return 1;
     }
@@ -483,6 +516,7 @@ int main(int argc, char **argv) {
         SDL_GL_DeleteContext(context);
         SDL_DestroyWindow(window);
         psf_font_destroy(&font);
+        shutdown_audio(&music, music_loaded, audio_ready);
         SDL_Quit();
         return 1;
     }
@@ -503,6 +537,7 @@ int main(int argc, char **argv) {
         SDL_GL_DeleteContext(context);
         SDL_DestroyWindow(window);
         psf_font_destroy(&font);
+        shutdown_audio(&music, music_loaded, audio_ready);
         SDL_Quit();
         return 1;
     }
@@ -515,6 +550,7 @@ int main(int argc, char **argv) {
         SDL_GL_DeleteContext(context);
         SDL_DestroyWindow(window);
         psf_font_destroy(&font);
+        shutdown_audio(&music, music_loaded, audio_ready);
         SDL_Quit();
         return 1;
     }
@@ -531,6 +567,7 @@ int main(int argc, char **argv) {
         SDL_GL_DeleteContext(context);
         SDL_DestroyWindow(window);
         psf_font_destroy(&font);
+        shutdown_audio(&music, music_loaded, audio_ready);
         SDL_Quit();
         return 1;
     }
@@ -891,6 +928,7 @@ int main(int argc, char **argv) {
     SDL_GL_DeleteContext(context);
     SDL_DestroyWindow(window);
     psf_font_destroy(&font);
+    shutdown_audio(&music, music_loaded, audio_ready);
     SDL_Quit();
 
     return 0;

@@ -116,8 +116,8 @@ int main(int argc, char **argv) {
     /* Initialize Font */
     
     psf_font_t font;
-    if (psf_font_load(&font, "../fonts/system.psf") != 0) {
-      fprintf(stderr, "Failed to load PSF font: %s\n", "../fonts/system.psf");
+    if (psf_font_load(&font, "./fonts/system.psf") != 0) {
+      fprintf(stderr, "Failed to load PSF font: %s\n", "./fonts/system.psf");
       SDL_Quit();
       return 1;
     }
@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
     /* Define BUDOSTACK shader paths */
 
     const char *shader_paths[] = {
-      "../shaders/crtscreen.glsl"
+      "./shaders/crtscreen.glsl"
     };
     
     

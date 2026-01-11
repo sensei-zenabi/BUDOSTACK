@@ -427,8 +427,8 @@ int main(int argc, char **argv) {
     }
 
     psf_font_t font;
-    if (psf_font_load(&font, "../fonts/system.psf") != 0) {
-        fprintf(stderr, "Failed to load PSF font: %s\n", "../fonts/system.psf");
+    if (psf_font_load(&font, "./fonts/system.psf") != 0) {
+        fprintf(stderr, "Failed to load PSF font: %s\n", "./fonts/system.psf");
         SDL_Quit();
         return 1;
     }
@@ -521,7 +521,7 @@ int main(int argc, char **argv) {
     }
 
     const char *shader_paths[] = {
-        "../shaders/crtscreen.glsl"
+        "./shaders/crtscreen.glsl"
     };
 
     if (budo_shader_stack_load(stack, shader_paths, 1u) != 0) {

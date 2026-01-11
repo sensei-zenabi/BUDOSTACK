@@ -538,12 +538,19 @@ int main(int argc, char **argv) {
 
     int audio_ready = 0;
     budo_music_t background_music = { 0 };
+    budo_sound_t fire_sound = { 0 };
+    int fire_sound_ready = 0;
     if (budo_audio_init(0, 0, 0, 0) == 0) {
         audio_ready = 1;
         if (budo_music_load(&background_music, "../budo/ROCKET/music.s3m") != 0) {
             fprintf(stderr, "Failed to load music: %s\n", "../budo/ROCKET/music.s3m");
         } else if (budo_music_play(&background_music, -1) != 0) {
             fprintf(stderr, "Failed to start background music.\n");
+        }
+        if (budo_sound_load(&fire_sound, "../budo/ROCKET/fire.wav") != 0) {
+            fprintf(stderr, "Failed to load sound: %s\n", "../budo/ROCKET/fire.wav");
+        } else {
+            fire_sound_ready = 1;
         }
     } else {
         fprintf(stderr, "Failed to initialize audio.\n");
@@ -708,6 +715,9 @@ int main(int argc, char **argv) {
                         bullets[i].velocity = vec2_scale(dir, BULLET_SPEED);
                         bullets[i].life = BULLET_LIFE;
                         fire_cooldown = FIRE_COOLDOWN;
+                        if (fire_sound_ready) {
+                            budo_sound_play(&fire_sound, 0);
+                        }
                         break;
                     }
                 }
@@ -902,6 +912,7 @@ int main(int argc, char **argv) {
     if (audio_ready) {
         budo_music_stop();
         budo_music_destroy(&background_music);
+        budo_sound_destroy(&fire_sound);
         budo_audio_shutdown();
     }
     budo_shader_stack_destroy(stack);

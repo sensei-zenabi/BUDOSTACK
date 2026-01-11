@@ -733,7 +733,13 @@ int main(int argc, char **argv) {
                 }
                 bullets[i].position = vec2_add(bullets[i].position,
                                                vec2_scale(bullets[i].velocity, delta));
-                wrap_position(&bullets[i].position, (float)GAME_WIDTH, (float)GAME_HEIGHT);
+                if (bullets[i].position.x < 0.0f ||
+                    bullets[i].position.x >= (float)GAME_WIDTH ||
+                    bullets[i].position.y < 0.0f ||
+                    bullets[i].position.y >= (float)GAME_HEIGHT) {
+                    bullets[i].active = 0;
+                    continue;
+                }
                 bullets[i].life -= delta;
                 if (bullets[i].life <= 0.0f) {
                     bullets[i].active = 0;

@@ -60,9 +60,10 @@ static void usage() {
         "  signal -<cmd> -<waveform> <note> <duration_ms> <volume> [channel]\n"
         "     [attack_pct] [decay_pct] [sustain_pct] [release_pct]\n"
         "     [lowpass_hz] [highpass_hz]\n"
+        "  signal -render <file>\n"
         "\n"
         "  cmd       : enter, play, loop <count> (plays entered notes count\n"
-        "              times), stop (stops all notes)\n"
+        "              times), render, stop (stops all notes)\n"
         "  waveforms : sine, square, triangle, sawtooth, noise\n"
         "  note      : standard concert pitch notes (e.g. c2, c3, c4, d4,\n"
         "              e4)\n"
@@ -76,6 +77,8 @@ static void usage() {
         "  adsr      : percentages must total 100\n"
         "  lowpass   : (optional) in Hz\n"
         "  highpass  : (optional) in Hz\n"
+        "  render    : read raw 16-bit little-endian samples from stdin and\n"
+        "              write a WAV file\n"
         "\n"
         "Notes entered on the same channel play sequentially in the order\n"
         "entered.\n"
@@ -83,7 +86,8 @@ static void usage() {
         "Examples:\n"
         "  signal -enter -sine c4 500 100 1 10 20 60 10 1000 200\n"
         "  signal -enter -square e4 250 80\n"
-        "  signal -play (wav > chord.wav)\n"
+        "  signal -play | signal -render sound.wav\n"
+        "  signal -play wav > chord.wav\n"
         "\n");
     exit(EXIT_FAILURE);
 }
@@ -523,6 +527,83 @@ static int write_wav_header(FILE *f, uint32_t total_samples) {
     return 0;
 }
 
+static int render_stream_to_file(const char *path) {
+    if (!path || *path == '\0') {
+        fprintf(stderr, "signal: render requires a file path.\n");
+        return -1;
+    }
+    if (isatty(STDIN_FILENO)) {
+        fprintf(stderr, "signal: render expects raw audio on stdin.\n");
+        return -1;
+    }
+
+    FILE *out = fopen(path, "wb");
+    if (!out) {
+        perror("signal: fopen");
+        return -1;
+    }
+
+    if (write_wav_header(out, 0) != 0) {
+        fprintf(stderr, "signal: failed to write WAV header.\n");
+        fclose(out);
+        return -1;
+    }
+
+    unsigned char buffer[8192];
+    size_t pending = 0;
+    size_t total_bytes = 0;
+    while (!feof(stdin)) {
+        size_t read_bytes = fread(buffer + pending, 1, sizeof(buffer) - pending, stdin);
+        if (read_bytes == 0) {
+            break;
+        }
+        read_bytes += pending;
+        size_t write_bytes = read_bytes - (read_bytes % 2);
+        if (write_bytes > 0) {
+            if (fwrite(buffer, 1, write_bytes, out) != write_bytes) {
+                perror("signal: fwrite");
+                fclose(out);
+                return -1;
+            }
+            total_bytes += write_bytes;
+        }
+        pending = read_bytes - write_bytes;
+        if (pending > 0) {
+            buffer[0] = buffer[write_bytes];
+        }
+    }
+
+    if (ferror(stdin)) {
+        perror("signal: fread");
+        fclose(out);
+        return -1;
+    }
+
+    if (pending > 0) {
+        fprintf(stderr, "signal: warning: dropped incomplete sample byte.\n");
+    }
+
+    if (fseek(out, 0, SEEK_SET) != 0) {
+        perror("signal: fseek");
+        fclose(out);
+        return -1;
+    }
+
+    uint32_t total_samples = (uint32_t)(total_bytes / 2);
+    if (write_wav_header(out, total_samples) != 0) {
+        fprintf(stderr, "signal: failed to update WAV header.\n");
+        fclose(out);
+        return -1;
+    }
+
+    if (fclose(out) != 0) {
+        perror("signal: fclose");
+        return -1;
+    }
+
+    return 0;
+}
+
 static void apply_adsr(uint64_t sample, uint64_t attack, uint64_t decay, uint64_t sustain, uint64_t release,
     uint64_t total, double *gain) {
     if (total == 0) {
@@ -682,7 +763,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (!strcmp(cmd, "play") || !strcmp(cmd, "loop")) {
-        enum { F_RAW, F_TEXT, F_WAV, F_PLAY } mode = F_PLAY;
+        enum { F_RAW, F_TEXT, F_WAV, F_PLAY, F_STREAM } mode = F_PLAY;
         int loop_mode = strcmp(cmd, "loop") == 0;
         long loop_count = 0;
         if (loop_mode) {
@@ -711,6 +792,8 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "Unknown format: %s\n", fmt);
                 usage(argv[0]);
             }
+        } else if (!loop_mode && !isatty(STDOUT_FILENO)) {
+            mode = F_STREAM;
         }
 
         NoteSequence sequences[SIGNAL_MAX_CHANNEL];
@@ -981,6 +1064,16 @@ int main(int argc, char *argv[]) {
         }
         for (size_t i = 0; i < SIGNAL_MAX_CHANNEL; ++i) {
             free_sequence(&sequences[i]);
+        }
+        return 0;
+    }
+
+    if (!strcmp(cmd, "render")) {
+        if (argc != 3) {
+            usage(argv[0]);
+        }
+        if (render_stream_to_file(argv[2]) != 0) {
+            return EXIT_FAILURE;
         }
         return 0;
     }

@@ -11,9 +11,6 @@
 
 # Initialize variables
 
-SET $SELECTION = 0
-SET $RESOLUTION = "LOW"
-SET $SCHEME = "vt220-green"
 SET $LOAD = 0
 
 # Set default resolution to low mode
@@ -24,8 +21,12 @@ RUN _TERM_RESOLUTION LOW
 
 RUN _TERM_MARGIN 8
 
+# Use to skip to a section for debugging
+GOTO LAUNCHER
+
 #-------------------------------------------------------------------------
 # BUDOSTACK LOGIN SCREEN
+@LOGIN_SCREEN
 
 RUN cls
 
@@ -45,7 +46,6 @@ END
 
 # Display intro logo and play starting tune
 
-@INTRO
 RUN clear
 RUN _WAIT 200
 RUN _DISPLAY -x 0 -y 15 -file assets/login_logo.png
@@ -58,80 +58,158 @@ RUN _WAIT 1600
 
 
 #-------------------------------------------------------------------------
-# BUDOSTACK LAUNCHER 
+# BUDOSTACK LAUNCHER
+@LAUNCHER
+
+# Variables
+
+SET $MENU = "MAIN MENU"
+SET $EVENT = 0
+SET $CURSOR_X = 34
+SET $CURSOR_Y = 19
+SET $RESOLUTION = "LOW"
+SET $SCHEME = "vt220-green"
+
+# Functions
+
+FUNCTION DRAW_CURSOR($X, $Y):
+
+  RUN _TEXT -x $X -y $Y -text ">"
+
+END
 
 RUN cls
 
+# DRAW USER INTERFACE
+
+RUN _RECT -x 1 -y 1 -width 79 -height 45 -fill off
+RUN _TEXT -x 31 -y 3 -text "- BUDOSTACK LAUNCHER -"
+
+@LAUNCHER_MENU
+
+IF ($MENU == "MAIN MENU"):
+    
+  RUN _RECT -x 2 -y 4 -width 77 -height 40 -fill on -color 0
+  RUN _TEXT -x 40 -y 15 -text "MENU:"
+  RUN _TEXT -x 36 -y 19 -text "CONFIGURATION"
+  RUN _TEXT -x 36 -y 22 -text "APPLICATIONS"
+  RUN _TEXT -x 36 -y 25 -text "COMMAND LINE"
+  
+  EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
+  
+  RUN _TEXT -x 34 -y 42 -text "<ENTER> to SELECT"
+
+END
+
+# Process Input
+
+RUN _KEYS TO $EVENT
+
+IF ($EVENT == 2):
+  $CURSOR_Y = $CURSOR_Y - 3
+END
+IF ($EVENT == -2):
+  $CURSOR_Y = $CURSOR_Y + 3
+END
+IF ($EVENT == 10):
+  GOTO EXIT
+END
+
+IF ($CURSOR_Y < 19):
+  $CURSOR_Y = 19
+END
+IF ($CURSOR_Y > 25):
+  $CURSOR_Y = 25
+END
+
+IF ($EVENT == 3):
+
+  IF ($CURSOR_Y == 22):
+    GOTO LAUNCHER_APPS
+  END
+  IF ($CURSOR_Y == 25):
+    GOTO EXIT
+  END
+
+END
+
+GOTO LAUNCHER_MENU
+
 # Select terminal color scheme
 
-PRINT "\nSelect BUDOSTACK colorscheme:"
-PRINT "\n[0] Commodore 64"
-PRINT "\n[1] IBM 5150"
-PRINT "\n[2] VT220-Amber"
-PRINT "\n[3] VT220-Green (Recommended)"
-PRINT "\nEnter Selection: "
-INPUT $SELECTION
-IF ($SELECTION == 0):
-  $SCHEME = "c64"
-END
-IF ($SELECTION == 1):
-  $SCHEME = "ibm5150"
-END
-IF ($SELECTION == 2):
-  $SCHEME = "vt220-amber"
-END
-IF ($SELECTION == 3):
-  $SCHEME = "vt220-green"
-END
-PRINT "\n"
-RUN _RETROPROFILE apply $SCHEME
-RUN _WAIT 200
+#_TEXT -x "\nSelect BUDOSTACK colorscheme:"
+#PRINT "\n[0] Commodore 64"
+#PRINT "\n[1] IBM 5150"
+#PRINT "\n[2] VT220-Amber"
+#PRINT "\n[3] VT220-Green (Recommended)"
+#PRINT "\nEnter Selection: "
+#INPUT $SELECTION
+#IF ($SELECTION == 0):
+#  $SCHEME = "c64"
+#END
+#IF ($SELECTION == 1):
+#  $SCHEME = "ibm5150"
+#END
+#IF ($SELECTION == 2):
+#  $SCHEME = "vt220-amber"
+#END
+#IF ($SELECTION == 3):
+#  $SCHEME = "vt220-green"
+#END
+#PRINT "\n"
+#RUN _RETROPROFILE apply $SCHEME
+#RUN _WAIT 200
 
 
 # Select terminal resolution mode
 
-PRINT "\n"
-PRINT "\n_TERM_RESOLUTION:"
-PRINT "\n[1] HIGH (800x450)"
-PRINT "\n[0] LOW (640x360)"
-PRINT "\nEnter Selection: "
-INPUT $SELECTION
-IF ($SELECTION == 1):
-  SET $RESOLUTION = "HIGH"
-END
-IF ($SELECTION == 0):
-  SET $RESOLUTION = "LOW"
-END
+#PRINT "\n"
+#PRINT "\n_TERM_RESOLUTION:"
+#PRINT "\n[1] HIGH (800x450)"
+#PRINT "\n[0] LOW (640x360)"
+#PRINT "\nEnter Selection: "
+#INPUT $SELECTION
+#IF ($SELECTION == 1):
+#  SET $RESOLUTION = "HIGH"
+#END
+#IF ($SELECTION == 0):
+#  SET $RESOLUTION = "LOW"
+#END
 
-PRINT "\n\nNote!"
-PRINT "\n"
-PRINT "\nResolution can be changed runtime with:"
-PRINT "\n"
-PRINT "\n  _TERM_RESOLUTION LOW  = sets the low resolution mode"
-PRINT "\n  _TERM_RESOLUTION HIGH = sets the high resolution mode"
-PRINT "\n"
+#PRINT "\n\nNote!"
+#PRINT "\n"
+#PRINT "\nResolution can be changed runtime with:"
+#PRINT "\n"
+#PRINT "\n  _TERM_RESOLUTION LOW  = sets the low resolution mode"
+#PRINT "\n  _TERM_RESOLUTION HIGH = sets the high resolution mode"
+#PRINT "\n"
+#PRINT "\n"
+
+#PRINT "\n"
+#PRINT "\n_TERM_MOUSE_SHOW:"
+#PRINT "\n[1] enable"
+#PRINT "\n[0] disable"
+#PRINT "\nEnter Selection: "
+#INPUT $SELECTION
+#IF ($SELECTION == 1):
+#  RUN _TERM_MOUSE_SHOW enable
+#END
+#IF ($SELECTION == 0):
+#  RUN _TERM_MOUSE_SHOW disable
+#END
+
+@EXIT
+
+RUN cls
+RUN _RETROPROFILE apply $SCHEME
 PRINT "\n"
 
-PRINT "\n"
-PRINT "\n_TERM_MOUSE_SHOW:"
-PRINT "\n[1] enable"
-PRINT "\n[0] disable"
-PRINT "\nEnter Selection: "
-INPUT $SELECTION
-IF ($SELECTION == 1):
-  RUN _TERM_MOUSE_SHOW enable
-END
-IF ($SELECTION == 0):
-  RUN _TERM_MOUSE_SHOW disable
-END
+# Apply the selected resolution at the exit
 
-                                              
-# Apply the selected resolution
-
-IF ($RESOLUTION == "HIGH"):
-  RUN _TERM_RESOLUTION HIGH
-END
-IF ($RESOLUTION == "LOW"):
-  RUN _TERM_RESOLUTION LOW
-END
+#IF ($RESOLUTION == "HIGH"):
+#  RUN _TERM_RESOLUTION HIGH
+#END
+#IF ($RESOLUTION == "LOW"):
+#  RUN _TERM_RESOLUTION LOW
+#END
                                                                                                                                                                                                                                 

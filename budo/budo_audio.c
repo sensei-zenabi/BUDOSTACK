@@ -3,7 +3,6 @@
 #include <SDL.h>
 #include <stdio.h>
 #include <string.h>
-#include <strings.h>
 
 #if defined(BUDO_USE_SDL_MIXER) && BUDO_USE_SDL_MIXER
 #if defined(__has_include)
@@ -37,38 +36,6 @@ static void budo_audio_clear_music(budo_music_t *music) {
         return;
     }
     memset(music, 0, sizeof(*music));
-}
-
-static const char *budo_audio_path_extension(const char *path) {
-    const char *dot = strrchr(path, '.');
-    if (!dot || dot == path) {
-        return "";
-    }
-    return dot + 1;
-}
-
-static int budo_audio_is_module_extension(const char *path, Mix_MusicType *type) {
-    const char *ext = budo_audio_path_extension(path);
-    if (!ext || ext[0] == '\0') {
-        return 0;
-    }
-    if (strcasecmp(ext, "mod") == 0) {
-        if (type) {
-            *type = MUS_MOD;
-        }
-        return 1;
-    }
-    if (strcasecmp(ext, "s3m") == 0) {
-        if (type) {
-#ifdef MUS_S3M
-            *type = MUS_S3M;
-#else
-            *type = MUS_MOD;
-#endif
-        }
-        return 1;
-    }
-    return 0;
 }
 #endif
 
@@ -228,19 +195,8 @@ int budo_music_load(budo_music_t *music, const char *path) {
 
     Mix_Music *track = Mix_LoadMUS(path);
     if (!track) {
-        Mix_MusicType module_type = MUS_MOD;
-        if (budo_audio_is_module_extension(path, &module_type)) {
-            SDL_RWops *rw = SDL_RWFromFile(path, "rb");
-            if (!rw) {
-                fprintf(stderr, "Failed to open module '%s': %s\n", path, SDL_GetError());
-                return -1;
-            }
-            track = Mix_LoadMUSType_RW(rw, module_type, 1);
-        }
-        if (!track) {
-            fprintf(stderr, "Failed to load music '%s': %s\n", path, Mix_GetError());
-            return -1;
-        }
+        fprintf(stderr, "Failed to load music '%s': %s\n", path, Mix_GetError());
+        return -1;
     }
 
     music->music = track;

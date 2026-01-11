@@ -34,6 +34,23 @@ static void budo_audio_clear_music(budo_music_t *music) {
     memset(music, 0, sizeof(*music));
 }
 
+static Mix_Music *budo_audio_load_music_track(const char *path, int is_module) {
+    if (!path) {
+        return NULL;
+    }
+
+#if defined(SDL_MIXER_VERSION_ATLEAST)
+#if SDL_MIXER_VERSION_ATLEAST(2, 6, 0)
+    if (is_module) {
+        return Mix_LoadMUSType(path, MUS_MOD);
+    }
+#endif
+#endif
+
+    (void)is_module;
+    return Mix_LoadMUS(path);
+}
+
 static int budo_audio_is_module_file(const char *path) {
     const char *extension;
 
@@ -215,13 +232,8 @@ int budo_music_load(budo_music_t *music, const char *path) {
 
     budo_audio_clear_music(music);
 
-    Mix_Music *track = NULL;
-
-    if (budo_audio_is_module_file(path)) {
-        track = Mix_LoadMUSType(path, MUS_MOD);
-    } else {
-        track = Mix_LoadMUS(path);
-    }
+    Mix_Music *track = budo_audio_load_music_track(path,
+                                                   budo_audio_is_module_file(path));
     if (!track) {
         fprintf(stderr, "Failed to load music '%s': %s\n", path, Mix_GetError());
         return -1;

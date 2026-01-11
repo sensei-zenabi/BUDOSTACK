@@ -540,8 +540,8 @@ int main(int argc, char **argv) {
     budo_music_t background_music = { 0 };
     if (budo_audio_init(0, 0, 0, 0) == 0) {
         audio_ready = 1;
-        if (budo_music_load(&background_music, "../budo/ROCKET/music.wav") != 0) {
-            fprintf(stderr, "Failed to load music: %s\n", "../budo/ROCKET/music.wav");
+        if (budo_music_load(&background_music, "../budo/ROCKET/music.s3m") != 0) {
+            fprintf(stderr, "Failed to load music: %s\n", "../budo/ROCKET/music.s3m");
         } else if (budo_music_play(&background_music, -1) != 0) {
             fprintf(stderr, "Failed to start background music.\n");
         }

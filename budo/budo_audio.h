@@ -40,7 +40,7 @@ void budo_sound_set_volume(budo_sound_t *sound, int volume);
 /* STOP A PLAYING CHANNEL (-1 TO HALT ALL). */
 void budo_sound_stop_channel(int channel);
 
-/* LOAD A MUSIC TRACK FROM DISK.
+/* LOAD A MUSIC TRACK FROM DISK (INCLUDING MOD/S3M MODULES).
 *  RETURNS 0 ON SUCCESS, -1 ON FAILURE.
 *  CALL budo_music_destroy WHEN DONE.
 */

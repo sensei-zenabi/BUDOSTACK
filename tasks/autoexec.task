@@ -62,16 +62,16 @@ RUN _WAIT 1000
 
 # Select whether shaders are used
 
-PRINT "\n"
-PRINT "\n_TERM_SHADERS:"
-PRINT "\n[1] enable"
-PRINT "\n[0] disable"
-PRINT "\nEnter Selection: "
-INPUT $SELECTION
-IF ($SELECTION == 0):
-  $SHADERS = "disable"
-END
-RUN _TERM_SHADER $SHADERS
+#PRINT "\n"
+#PRINT "\n_TERM_SHADERS:"
+#PRINT "\n[1] enable"
+#PRINT "\n[0] disable"
+#PRINT "\nEnter Selection: "
+#INPUT $SELECTION
+#IF ($SELECTION == 0):
+#  $SHADERS = "disable"
+#END
+#RUN _TERM_SHADER $SHADERS
 
 # Select terminal resolution mode
 

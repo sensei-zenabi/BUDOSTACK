@@ -135,7 +135,6 @@ int main(int argc, char *argv[]) {
         "  makedir  : Create a new directory.\n"     
         "  mute     : Enable/Disable Voice Assistant.\n" 
         "  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n"     
-        "  rename   : File and folder rename tool.\n" 
         "  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n" 
         "             Type: runtask -help for more details.\n" 
         "  stats    : Displays basic hardware stats.\n" 

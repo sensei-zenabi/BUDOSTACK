@@ -11,37 +11,64 @@
 
 # Initialize variables
 
-SET $RESOLUTION = "LOW"
 SET $SELECTION = 0
-SET $SCHEME = "c64"
-SET $SHADERS = "enable"
-SET $INTRO = "enable"
+SET $RESOLUTION = "LOW"
+SET $SCHEME = "vt220-green"
 SET $LOAD = 0
 
 # Set default resolution to low mode
 
-RUN _TERM_RESOLUTION 640 360
+RUN _TERM_RESOLUTION LOW
 
 # Adjust the margin
 
 RUN _TERM_MARGIN 8
 
 #-------------------------------------------------------------------------
-# OPTION 1: Your Customized Starting Sequence
+# BUDOSTACK LOGIN SCREEN
 
-# Start directly to your application
-# - to be defined -
+RUN cls
+
+# Display "simulated" loading screen and play related sound effects
+
+RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+@LOADING
+RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
+IF ($LOAD == 50):
+  RUN _TERM_SOUND_PLAY 2 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+END
+IF ($LOAD < 100):
+  SET $LOAD = $LOAD + 10
+  RUN _WAIT 250
+  GOTO LOADING
+END
+
+# Display intro logo and play starting tune
+
+@INTRO
+RUN clear
+RUN _WAIT 200
+RUN _DISPLAY -x 0 -y 15 -file assets/login_logo.png
+RUN _WAIT 1500
+RUN _TEXT -x 17 -y 31 -text "...WELCOME BACK TO GOLDEN AGE OF COMPUTING..."
+RUN _WAIT 1000
+RUN _TEXT -x 2 -y 43 -text "Created by: Ville Suoranta"
+RUN _TEXT -x 2 -y 44 -text "email: ville.m.suoranta(at)gmail.com"
+RUN _WAIT 1600
+
 
 #-------------------------------------------------------------------------
-# OPTION 2: BUDOSTACK Default Starting Sequence 
+# BUDOSTACK LAUNCHER 
+
+RUN cls
 
 # Select terminal color scheme
 
 PRINT "\nSelect BUDOSTACK colorscheme:"
 PRINT "\n[0] Commodore 64"
-PRINT "\n[1] IBM 5150 (Recommended)"
+PRINT "\n[1] IBM 5150"
 PRINT "\n[2] VT220-Amber"
-PRINT "\n[3] VT220-Green"
+PRINT "\n[3] VT220-Green (Recommended)"
 PRINT "\nEnter Selection: "
 INPUT $SELECTION
 IF ($SELECTION == 0):
@@ -56,22 +83,10 @@ END
 IF ($SELECTION == 3):
   $SCHEME = "vt220-green"
 END
-RUN _CLEAR
+PRINT "\n"
 RUN _RETROPROFILE apply $SCHEME
-RUN _WAIT 1000
+RUN _WAIT 200
 
-# Select whether shaders are used
-
-#PRINT "\n"
-#PRINT "\n_TERM_SHADERS:"
-#PRINT "\n[1] enable"
-#PRINT "\n[0] disable"
-#PRINT "\nEnter Selection: "
-#INPUT $SELECTION
-#IF ($SELECTION == 0):
-#  $SHADERS = "disable"
-#END
-#RUN _TERM_SHADER $SHADERS
 
 # Select terminal resolution mode
 
@@ -110,58 +125,13 @@ IF ($SELECTION == 0):
   RUN _TERM_MOUSE_SHOW disable
 END
 
-# Select whether INTRO is displayed
-
-PRINT "\n"
-PRINT "\nShow Intro?"
-PRINT "\n[1] Yes"
-PRINT "\n[0] No"
-PRINT "\nEnter Selection: "
-INPUT $SELECTION
-IF ($SELECTION == 0):
-  SET $INTRO = "disable"
-END
-
-RUN cls
-
-IF ($INTRO == "enable"):
-
-  # Display "simulated" loading screen and play related sound effects
-
-  RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-  @LOADING
-  RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
-  IF ($LOAD == 50):
-    RUN _TERM_SOUND_PLAY 2 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-  END
-  IF ($LOAD < 100):
-    SET $LOAD = $LOAD + 10
-    RUN _WAIT 250
-    GOTO LOADING
-  END
-
-  # Display intro logo and play starting tune
-
-  @INTRO
-  RUN clear
-  RUN _WAIT 200
-  RUN _DISPLAY -x 0 -y 15 -file assets/login_logo.png
-  RUN _TERM_SOUND_PLAY 2 ../sounds/561996__neopolitansixth__chipsound-logo-jingle.wav 100
-  RUN _WAIT 1500
-  RUN _TEXT -x 27 -y 31 -text "...WELCOME BACK TO 1980s..."
-  RUN _WAIT 1000
-  RUN _TEXT -x 2 -y 43 -text "Created by: Ville Suoranta"
-  RUN _TEXT -x 2 -y 44 -text "email: ville.m.suoranta(at)gmail.com"
-  RUN _WAIT 1600                                                                                                                      
- 
-END
                                               
 # Apply the selected resolution
 
 IF ($RESOLUTION == "HIGH"):
-  RUN _TERM_RESOLUTION 800 450
+  RUN _TERM_RESOLUTION HIGH
 END
 IF ($RESOLUTION == "LOW"):
-  RUN _TERM_RESOLUTION 640 360
+  RUN _TERM_RESOLUTION LOW
 END
                                                                                                                                                                                                                                 

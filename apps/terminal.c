@@ -100,6 +100,7 @@ static Uint32 terminal_render_last_frame_tick = 0u;
 static Uint32 terminal_render_frame_interval_ms = 0u;
 static int terminal_shaders_enabled = 1;
 static int terminal_vsync_enabled = 0;
+static int terminal_input_draw_requested = 0;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -7395,6 +7396,7 @@ int main(int argc, char **argv) {
                 }
 #endif
             } else if (event.type == SDL_MOUSEBUTTONDOWN) {
+                terminal_input_draw_requested = 1;
                 terminal_cursor_update_position(event.button.x, event.button.y);
                 int mouse_reporting = terminal_mouse_reporting_enabled(&buffer);
                 if (mouse_reporting) {
@@ -7472,6 +7474,7 @@ int main(int argc, char **argv) {
                     }
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP) {
+                terminal_input_draw_requested = 1;
                 if (terminal_mouse_reporting_enabled(&buffer)) {
                     size_t top_index = 0u;
                     terminal_visible_row_range(&buffer, &top_index, NULL);
@@ -7598,6 +7601,7 @@ int main(int argc, char **argv) {
                     }
                 }
             } else if (event.type == SDL_KEYDOWN) {
+                terminal_input_draw_requested = 1;
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = terminal_normalize_modifiers(event.key.keysym.mod);
                 int handled = 0;
@@ -7985,6 +7989,7 @@ int main(int argc, char **argv) {
                     continue;
                 }
             } else if (event.type == SDL_TEXTINPUT) {
+                terminal_input_draw_requested = 1;
                 const char *text = event.text.text;
                 size_t len = strlen(text);
                 if (len > 0u) {
@@ -8266,7 +8271,8 @@ int main(int argc, char **argv) {
         }
 
         int cursor_requires_draw = terminal_cursor_enabled && terminal_cursor_dirty;
-        int need_gpu_draw = frame_dirty || shader_requires_frame || cursor_requires_draw;
+        int need_input_draw = terminal_input_draw_requested && !terminal_shaders_active();
+        int need_gpu_draw = frame_dirty || shader_requires_frame || cursor_requires_draw || need_input_draw;
         if (need_gpu_draw && terminal_render_frame_interval_ms > 0u) {
             Uint32 since_last_frame = now - terminal_render_last_frame_tick;
             if (since_last_frame < terminal_render_frame_interval_ms) {
@@ -8564,6 +8570,7 @@ int main(int argc, char **argv) {
 
         SDL_GL_SwapWindow(window);
 
+        terminal_input_draw_requested = 0;
         terminal_cursor_dirty = 0;
 
         terminal_render_last_frame_tick = SDL_GetTicks();

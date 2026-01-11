@@ -36,6 +36,7 @@ PACKAGES=(
     "zip"               # Mandatory: commands: unpack, pack
     "libasound2-dev"    # Required: ALSA development headers for linking
     "libsdl2-dev"       # Mandatory: for sdl*.c based commands
+    "libsdl2-mixer-dev" # Optional: SDL_mixer support for background music
     "mesa-common-dev"   # Required: OpenGL headers
     "libgl1-mesa-dev"   # Required: libGL for shader-based terminal
     "espeak"            # Optional: Speech assist

@@ -39,15 +39,14 @@ static Mix_Music *budo_audio_load_music_track(const char *path, int is_module) {
         return NULL;
     }
 
-#if defined(SDL_MIXER_VERSION_ATLEAST)
-#if SDL_MIXER_VERSION_ATLEAST(2, 6, 0)
     if (is_module) {
-        return Mix_LoadMUSType(path, MUS_MOD);
+        SDL_RWops *rw = SDL_RWFromFile(path, "rb");
+        if (!rw) {
+            return NULL;
+        }
+        return Mix_LoadMUSType_RW(rw, MUS_MOD, 1);
     }
-#endif
-#endif
 
-    (void)is_module;
     return Mix_LoadMUS(path);
 }
 

@@ -459,6 +459,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    SDL_ShowCursor(SDL_DISABLE);
+
     SDL_GLContext context = SDL_GL_CreateContext(window);
     if (!context) {
         fprintf(stderr, "Failed to create GL context: %s\n", SDL_GetError());

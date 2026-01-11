@@ -1,3 +1,4 @@
+#include "budo_audio.h"
 #include "budo_graphics.h"
 #include "budo_shader_stack.h"
 
@@ -535,6 +536,19 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    int audio_ready = 0;
+    budo_music_t background_music = { 0 };
+    if (budo_audio_init(0, 0, 0, 0) == 0) {
+        audio_ready = 1;
+        if (budo_music_load(&background_music, "../budo/ROCKET/music.wav") != 0) {
+            fprintf(stderr, "Failed to load music: %s\n", "../budo/ROCKET/music.wav");
+        } else if (budo_music_play(&background_music, -1) != 0) {
+            fprintf(stderr, "Failed to start background music.\n");
+        }
+    } else {
+        fprintf(stderr, "Failed to initialize audio.\n");
+    }
+
     srand((unsigned int)SDL_GetTicks());
 
     struct ship_state ship = {
@@ -885,6 +899,11 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (audio_ready) {
+        budo_music_stop();
+        budo_music_destroy(&background_music);
+        budo_audio_shutdown();
+    }
     budo_shader_stack_destroy(stack);
     free(pixels);
     glDeleteTextures(1, &texture);

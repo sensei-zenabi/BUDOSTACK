@@ -38,4 +38,4 @@
 # Generate fire sound
 
 RUN signal -enter -square c2 100 10 1 20 10 50 20
-RUN signal -play
+RUN signal -render ./fire.wav

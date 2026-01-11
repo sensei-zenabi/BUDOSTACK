@@ -910,6 +910,8 @@ static int handle_key_event(int key, int *running) {
 
 /* -------- UI / Rendering -------- */
 
+#define STATUS_LINE_MAX 8
+
 static void append_hint(char *line, size_t cap, int *len, const char *hint) {
     if (*len >= (int)cap - 1) return;
     if (*len > 0) {
@@ -926,19 +928,22 @@ static void append_hint(char *line, size_t cap, int *len, const char *hint) {
     line[*len] = '\0';
 }
 
-static void draw_status_lines(int cols) {
+static int build_status_lines(int cols, char lines[][256], int max_lines) {
+    if (max_lines <= 0) {
+        return 0;
+    }
     char line1[256];
-    char line2[256];
     const char *fill_msg = fill_color_pending ? "  Fill:Pick color" : "";
     snprintf(line1, sizeof(line1),
         " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%d  %s%s",
         img_w, img_h, cursor_x, cursor_y, view_x, view_y,
         current_palette_variant + 1, dirty ? "Dirty" : "Saved", fill_msg);
     line1[sizeof(line1) - 1] = '\0';
-    int len1 = (int)strlen(line1);
-
-    line2[0] = '\0';
-    int len2 = 0;
+    strncpy(lines[0], line1, sizeof(lines[0]) - 1);
+    lines[0][sizeof(lines[0]) - 1] = '\0';
+    int line_lengths[STATUS_LINE_MAX];
+    int line_count = 1;
+    line_lengths[0] = (int)strlen(lines[0]);
 
     const char *shortcuts[] = {
         "Draw:A-Z",
@@ -954,38 +959,50 @@ static void draw_status_lines(int cols) {
         "Quit:^Q"
     };
     size_t shortcut_count = sizeof(shortcuts) / sizeof(shortcuts[0]);
-    size_t split = (shortcut_count + 1) / 2;
+    int max_len = cols > 0 ? cols - 1 : 0;
     for (size_t i = 0; i < shortcut_count; ++i) {
-        if (i < split) {
-            int prev_len = len1;
-            append_hint(line1, sizeof(line1), &len1, shortcuts[i]);
-            if (cols > 0 && len1 > cols - 1) {
-                len1 = prev_len;
-                line1[len1] = '\0';
-                append_hint(line2, sizeof(line2), &len2, shortcuts[i]);
+        if (line_count >= max_lines) {
+            break;
+        }
+        int prev_len = line_lengths[line_count - 1];
+        append_hint(lines[line_count - 1], sizeof(lines[0]), &line_lengths[line_count - 1], shortcuts[i]);
+        if (max_len > 0 && line_lengths[line_count - 1] > max_len) {
+            line_lengths[line_count - 1] = prev_len;
+            lines[line_count - 1][line_lengths[line_count - 1]] = '\0';
+            if (line_count >= max_lines) {
+                break;
             }
-        } else {
-            append_hint(line2, sizeof(line2), &len2, shortcuts[i]);
+            lines[line_count][0] = '\0';
+            line_lengths[line_count] = 0;
+            line_count++;
+            append_hint(lines[line_count - 1], sizeof(lines[0]), &line_lengths[line_count - 1], shortcuts[i]);
         }
     }
 
+    return line_count;
+}
+
+static int status_line_count(int cols) {
+    char lines[STATUS_LINE_MAX][256];
+    return build_status_lines(cols, lines, (int)(sizeof(lines) / sizeof(lines[0])));
+}
+
+static void draw_status_lines(int cols) {
+    char lines[STATUS_LINE_MAX][256];
+    int line_count = build_status_lines(cols, lines, (int)(sizeof(lines) / sizeof(lines[0])));
     int max_len = cols > 0 ? cols - 1 : 0;
-    int write_len1 = len1;
-    int write_len2 = len2;
-    if (write_len1 > max_len) write_len1 = max_len;
-    if (write_len2 > max_len) write_len2 = max_len;
 
-    write(STDOUT_FILENO, "\x1b[7m", 4);
-    write(STDOUT_FILENO, line1, write_len1);
-    for (int i = write_len1; i < max_len; i++) write(STDOUT_FILENO, " ", 1);
-    write(STDOUT_FILENO, "\x1b[0m", 4);
-
-    write(STDOUT_FILENO, "\r\n", 2);
-
-    write(STDOUT_FILENO, "\x1b[7m", 4);
-    write(STDOUT_FILENO, line2, write_len2);
-    for (int i = write_len2; i < max_len; i++) write(STDOUT_FILENO, " ", 1);
-    write(STDOUT_FILENO, "\x1b[0m", 4);
+    for (int line = 0; line < line_count; ++line) {
+        int write_len = (int)strlen(lines[line]);
+        if (write_len > max_len) write_len = max_len;
+        write(STDOUT_FILENO, "\x1b[7m", 4);
+        write(STDOUT_FILENO, lines[line], write_len);
+        for (int i = write_len; i < max_len; i++) write(STDOUT_FILENO, " ", 1);
+        write(STDOUT_FILENO, "\x1b[0m", 4);
+        if (line + 1 < line_count) {
+            write(STDOUT_FILENO, "\r\n", 2);
+        }
+    }
 }
 
 static int ensure_cursor_visible_for_area(int draw_rows, int draw_cols) {
@@ -1118,6 +1135,7 @@ typedef struct {
     int cols;
     int draw_rows;
     int draw_cols;
+    int status_lines;
 } ScreenLayout;
 
 static int compute_screen_layout(ScreenLayout *layout) {
@@ -1125,7 +1143,11 @@ static int compute_screen_layout(ScreenLayout *layout) {
     if (layout->rows < 5 || layout->cols <= 0) {
         return 0;
     }
-    layout->draw_rows = layout->rows - 3;
+    layout->status_lines = status_line_count(layout->cols);
+    if (layout->status_lines <= 0) {
+        layout->status_lines = 1;
+    }
+    layout->draw_rows = layout->rows - (layout->status_lines + 1);
     layout->draw_cols = layout->cols;
     if (layout->draw_rows <= 0 || layout->draw_cols <= 0) {
         return 0;
@@ -1197,14 +1219,12 @@ static int update_cursor_partial(int old_x, int old_y) {
 }
 
 static void render(void){
-    int rows, cols;
-    get_terminal_size(&rows, &cols);
-    if (rows < 5 || cols < 10) return;
+    ScreenLayout layout;
+    if (!compute_screen_layout(&layout)) {
+        return;
+    }
 
-    int draw_rows = rows - 3; // palette line + two status/help lines
-    int draw_cols = cols;
-
-    ensure_cursor_visible_for_area(draw_rows, draw_cols);
+    ensure_cursor_visible_for_area(layout.draw_rows, layout.draw_cols);
 
     // Clear & move home
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -1221,15 +1241,14 @@ static void render(void){
     reset_ansi_colors();
     // Fill to end
     int curcol = 10 + 2*PALETTE_COLORS;
-    int cols_now; get_terminal_size(&rows,&cols_now);
-    for (int i=curcol;i<cols_now;i++) write(STDOUT_FILENO, " ", 1);
+    for (int i = curcol; i < layout.cols; i++) write(STDOUT_FILENO, " ", 1);
 
     // Draw viewport
-    for (int ry = 0; ry < draw_rows; ry++) {
+    for (int ry = 0; ry < layout.draw_rows; ry++) {
         write(STDOUT_FILENO, "\r\n", 2);
         int y = view_y + ry;
 
-        for (int rx = 0; rx < draw_cols; rx++) {
+        for (int rx = 0; rx < layout.draw_cols; rx++) {
             int x = view_x + rx;
             int in_bounds = (x >= 0 && x < img_w && y >= 0 && y < img_h);
 
@@ -1246,7 +1265,7 @@ static void render(void){
 
     write(STDOUT_FILENO, "\r\n", 2);
     // Status + help lines
-    draw_status_lines(cols_now);
+    draw_status_lines(layout.cols);
 }
 
 /* -------- Prompts (line input in raw mode) -------- */

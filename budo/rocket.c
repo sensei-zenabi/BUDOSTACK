@@ -544,12 +544,16 @@ int main(int argc, char **argv) {
         audio_ready = 1;
         if (budo_music_load(&background_music, "../budo/ROCKET/music.s3m") != 0) {
             fprintf(stderr, "Failed to load music: %s\n", "../budo/ROCKET/music.s3m");
-        } else if (budo_music_play(&background_music, -1) != 0) {
-            fprintf(stderr, "Failed to start background music.\n");
+        } else {
+            budo_music_set_volume(85);
+            if (budo_music_play(&background_music, -1) != 0) {
+                fprintf(stderr, "Failed to start background music.\n");
+            }
         }
         if (budo_sound_load(&fire_sound, "../budo/ROCKET/fire.wav") != 0) {
             fprintf(stderr, "Failed to load sound: %s\n", "../budo/ROCKET/fire.wav");
         } else {
+            budo_sound_set_volume(&fire_sound, 128);
             fire_sound_ready = 1;
         }
     } else {

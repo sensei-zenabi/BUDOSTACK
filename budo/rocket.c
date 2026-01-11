@@ -19,12 +19,12 @@
 #define MAX_LEVEL 10
 
 #define SHIP_TURN_SPEED 3.5f
-#define SHIP_THRUST 110.0f
+#define SHIP_THRUST 150.0f
 #define SHIP_FRICTION 0.98f
 #define SHIP_RADIUS 10.0f
 
 #define BULLET_SPEED 220.0f
-#define BULLET_LIFE 1.4f
+#define BULLET_LIFE 3.0f
 #define FIRE_COOLDOWN 0.18f
 
 #define BONUS_LIFE_SCORE 5000

@@ -88,50 +88,124 @@ RUN _TEXT -x 31 -y 3 -text "- BUDOSTACK LAUNCHER -"
 @LAUNCHER_MENU
 
 IF ($MENU == "MAIN MENU"):
-    
+  
+  # Draw MAIN MENU
+  
   RUN _RECT -x 2 -y 4 -width 77 -height 40 -fill on -color 0
   RUN _TEXT -x 40 -y 15 -text "MENU:"
-  RUN _TEXT -x 36 -y 19 -text "CONFIGURATION"
-  RUN _TEXT -x 36 -y 22 -text "APPLICATIONS"
+  RUN _TEXT -x 36 -y 19 -text "CONFIGURATION -->"
+  RUN _TEXT -x 36 -y 22 -text "APPLICATIONS -->"
   RUN _TEXT -x 36 -y 25 -text "COMMAND LINE"
   
   EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
   
   RUN _TEXT -x 34 -y 42 -text "<ENTER> to SELECT"
-
-END
-
-# Process Input
-
-RUN _KEYS TO $EVENT
-
-IF ($EVENT == 2):
-  $CURSOR_Y = $CURSOR_Y - 3
-END
-IF ($EVENT == -2):
-  $CURSOR_Y = $CURSOR_Y + 3
-END
-IF ($EVENT == 10):
-  GOTO EXIT
-END
-
-IF ($CURSOR_Y < 19):
-  $CURSOR_Y = 19
-END
-IF ($CURSOR_Y > 25):
-  $CURSOR_Y = 25
-END
-
-IF ($EVENT == 3):
-
-  IF ($CURSOR_Y == 22):
-    GOTO LAUNCHER_APPS
+  
+  
+  # Process Input
+  
+  RUN _KEYS TO $EVENT
+  
+  IF ($EVENT == 2):
+    # Up Arrow
+    $CURSOR_Y = $CURSOR_Y - 3
   END
-  IF ($CURSOR_Y == 25):
+  
+  IF ($EVENT == -2):
+    # Down Arrow
+    $CURSOR_Y = $CURSOR_Y + 3
+  END
+  
+  IF ($EVENT == 10):
+    # ESC Key
     GOTO EXIT
   END
 
+  
+  # Limit Cursor Movement
+  
+  IF ($CURSOR_Y < 19):
+    $CURSOR_Y = 19
+  END
+  IF ($CURSOR_Y > 25):
+    $CURSOR_Y = 25
+  END
+  
+  
+  # Act on ENTER press
+  
+  IF ($EVENT == 3):  
+    # Enter Key
+  
+    IF ($CURSOR_Y == 22):
+      $MENU = "APPLICATIONS"
+    END
+    IF ($CURSOR_Y == 25):
+      GOTO EXIT
+    END
+  
+  END
+
 END
+
+IF ($MENU == "APPLICATIONS"):
+
+  # Draw APPLICATIONS menu
+  
+  RUN _RECT -x 2 -y 4 -width 77 -height 40 -fill on -color 0
+  RUN _TEXT -x 40 -y 15 -text "MENU:"
+  RUN _TEXT -x 36 -y 19 -text "CUBE DEMO"
+  RUN _TEXT -x 36 -y 22 -text "ROCKET DEMO"
+  RUN _TEXT -x 36 -y 25 -text "../MAIN MENU"
+  
+  EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
+  
+  RUN _TEXT -x 34 -y 42 -text "<ENTER> to SELECT"
+
+  
+  # Process Input
+  
+  RUN _KEYS TO $EVENT
+  
+  IF ($EVENT == 2):
+    # Up Arrow
+    $CURSOR_Y = $CURSOR_Y - 3
+  END
+  
+  IF ($EVENT == -2):
+    # Down Arrow
+    $CURSOR_Y = $CURSOR_Y + 3
+  END
+  
+  IF ($EVENT == 10):
+    # ESC Key
+    GOTO EXIT
+  END
+
+  
+  # Limit Cursor Movement
+  
+  IF ($CURSOR_Y < 19):
+    $CURSOR_Y = 19
+  END
+  IF ($CURSOR_Y > 25):
+    $CURSOR_Y = 25
+  END
+  
+  
+  # Act on ENTER press
+  
+  IF ($EVENT == 3):  
+    # Enter Key
+  
+    IF ($CURSOR_Y == 25):
+      $MENU = "MAIN MENU"
+    END
+  
+  END
+
+END
+
 
 GOTO LAUNCHER_MENU
 

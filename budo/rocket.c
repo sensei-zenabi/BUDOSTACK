@@ -438,15 +438,13 @@ int main(int argc, char **argv) {
     budo_music_t music = { 0 };
     int audio_ready = 0;
     int music_loaded = 0;
-    const char *music_path = "ROCKET/SUORAN~1.S3M";
+    int music_started = 0;
+    const char *music_path = "./budo/ROCKET/SUORAN~1.S3M";
 
     if (budo_audio_init(0, 0, 0, 0) == 0) {
         audio_ready = 1;
         if (budo_music_load(&music, music_path) == 0) {
             music_loaded = 1;
-            if (budo_music_play(&music, -1) != 0) {
-                fprintf(stderr, "Failed to start music: %s\n", music_path);
-            }
         } else {
             fprintf(stderr, "Failed to load music: %s\n", music_path);
             budo_audio_shutdown();
@@ -596,6 +594,7 @@ int main(int argc, char **argv) {
     int next_bonus = BONUS_LIFE_SCORE;
     float level_banner = 0.0f;
     enum game_state state = STATE_MENU;
+    enum game_state prev_state = state;
     int menu_index = 0;
     int options_index = 0;
 
@@ -680,6 +679,25 @@ int main(int argc, char **argv) {
                     }
                 }
             }
+        }
+
+        if (state != prev_state) {
+            if (state == STATE_PLAY) {
+                if (music_loaded) {
+                    if (!music_started) {
+                        if (budo_music_play(&music, -1) != 0) {
+                            fprintf(stderr, "Failed to start music: %s\n", music_path);
+                        } else {
+                            music_started = 1;
+                        }
+                    } else {
+                        budo_music_resume();
+                    }
+                }
+            } else if (music_loaded) {
+                budo_music_pause();
+            }
+            prev_state = state;
         }
 
         Uint32 now = SDL_GetTicks();

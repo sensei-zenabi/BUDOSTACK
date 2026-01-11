@@ -84,7 +84,8 @@ enum EditorKey {
     PGDN_KEY,       // 1008
     F1_KEY,         // 1009
     F2_KEY,         // 1010
-    F3_KEY          // 1011
+    F3_KEY,         // 1011
+    SHIFT_TAB_KEY   // 1012
 };
 
 /* Data structure for a text line */
@@ -1008,6 +1009,69 @@ static void editorGetSelectionRangeForLine(int line, int start_line, int start_x
         *sel_end = *sel_start;
 }
 
+static int editorIndentLine(EditorLine *line, int width) {
+    if (width <= 0)
+        return 0;
+    char *new_chars = realloc(line->chars, line->size + width + 1);
+    if (!new_chars)
+        die("realloc");
+    line->chars = new_chars;
+    memmove(line->chars + width, line->chars, line->size + 1);
+    memset(line->chars, ' ', width);
+    line->size += width;
+    line->modified = 1;
+    return width;
+}
+
+static int editorUnindentLine(EditorLine *line, int width) {
+    if (width <= 0 || line->size == 0)
+        return 0;
+    int remove = 0;
+    while (remove < width && remove < line->size && line->chars[remove] == ' ')
+        remove++;
+    if (remove == 0 && line->chars[0] == '\t')
+        remove = 1;
+    if (remove == 0)
+        return 0;
+    memmove(line->chars, line->chars + remove, line->size - remove + 1);
+    line->size -= remove;
+    line->modified = 1;
+    return remove;
+}
+
+static void editorIndentLines(int start_line, int end_line, int direction) {
+    int width = EDITOR_TAB_WIDTH;
+    int changed = 0;
+    if (start_line < 0)
+        start_line = 0;
+    if (end_line >= E.numrows)
+        end_line = E.numrows - 1;
+    for (int i = start_line; i <= end_line; i++) {
+        int delta = 0;
+        if (direction > 0)
+            delta = editorIndentLine(&E.row[i], width);
+        else
+            delta = -editorUnindentLine(&E.row[i], width);
+        if (delta != 0) {
+            changed = 1;
+            if (i == E.cy) {
+                E.cx += delta;
+                if (E.cx < 0)
+                    E.cx = 0;
+            }
+            if (i == E.sel_anchor_y) {
+                E.sel_anchor_x += delta;
+                if (E.sel_anchor_x < 0)
+                    E.sel_anchor_x = 0;
+            }
+        }
+    }
+    if (changed) {
+        E.dirty = 1;
+        E.preferred_cx = E.cx;
+    }
+}
+
 void editorRenderRowWithSelection(EditorLine *row, int file_row, int avail, struct abuf *ab) {
     int logical_width = 0;
     int byte_index = editorRowCxToByteIndex(row, E.coloff);
@@ -1317,6 +1381,7 @@ int editorReadKey(void) {
                 case 'D': return ARROW_LEFT;
                 case 'H': return HOME_KEY;
                 case 'F': return END_KEY;
+                case 'Z': return SHIFT_TAB_KEY;
                 default: return '\x1b';
             }
         }
@@ -1580,12 +1645,40 @@ void editorProcessKeypress(void) {
             last_key_was_vertical = 0;
             break;
         case '\t':
-            /* TAB support: insert spaces based on EDITOR_TAB_WIDTH */
             push_undo_state();
-            for (int i = 0; i < EDITOR_TAB_WIDTH; i++)
-                editorInsertChar(' ');
+            if (E.selecting) {
+                int start_line = 0;
+                int start_x = 0;
+                int end_line = 0;
+                int end_x = 0;
+                editorGetSelectionBounds(&start_line, &start_x, &end_line, &end_x);
+                if (end_line > start_line && end_x == 0)
+                    end_line--;
+                editorIndentLines(start_line, end_line, 1);
+                snprintf(E.status_message, sizeof(E.status_message), "Indented selection");
+            } else {
+                /* TAB support: insert spaces based on EDITOR_TAB_WIDTH */
+                for (int i = 0; i < EDITOR_TAB_WIDTH; i++)
+                    editorInsertChar(' ');
+            }
             last_key_was_vertical = 0;
             break;
+        case SHIFT_TAB_KEY: {
+            int start_line = E.cy;
+            int end_line = E.cy;
+            push_undo_state();
+            if (E.selecting) {
+                int start_x = 0;
+                int end_x = 0;
+                editorGetSelectionBounds(&start_line, &start_x, &end_line, &end_x);
+                if (end_line > start_line && end_x == 0)
+                    end_line--;
+            }
+            editorIndentLines(start_line, end_line, -1);
+            snprintf(E.status_message, sizeof(E.status_message), "Unindented selection");
+            last_key_was_vertical = 0;
+            break;
+        }
         case CTRL_KEY('h'):
         case BACKSPACE:
             push_undo_state();

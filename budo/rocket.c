@@ -545,7 +545,7 @@ int main(int argc, char **argv) {
         if (budo_music_load(&background_music, "../budo/ROCKET/music.s3m") != 0) {
             fprintf(stderr, "Failed to load music: %s\n", "../budo/ROCKET/music.s3m");
         } else {
-            budo_music_set_volume(85);
+            budo_music_set_volume(66);
             if (budo_music_play(&background_music, -1) != 0) {
                 fprintf(stderr, "Failed to start background music.\n");
             }

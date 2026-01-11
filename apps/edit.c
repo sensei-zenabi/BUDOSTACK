@@ -174,6 +174,7 @@ struct EditorConfig {
 #define MENU_LABEL_FILES "FILES"
 #define MENU_LABEL_NEW_FILE "<New File>"
 #define MENU_TITLE_MAX 10
+#define EDIT_SESSION_HEADER "EDIT_SESSION 1"
 
 /* Undo state structure */
 struct UndoState {
@@ -192,6 +193,15 @@ static int auto_indent_enabled = 1;
    When true, auto-indent is temporarily disabled.
 */
 static int in_paste_mode = 0;
+
+struct EditorSessionSlot {
+    char filename[PATH_MAX];
+    int cx;
+    int cy;
+    int rowoff;
+    int coloff;
+    int has_file;
+};
 
 /*** New Helper Function for Case-Insensitive Search ***/
 /*
@@ -300,6 +310,7 @@ void editorMenuOpenFiles(void);
 void editorDrawFilesMenu(struct abuf *ab);
 void editorProcessMenuKeypress(int c);
 void editorSwitchToSlot(int slot);
+static void editorSetMenuTitleForSlot(int slot, const char *filename);
 
 /* New function prototypes */
 void editorDeleteSelection(void);
@@ -375,6 +386,191 @@ static void editorBufferInit(EditorBuffer *buf) {
     buf->row[0].modified = 0;
     buf->row[0].hl_in_comment = 0;
     buf->numrows = 1;
+}
+
+static int editorSessionPath(char *path, size_t path_len) {
+    const char *home = getenv("HOME");
+    if (home && home[0] != '\0') {
+        char dir[PATH_MAX];
+        int needed = snprintf(dir, sizeof(dir), "%s/.budostack", home);
+        if (needed < 0 || (size_t)needed >= sizeof(dir))
+            return -1;
+        if (mkdir(dir, 0755) != 0 && errno != EEXIST)
+            return -1;
+        needed = snprintf(path, path_len, "%s/edit_session.txt", dir);
+        if (needed < 0 || (size_t)needed >= path_len)
+            return -1;
+        return 0;
+    }
+    {
+        int needed = snprintf(path, path_len, "./.budostack_edit_session.txt");
+        if (needed < 0 || (size_t)needed >= path_len)
+            return -1;
+    }
+    return 0;
+}
+
+static const char *editorSessionFilename(const char *filename, char *buffer, size_t buffer_len) {
+    if (!filename || filename[0] == '\0')
+        return "";
+    if (filename[0] == '/')
+        return filename;
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        int needed = snprintf(buffer, buffer_len, "%s/%s", cwd, filename);
+        if (needed > 0 && (size_t)needed < buffer_len)
+            return buffer;
+    }
+    return filename;
+}
+
+static void editorClampCursor(void) {
+    if (E.numrows <= 0) {
+        E.cx = 0;
+        E.cy = 0;
+        return;
+    }
+    if (E.cy < 0)
+        E.cy = 0;
+    if (E.cy >= E.numrows)
+        E.cy = E.numrows - 1;
+    int row_width = editorDisplayWidth(E.row[E.cy].chars);
+    if (E.cx < 0)
+        E.cx = 0;
+    if (E.cx > row_width)
+        E.cx = row_width;
+}
+
+static void editorSaveSession(void) {
+    char path[PATH_MAX];
+    if (editorSessionPath(path, sizeof(path)) != 0)
+        return;
+    FILE *fp = fopen(path, "w");
+    if (!fp) {
+        perror("edit session");
+        return;
+    }
+    fprintf(fp, "%s\n", EDIT_SESSION_HEADER);
+    fprintf(fp, "ACTIVE %d\n", E.active_slot);
+    for (int slot = 0; slot < MENU_COUNT; slot++) {
+        const char *filename = NULL;
+        int cx = 0;
+        int cy = 0;
+        int rowoff = 0;
+        int coloff = 0;
+        if (slot == E.active_slot) {
+            filename = E.filename;
+            cx = E.cx;
+            cy = E.cy;
+            rowoff = E.rowoff;
+            coloff = E.coloff;
+        } else {
+            EditorBuffer *buf = &E.buffers[slot];
+            filename = buf->filename;
+            cx = buf->cx;
+            cy = buf->cy;
+            rowoff = buf->rowoff;
+            coloff = buf->coloff;
+        }
+        const char *stored = "-";
+        char resolved[PATH_MAX];
+        if (filename && filename[0] != '\0')
+            stored = editorSessionFilename(filename, resolved, sizeof(resolved));
+        fprintf(fp, "SLOT\t%d\t%d\t%d\t%d\t%d\t%s\n",
+                slot, cx, cy, rowoff, coloff, stored);
+    }
+    fclose(fp);
+}
+
+static int editorParseSessionSlot(char *line, struct EditorSessionSlot slots[], size_t slot_count) {
+    char *saveptr = NULL;
+    char *token = strtok_r(line, "\t", &saveptr);
+    if (!token || strcmp(token, "SLOT") != 0)
+        return 0;
+    char *fields[6];
+    for (size_t i = 0; i < 6; i++) {
+        fields[i] = strtok_r(NULL, "\t", &saveptr);
+        if (!fields[i])
+            return 0;
+    }
+    char *endptr = NULL;
+    long slot_index = strtol(fields[0], &endptr, 10);
+    if (endptr == fields[0] || slot_index < 0 || (size_t)slot_index >= slot_count)
+        return 0;
+    struct EditorSessionSlot *slot = &slots[slot_index];
+    slot->cx = (int)strtol(fields[1], NULL, 10);
+    slot->cy = (int)strtol(fields[2], NULL, 10);
+    slot->rowoff = (int)strtol(fields[3], NULL, 10);
+    slot->coloff = (int)strtol(fields[4], NULL, 10);
+    if (strcmp(fields[5], "-") == 0) {
+        slot->filename[0] = '\0';
+        slot->has_file = 0;
+    } else {
+        strncpy(slot->filename, fields[5], sizeof(slot->filename) - 1);
+        slot->filename[sizeof(slot->filename) - 1] = '\0';
+        slot->has_file = slot->filename[0] != '\0';
+    }
+    return 1;
+}
+
+static int editorLoadSession(void) {
+    char path[PATH_MAX];
+    if (editorSessionPath(path, sizeof(path)) != 0)
+        return 0;
+    FILE *fp = fopen(path, "r");
+    if (!fp)
+        return 0;
+    struct EditorSessionSlot slots[MENU_COUNT];
+    for (int i = 0; i < MENU_COUNT; i++) {
+        slots[i].filename[0] = '\0';
+        slots[i].cx = 0;
+        slots[i].cy = 0;
+        slots[i].rowoff = 0;
+        slots[i].coloff = 0;
+        slots[i].has_file = 0;
+    }
+    int active_slot = 0;
+    char line[PATH_MAX * 2];
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        line[strcspn(line, "\n")] = '\0';
+        if (strncmp(line, "ACTIVE ", 7) == 0) {
+            int value = 0;
+            if (sscanf(line + 7, "%d", &value) == 1)
+                active_slot = value;
+            continue;
+        }
+        if (strncmp(line, "SLOT\t", 5) == 0) {
+            editorParseSessionSlot(line, slots, MENU_COUNT);
+        }
+    }
+    fclose(fp);
+
+    int loaded_any = 0;
+    for (int slot = 0; slot < MENU_COUNT; slot++) {
+        if (!slots[slot].has_file)
+            continue;
+        if (access(slots[slot].filename, F_OK) != 0)
+            continue;
+        editorSwitchToSlot(slot);
+        editorClearUndoHistory();
+        editorClearBuffer();
+        editorOpen(slots[slot].filename);
+        E.cx = slots[slot].cx;
+        E.cy = slots[slot].cy;
+        E.rowoff = slots[slot].rowoff;
+        E.coloff = slots[slot].coloff;
+        editorClampCursor();
+        E.preferred_cx = E.cx;
+        editorSetMenuTitleForSlot(slot, slots[slot].filename);
+        loaded_any = 1;
+    }
+    if (loaded_any) {
+        if (active_slot < 0 || active_slot >= MENU_COUNT)
+            active_slot = 0;
+        editorSwitchToSlot(active_slot);
+        snprintf(E.status_message, sizeof(E.status_message), "Restored last session");
+    }
+    return loaded_any;
 }
 
 static void editorSetMenuTitleForSlot(int slot, const char *filename) {
@@ -1573,6 +1769,7 @@ void editorProcessKeypress(void) {
     }
     switch (c) {
         case CTRL_KEY('q'):
+            editorSaveSession();
             if (write(STDOUT_FILENO, "\x1b[2J", 4) < 0) perror("write");
             if (write(STDOUT_FILENO, "\x1b[H", 3) < 0) perror("write");
             exit(0);
@@ -2614,12 +2811,16 @@ int main(int argc, char *argv[]) {
     }
     E.textrows = E.screenrows - 3;
 
-    if (argc >= 2)
+    int restored = 0;
+    if (argc >= 2) {
         editorOpen(argv[1]);
-    else {
-        editorAppendLine("", 0);
-        E.dirty = 0;
-        editorMenuSetDirectory(".");
+    } else {
+        restored = editorLoadSession();
+        if (!restored) {
+            editorAppendLine("", 0);
+            E.dirty = 0;
+            editorMenuSetDirectory(".");
+        }
     }
     editorSetMenuTitleForSlot(E.active_slot, E.filename);
 

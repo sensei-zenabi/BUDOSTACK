@@ -148,12 +148,12 @@ IF ($MENU == "MAIN MENU"):
   
   # Draw
   
-  RUN _TEXT -x $MENU_X -y 15 -text "-- MAIN MENU --        "
-  RUN _TEXT -x $MENU_X -y 17 -text "./APPS (to-be-done)    "
-  RUN _TEXT -x $MENU_X -y 19 -text "./GAMES                "
-  RUN _TEXT -x $MENU_X -y 21 -text "Configuration          "
-  RUN _TEXT -x $MENU_X -y 23 -text "Help                   "
-  RUN _TEXT -x $MENU_X -y 25 -text "Command Line           "
+  RUN _TEXT -x $MENU_X -y 15 -text "-- MAIN MENU --             "
+  RUN _TEXT -x $MENU_X -y 17 -text "./APPS (to-be-done)         "
+  RUN _TEXT -x $MENU_X -y 19 -text "./GAMES                     "
+  RUN _TEXT -x $MENU_X -y 21 -text "Configuration               "
+  RUN _TEXT -x $MENU_X -y 23 -text "Help                        "
+  RUN _TEXT -x $MENU_X -y 25 -text "Command Line                "
   
   EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
     
@@ -221,14 +221,14 @@ IF ($MENU == "GAMES"):
 
   # Draw GAMES menu
   
-  RUN _TEXT -x $MENU_X -y 15 -text "-- GAMES --            "
-  RUN _TEXT -x $MENU_X -y 17 -text "./BUDO/example         "
-  RUN _TEXT -x $MENU_X -y 19 -text "./BUDO/rocket          "
-  RUN _TEXT -x $MENU_X -y 21 -text "./GAMES/invaders       "
-  RUN _TEXT -x $MENU_X -y 23 -text "./GAMES/snake          "
-  RUN _TEXT -x $MENU_X -y 25 -text "./GAMES/tictactoe      "
-  RUN _TEXT -x $MENU_X -y 27 -text "./TASKS/demo           "
-  RUN _TEXT -x $MENU_X -y 29 -text "<-- MAIN MENU          "
+  RUN _TEXT -x $MENU_X -y 15 -text "-- GAMES --                 "
+  RUN _TEXT -x $MENU_X -y 17 -text "./BUDO/example              "
+  RUN _TEXT -x $MENU_X -y 19 -text "./BUDO/rocket               "
+  RUN _TEXT -x $MENU_X -y 21 -text "./GAMES/invaders            "
+  RUN _TEXT -x $MENU_X -y 23 -text "./GAMES/snake               "
+  RUN _TEXT -x $MENU_X -y 25 -text "./GAMES/tictactoe           "
+  RUN _TEXT -x $MENU_X -y 27 -text "./TASKS/demo                "
+  RUN _TEXT -x $MENU_X -y 29 -text "<-- MAIN MENU               "
   
   EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
   
@@ -326,13 +326,13 @@ IF ($MENU == "CONFIGURATION"):
   
   # Draw
   
-  RUN _TEXT -x $MENU_X-1 -y 15 -text "-- CONFIGURATION --    "
+  RUN _TEXT -x $MENU_X-1 -y 15 -text "-- CONFIGURATION --       "
   RUN _TEXT -x $MENU_X-3 -y 17 -text "Resolution Mode = " + $RESOLUTION
   RUN _TEXT -x $MENU_X-3 -y 19 -text "Mouse Cursor    = " + $MOUSE
   RUN _TEXT -x $MENU_X-3 -y 21 -text "Login Screen    = " + $LOGIN_SCREEN
   RUN _TEXT -x $MENU_X-3 -y 23 -text "Login Menu      = " + $LOGIN_MENU
   RUN _TEXT -x $MENU_X-3 -y 25 -text "Retro Profile   = " + $RETROPROFILE
-  RUN _TEXT -x $MENU_X-3 -y 27 -text "<-- MAIN MENU          "
+  RUN _TEXT -x $MENU_X-3 -y 27 -text "<-- MAIN MENU             "
   
   EVAL DRAW_CURSOR($CURSOR_X-3, $CURSOR_Y)
     

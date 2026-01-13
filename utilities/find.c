@@ -279,21 +279,24 @@ static void search_directory(const char *dir, const char *pattern,
 }
 
 static void print_usage(const char *program) {
-    printf("Usage: %s <string> [-fw] [-hf] [-cs] [-git]\n", program);
+    (void)program;
+    printf("Usage: find <string> [-fw] [-hf] [-cs] [-git]\n");
     printf("\n");
-    printf("Search files for lines matching <string> (supports '*' wildcards).\n");
+    printf("Search files for lines matching <string> (supports '*'\n");
+    printf("wildcards).\n");
     printf("\n");
     printf("Options:\n");
     printf("  -fw    Match full words only.\n");
-    printf("  -hf    Include hidden folders and files (except .git unless -git).\n");
+    printf("  -hf    Include hidden folders and files (except .git\n");
+    printf("         unless -git).\n");
     printf("  -cs    Case-sensitive matching (default is case-insensitive).\n");
     printf("  -git   Include .git folders in search.\n");
     printf("  -h     Show this help message.\n");
     printf("  -help  Show this help message.\n");
     printf("\n");
     printf("Examples:\n");
-    printf("  %s note\n", program);
-    printf("  %s \"*note*\" -fw\n", program);
+    printf("  find note\n");
+    printf("  find \"*note*\" -fw\n");
 }
 
 int main(int argc, char *argv[]) {

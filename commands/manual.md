@@ -59,12 +59,6 @@ Notes:
 
 **Description:** Clears the terminal using ANSI escape sequences.
 
-### `_COLORS`
-**Usage:** `_COLORS`
-
-**Description:** Prints the 256-color palette, plus the active retro profile colors
-and defaults if one is active.
-
 ### `_CONFIG`
 **Usage:**
 ```

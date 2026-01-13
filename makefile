@@ -124,9 +124,13 @@ UTILITIES_EXES = $(UTILITIES_SRCS:.c=)
 # Define all targets (main, commands, and apps)
 ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
 
-.PHONY: all clean
+.PHONY: all clean budo_build
 
-all: $(ALL_TARGETS)
+all: budo_build $(ALL_TARGETS)
+
+budo_build:
+	@echo "Running ./budo/build.sh..."
+	@./budo/build.sh || echo "Warning: ./budo/build.sh failed."
 
 # Build the main executable from non-command sources and link with lib objects
 $(TARGET): $(NON_COMMAND_OBJECTS) $(LIB_OBJS)

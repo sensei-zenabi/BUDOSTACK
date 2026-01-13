@@ -156,6 +156,13 @@ column) and prints it.
 - `3` = enter, `4` = space, `5` = tab, `6` = backspace/delete
 - `10` = escape (also used for Ctrl+C)
 
+### `_LIST`
+**Usage:** `_LIST <directory>`
+
+**Description:** Lists files and folders inside `<directory>` and prints them as a
+TASK array literal of quoted strings (e.g., `{\"file.txt\", \"subdir\"}`), sorted
+alphabetically.
+
 ### `_RECT`
 **Usage:** `_RECT -x <col> -y <row> -width <pixels> -height <pixels> [-color <0-18>] [-fill on|off]`
 

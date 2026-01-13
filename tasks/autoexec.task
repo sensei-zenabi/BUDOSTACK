@@ -7,7 +7,7 @@
 
 
 #-------------------------------------------------------------------------
-# DO NOT EDIT THIS SECTION!
+# INITIALIZAION
 
 # Initialize variables
 
@@ -22,6 +22,7 @@ RUN _TERM_RESOLUTION LOW
 RUN _TERM_MARGIN 8
 
 # Use to skip to a section for debugging
+#GOTO LOGIN_SCREEN
 GOTO LAUNCHER
 
 #-------------------------------------------------------------------------
@@ -61,7 +62,8 @@ RUN _WAIT 1600
 # BUDOSTACK LAUNCHER
 @LAUNCHER
 
-# Variables
+
+# VARIABLES
 
 SET $MENU = "MAIN MENU"
 SET $EVENT = 0
@@ -70,7 +72,14 @@ SET $CURSOR_Y = 19
 SET $RESOLUTION = "LOW"
 SET $SCHEME = "vt220-green"
 
-# Functions
+
+# FUNCTIONS
+
+FUNCTION DRAW_FRAME():
+  RUN _CLEAR
+  RUN _RECT -x 1 -y 1 -width 79 -height 45 -fill off
+  RUN _TEXT -x 31 -y 3 -text "- BUDOSTACK LAUNCHER -"
+END
 
 FUNCTION DRAW_CURSOR($X, $Y):
 
@@ -80,22 +89,26 @@ END
 
 RUN cls
 
-# DRAW USER INTERFACE
 
-RUN _RECT -x 1 -y 1 -width 79 -height 45 -fill off
-RUN _TEXT -x 31 -y 3 -text "- BUDOSTACK LAUNCHER -"
+# DRAW MENU FRAME ONCE
 
 @LAUNCHER_MENU
+
+EVAL DRAW_FRAME()
+
+# MAIN MENU
 
 IF ($MENU == "MAIN MENU"):
   
   # Draw MAIN MENU
   
-  RUN _RECT -x 2 -y 4 -width 77 -height 40 -fill on -color 0
-  RUN _TEXT -x 40 -y 15 -text "MENU:"
-  RUN _TEXT -x 36 -y 19 -text "CONFIGURATION -->"
-  RUN _TEXT -x 36 -y 22 -text "APPLICATIONS -->"
-  RUN _TEXT -x 36 -y 25 -text "COMMAND LINE"
+  #RUN _RECT -x 30 -y 15 -width 30 -height 15 -fill on -color 0
+  RUN _TEXT -x 36 -y 15 -text "-- MAIN MENU --        "
+  RUN _TEXT -x 36 -y 17 -text "./APPS                 "
+  RUN _TEXT -x 36 -y 19 -text "./GAMES                "
+  RUN _TEXT -x 36 -y 21 -text "Configuration          "
+  RUN _TEXT -x 36 -y 23 -text "Help                   "
+  RUN _TEXT -x 36 -y 25 -text "Command Line           "
   
   EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
   
@@ -108,12 +121,12 @@ IF ($MENU == "MAIN MENU"):
   
   IF ($EVENT == 2):
     # Up Arrow
-    $CURSOR_Y = $CURSOR_Y - 3
+    $CURSOR_Y = $CURSOR_Y - 2
   END
   
   IF ($EVENT == -2):
     # Down Arrow
-    $CURSOR_Y = $CURSOR_Y + 3
+    $CURSOR_Y = $CURSOR_Y + 2
   END
   
   IF ($EVENT == 10):
@@ -124,8 +137,8 @@ IF ($MENU == "MAIN MENU"):
   
   # Limit Cursor Movement
   
-  IF ($CURSOR_Y < 19):
-    $CURSOR_Y = 19
+  IF ($CURSOR_Y < 17):
+    $CURSOR_Y = 17
   END
   IF ($CURSOR_Y > 25):
     $CURSOR_Y = 25
@@ -137,8 +150,11 @@ IF ($MENU == "MAIN MENU"):
   IF ($EVENT == 3):  
     # Enter Key
   
-    IF ($CURSOR_Y == 22):
-      $MENU = "APPLICATIONS"
+    IF ($CURSOR_Y == 19):
+      $MENU = "GAMES"
+    END
+    IF ($CURSOR_Y == 23):
+      RUN ./apps/edit readme.md
     END
     IF ($CURSOR_Y == 25):
       GOTO EXIT
@@ -148,15 +164,21 @@ IF ($MENU == "MAIN MENU"):
 
 END
 
-IF ($MENU == "APPLICATIONS"):
+# GAMES MENU
 
-  # Draw APPLICATIONS menu
+IF ($MENU == "GAMES"):
+
+  # Draw GAMES menu
   
-  RUN _RECT -x 2 -y 4 -width 77 -height 40 -fill on -color 0
-  RUN _TEXT -x 40 -y 15 -text "MENU:"
-  RUN _TEXT -x 36 -y 19 -text "CUBE DEMO"
-  RUN _TEXT -x 36 -y 22 -text "ROCKET DEMO"
-  RUN _TEXT -x 36 -y 25 -text "../MAIN MENU"
+  #RUN _RECT -x 30 -y 15 -width 30 -height 15 -fill on -color 0
+  RUN _TEXT -x 36 -y 15 -text "-- GAMES --            "
+  RUN _TEXT -x 36 -y 17 -text "./BUDO/example         "
+  RUN _TEXT -x 36 -y 19 -text "./BUDO/rocket          "
+  RUN _TEXT -x 36 -y 21 -text "./GAMES/invaders       "
+  RUN _TEXT -x 36 -y 23 -text "./GAMES/snake          "
+  RUN _TEXT -x 36 -y 25 -text "./GAMES/tictactoe      "
+  RUN _TEXT -x 36 -y 27 -text "./TASKS/demo           "
+  RUN _TEXT -x 36 -y 29 -text "<-- MAIN MENU          "
   
   EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
   
@@ -169,12 +191,12 @@ IF ($MENU == "APPLICATIONS"):
   
   IF ($EVENT == 2):
     # Up Arrow
-    $CURSOR_Y = $CURSOR_Y - 3
+    $CURSOR_Y = $CURSOR_Y - 2
   END
   
   IF ($EVENT == -2):
     # Down Arrow
-    $CURSOR_Y = $CURSOR_Y + 3
+    $CURSOR_Y = $CURSOR_Y + 2
   END
   
   IF ($EVENT == 10):
@@ -185,11 +207,11 @@ IF ($MENU == "APPLICATIONS"):
   
   # Limit Cursor Movement
   
-  IF ($CURSOR_Y < 19):
-    $CURSOR_Y = 19
+  IF ($CURSOR_Y < 17):
+    $CURSOR_Y = 17
   END
-  IF ($CURSOR_Y > 25):
-    $CURSOR_Y = 25
+  IF ($CURSOR_Y > 29):
+    $CURSOR_Y = 29
   END
   
   
@@ -197,8 +219,30 @@ IF ($MENU == "APPLICATIONS"):
   
   IF ($EVENT == 3):  
     # Enter Key
-  
+    
+    IF ($CURSOR_Y == 17):
+      RUN ./budo/example
+    END
+    IF ($CURSOR_Y == 19):
+      RUN ./budo/rocket
+    END
+    IF ($CURSOR_Y == 21):
+      RUN _CLEAR
+      RUN ./games/invaders
+    END
+    IF ($CURSOR_Y == 23):
+      RUN _CLEAR
+      RUN ./games/snake
+    END
     IF ($CURSOR_Y == 25):
+      RUN _CLEAR
+      RUN ./games/tictactoe
+    END
+    IF ($CURSOR_Y == 27):
+      RUN _CLEAR
+      RUN runtask demo.task
+    END
+    IF ($CURSOR_Y == 29):
       $MENU = "MAIN MENU"
     END
   

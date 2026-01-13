@@ -49,6 +49,14 @@ static int ensure_capacity(char ***array, size_t *capacity, size_t required) {
     return 1;
 }
 
+static int add_argument(CommandStruct *cmd, char *arg) {
+    if (!ensure_capacity(&cmd->args, &cmd->arg_capacity, cmd->arg_count + 1)) {
+        return 0;
+    }
+    cmd->args[cmd->arg_count++] = arg;
+    return 1;
+}
+
 void init_command_struct(CommandStruct *cmd) {
     if (!cmd)
         return;
@@ -56,10 +64,13 @@ void init_command_struct(CommandStruct *cmd) {
     cmd->command[0] = '\0';
     cmd->parameters = NULL;
     cmd->options = NULL;
+    cmd->args = NULL;
     cmd->param_count = 0;
     cmd->opt_count = 0;
+    cmd->arg_count = 0;
     cmd->param_capacity = 0;
     cmd->opt_capacity = 0;
+    cmd->arg_capacity = 0;
 }
 
 /* Base path for locating commands */
@@ -114,6 +125,7 @@ void parse_input(const char *input, CommandStruct *cmd) {
     cmd->command[0] = '\0';
     cmd->param_count = 0;
     cmd->opt_count = 0;
+    cmd->arg_count = 0;
 
     const char *p = input;
     while (*p != '\0') {
@@ -194,72 +206,128 @@ void parse_input(const char *input, CommandStruct *cmd) {
     strncpy(cmd->command, tokens[0], sizeof(cmd->command) - 1);
     cmd->command[sizeof(cmd->command) - 1] = '\0';
     free(tokens[0]);
+    tokens[0] = NULL;
 
     size_t i = 1;
     while (i < token_count) {
         char *token = tokens[i];
 
+        if (!token) {
+            i++;
+            continue;
+        }
+
         if (token[0] == '-' && token[1] != '\0') {
             if (!ensure_capacity(&cmd->options, &cmd->opt_capacity, cmd->opt_count + 1)) {
                 free(token);
+                tokens[i] = NULL;
+                break;
+            }
+            if (!add_argument(cmd, token)) {
+                free(token);
+                tokens[i] = NULL;
                 break;
             }
             cmd->options[cmd->opt_count++] = token;
+            tokens[i] = NULL;
 
             if (i + 1 < token_count) {
                 char *value = tokens[i + 1];
                 if (!ensure_capacity(&cmd->options, &cmd->opt_capacity, cmd->opt_count + 1)) {
                     free(value);
+                    tokens[i + 1] = NULL;
+                    i++;
+                    break;
+                }
+                if (!add_argument(cmd, value)) {
+                    free(value);
+                    tokens[i + 1] = NULL;
                     i++;
                     break;
                 }
                 cmd->options[cmd->opt_count++] = value;
+                tokens[i + 1] = NULL;
                 i++;
             }
         } else {
             if (should_bypass_expansion(cmd->command)) {
                 if (!ensure_capacity(&cmd->parameters, &cmd->param_capacity, cmd->param_count + 1)) {
                     free(token);
+                    tokens[i] = NULL;
+                    break;
+                }
+                if (!add_argument(cmd, token)) {
+                    free(token);
+                    tokens[i] = NULL;
                     break;
                 }
                 cmd->parameters[cmd->param_count++] = token;
+                tokens[i] = NULL;
             } else if (contains_wildcard(token)) {
                 glob_t glob_result;
                 int ret = glob(token, GLOB_NOCHECK, NULL, &glob_result);
                 if (ret == 0 || ret == GLOB_NOMATCH) {
                     for (size_t j = 0; j < glob_result.gl_pathc; j++) {
+                        char *dup = strdup(glob_result.gl_pathv[j]);
+                        if (!dup) {
+                            perror("strdup failed");
+                            exit(EXIT_FAILURE);
+                        }
                         if (!ensure_capacity(&cmd->parameters, &cmd->param_capacity, cmd->param_count + 1)) {
+                            free(dup);
                             break;
                         }
-                        char *dup = strdup(glob_result.gl_pathv[j]);
-                        if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
+                        if (!add_argument(cmd, dup)) {
+                            free(dup);
+                            break;
+                        }
                         cmd->parameters[cmd->param_count++] = dup;
                     }
                 } else {
+                    char *dup = strdup(token);
+                    if (!dup) {
+                        perror("strdup failed");
+                        exit(EXIT_FAILURE);
+                    }
                     if (!ensure_capacity(&cmd->parameters, &cmd->param_capacity, cmd->param_count + 1)) {
+                        free(dup);
                         globfree(&glob_result);
                         free(token);
+                        tokens[i] = NULL;
                         break;
                     }
-                    char *dup = strdup(token);
-                    if (!dup) { perror("strdup failed"); exit(EXIT_FAILURE); }
+                    if (!add_argument(cmd, dup)) {
+                        free(dup);
+                        globfree(&glob_result);
+                        free(token);
+                        tokens[i] = NULL;
+                        break;
+                    }
                     cmd->parameters[cmd->param_count++] = dup;
                 }
                 globfree(&glob_result);
                 free(token);
+                tokens[i] = NULL;
             } else {
                 if (!ensure_capacity(&cmd->parameters, &cmd->param_capacity, cmd->param_count + 1)) {
                     free(token);
+                    tokens[i] = NULL;
+                    break;
+                }
+                if (!add_argument(cmd, token)) {
+                    free(token);
+                    tokens[i] = NULL;
                     break;
                 }
                 cmd->parameters[cmd->param_count++] = token;
+                tokens[i] = NULL;
             }
         }
         i++;
     }
 
-    for (; i < token_count; i++) {
-        free(tokens[i]);
+    for (size_t j = 0; j < token_count; j++) {
+        free(tokens[j]);
     }
 
     free(tokens);
@@ -267,7 +335,7 @@ void parse_input(const char *input, CommandStruct *cmd) {
 
 /*
  * Locate the executable under base_path, then execv() it,
- * passing all flags (and their values) first, then positional parameters.
+ * passing arguments in their original order.
  */
 int execute_command(const CommandStruct *cmd) {
     char command_path[PATH_MAX];
@@ -312,15 +380,13 @@ int execute_command(const CommandStruct *cmd) {
         return -1;
     }
 
-    /* Build argv: flags+values first, then parameters */
-    int total_args = 1 + cmd->opt_count + cmd->param_count;
+    /* Build argv: command followed by parsed arguments in order */
+    int total_args = 1 + cmd->arg_count;
     char *args[total_args + 1];
     args[0] = abs_path;
     int idx = 1;
-    for (int i = 0; i < cmd->opt_count; i++)
-        args[idx++] = cmd->options[i];
-    for (int i = 0; i < cmd->param_count; i++)
-        args[idx++] = cmd->parameters[i];
+    for (int i = 0; i < cmd->arg_count; i++)
+        args[idx++] = cmd->args[i];
     args[idx] = NULL;
 
     /* Fork & exec */
@@ -358,19 +424,21 @@ void free_command_struct(CommandStruct *cmd) {
     if (!cmd)
         return;
 
-    for (int i = 0; i < cmd->param_count; i++)
-        free(cmd->parameters[i]);
-    for (int i = 0; i < cmd->opt_count; i++)
-        free(cmd->options[i]);
+    for (int i = 0; i < cmd->arg_count; i++)
+        free(cmd->args[i]);
 
     free(cmd->parameters);
     free(cmd->options);
+    free(cmd->args);
 
     cmd->parameters = NULL;
     cmd->options = NULL;
+    cmd->args = NULL;
     cmd->param_count = 0;
     cmd->opt_count = 0;
+    cmd->arg_count = 0;
     cmd->param_capacity = 0;
     cmd->opt_capacity = 0;
+    cmd->arg_capacity = 0;
     cmd->command[0] = '\0';
 }

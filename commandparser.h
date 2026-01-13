@@ -21,10 +21,13 @@ typedef struct {
     char command[INPUT_SIZE];
     char **parameters;
     char **options;
+    char **args;
     int param_count;
     int opt_count;
+    int arg_count;
     size_t param_capacity;
     size_t opt_capacity;
+    size_t arg_capacity;
 } CommandStruct;
 
 void init_command_struct(CommandStruct *cmd);

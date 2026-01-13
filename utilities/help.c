@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -9,236 +10,45 @@
  * - If the program is started with the "-a" argument (i.e. "help -a"),
  *   a reserved section is printed for future hidden features or advanced help.
  */
+static int print_help_file(const char *path) {
+    char buffer[4096];
+    FILE *help_file = fopen(path, "rb");
+
+    if (help_file == NULL) {
+        fprintf(stderr, "help: failed to open %s: %s\n", path, strerror(errno));
+        return 1;
+    }
+
+    while (!feof(help_file)) {
+        size_t bytes_read = fread(buffer, 1, sizeof(buffer), help_file);
+
+        if (bytes_read > 0 && fwrite(buffer, 1, bytes_read, stdout) != bytes_read) {
+            fprintf(stderr, "help: failed to write help output\n");
+            fclose(help_file);
+            return 1;
+        }
+
+        if (ferror(help_file)) {
+            fprintf(stderr, "help: failed to read %s\n", path);
+            fclose(help_file);
+            return 1;
+        }
+    }
+
+    if (fclose(help_file) != 0) {
+        fprintf(stderr, "help: failed to close %s\n", path);
+        return 1;
+    }
+
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
-    
-    printf(
-        "================== BUDOSTACK - The Martial Arts of Software  ================\n" 
-        "   ______  _     _ ______   _____  _______ _______ _______ _______ _     _   \n"
-        "   |_____] |     | |     \\ |     | |______    |    |_____| |       |___ /    \n"
-        "   |_____] |_____| |_____/ |_____| ______|    |    |     | |_____  |    \\_   \n"
-        "\n"                                                                
-        "\n" 
-        " Created by:      Ville Suoranta\n" 
-        " Contact email:   ville.m.suoranta(at)gmail.com\n" 
-        "\n" 
-        "\n" 
-        " License:         GPLv2\n" 
-        "\n" 
-        "  You can use, modify, and sell GPLv2 software freely, but if you distribute\n" 
-        "  it, you must provide the source code and keep it under the same license.\n" 
-        "\n" 
-        "  Note! Some files in sub-folders have their own licensing policies!\n" 
-        "\n" 
-        "\n" 
-        " How to Install & Run?\n" 
-        "\n" 
-        "  1. Run ./setup.sh to install all dependencies required to run BUDOSTACK.\n" 
-        "\n" 
-        "  2. Run ./start.sh to start the built-in terminal with CRT simulation.\n" 
-        "\n" 
-        "  3. Modify the BUDOSTACK.desktop to create a desktop shortcut.\n" 
-        "\n" 
-        "  4. (Opt.) Use your own terminal, start with './budostack' and match the\n" 
-        "     displayed columns and rows using the 'runtask screen.task'.\n" 
-        "\n" 
-        "-----------------------------------------------------------------------------\n" 
-        "\n" 
-        "                           - SYSTEM REQUIREMENTS -\n" 
-        "\n" 
-        " Operating System: Debian Linux\n" 
-        "\n" 
-        " Hardware Requirements:\n" 
-        "\n" 
-        "  - Minimum CPU Intel CORE i5\n" 
-        "  - GPU with OpenGL support\n" 
-        "\n" 
-        " Tested distributions:\n" 
-        "\n" 
-        "  - Ubuntu\n" 
-        "  - Kubuntu\n" 
-        "\n" 
-        " Note! BUDOSTACK is intended to be ran with the apps/terminal application.\n" 
-        "       that supports 640x360 (80x45) and 800x450 (100x56) resolution modes.\n" 
-        "\n"
-    );
-    printf(
-        "-----------------------------------------------------------------------------\n" 
-        "\n" 
-        "                            - GENERAL INFORMATION -\n" 
-        "\n" 
-        " /* TOP Tips */\n" 
-        "\n" 
-        "  edit     : Opens a basic file editor: edit <filename>.\n" 
-        "             Supported languages: C/C++, Markup, .txt\n" 
-        "  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!\n" 
-        "             Use 'restart -f' to clean before building.\n" 
-        "  runtask  : Run a TASK script. See below help for details.\n" 
-        "\n" 
-        "  update   : Update your BUDOSTACK version automatically.\n"      
-        "\n" 
-        "\n"
-        " /* Description */\n"
-        "\n"
-        "  BUDOSTACK is an environment for content creators that enjoy MS-DOS and\n"
-        "  other older operating systems from the golden era of computing.\n"
-        "\n"
-        "\n"
-        " /* User Directories */\n"
-        "\n"
-        "  Folders reserved for user content, excluded from the build process triggered\n"
-        "  by 'restart' and makefile.\n"
-        "\n"
-        "  ./budo/        - Folder containing budo* libraries for SDL based content\n"
-        "                   creation from applications to games. Examples included.\n"
-        "  ./tasks/       - Folder reserved for TASK scripts that can be launched from\n"
-        "                   any location using the 'runtask mytask.task' scheme.\n"
-        "  ./users/       - User folders for those who like them.\n" 
-        "\n"
-        "\n" 
-        " /* System Directories */\n"
-        "\n"
-        "  BUDOSTACK system folders containing all commands and in-built applications\n"
-        "  for content creation. The content of these folders should not be modified.\n" 
-        "\n" 
-        "  ./apps/        - System applications that do not use paging.\n" 
-        "  ./commands/    - BUDOSTACK TASK scripting commands (read manual.md).\n" 
-        "  ./documents/   - Documents provided by BUDOSTACK.\n" 
-        "  ./fonts/       - Built-in .ttf and .psf system fonts\n" 
-        "  ./games/       - Built-in games. Think of the as our 'minesweepers'.\n" 
-        "  ./lib/         - Shared system libraries used by applications and utilities.\n" 
-        "  ./screenshots/ - Contains the advertisement screenshots.\n" 
-        "  ./shaders/     - Shaders used for CRT simulation used in apps/terminal.\n" 
-        "  ./sounds/      - Collection of system sounds.\n" 
-        "  ./utilities/   - System utilities (utilities/nopaging.ini for exceptions).\n" 
-        "\n" 
-        "-----------------------------------------------------------------------------\n" 
-        "\n" 
-        "                             - SYSTEM UTILITIES -\n" 
-        "\n" 
-        " In general BUDOSTACK passes commands as they are unless they are found from\n" 
-        " the list of built-in commands. User can hence use linux through BUDOSTACK.\n" 
-        "\n" 
-        " /* System Commands */\n" 
-        "\n" 
-        "  cd       : Change Directory, remember to put 'if space' in folder name.\n" 
-        "  cls      : Clear terminal screen.\n" 
-        "  crc32    : Calculate and/or verify CRC32 checksum of a file.\n" 
-        "  diff     : See the difference of two files.\n" 
-        "  display  : Display the contents of a file or an image supported by paint.\n"     
-        "  do       : Copy, move, or delete files and folders with prompts.\n" 
-        "  drives   : Lists all found drives.\n"     
-        "  find     : Find anything.\n"     
-        "  gitter   : Professional git helper for your daily development activities.\n" 
-        "  help     : Display this help message.\n" 
-        "  hw       : Learn your hardware specs just by typing 'hw'.\n" 
-        "  list     : List contents of a directory (type 'list -help').\n"     
-        "  makedir  : Create a new directory.\n"     
-        "  mute     : Enable/Disable Voice Assistant.\n" 
-        "  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'\n"     
-        "  runtask  : Run a proprietary .task script until CTRL+c is pressed.\n" 
-        "             Type: runtask -help for more details.\n" 
-        "  stats    : Displays basic hardware stats.\n" 
-        "  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'\n" 
-        "  exit     : Exit BUDOSTACK.\n" 
-        "\n"
-    ); 
-    printf(
-        "-----------------------------------------------------------------------------\n" 
-        "\n" 
-        "                            - SYSTEM APPLICATIONS -\n" 
-        "\n" 
-        " /* Office Tools */\n" 
-        "\n" 
-        " Note! All csv related commands assume ; as delimiter!\n" 
-        "\n" 
-        "  book     : Focus writer for all who want to write.\n" 
-        "  cmath    : Math interpreter that has interactive mode and macro execution.\n" 
-        "             To run existing macro, type 'cmath mymacro.m'.\n"
-        "  csvplot  : ASCII x-y plotter for .csv files.\n" 
-        "  csvprint : Pretty prints a .csv file.\n"     
-        "  slides   : Terminal slideset editor, to start 'slides myslides.sld'.\n" 
-        "             For help CTRL+H when the app is running.\n" 
-        "  table    : Lightweight spreadsheet tool, open file 'table mytable.csv'.\n" 
-        "             Uses commands/_CALC to evaluate equations.\n" 
-        "\n" 
-        "\n" 
-        " /* Internet and Communications */\n" 
-        "\n" 
-        "  ctalk    : IRC like messaging tool. Type ctalk for instructions.\n"     
-        "  inet     : Interactive internet connection manager.\n"     
-        "  rss      : Lightweight rss news app, tested only with yle rss feed.\n"     
-        "\n" 
-        "\n" 
-        " /* Other */\n" 
-        "\n" 
-        "  dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.\n" 
-        "  editprof.: Full name 'editprofile'. App for editing color scheme presets.\n" 
-        "  paint    : ASCII paint application to edit bitmaps.\n"     
-        "  pixart   : Turn images into pixel art and assets to your apps.\n" 
-        "  psfedit  : Font editor for .psf fonts.\n" 
-        "  signal   : Signal generator. Type 'signal' for help.\n" 
-        "  time     : Display time with IP-based timezone lookup and NTP clocks.\n" 
-        "             Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).\n" 
-        "\n" 
-        "-----------------------------------------------------------------------------\n"   
-        "\n" 
-        "                              - BUILT-IN GAMES -\n" 
-        "\n" 
-        " A collection of games provided together with BUDOSTACK.\n" 
-        "\n" 
-        " /* List of Games */\n" 
-        "\n" 
-        "  invaders : Space invaders clone tailored to terminal.\n" 
-        "  snake    : Snake clone, reminence from the good old Nokia days.\n" 
-        "  tictactoe: Classic tictactoe, but with bigger game area.\n" 
-        "\n" 
-        "-----------------------------------------------------------------------------\n"  
-        "\n" 
-        "                               - BUDO LIBRARIES -\n" 
-        "\n" 
-        " Work-in-progress.\n"
-        "\n"
-        "-----------------------------------------------------------------------------\n"  
-        "\n" 
-        "                               - TASK LANGUAGE -\n" 
-        "\n" 
-        " BUDOSTACK contains built-in TASK scripting language that can be used to\n" 
-        " develop various applications. The instruction set is located in ./commands/\n" 
-        " folder and all the commands contain help when executed without arguments.\n" 
-        "\n" 
-        " Example TASK applications are located in ./tasks/ -folder.\n" 
-        "\n" 
-        "\n" 
-        " /* BUDOSTACK Developer Tools */\n" 
-        "\n" 
-        "  compile              : Build a standalone binary from a TASK script.\n"  
-        "                         Type 'compile -help'.\n" 
-        "  floppycheck          : 'floppycheck ./file or ./folder/' estimates how many\n" 
-        "                         standard floppy disks the given content will take.\n" 
-        "\n" 
-        " /* BUDOSTACK Example TASK Programs */\n" 
-        "\n" 
-        "  audiodemo.task       : Collection of in-built sound capabilities\n" 
-        "  autoexec.task        : Determines what happens before BUDOSTACK login screen\n" 
-        "  codedemo.task        : Coding basics: for, while, arrays, functions, etc.\n" 
-        "  csvdemo.task         : Dynamic .csv file manipulation demo\n" 
-        "  demo.task            : Demonstration of _TERM* command set.\n"     
-        "  keyboard.task        : Keyboard input reading and processing.\n" 
-        "  mouse.task           : Mouse input reading and processing.\n" 
-        "  release.task         : Used to generate release notes\n"     
-        "  screen.task          : Screen calibration TASK\n" 
-        "  waves.task           : Demonstration how to plot basic math\n" 
-        "\n" 
-        "-----------------------------------------------------------------------------\n" 
-        "\n" 
-        "                               - KNOWN ISSUES -\n" 
-        "\n" 
-        " apps/slides:\n" 
-        "\n" 
-        "  Unable to copy-paste content between the app and clipboard.\n" 
-        "\n" 
-        "=============================================================================\n"
-    );  
+    int status = print_help_file("documents/help.txt");
+
+    if (status != 0) {
+        return status;
+    }
 
     // Check for the "-a" argument to display the reserved section
     if (argc > 1 && strcmp(argv[1], "-a") == 0) {

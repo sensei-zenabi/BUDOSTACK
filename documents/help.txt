@@ -1,0 +1,222 @@
+================== BUDOSTACK - The Martial Arts of Software  ================
+   ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
+   |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
+   |_____] |_____| |_____/ |_____| ______|    |    |     | |_____  |    \_   
+
+
+ Created by:      Ville Suoranta
+ Contact email:   ville.m.suoranta(at)gmail.com
+
+
+ License:         GPLv2
+
+  You can use, modify, and sell GPLv2 software freely, but if you distribute
+  it, you must provide the source code and keep it under the same license.
+
+  Note! Some files in sub-folders have their own licensing policies!
+
+
+ How to Install & Run?
+
+  1. Run ./setup.sh to install all dependencies required to run BUDOSTACK.
+
+  2. Run ./start.sh to start the built-in terminal with CRT simulation.
+
+  3. Modify the BUDOSTACK.desktop to create a desktop shortcut.
+
+  4. (Opt.) Use your own terminal, start with './budostack' and match the
+     displayed columns and rows using the 'runtask screen.task'.
+
+-----------------------------------------------------------------------------
+
+                           - SYSTEM REQUIREMENTS -
+
+ Operating System: Debian Linux
+
+ Hardware Requirements:
+
+  - Minimum CPU Intel CORE i5
+  - GPU with OpenGL support
+
+ Tested distributions:
+
+  - Ubuntu
+  - Kubuntu
+
+ Note! BUDOSTACK is intended to be ran with the apps/terminal application.
+       that supports 640x360 (80x45) and 800x450 (100x56) resolution modes.
+
+-----------------------------------------------------------------------------
+
+                            - GENERAL INFORMATION -
+
+ /* TOP Tips */
+
+  edit     : Opens a basic file editor: edit <filename>.
+             Supported languages: C/C++, Markup, .txt
+  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!
+             Use 'restart -f' to clean before building.
+  runtask  : Run a TASK script. See below help for details.
+
+  update   : Update your BUDOSTACK version automatically.
+
+
+ /* Description */
+
+  BUDOSTACK is an environment for content creators that enjoy MS-DOS and
+  other older operating systems from the golden era of computing.
+
+
+ /* User Directories */
+
+  Folders reserved for user content, excluded from the build process triggered
+  by 'restart' and makefile.
+
+  ./budo/        - Folder containing budo* libraries for SDL based content
+                   creation from applications to games. Examples included.
+  ./tasks/       - Folder reserved for TASK scripts that can be launched from
+                   any location using the 'runtask mytask.task' scheme.
+  ./users/       - User folders for those who like them.
+
+
+ /* System Directories */
+
+  BUDOSTACK system folders containing all commands and in-built applications
+  for content creation. The content of these folders should not be modified.
+
+  ./apps/        - System applications that do not use paging.
+  ./commands/    - BUDOSTACK TASK scripting commands (read manual.md).
+  ./documents/   - Documents provided by BUDOSTACK.
+  ./fonts/       - Built-in .ttf and .psf system fonts
+  ./games/       - Built-in games. Think of the as our 'minesweepers'.
+  ./lib/         - Shared system libraries used by applications and utilities.
+  ./screenshots/ - Contains the advertisement screenshots.
+  ./shaders/     - Shaders used for CRT simulation used in apps/terminal.
+  ./sounds/      - Collection of system sounds.
+  ./utilities/   - System utilities (utilities/nopaging.ini for exceptions).
+
+-----------------------------------------------------------------------------
+
+                             - SYSTEM UTILITIES -
+
+ In general BUDOSTACK passes commands as they are unless they are found from
+ the list of built-in commands. User can hence use linux through BUDOSTACK.
+
+ /* System Commands */
+
+  cd       : Change Directory, remember to put 'if space' in folder name.
+  cls      : Clear terminal screen.
+  crc32    : Calculate and/or verify CRC32 checksum of a file.
+  diff     : See the difference of two files.
+  display  : Display the contents of a file or an image supported by paint.
+  do       : Copy, move, or delete files and folders with prompts.
+  drives   : Lists all found drives.
+  find     : Find anything.
+  gitter   : Professional git helper for your daily development activities.
+  help     : Display this help message.
+  hw       : Learn your hardware specs just by typing 'hw'.
+  list     : List contents of a directory (type 'list -help').
+  makedir  : Create a new directory.
+  mute     : Enable/Disable Voice Assistant.
+  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'
+  runtask  : Run a proprietary .task script until CTRL+c is pressed.
+             Type: runtask -help for more details.
+  stats    : Displays basic hardware stats.
+  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'
+  exit     : Exit BUDOSTACK.
+
+-----------------------------------------------------------------------------
+
+                            - SYSTEM APPLICATIONS -
+
+ /* Office Tools */
+
+ Note! All csv related commands assume ; as delimiter!
+
+  book     : Focus writer for all who want to write.
+  cmath    : Math interpreter that has interactive mode and macro execution.
+             To run existing macro, type 'cmath mymacro.m'.
+  csvplot  : ASCII x-y plotter for .csv files.
+  csvprint : Pretty prints a .csv file.
+  slides   : Terminal slideset editor, to start 'slides myslides.sld'.
+             For help CTRL+H when the app is running.
+  table    : Lightweight spreadsheet tool, open file 'table mytable.csv'.
+             Uses commands/_CALC to evaluate equations.
+
+
+ /* Internet and Communications */
+
+  ctalk    : IRC like messaging tool. Type ctalk for instructions.
+  inet     : Interactive internet connection manager.
+  rss      : Lightweight rss news app, tested only with yle rss feed.
+
+
+ /* Other */
+
+  dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.
+  editprof.: Full name 'editprofile'. App for editing color scheme presets.
+  paint    : ASCII paint application to edit bitmaps.
+  pixart   : Turn images into pixel art and assets to your apps.
+  psfedit  : Font editor for .psf fonts.
+  signal   : Signal generator. Type 'signal' for help.
+  time     : Display time with IP-based timezone lookup and NTP clocks.
+             Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).
+
+-----------------------------------------------------------------------------
+
+                              - BUILT-IN GAMES -
+
+ A collection of games provided together with BUDOSTACK.
+
+ /* List of Games */
+
+  invaders : Space invaders clone tailored to terminal.
+  snake    : Snake clone, reminence from the good old Nokia days.
+  tictactoe: Classic tictactoe, but with bigger game area.
+
+-----------------------------------------------------------------------------
+
+                               - BUDO LIBRARIES -
+
+ Work-in-progress.
+
+-----------------------------------------------------------------------------
+
+                               - TASK LANGUAGE -
+
+ BUDOSTACK contains built-in TASK scripting language that can be used to
+ develop various applications. The instruction set is located in ./commands/
+ folder and all the commands contain help when executed without arguments.
+
+ Example TASK applications are located in ./tasks/ -folder.
+
+
+ /* BUDOSTACK Developer Tools */
+
+  compile              : Build a standalone binary from a TASK script.
+                         Type 'compile -help'.
+  floppycheck          : 'floppycheck ./file or ./folder/' estimates how many
+                         standard floppy disks the given content will take.
+
+ /* BUDOSTACK Example TASK Programs */
+
+  audiodemo.task       : Collection of in-built sound capabilities
+  autoexec.task        : Determines what happens before BUDOSTACK login screen
+  codedemo.task        : Coding basics: for, while, arrays, functions, etc.
+  csvdemo.task         : Dynamic .csv file manipulation demo
+  demo.task            : Demonstration of _TERM* command set.
+  keyboard.task        : Keyboard input reading and processing.
+  mouse.task           : Mouse input reading and processing.
+  release.task         : Used to generate release notes
+  screen.task          : Screen calibration TASK
+  waves.task           : Demonstration how to plot basic math
+
+-----------------------------------------------------------------------------
+
+                               - KNOWN ISSUES -
+
+ apps/slides:
+
+  Unable to copy-paste content between the app and clipboard.
+
+=============================================================================

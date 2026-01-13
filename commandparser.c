@@ -87,6 +87,7 @@ void set_base_path(const char *path) {
 /* Commands that should bypass wildcard expansion */
 static const char *bypass_expansion_commands[] = {
     "list",
+    "_STRCMP",
     NULL
 };
 

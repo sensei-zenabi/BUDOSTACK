@@ -16,12 +16,13 @@ how to call each command inside TASK scripts.
 ## Command reference
 
 ### `_BAR`
-**Usage:** `_BAR [-x <col> -y <row>] -title <text> -progress <0-100> [-color <0-255>]`
+**Usage:** `_BAR [-x <col> -y <row>] -title <text> -progress <0-100> [-color <0-18>]`
 
 **Description:** Draws a progress bar with a title and percentage. When `-x`/`-y` are
 provided, the bar is drawn at the specified column/row; otherwise it draws at the
-current cursor position. `-color` selects the foreground color (0–15 uses the active
-retro palette, 16–255 uses xterm colors).
+current cursor position. `-color` selects the foreground color from the active
+retro profile (0–15 = palette, 16 = default foreground, 17 = default background,
+18 = cursor highlight).
 
 ### `_BEEP`
 **Usage:** `_BEEP -<note> -<duration_ms>`
@@ -162,11 +163,12 @@ column) and prints it.
 - `10` = escape (also used for Ctrl+C)
 
 ### `_RECT`
-**Usage:** `_RECT -x <col> -y <row> -width <pixels> -height <pixels> [-color <0-255>] [-fill on|off]`
+**Usage:** `_RECT -x <col> -y <row> -width <pixels> -height <pixels> [-color <0-18>] [-fill on|off]`
 
 **Description:** Draws a rectangle using background colors at the specified position.
 `-fill on` draws a filled rectangle; `-fill off` draws only the border. Color indices
-0–15 use the active retro palette; 16–255 use xterm colors.
+0–15 use the active retro palette; 16 is the default foreground, 17 is the default
+background, and 18 is the cursor highlight.
 
 ### `_RETROPROFILE`
 **Usage:** `_RETROPROFILE <command> [profile]`
@@ -283,7 +285,7 @@ system font. Color indices come from the active 18-color scheme. Layer 1 is topm
 Intended for validating terminal layout.
 
 ### `_TEXT`
-**Usage:** `_TEXT -x <col> -y <row> -text <string> [-color <0-255>]`
+**Usage:** `_TEXT -x <col> -y <row> -text <string> [-color <0-18>]`
 
 **Description:** Prints text at the specified column/row while preserving background
 colors. `-text` can include multiple tokens; use `+` tokens to suppress spaces

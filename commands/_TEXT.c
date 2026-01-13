@@ -30,24 +30,53 @@ static int default_color_index(void) {
     int index = retroprofile_active_default_foreground_index();
     if (index >= 0)
         return index;
-    return 15;
+    return 16;
 }
 
 static int clamp_color_value(int value) {
     if (value < 0)
         return 0;
-    if (value > 255)
-        return 255;
+    if (value > 18)
+        return 18;
     return value;
+}
+
+static int retroprofile_color_from_index(int index, RetroColor *out_color) {
+    if (out_color == NULL)
+        return -1;
+
+    const RetroProfile *profile = retroprofile_active();
+    if (profile == NULL)
+        return -1;
+
+    if (index >= 0 && index < 16) {
+        *out_color = profile->colors[index];
+        return 0;
+    }
+
+    if (index == 16) {
+        *out_color = profile->defaults.foreground;
+        return 0;
+    }
+
+    if (index == 17) {
+        *out_color = profile->defaults.background;
+        return 0;
+    }
+
+    if (index == 18) {
+        *out_color = profile->defaults.cursor;
+        return 0;
+    }
+
+    return -1;
 }
 
 static int resolve_color(int color_index) {
     int clamped = clamp_color_value(color_index);
-    if (clamped >= 0 && clamped < 16) {
-        RetroColor palette_color;
-        if (retroprofile_color_from_active(clamped, &palette_color) == 0)
-            return termbg_encode_truecolor(palette_color.r, palette_color.g, palette_color.b);
-    }
+    RetroColor palette_color;
+    if (retroprofile_color_from_index(clamped, &palette_color) == 0)
+        return termbg_encode_truecolor(palette_color.r, palette_color.g, palette_color.b);
     return clamped;
 }
 
@@ -211,7 +240,7 @@ int main(int argc, char *argv[]) {
     }
 
     if (x < 0 || y < 0 || text == NULL) {
-        fprintf(stderr, "Usage: _TEXT -x <col> -y <row> -text <string> [-color <0-255>]\n");
+        fprintf(stderr, "Usage: _TEXT -x <col> -y <row> -text <string> [-color <0-18>]\n");
         goto cleanup;
     }
 
@@ -239,4 +268,3 @@ cleanup:
     termbg_shutdown();
     return exit_code;
 }
-

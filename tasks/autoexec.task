@@ -13,6 +13,9 @@
 # Required to clear all screen buffer
 RUN cls
 
+# Disable cursor blinking
+RUN _TERM_CURSOR_BLINK disable
+
 # Initialize variables
 
 SET $LOAD = 0
@@ -91,7 +94,7 @@ END
 
 # VARIABLES
 
-SET $MENU = "MAIN MENU"
+SET $MENU = "USER LOGIN"
 SET $MENU_X = 34
 SET $EVENT = 0
 SET $CURSOR_X = $MENU_X-2
@@ -115,21 +118,38 @@ FUNCTION DRAW_CURSOR($X, $Y):
 END
 
 
-# DRAW MENU FRAME ONCE
+# LAUNCHER APPLICATION
 
 @LAUNCHER_MENU
 
 EVAL DRAW_FRAME()
 
 
+# USER LOGIN
+
+IF ($MENU == "USER LOGIN"):
+  
+  # Work in progress
+  $MENU = "MAIN MENU"  
+
+END
+
+
 # MAIN MENU
 
 IF ($MENU == "MAIN MENU"):
   
+  # Limit cursor movement upon returning
+  
+  IF ($CURSOR_Y > 25):
+    $CURSOR_Y = 25
+  END
+  
+  
   # Draw
   
   RUN _TEXT -x $MENU_X -y 15 -text "-- MAIN MENU --        "
-  RUN _TEXT -x $MENU_X -y 17 -text "./APPS                 "
+  RUN _TEXT -x $MENU_X -y 17 -text "./APPS (to-be-done)    "
   RUN _TEXT -x $MENU_X -y 19 -text "./GAMES                "
   RUN _TEXT -x $MENU_X -y 21 -text "Configuration          "
   RUN _TEXT -x $MENU_X -y 23 -text "Help                   "
@@ -183,7 +203,7 @@ IF ($MENU == "MAIN MENU"):
     END
     IF ($CURSOR_Y == 23):
       # Help
-      RUN ./apps/edit readme.md
+      RUN ./apps/edit ../documents/help.txt
     END
     IF ($CURSOR_Y == 25):
       # Command line
@@ -435,6 +455,9 @@ RUN _TERM_MOUSE_SHOW $MOUSE
 
 RUN _CONFIG -read _RETROPROFILE TO $RETROPROFILE
 RUN _RETROPROFILE apply $RETROPROFILE
+
+# Return cursor blink
+RUN _TERM_CURSOR_BLINK enable
 
 PRINT "\n"
 

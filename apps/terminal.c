@@ -116,6 +116,8 @@ static int terminal_cursor_height = 0;
 static int terminal_cursor_hot_x = 0;
 static int terminal_cursor_hot_y = 0;
 static int terminal_cursor_enabled = 0;
+static int terminal_cursor_blink_enabled = 1;
+static int terminal_cursor_blink_reset_requested = 0;
 static int terminal_cursor_position_valid = 0;
 static int terminal_cursor_x = 0;
 static int terminal_cursor_y = 0;
@@ -3560,6 +3562,7 @@ static void terminal_print_usage(const char *progname) {
     const char *name = (progname && progname[0] != '\0') ? progname : "terminal";
     fprintf(stderr, "Usage: %s [-s shader_path]...\n", name);
     fprintf(stderr, "  Send OSC 777 'shader=enable|disable' via _TERM_SHADER to toggle shaders at runtime.\n");
+    fprintf(stderr, "  Send OSC 777 'cursor_blink=enable|disable' via _TERM_CURSOR_BLINK to toggle cursor blinking.\n");
 }
 
 static int psf_unicode_map_compare(const void *a, const void *b) {
@@ -5252,6 +5255,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int mouse_visibility_show = 0;
     int shader_toggle_requested = 0;
     int shader_enable_requested = 0;
+    int cursor_blink_toggle_requested = 0;
+    int cursor_blink_enable_requested = 1;
 
     if (args && args[0] != '\0') {
         char *copy = strdup(args);
@@ -5377,6 +5382,14 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         } else if (strcmp(value, "disable") == 0) {
                             shader_toggle_requested = 1;
                             shader_enable_requested = 0;
+                        }
+                    } else if (strcmp(key, "cursor_blink") == 0 && value && *value != '\0') {
+                        if (strcmp(value, "enable") == 0) {
+                            cursor_blink_toggle_requested = 1;
+                            cursor_blink_enable_requested = 1;
+                        } else if (strcmp(value, "disable") == 0) {
+                            cursor_blink_toggle_requested = 1;
+                            cursor_blink_enable_requested = 0;
                         }
 #if BUDOSTACK_HAVE_SDL2
                     } else if (strcmp(key, "sound") == 0 && value && *value != '\0') {
@@ -5733,6 +5746,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 } else {
                     terminal_disable_shaders();
                 }
+                terminal_mark_full_redraw();
+            }
+
+            if (cursor_blink_toggle_requested) {
+                terminal_cursor_blink_enabled = cursor_blink_enable_requested;
+                terminal_cursor_blink_reset_requested = 1;
                 terminal_mark_full_redraw();
             }
 
@@ -8032,8 +8051,16 @@ int main(int argc, char **argv) {
             child_exited = 1;
         }
 
+        if (terminal_cursor_blink_reset_requested) {
+            cursor_phase_visible = 1;
+            cursor_last_toggle = SDL_GetTicks();
+            terminal_cursor_blink_reset_requested = 0;
+        }
+
         Uint32 now = SDL_GetTicks();
-        if (cursor_blink_interval > 0u && (Uint32)(now - cursor_last_toggle) >= cursor_blink_interval) {
+        if (terminal_cursor_blink_enabled &&
+            cursor_blink_interval > 0u &&
+            (Uint32)(now - cursor_last_toggle) >= cursor_blink_interval) {
             cursor_last_toggle = now;
             cursor_phase_visible = cursor_phase_visible ? 0 : 1;
         }
@@ -8043,7 +8070,10 @@ int main(int argc, char **argv) {
         terminal_visible_row_range(&buffer, &top_index, &bottom_index);
 
         size_t cursor_global_index = buffer.history_rows + buffer.cursor_row;
-        int cursor_render_visible = (clamped_scroll_offset == 0u) && buffer.cursor_visible && cursor_phase_visible;
+        int cursor_render_visible = (clamped_scroll_offset == 0u) &&
+                                    buffer.cursor_visible &&
+                                    cursor_phase_visible &&
+                                    terminal_cursor_blink_enabled;
 
         size_t selection_start = 0u;
         size_t selection_end = 0u;
@@ -8304,7 +8334,7 @@ int main(int argc, char **argv) {
                     idle_delay_ms = 0u;
                 }
             }
-            if (cursor_blink_interval > 0u) {
+            if (terminal_cursor_blink_enabled && cursor_blink_interval > 0u) {
                 Uint32 since_cursor_toggle = now - cursor_last_toggle;
                 if (since_cursor_toggle < cursor_blink_interval) {
                     Uint32 remaining = cursor_blink_interval - since_cursor_toggle;

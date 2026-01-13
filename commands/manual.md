@@ -180,6 +180,12 @@ background, and 18 is the cursor highlight.
 **Description:** Clears a rectangular pixel region on the terminal’s pixel surface.
 Layer 1 is topmost; default layer is 1.
 
+### `_TERM_CURSOR_BLINK`
+**Usage:** `_TERM_CURSOR_BLINK <enable|disable>`
+
+**Description:** Enables (`enable`) or disables (`disable`) the blinking text cursor
+in the terminal emulator. When disabled, the cursor is hidden.
+
 ### `_TERM_KEYBOARD`
 **Usage:** `_TERM_KEYBOARD`
 

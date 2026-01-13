@@ -88,6 +88,8 @@ void set_base_path(const char *path) {
 static const char *bypass_expansion_commands[] = {
     "list",
     "_STRCMP",
+    "find",
+    "do",
     NULL
 };
 

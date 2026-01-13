@@ -64,6 +64,17 @@ Notes:
 **Description:** Prints the 256-color palette, plus the active retro profile colors
 and defaults if one is active.
 
+### `_CONFIG`
+**Usage:**
+```
+_CONFIG -read <key>
+_CONFIG -write <key> <value>
+```
+
+**Description:** Reads or updates keys in the root `config.ini` file. `-read` prints
+the current value for `<key>` and exits with a non-zero status if the key does not
+exist. `-write` updates the value for `<key>` and creates it if missing.
+
 ### `_CSVFILTER`
 **Usage:**
 ```

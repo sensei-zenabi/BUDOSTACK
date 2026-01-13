@@ -1,6 +1,10 @@
 # mouse.task
 
+RUN cls
+
 ECHO OFF
+
+RUN _TERM_MOUSE_SHOW enable
 
 SET $RUNFLAG = 1
 SET $MOUSE_EVENTS = {}
@@ -44,3 +48,8 @@ END
 RUN cls
 
 ECHO ON
+
+# revert mouse status
+$MOUSE = "null"
+RUN _CONFIG -read _TERM_MOUSE_SHOW TO $MOUSE
+RUN _TERM_MOUSE_SHOW $MOUSE

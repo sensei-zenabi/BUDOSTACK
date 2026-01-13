@@ -284,8 +284,19 @@ void add_match(const char *path) {
     matches[matches_count++] = strdup(path);
 }
 
+static const char *normalize_pattern(const char *pattern) {
+    while (pattern[0] == '.' && pattern[1] == '/') {
+        pattern += 2;
+    }
+    return pattern;
+}
+
+static int pattern_has_path(const char *pattern) {
+    return strchr(pattern, '/') != NULL;
+}
+
 // Recursively collect all entries matching the pattern
-void recursive_collect(const char *dir_path, const char *pattern) {
+void recursive_collect(const char *dir_path, const char *pattern, int has_path) {
     DIR *dp = opendir(dir_path);
     if (!dp) {
         fprintf(stderr, "list: cannot access directory '%s': %s\n", dir_path, strerror(errno));
@@ -303,8 +314,21 @@ void recursive_collect(const char *dir_path, const char *pattern) {
         struct stat st;
         if (stat(fullpath, &st) == -1)
             continue;
-        if (fnmatch(pattern, entry->d_name, 0) == 0) {
-            if (!show_all && !S_ISDIR(st.st_mode)) {
+        int matched = 0;
+        if (has_path) {
+            const char *relpath = fullpath;
+            if (strncmp(fullpath, "./", 2) == 0) {
+                relpath = fullpath + 2;
+            }
+            if (fnmatch(pattern, relpath, FNM_PATHNAME) == 0) {
+                matched = 1;
+            }
+        } else if (fnmatch(pattern, entry->d_name, 0) == 0) {
+            matched = 1;
+        }
+
+        if (matched && !S_ISDIR(st.st_mode)) {
+            if (!show_all) {
                 int excluded = 0;
                 for (int i = 0; excluded_extensions[i] != NULL; i++) {
                     size_t ext_len = strlen(excluded_extensions[i]);
@@ -314,14 +338,15 @@ void recursive_collect(const char *dir_path, const char *pattern) {
                         break;
                     }
                 }
-                if (!excluded)
+                if (!excluded) {
                     add_match(fullpath);
+                }
             } else {
                 add_match(fullpath);
             }
         }
         if (S_ISDIR(st.st_mode)) {
-            recursive_collect(fullpath, pattern);
+            recursive_collect(fullpath, pattern, has_path);
         }
     }
     closedir(dp);
@@ -345,7 +370,9 @@ void list_recursive_search(const char *pattern) {
     matches_count = 0;
     matches_capacity = 0;
 
-    recursive_collect(".", pattern);
+    const char *normalized = normalize_pattern(pattern);
+    int has_path = pattern_has_path(normalized);
+    recursive_collect(".", normalized, has_path);
 
     qsort(matches, matches_count, sizeof(char*), cmp_str);
 

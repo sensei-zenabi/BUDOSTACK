@@ -31,7 +31,8 @@ SET $RESOLUTION = "null"
 SET $MOUSE = "null"
 SET $LOGIN_SCREEN = "null"
 SET $LOGIN_MENU = "null"
-    
+SET $RETROPROFILE = "vt220-green"
+        
 #-------------------------------------------------------------------------
 # BUDOSTACK LOGIN SCREEN
 @LOGIN_SCREEN
@@ -83,7 +84,7 @@ RUN cls
 # Login menu behavior according to config.ini
 RUN _CONFIG -read LOGIN_MENU TO $LOGIN_MENU
 
-IF ($LOGIN_SCREEN == "disable"):
+IF ($LOGIN_MENU == "disable"):
   GOTO EXIT
 END
 
@@ -91,8 +92,9 @@ END
 # VARIABLES
 
 SET $MENU = "MAIN MENU"
+SET $MENU_X = 34
 SET $EVENT = 0
-SET $CURSOR_X = 34
+SET $CURSOR_X = $MENU_X-2
 SET $CURSOR_Y = 19
 
 
@@ -124,16 +126,16 @@ IF ($MENU == "MAIN MENU"):
   
   # Draw
   
-  RUN _TEXT -x 36 -y 15 -text "-- MAIN MENU --        "
-  RUN _TEXT -x 36 -y 17 -text "./APPS                 "
-  RUN _TEXT -x 36 -y 19 -text "./GAMES                "
-  RUN _TEXT -x 36 -y 21 -text "Configuration          "
-  RUN _TEXT -x 36 -y 23 -text "Help                   "
-  RUN _TEXT -x 36 -y 25 -text "Command Line           "
+  RUN _TEXT -x $MENU_X -y 15 -text "-- MAIN MENU --        "
+  RUN _TEXT -x $MENU_X -y 17 -text "./APPS                 "
+  RUN _TEXT -x $MENU_X -y 19 -text "./GAMES                "
+  RUN _TEXT -x $MENU_X -y 21 -text "Configuration          "
+  RUN _TEXT -x $MENU_X -y 23 -text "Help                   "
+  RUN _TEXT -x $MENU_X -y 25 -text "Command Line           "
   
   EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
   
-  RUN _TEXT -x 34 -y 42 -text "<ENTER> to SELECT"
+  RUN _TEXT -x $MENU_X-2 -y 42 -text "<ENTER> to SELECT"
   
   
   # Process Input
@@ -199,18 +201,18 @@ IF ($MENU == "GAMES"):
 
   # Draw GAMES menu
   
-  RUN _TEXT -x 36 -y 15 -text "-- GAMES --            "
-  RUN _TEXT -x 36 -y 17 -text "./BUDO/example         "
-  RUN _TEXT -x 36 -y 19 -text "./BUDO/rocket          "
-  RUN _TEXT -x 36 -y 21 -text "./GAMES/invaders       "
-  RUN _TEXT -x 36 -y 23 -text "./GAMES/snake          "
-  RUN _TEXT -x 36 -y 25 -text "./GAMES/tictactoe      "
-  RUN _TEXT -x 36 -y 27 -text "./TASKS/demo           "
-  RUN _TEXT -x 36 -y 29 -text "<-- MAIN MENU          "
+  RUN _TEXT -x $MENU_X -y 15 -text "-- GAMES --            "
+  RUN _TEXT -x $MENU_X -y 17 -text "./BUDO/example         "
+  RUN _TEXT -x $MENU_X -y 19 -text "./BUDO/rocket          "
+  RUN _TEXT -x $MENU_X -y 21 -text "./GAMES/invaders       "
+  RUN _TEXT -x $MENU_X -y 23 -text "./GAMES/snake          "
+  RUN _TEXT -x $MENU_X -y 25 -text "./GAMES/tictactoe      "
+  RUN _TEXT -x $MENU_X -y 27 -text "./TASKS/demo           "
+  RUN _TEXT -x $MENU_X -y 29 -text "<-- MAIN MENU          "
   
   EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
   
-  RUN _TEXT -x 34 -y 42 -text "<ENTER> to SELECT"
+  RUN _TEXT -x $MENU_X-2 -y 42 -text "<ENTER> to SELECT"
 
   
   # Process Input
@@ -288,19 +290,36 @@ IF ($MENU == "CONFIGURATION"):
   RUN _CONFIG -read _TERM_MOUSE_SHOW TO $MOUSE
   RUN _CONFIG -read LOGIN_SCREEN TO $LOGIN_SCREEN
   RUN _CONFIG -read LOGIN_MENU TO $LOGIN_MENU
+  RUN _CONFIG -read _RETROPROFILE TO $RETROPROFILE
+  
+  # Index retroprofile
+  SET $RETROPROFILE_IDX = 0
+  IF ($RETROPROFILE == "c64"):
+    $RETROPROFILE_IDX = 0
+  END
+  IF ($RETROPROFILE == "ibm5150"):
+    $RETROPROFILE_IDX = 1
+  END
+  IF ($RETROPROFILE == "vt220-amber"):
+    $RETROPROFILE_IDX = 2
+  END
+  IF ($RETROPROFILE == "vt220-green"):
+    $RETROPROFILE_IDX = 3
+  END
   
   # Draw
   
-  RUN _TEXT -x 36 -y 15 -text "-- CONFIGURATION --    "
-  RUN _TEXT -x 36 -y 17 -text "Resolution Mode = " + $RESOLUTION
-  RUN _TEXT -x 36 -y 19 -text "Mouse Cursor    = " + $MOUSE
-  RUN _TEXT -x 36 -y 21 -text "Login Screen    = " + $LOGIN_SCREEN
-  RUN _TEXT -x 36 -y 23 -text "Login Menu      = " + $LOGIN_MENU
-  RUN _TEXT -x 36 -y 25 -text "<-- MAIN MENU          "
+  RUN _TEXT -x $MENU_X-1 -y 15 -text "-- CONFIGURATION --    "
+  RUN _TEXT -x $MENU_X-3 -y 17 -text "Resolution Mode = " + $RESOLUTION
+  RUN _TEXT -x $MENU_X-3 -y 19 -text "Mouse Cursor    = " + $MOUSE
+  RUN _TEXT -x $MENU_X-3 -y 21 -text "Login Screen    = " + $LOGIN_SCREEN
+  RUN _TEXT -x $MENU_X-3 -y 23 -text "Login Menu      = " + $LOGIN_MENU
+  RUN _TEXT -x $MENU_X-3 -y 25 -text "Retro Profile   = " + $RETROPROFILE
+  RUN _TEXT -x $MENU_X-3 -y 27 -text "<-- MAIN MENU          "
   
-  EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
+  EVAL DRAW_CURSOR($CURSOR_X-3, $CURSOR_Y)
   
-  RUN _TEXT -x 34 -y 42 -text "<ENTER> to SELECT"
+  RUN _TEXT -x $MENU_X-2 -y 42 -text "<ENTER> to SELECT"
   
   
   # Process Input
@@ -328,8 +347,8 @@ IF ($MENU == "CONFIGURATION"):
   IF ($CURSOR_Y < 17):
     $CURSOR_Y = 17
   END
-  IF ($CURSOR_Y > 25):
-    $CURSOR_Y = 25
+  IF ($CURSOR_Y > 27):
+    $CURSOR_Y = 27
   END
   
   
@@ -375,6 +394,25 @@ IF ($MENU == "CONFIGURATION"):
       EN
     END
     IF ($CURSOR_Y == 25):
+      # Switch retro profile
+      $RETROPROFILE_IDX = $RETROPROFILE_IDX + 1
+      IF ($RETROPROFILE_IDX > 3):
+        $RETROPROFILE_IDX = 0
+      END
+      IF ($RETROPROFILE_IDX == 0):
+        RUN _CONFIG -write _RETROPROFILE c64
+      END
+      IF ($RETROPROFILE_IDX == 1):
+        RUN _CONFIG -write _RETROPROFILE ibm5150
+      END
+      IF ($RETROPROFILE_IDX == 2):
+        RUN _CONFIG -write _RETROPROFILE vt220-amber
+      END
+      IF ($RETROPROFILE_IDX == 3):
+        RUN _CONFIG -write _RETROPROFILE vt220-green
+      END
+    END
+    IF ($CURSOR_Y == 27):
       $MENU = "MAIN MENU"
     END
   
@@ -399,6 +437,9 @@ RUN _TERM_RESOLUTION $RESOLUTION
 
 RUN _CONFIG -read _TERM_MOUSE_SHOW TO $MOUSE
 RUN _TERM_MOUSE_SHOW $MOUSE
+
+RUN _CONFIG -read _RETROPROFILE TO $RETROPROFILE
+RUN _RETROPROFILE apply $RETROPROFILE
 
 PRINT "\n"
 

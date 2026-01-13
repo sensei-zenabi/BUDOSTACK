@@ -17,8 +17,32 @@ RUN list ../users
 
 PRINT "\n"
 PRINT "\nCALCULCATING CHECKSUM OF readme.md..."
-PRINT "\n"
 
 RUN crc32 ../users/readme.md
 
 PRINT "\n"
+PRINT "List BUDOSTACK root using _LIST:"
+PRINT "\n"
+
+SET $FILES = {}
+RUN _LIST ../ TO $FILES
+
+FOR ($i=0; $i<LEN($FILES); $i++):
+  PRINT "\n"
+  PRINT $FILES[$i]
+END
+PRINT "\n"
+
+PRINT "\nPrint only .c files:"
+PRINT "\n"
+
+SET $MATCH = 0
+FOR ($i=0; $i<LEN($FILES); $i++):
+  RUN _STRCMP $FILES[$i] "*.c" TO $MATCH
+  IF ($MATCH == 1):
+    PRINT "\n"
+    PRINT $FILES[$i]
+  END
+END
+
+PRINT "\n\n"

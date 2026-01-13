@@ -9,6 +9,7 @@
 *   Arguments are passed as-is.
 * - RUN optionally supports `TO $VAR` to capture stdout into a variable (type auto-detected).
 * - If RUN's first token contains '/', it's treated as an explicit path and executed directly.
+*   The child process will switch to the executable's directory before exec.
 * - Fixed argv lifetime: arguments are now heap-allocated (no static buffers). RUN reliably
 *   passes switches/arguments (e.g., "setfont -d small2.psf") to the child.
 *
@@ -232,6 +233,24 @@ static void cache_task_workdir(const char *dir) {
 
     if (snprintf(task_workdir, sizeof(task_workdir), "%s", dir) >= (int)sizeof(task_workdir)) {
         task_workdir[sizeof(task_workdir) - 1] = '\0';
+    }
+}
+
+static void apply_exec_workdir(const char *path, int line) {
+    char exec_dir[PATH_MAX];
+
+    if (!path || !strchr(path, '/')) {
+        return;
+    }
+
+    if (task_dirname(path, exec_dir, sizeof(exec_dir)) != 0) {
+        fprintf(stderr, "RUN: failed to resolve directory for '%s' at line %d\n", path, line);
+        return;
+    }
+
+    if (chdir(exec_dir) != 0) {
+        fprintf(stderr, "RUN: failed to change directory to '%s' at line %d: %s\n",
+                exec_dir, line, strerror(errno));
     }
 }
 
@@ -2597,7 +2616,7 @@ static void print_help(void) {
     printf("  RUN [BLOCKING|NONBLOCKING] <cmd [args...]>\n");
     printf("    Execute from ./apps, ./commands, or ./utilities; otherwise fall back to\n");
     printf("    PATH. Default is BLOCKING. If the command contains '/', it's executed as\n");
-    printf("    given.\n");
+    printf("    given and run from that directory.\n");
     printf("    Append 'TO $VAR' to capture stdout into $VAR (blocking mode only).\n");
     printf("  CLEAR\n");
     printf("    Clear the screen.\n\n");
@@ -4883,6 +4902,7 @@ int main(int argc, char *argv[]) {
             size_t captured_cap = 0;
             bool use_execvp = false;
             bool explicit_path_requested = false;
+            bool run_in_exec_dir = false;
             char resolved[PATH_MAX];
 
             if (argcnt > 0) {
@@ -5016,6 +5036,7 @@ int main(int argc, char *argv[]) {
             if (resolve_exec_path(argv_heap[0], resolved, sizeof(resolved)) == 0) {
                 free(argv_heap[0]);
                 argv_heap[0] = xstrdup(resolved);
+                run_in_exec_dir = explicit_path_requested;
             } else if (!explicit_path_requested) {
                 use_execvp = true;
             } else {
@@ -5053,6 +5074,9 @@ int main(int argc, char *argv[]) {
                         _exit(EXIT_FAILURE);
                     }
                     if (gpid == 0) {
+                        if (run_in_exec_dir) {
+                            apply_exec_workdir(argv_heap[0], script[pc].source_line);
+                        }
                         if (use_execvp) {
                             execvp(argv_heap[0], argv_heap);
                             perror("execvp");
@@ -5110,6 +5134,9 @@ int main(int argc, char *argv[]) {
                         _exit(EXIT_FAILURE);
                     }
                     close(pipefd[1]);
+                }
+                if (run_in_exec_dir) {
+                    apply_exec_workdir(argv_heap[0], script[pc].source_line);
                 }
                 if (use_execvp) {
                     execvp(argv_heap[0], argv_heap);
@@ -5336,6 +5363,5 @@ int main(int argc, char *argv[]) {
     free(script);
     return 0;
 }
-
 
 

@@ -1,18 +1,84 @@
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 
 #include <ctype.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
-#define CONFIG_PATH "config.ini"
 #define LINE_BUFFER_SIZE 1024
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
+#define CONFIG_FILENAME "config.ini"
 
 static void usage(void) {
     fprintf(stderr,
             "Usage:\n"
             "  _CONFIG -read <key>\n"
             "  _CONFIG -write <key> <value>\n");
+}
+
+static const char *get_base_dir(const char *argv0) {
+    static char cached[PATH_MAX];
+    static int initialized = 0;
+
+    if (!initialized) {
+        initialized = 1;
+        const char *env = getenv("BUDOSTACK_BASE");
+        if (env && env[0] != '\0') {
+            if (!realpath(env, cached)) {
+                strncpy(cached, env, sizeof(cached) - 1);
+                cached[sizeof(cached) - 1] = '\0';
+            }
+        } else if (argv0 && argv0[0] != '\0') {
+            char resolved[PATH_MAX];
+            if (!realpath(argv0, resolved)) {
+                ssize_t len = readlink("/proc/self/exe", resolved, sizeof(resolved) - 1);
+                if (len >= 0) {
+                    resolved[len] = '\0';
+                } else {
+                    resolved[0] = '\0';
+                }
+            }
+
+            if (resolved[0] != '\0') {
+                strncpy(cached, resolved, sizeof(cached) - 1);
+                cached[sizeof(cached) - 1] = '\0';
+                char *slash = strrchr(cached, '/');
+                if (slash) {
+                    *slash = '\0';
+                    slash = strrchr(cached, '/');
+                    if (slash) {
+                        *slash = '\0';
+                    }
+                }
+            }
+        }
+    }
+
+    return cached[0] ? cached : NULL;
+}
+
+static const char *config_path(const char *argv0, char *buffer, size_t size) {
+    const char *base = get_base_dir(argv0);
+
+    if (base && base[0] != '\0') {
+        size_t len = strlen(base);
+        const char *fmt = (len > 0 && base[len - 1] == '/') ? "%s%s" : "%s/%s";
+        if (snprintf(buffer, size, fmt, base, CONFIG_FILENAME) >= (int)size)
+            return NULL;
+        return buffer;
+    }
+
+    if (snprintf(buffer, size, "%s", CONFIG_FILENAME) >= (int)size)
+        return NULL;
+
+    return buffer;
 }
 
 static const char *skip_leading_space(const char *s) {
@@ -61,8 +127,16 @@ static int match_key_line(const char *line, const char *key, const char **value_
     return 1;
 }
 
-static int read_value(const char *key) {
-    FILE *file = fopen(CONFIG_PATH, "r");
+static int read_value(const char *argv0, const char *key) {
+    char path[PATH_MAX];
+    const char *config = config_path(argv0, path, sizeof(path));
+
+    if (!config) {
+        fprintf(stderr, "_CONFIG: failed to build config path.\n");
+        return EXIT_FAILURE;
+    }
+
+    FILE *file = fopen(config, "r");
     if (file == NULL) {
         perror("_CONFIG: fopen");
         return EXIT_FAILURE;
@@ -89,7 +163,7 @@ static int read_value(const char *key) {
     }
 
     if (!found) {
-        fprintf(stderr, "_CONFIG: key '%s' not found in %s.\n", key, CONFIG_PATH);
+        fprintf(stderr, "_CONFIG: key '%s' not found in %s.\n", key, config);
         return EXIT_FAILURE;
     }
 
@@ -115,15 +189,23 @@ static char *join_value(int argc, char *argv[], int start_index) {
     return value;
 }
 
-static int write_value(const char *key, const char *value) {
-    FILE *input = fopen(CONFIG_PATH, "r");
+static int write_value(const char *argv0, const char *key, const char *value) {
+    char path[PATH_MAX];
+    const char *config = config_path(argv0, path, sizeof(path));
+
+    if (!config) {
+        fprintf(stderr, "_CONFIG: failed to build config path.\n");
+        return EXIT_FAILURE;
+    }
+
+    FILE *input = fopen(config, "r");
     if (input == NULL) {
         perror("_CONFIG: fopen");
         return EXIT_FAILURE;
     }
 
-    char tmp_path[64];
-    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", CONFIG_PATH) < 0) {
+    char tmp_path[PATH_MAX];
+    if (snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", config) >= (int)sizeof(tmp_path)) {
         fprintf(stderr, "_CONFIG: failed to build temp path.\n");
         fclose(input);
         return EXIT_FAILURE;
@@ -195,7 +277,7 @@ static int write_value(const char *key, const char *value) {
         return EXIT_FAILURE;
     }
 
-    if (rename(tmp_path, CONFIG_PATH) != 0) {
+    if (rename(tmp_path, config) != 0) {
         perror("_CONFIG: rename");
         return EXIT_FAILURE;
     }
@@ -214,7 +296,7 @@ int main(int argc, char *argv[]) {
             usage();
             return EXIT_FAILURE;
         }
-        return read_value(argv[2]);
+        return read_value(argv[0], argv[2]);
     }
 
     if (strcmp(argv[1], "-write") == 0) {
@@ -227,7 +309,7 @@ int main(int argc, char *argv[]) {
             perror("_CONFIG: malloc");
             return EXIT_FAILURE;
         }
-        int result = write_value(argv[2], value);
+        int result = write_value(argv[0], argv[2], value);
         free(value);
         return result;
     }

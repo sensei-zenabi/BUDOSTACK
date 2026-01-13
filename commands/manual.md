@@ -71,7 +71,8 @@ _CONFIG -read <key>
 _CONFIG -write <key> <value>
 ```
 
-**Description:** Reads or updates keys in the root `config.ini` file. `-read` prints
+**Description:** Reads or updates keys in the root `config.ini` file (resolved via
+`$BUDOSTACK_BASE` when set, otherwise relative to the executable). `-read` prints
 the current value for `<key>` and exits with a non-zero status if the key does not
 exist. `-write` updates the value for `<key>` and creates it if missing.
 

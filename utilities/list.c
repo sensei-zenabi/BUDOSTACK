@@ -21,6 +21,8 @@ static int git_available = 0;
 
 // Global flag to indicate if all files should be shown (if "-a" is provided)
 static int show_all = 0;
+// Global flag to indicate only directories should be listed (if "-f" is provided)
+static int list_folders_only = 0;
 
 // Configurable list of file extensions to be hidden unless "-a" is specified
 static const char *excluded_extensions[] = {
@@ -171,6 +173,9 @@ int filter(const struct dirent *entry) {
 
     if (!show_all && entry->d_name[0] == '.')
         return 0;
+
+    if (list_folders_only)
+        return is_dir;
 
     // Determine if entry is a directory using stat for portability
     if (is_dir)
@@ -327,22 +332,28 @@ void recursive_collect(const char *dir_path, const char *pattern, int has_path) 
             matched = 1;
         }
 
-        if (matched && !S_ISDIR(st.st_mode)) {
-            if (!show_all) {
-                int excluded = 0;
-                for (int i = 0; excluded_extensions[i] != NULL; i++) {
-                    size_t ext_len = strlen(excluded_extensions[i]);
-                    size_t name_len = strlen(entry->d_name);
-                    if (name_len >= ext_len && strcmp(entry->d_name + name_len - ext_len, excluded_extensions[i]) == 0) {
-                        excluded = 1;
-                        break;
-                    }
-                }
-                if (!excluded) {
+        if (matched) {
+            if (list_folders_only) {
+                if (S_ISDIR(st.st_mode)) {
                     add_match(fullpath);
                 }
-            } else {
-                add_match(fullpath);
+            } else if (!S_ISDIR(st.st_mode)) {
+                if (!show_all) {
+                    int excluded = 0;
+                    for (int i = 0; excluded_extensions[i] != NULL; i++) {
+                        size_t ext_len = strlen(excluded_extensions[i]);
+                        size_t name_len = strlen(entry->d_name);
+                        if (name_len >= ext_len && strcmp(entry->d_name + name_len - ext_len, excluded_extensions[i]) == 0) {
+                            excluded = 1;
+                            break;
+                        }
+                    }
+                    if (!excluded) {
+                        add_match(fullpath);
+                    }
+                } else {
+                    add_match(fullpath);
+                }
             }
         }
         if (S_ISDIR(st.st_mode)) {
@@ -376,7 +387,10 @@ void list_recursive_search(const char *pattern) {
 
     qsort(matches, matches_count, sizeof(char*), cmp_str);
 
-    printf("Recursive search for files matching pattern '%s':\n", pattern);
+    printf(
+        "Recursive search for %s matching pattern '%s':\n",
+        list_folders_only ? "folders" : "files",
+        pattern);
     printf(
         "%-*s %-11s %-10s %-3s %-20s\n",
         NAME_DISPLAY_WIDTH,
@@ -403,6 +417,7 @@ void print_help() {
     printf("Usage examples for the 'list' command:\n");
     printf("  list                 List contents of the current directory\n");
     printf("  list -a              List all files, including excluded extensions\n");
+    printf("  list -f              List only folders in the current directory\n");
     printf("  list <file>          Show details for a specific file\n");
     printf("  list <directory>     List contents of a specific directory\n");
     printf("  list <pattern>*      Recursively list files matching a wildcard pattern\n");
@@ -425,6 +440,7 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
     int file_count = 0, dir_count = 0, search_count = 0;
+    int had_non_option_args = 0;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-help") == 0) {
@@ -438,6 +454,11 @@ int main(int argc, char *argv[]) {
             show_all = 1;
             continue;
         }
+        if (strcmp(argv[i], "-f") == 0) {
+            list_folders_only = 1;
+            continue;
+        }
+        had_non_option_args = 1;
         if (strchr(argv[i], '*') || strchr(argv[i], '?') || strchr(argv[i], '[')) {
             search_patterns[search_count++] = strdup(argv[i]);
             continue;
@@ -446,7 +467,7 @@ int main(int argc, char *argv[]) {
         if (stat(argv[i], &st) == 0) {
             if (S_ISDIR(st.st_mode)) {
                 dir_paths[dir_count++] = strdup(argv[i]);
-            } else {
+            } else if (!list_folders_only) {
                 file_paths[file_count++] = strdup(argv[i]);
             }
         } else {
@@ -455,6 +476,13 @@ int main(int argc, char *argv[]) {
     }
 
     if (file_count == 0 && dir_count == 0 && search_count == 0) {
+        if (had_non_option_args) {
+            fprintf(stderr, "list: no matching entries found\n");
+            free(file_paths);
+            free(dir_paths);
+            free(search_patterns);
+            return EXIT_FAILURE;
+        }
         list_directory(".");
         free(file_paths);
         free(dir_paths);

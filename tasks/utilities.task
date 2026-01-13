@@ -1,0 +1,24 @@
+#=========================================================================
+#
+# utilities.task
+#
+# Description:
+# 
+#  You can use ./utilities in your task scripts, but all paths need to
+#  be given in relation to the BUDOSTACK root.
+#
+#=========================================================================
+
+
+PRINT "\nPRINTING THE USERS -FOLDER CONTENT:"
+PRINT" \n"
+
+RUN list ../users
+
+PRINT "\n"
+PRINT "\nCALCULCATING CHECKSUM OF readme.md..."
+PRINT "\n"
+
+RUN crc32 ../users/readme.md
+
+PRINT "\n"

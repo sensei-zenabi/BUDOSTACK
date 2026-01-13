@@ -1,3 +1,4 @@
+
 # autoexec.task
 #=========================================================================
 # This TASK is being ran when BUDOSTACK starts.
@@ -9,27 +10,41 @@
 #-------------------------------------------------------------------------
 # INITIALIZAION
 
+# Required to clear all screen buffer
+RUN cls
+
 # Initialize variables
 
 SET $LOAD = 0
 
-# Set default resolution to low mode
+# Set configurations for login
 
 RUN _TERM_RESOLUTION LOW
+RUN _RETROPROFILE apply vt220-green
 
 # Adjust the margin
 
 RUN _TERM_MARGIN 8
 
-# Use to skip to a section for debugging
-#GOTO LOGIN_SCREEN
-GOTO LAUNCHER
-
+# Configurations 
+SET $RESOLUTION = "null"
+SET $MOUSE = "null"
+SET $LOGIN_SCREEN = "null"
+SET $LOGIN_MENU = "null"
+    
 #-------------------------------------------------------------------------
 # BUDOSTACK LOGIN SCREEN
 @LOGIN_SCREEN
 
-RUN cls
+# Login screen behavior according to config.ini
+RUN _CONFIG -read LOGIN_SCREEN TO $LOGIN_SCREEN
+
+IF ($LOGIN_SCREEN == "disable"):
+  GOTO LAUNCHER
+END
+
+
+RUN _CLEAR
 
 # Display "simulated" loading screen and play related sound effects
 
@@ -62,6 +77,16 @@ RUN _WAIT 1600
 # BUDOSTACK LAUNCHER
 @LAUNCHER
 
+# Clear frame buffer
+RUN cls
+
+# Login menu behavior according to config.ini
+RUN _CONFIG -read LOGIN_MENU TO $LOGIN_MENU
+
+IF ($LOGIN_SCREEN == "disable"):
+  GOTO EXIT
+END
+
 
 # VARIABLES
 
@@ -69,8 +94,6 @@ SET $MENU = "MAIN MENU"
 SET $EVENT = 0
 SET $CURSOR_X = 34
 SET $CURSOR_Y = 19
-SET $RESOLUTION = "LOW"
-SET $SCHEME = "vt220-green"
 
 
 # FUNCTIONS
@@ -87,8 +110,6 @@ FUNCTION DRAW_CURSOR($X, $Y):
 
 END
 
-RUN cls
-
 
 # DRAW MENU FRAME ONCE
 
@@ -96,13 +117,13 @@ RUN cls
 
 EVAL DRAW_FRAME()
 
+
 # MAIN MENU
 
 IF ($MENU == "MAIN MENU"):
   
-  # Draw MAIN MENU
+  # Draw
   
-  #RUN _RECT -x 30 -y 15 -width 30 -height 15 -fill on -color 0
   RUN _TEXT -x 36 -y 15 -text "-- MAIN MENU --        "
   RUN _TEXT -x 36 -y 17 -text "./APPS                 "
   RUN _TEXT -x 36 -y 19 -text "./GAMES                "
@@ -151,12 +172,19 @@ IF ($MENU == "MAIN MENU"):
     # Enter Key
   
     IF ($CURSOR_Y == 19):
+      # Games Menu
       $MENU = "GAMES"
     END
+    IF ($CURSOR_Y == 21):
+      # Configuration Menu
+      $MENU = "CONFIGURATION"
+    END
     IF ($CURSOR_Y == 23):
+      # Help
       RUN ./apps/edit readme.md
     END
     IF ($CURSOR_Y == 25):
+      # Command line
       GOTO EXIT
     END
   
@@ -164,13 +192,13 @@ IF ($MENU == "MAIN MENU"):
 
 END
 
+
 # GAMES MENU
 
 IF ($MENU == "GAMES"):
 
   # Draw GAMES menu
   
-  #RUN _RECT -x 30 -y 15 -width 30 -height 15 -fill on -color 0
   RUN _TEXT -x 36 -y 15 -text "-- GAMES --            "
   RUN _TEXT -x 36 -y 17 -text "./BUDO/example         "
   RUN _TEXT -x 36 -y 19 -text "./BUDO/rocket          "
@@ -251,83 +279,127 @@ IF ($MENU == "GAMES"):
 END
 
 
+# CONFIGURATION MENU
+
+IF ($MENU == "CONFIGURATION"):
+  
+  # Fetch Configuration
+  RUN _CONFIG -read _TERM_RESOLUTION TO $RESOLUTION
+  RUN _CONFIG -read _TERM_MOUSE_SHOW TO $MOUSE
+  RUN _CONFIG -read LOGIN_SCREEN TO $LOGIN_SCREEN
+  RUN _CONFIG -read LOGIN_MENU TO $LOGIN_MENU
+  
+  # Draw
+  
+  RUN _TEXT -x 36 -y 15 -text "-- CONFIGURATION --    "
+  RUN _TEXT -x 36 -y 17 -text "Resolution Mode = " + $RESOLUTION
+  RUN _TEXT -x 36 -y 19 -text "Mouse Cursor    = " + $MOUSE
+  RUN _TEXT -x 36 -y 21 -text "Login Screen    = " + $LOGIN_SCREEN
+  RUN _TEXT -x 36 -y 23 -text "Login Menu      = " + $LOGIN_MENU
+  RUN _TEXT -x 36 -y 25 -text "<-- MAIN MENU          "
+  
+  EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
+  
+  RUN _TEXT -x 34 -y 42 -text "<ENTER> to SELECT"
+  
+  
+  # Process Input
+  
+  RUN _KEYS TO $EVENT
+  
+  IF ($EVENT == 2):
+    # Up Arrow
+    $CURSOR_Y = $CURSOR_Y - 2
+  END
+  
+  IF ($EVENT == -2):
+    # Down Arrow
+    $CURSOR_Y = $CURSOR_Y + 2
+  END
+  
+  IF ($EVENT == 10):
+    # ESC Key
+    GOTO EXIT
+  END
+
+  
+  # Limit Cursor Movement
+  
+  IF ($CURSOR_Y < 17):
+    $CURSOR_Y = 17
+  END
+  IF ($CURSOR_Y > 25):
+    $CURSOR_Y = 25
+  END
+  
+  
+  # Act on ENTER press
+  
+  IF ($EVENT == 3):  
+    # Enter Key
+  
+    IF ($CURSOR_Y == 17):
+      # Set resolution
+      IF ($RESOLUTION == "HIGH"):
+        RUN _CONFIG -write _TERM_RESOLUTION LOW
+      END
+      IF ($RESOLUTION == "LOW"):
+        RUN _CONFIG -write _TERM_RESOLUTION HIGH
+      END
+    END
+    IF ($CURSOR_Y == 19):
+      # Set mouse cursor
+      IF ($MOUSE == "enable"):
+        RUN _CONFIG -write _TERM_MOUSE_SHOW disable
+      END
+      IF ($MOUSE == "disable"):
+        RUN _CONFIG -write _TERM_MOUSE_SHOW enable
+      END
+    END
+    IF ($CURSOR_Y == 21):
+      # Set login screen
+      IF ($LOGIN_SCREEN == "enable"):
+        RUN _CONFIG -write LOGIN_SCREEN disable
+      END
+      IF ($LOGIN_SCREEN == "disable"):
+        RUN _CONFIG -write LOGIN_SCREEN enable
+      END
+    END
+    IF ($CURSOR_Y == 23):
+      # Set login menu
+      IF ($LOGIN_MENU == "enable"):
+        RUN _CONFIG -write LOGIN_MENU disable
+      END
+      IF ($LOGIN_MENU == "disable"):
+        RUN _CONFIG -write LOGIN_MENU enable
+      EN
+    END
+    IF ($CURSOR_Y == 25):
+      $MENU = "MAIN MENU"
+    END
+  
+  END
+
+END
+
+
 GOTO LAUNCHER_MENU
 
-# Select terminal color scheme
-
-#_TEXT -x "\nSelect BUDOSTACK colorscheme:"
-#PRINT "\n[0] Commodore 64"
-#PRINT "\n[1] IBM 5150"
-#PRINT "\n[2] VT220-Amber"
-#PRINT "\n[3] VT220-Green (Recommended)"
-#PRINT "\nEnter Selection: "
-#INPUT $SELECTION
-#IF ($SELECTION == 0):
-#  $SCHEME = "c64"
-#END
-#IF ($SELECTION == 1):
-#  $SCHEME = "ibm5150"
-#END
-#IF ($SELECTION == 2):
-#  $SCHEME = "vt220-amber"
-#END
-#IF ($SELECTION == 3):
-#  $SCHEME = "vt220-green"
-#END
-#PRINT "\n"
-#RUN _RETROPROFILE apply $SCHEME
-#RUN _WAIT 200
-
-
-# Select terminal resolution mode
-
-#PRINT "\n"
-#PRINT "\n_TERM_RESOLUTION:"
-#PRINT "\n[1] HIGH (800x450)"
-#PRINT "\n[0] LOW (640x360)"
-#PRINT "\nEnter Selection: "
-#INPUT $SELECTION
-#IF ($SELECTION == 1):
-#  SET $RESOLUTION = "HIGH"
-#END
-#IF ($SELECTION == 0):
-#  SET $RESOLUTION = "LOW"
-#END
-
-#PRINT "\n\nNote!"
-#PRINT "\n"
-#PRINT "\nResolution can be changed runtime with:"
-#PRINT "\n"
-#PRINT "\n  _TERM_RESOLUTION LOW  = sets the low resolution mode"
-#PRINT "\n  _TERM_RESOLUTION HIGH = sets the high resolution mode"
-#PRINT "\n"
-#PRINT "\n"
-
-#PRINT "\n"
-#PRINT "\n_TERM_MOUSE_SHOW:"
-#PRINT "\n[1] enable"
-#PRINT "\n[0] disable"
-#PRINT "\nEnter Selection: "
-#INPUT $SELECTION
-#IF ($SELECTION == 1):
-#  RUN _TERM_MOUSE_SHOW enable
-#END
-#IF ($SELECTION == 0):
-#  RUN _TERM_MOUSE_SHOW disable
-#END
+#-------------------------------------------------------------------------
+# EXIT
 
 @EXIT
 
-RUN cls
-RUN _RETROPROFILE apply $SCHEME
+RUN _CLEAR
+
+# Apply config.ini
+
+RUN _CONFIG -read _TERM_RESOLUTION TO $RESOLUTION
+RUN _TERM_RESOLUTION $RESOLUTION
+
+RUN _CONFIG -read _TERM_MOUSE_SHOW TO $MOUSE
+RUN _TERM_MOUSE_SHOW $MOUSE
+
 PRINT "\n"
 
-# Apply the selected resolution at the exit
-
-#IF ($RESOLUTION == "HIGH"):
-#  RUN _TERM_RESOLUTION HIGH
-#END
-#IF ($RESOLUTION == "LOW"):
-#  RUN _TERM_RESOLUTION LOW
-#END
                                                                                                                                                                                                                                 

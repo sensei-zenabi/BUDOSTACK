@@ -4,6 +4,11 @@
 # Main compiled binary
 budostack
 
+# Budo build artifacts
+budo/.budo_build_stamp
+budo/example
+budo/rocket
+
 # In the commands directory, ignore everything except source files
 apps/*
 !apps/*.c

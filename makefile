@@ -124,13 +124,19 @@ UTILITIES_EXES = $(UTILITIES_SRCS:.c=)
 # Define all targets (main, commands, and apps)
 ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
 
+BUDO_SRCS = $(shell find ./budo -type f \( -name '*.c' -o -name '*.h' \))
+BUDO_BUILD_STAMP = ./budo/.budo_build_stamp
+
 .PHONY: all clean budo_build
 
 all: budo_build $(ALL_TARGETS)
 
-budo_build:
+budo_build: $(BUDO_BUILD_STAMP)
+
+$(BUDO_BUILD_STAMP): $(BUDO_SRCS) ./budo/build.sh
 	@echo "Running ./budo/build.sh..."
 	@./budo/build.sh || echo "Warning: ./budo/build.sh failed."
+	@touch $(BUDO_BUILD_STAMP)
 
 # Build the main executable from non-command sources and link with lib objects
 $(TARGET): $(NON_COMMAND_OBJECTS) $(LIB_OBJS)
@@ -150,5 +156,6 @@ $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS
 # Clean: remove all executables and all .o files recursively.
 clean:
 	rm -f $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
+	rm -f ./budo/example ./budo/rocket $(BUDO_BUILD_STAMP)
 	@echo "Removing all .o files..."
 	$(shell find . -type f -name '*.o' -delete)

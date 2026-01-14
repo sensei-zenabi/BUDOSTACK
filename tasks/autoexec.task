@@ -16,6 +16,9 @@ RUN cls
 # Disable cursor blinking
 RUN _TERM_CURSOR_BLINK disable
 
+# Disable mouse for the UI
+RUN _TERM_MOUSE_SHOW disable
+
 # Initialize variables
 
 SET $LOAD = 0

@@ -39,6 +39,9 @@
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
+#include <libgen.h>
+#include <limits.h>
+#include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
 
@@ -275,6 +278,232 @@ void set_variable(const char *name, Value val) {
         if (val.type == VAL_MATRIX)
             free(val.matrix.data);
     }
+}
+
+static int append_text(char **buffer, size_t *len, size_t *cap, const char *text, size_t text_len) {
+    if (*len + text_len + 1 > *cap) {
+        size_t new_cap = (*cap + text_len + 32) * 2;
+        char *resized = realloc(*buffer, new_cap);
+        if (!resized) {
+            return 0;
+        }
+        *buffer = resized;
+        *cap = new_cap;
+    }
+    memcpy(*buffer + *len, text, text_len);
+    *len += text_len;
+    (*buffer)[*len] = '\0';
+    return 1;
+}
+
+static int append_number_literal(char **buffer, size_t *len, size_t *cap, double value) {
+    char temp[64];
+    int written = snprintf(temp, sizeof(temp), "%.17g", value);
+    if (written < 0 || (size_t)written >= sizeof(temp)) {
+        return 0;
+    }
+    return append_text(buffer, len, cap, temp, (size_t)written);
+}
+
+static char *build_calc_expression(const char *input, int *requires_matrix, int *error) {
+    size_t cap = 128;
+    size_t len = 0;
+    char *output = malloc(cap);
+    if (!output) {
+        *error = 1;
+        return NULL;
+    }
+    output[0] = '\0';
+    *requires_matrix = 0;
+
+    for (size_t i = 0; input[i] != '\0';) {
+        if (input[i] == '[' || input[i] == ']') {
+            *requires_matrix = 1;
+            break;
+        }
+        if (input[i] == '.' && (input[i + 1] == '*' || input[i + 1] == '/' || input[i + 1] == '^')) {
+            *requires_matrix = 1;
+            break;
+        }
+        if (isalpha((unsigned char)input[i]) || input[i] == '_') {
+            size_t start = i;
+            i++;
+            while (isalnum((unsigned char)input[i]) || input[i] == '_') {
+                i++;
+            }
+            size_t name_len = i - start;
+            char name[32];
+            if (name_len >= sizeof(name)) {
+                *error = 1;
+                break;
+            }
+            memcpy(name, input + start, name_len);
+            name[name_len] = '\0';
+
+            size_t lookahead = i;
+            while (input[lookahead] != '\0' && isspace((unsigned char)input[lookahead]) != 0) {
+                lookahead++;
+            }
+            if (input[lookahead] == '(') {
+                if (!append_text(&output, &len, &cap, input + start, name_len)) {
+                    *error = 1;
+                    break;
+                }
+                continue;
+            }
+
+            struct Variable *var = get_variable_by_name(name);
+            if (var != NULL) {
+                if (var->value.type == VAL_MATRIX) {
+                    *requires_matrix = 1;
+                    break;
+                }
+                if (!append_number_literal(&output, &len, &cap, var->value.scalar)) {
+                    *error = 1;
+                    break;
+                }
+            } else {
+                if (!append_text(&output, &len, &cap, input + start, name_len)) {
+                    *error = 1;
+                    break;
+                }
+            }
+            continue;
+        }
+
+        if (!append_text(&output, &len, &cap, input + i, 1)) {
+            *error = 1;
+            break;
+        }
+        i++;
+    }
+
+    if (*error || *requires_matrix) {
+        free(output);
+        return NULL;
+    }
+
+    return output;
+}
+
+static char *run_calc_expression(const char *expression, int *error) {
+    int pipefd[2];
+    if (pipe(pipefd) != 0) {
+        *error = 1;
+        return NULL;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(pipefd[0]);
+        if (dup2(pipefd[1], STDOUT_FILENO) == -1) {
+            _exit(127);
+        }
+        close(pipefd[1]);
+
+        char exe_path[PATH_MAX];
+        ssize_t exe_len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+        if (exe_len > 0 && exe_len < (ssize_t)sizeof(exe_path)) {
+            exe_path[exe_len] = '\0';
+            char *exe_dir = dirname(exe_path);
+            if (exe_dir && exe_dir[0] != '\0') {
+                char calc_path[PATH_MAX];
+                int written = snprintf(calc_path, sizeof(calc_path), "%s/../commands/_CALC", exe_dir);
+                if (written > 0 && (size_t)written < sizeof(calc_path)) {
+                    execl(calc_path, "_CALC", expression, (char *)NULL);
+                }
+            }
+        }
+
+        execl("./commands/_CALC", "_CALC", expression, (char *)NULL);
+        execlp("_CALC", "_CALC", expression, (char *)NULL);
+        _exit(127);
+    } else if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        *error = 1;
+        return NULL;
+    }
+
+    close(pipefd[1]);
+    size_t cap = 128;
+    size_t len = 0;
+    char *output = malloc(cap);
+    if (!output) {
+        close(pipefd[0]);
+        *error = 1;
+        return NULL;
+    }
+    output[0] = '\0';
+
+    char buffer[128];
+    ssize_t nread = 0;
+    while ((nread = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
+        if (len + (size_t)nread + 1 > cap) {
+            size_t new_cap = (cap + (size_t)nread + 32) * 2;
+            char *resized = realloc(output, new_cap);
+            if (!resized) {
+                free(output);
+                close(pipefd[0]);
+                *error = 1;
+                return NULL;
+            }
+            output = resized;
+            cap = new_cap;
+        }
+        memcpy(output + len, buffer, (size_t)nread);
+        len += (size_t)nread;
+        output[len] = '\0';
+    }
+    close(pipefd[0]);
+
+    int status = 0;
+    if (waitpid(pid, &status, 0) == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        free(output);
+        *error = 1;
+        return NULL;
+    }
+
+    while (len > 0 && (output[len - 1] == '\n' || output[len - 1] == '\r')) {
+        output[--len] = '\0';
+    }
+
+    return output;
+}
+
+static int try_eval_with_calc(const char *expression, Value *result) {
+    int requires_matrix = 0;
+    int error = 0;
+    char *calc_expr = build_calc_expression(expression, &requires_matrix, &error);
+    if (requires_matrix || !calc_expr) {
+        if (error) {
+            error_flag = 1;
+        }
+        return 0;
+    }
+
+    char *output = run_calc_expression(calc_expr, &error);
+    free(calc_expr);
+    if (error || !output) {
+        free(output);
+        error_flag = 1;
+        return 1;
+    }
+
+    char *endptr = NULL;
+    double value = strtod(output, &endptr);
+    while (endptr && *endptr != '\0' && isspace((unsigned char)*endptr) != 0) {
+        endptr++;
+    }
+    if (!endptr || *endptr != '\0') {
+        free(output);
+        error_flag = 1;
+        return 1;
+    }
+    free(output);
+    result->type = VAL_SCALAR;
+    result->scalar = value;
+    return 1;
 }
 
 /* Print a Value (scalar or matrix) */
@@ -1153,7 +1382,7 @@ int main(int argc, char *argv[]) {
         skip_whitespace();
         char ident[32];
         const char *start = p;
-        if (isalpha(*p)) {
+        if (isalpha((unsigned char)*p)) {
             int i = 0;
             while ((isalnum(*p) || *p == '_') && i < (int)(sizeof(ident) - 1)) {
                 ident[i++] = *p;
@@ -1164,7 +1393,13 @@ int main(int argc, char *argv[]) {
             if (*p == '=') {
                 p++; // skip '='
                 skip_whitespace();
-                Value result = parse_expression();
+                const char *rhs = p;
+                Value result;
+                int used_calc = try_eval_with_calc(rhs, &result);
+                if (!used_calc) {
+                    p = rhs;
+                    result = parse_expression();
+                }
                 if (error_flag) {
                     error_flag = 0;
                     continue;
@@ -1191,7 +1426,11 @@ int main(int argc, char *argv[]) {
         }
         
         /* Expression evaluation */
-        Value result = parse_expression();
+        Value result;
+        int used_calc = try_eval_with_calc(p, &result);
+        if (!used_calc) {
+            result = parse_expression();
+        }
         if (error_flag) {
             error_flag = 0;
             continue;

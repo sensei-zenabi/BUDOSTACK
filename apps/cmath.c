@@ -72,82 +72,127 @@ void enable_raw_mode(void) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 }
 
+static void redraw_line(const char *buffer, size_t len, size_t pos) {
+    const char *prompt = "math> ";
+    if (write(STDOUT_FILENO, "\33[2K\r", 5) < 0) perror("write");
+    if (write(STDOUT_FILENO, prompt, strlen(prompt)) < 0) perror("write");
+    if (len > 0) {
+        if (write(STDOUT_FILENO, buffer, len) < 0) perror("write");
+    }
+    if (len > pos) {
+        char move_seq[32];
+        int written = snprintf(move_seq, sizeof(move_seq), "\33[%zuD", len - pos);
+        if (written > 0 && (size_t)written < sizeof(move_seq)) {
+            if (write(STDOUT_FILENO, move_seq, (size_t)written) < 0) perror("write");
+        }
+    }
+}
+
 /*
  * get_line:
  *  Reads a line of input with a simple line editor.
- *  Supports backspace and history navigation with up/down arrow keys.
- *  Arrow up (ESC [ A) loads the previous command; arrow down (ESC [ B) loads the next.
- *  The prompt "math> " is reprinted after each history recall.
+ *  Supports left/right navigation, backspace, delete, and history navigation
+ *  with up/down arrow keys. The prompt "math> " is redrawn as needed.
  */
 char *get_line(void) {
     static char buffer[256];
-    int pos = 0;
+    size_t len = 0;
+    size_t pos = 0;
     int history_index = history_count; // start at the end of history
-    memset(buffer, 0, sizeof(buffer));
-    
+    buffer[0] = '\0';
+
     enable_raw_mode();
     if (write(STDOUT_FILENO, "math> ", 6) < 0) perror("write");
-    
+
     while (1) {
         char c;
         if (read(STDIN_FILENO, &c, 1) != 1)
             break;
         if (c == '\r' || c == '\n') {
             if (write(STDOUT_FILENO, "\r\n", 2) < 0) perror("write");
-            buffer[pos] = '\0';
+            buffer[len] = '\0';
             break;
-        } else if (c == 127 || c == 8) { // Handle backspace
+        } else if (c == 127 || c == 8) { // Backspace
             if (pos > 0) {
+                memmove(buffer + pos - 1, buffer + pos, len - pos);
+                len--;
                 pos--;
-                buffer[pos] = '\0';
-                /* Erase the character from the terminal */
-                if (write(STDOUT_FILENO, "\b \b", 3) < 0) perror("write");
+                buffer[len] = '\0';
+                redraw_line(buffer, len, pos);
             }
-        } else if (c == 27) { // Start of an escape sequence (likely arrow keys)
+        } else if (c == 27) { // Escape sequence
             char seq[2];
             if (read(STDIN_FILENO, seq, 2) != 2)
                 continue;
             if (seq[0] == '[') {
-                if (seq[1] == 'A') { // Up arrow: navigate to previous command
+                if (seq[1] == 'A') { // Up arrow
                     if (history_index > 0) {
                         history_index--;
-                        /* Clear current line: ESC[2K clears entire line, \r returns cursor */
-                        char clear_seq[] = "\33[2K\r";
-                        if (write(STDOUT_FILENO, clear_seq, strlen(clear_seq)) < 0) perror("write");
-                        if (write(STDOUT_FILENO, "math> ", 6) < 0) perror("write");
-                        /* Load command from history */
-                        int len = strlen(history[history_index]);
-                        if (len > 255) len = 255;
-                        strcpy(buffer, history[history_index]);
+                        size_t hist_len = strlen(history[history_index]);
+                        if (hist_len > sizeof(buffer) - 1) hist_len = sizeof(buffer) - 1;
+                        memcpy(buffer, history[history_index], hist_len);
+                        buffer[hist_len] = '\0';
+                        len = hist_len;
                         pos = len;
-                        if (write(STDOUT_FILENO, buffer, pos) < 0) perror("write");
+                        redraw_line(buffer, len, pos);
                     }
-                } else if (seq[1] == 'B') { // Down arrow: navigate to next command
+                } else if (seq[1] == 'B') { // Down arrow
                     if (history_index < history_count - 1) {
                         history_index++;
-                        char clear_seq[] = "\33[2K\r";
-                        if (write(STDOUT_FILENO, clear_seq, strlen(clear_seq)) < 0) perror("write");
-                        if (write(STDOUT_FILENO, "math> ", 6) < 0) perror("write");
-                        int len = strlen(history[history_index]);
-                        if (len > 255) len = 255;
-                        strcpy(buffer, history[history_index]);
+                        size_t hist_len = strlen(history[history_index]);
+                        if (hist_len > sizeof(buffer) - 1) hist_len = sizeof(buffer) - 1;
+                        memcpy(buffer, history[history_index], hist_len);
+                        buffer[hist_len] = '\0';
+                        len = hist_len;
                         pos = len;
-                        if (write(STDOUT_FILENO, buffer, pos) < 0) perror("write");
-                    } else {
-                        /* At the end of history, clear the line */
+                        redraw_line(buffer, len, pos);
+                    } else if (history_index == history_count - 1) {
                         history_index = history_count;
-                        char clear_seq[] = "\33[2K\r";
-                        if (write(STDOUT_FILENO, clear_seq, strlen(clear_seq)) < 0) perror("write");
-                        if (write(STDOUT_FILENO, "math> ", 6) < 0) perror("write");
+                        len = 0;
                         pos = 0;
                         buffer[0] = '\0';
+                        redraw_line(buffer, len, pos);
+                    }
+                } else if (seq[1] == 'C') { // Right arrow
+                    if (pos < len) {
+                        pos++;
+                        if (write(STDOUT_FILENO, "\33[C", 3) < 0) perror("write");
+                    }
+                } else if (seq[1] == 'D') { // Left arrow
+                    if (pos > 0) {
+                        pos--;
+                        if (write(STDOUT_FILENO, "\33[D", 3) < 0) perror("write");
+                    }
+                } else if (seq[1] == 'H') { // Home
+                    if (pos > 0) {
+                        pos = 0;
+                        redraw_line(buffer, len, pos);
+                    }
+                } else if (seq[1] == 'F') { // End
+                    if (pos < len) {
+                        pos = len;
+                        redraw_line(buffer, len, pos);
+                    }
+                } else if (seq[1] == '3') { // Delete
+                    char tilde;
+                    if (read(STDIN_FILENO, &tilde, 1) != 1)
+                        continue;
+                    if (tilde == '~' && pos < len) {
+                        memmove(buffer + pos, buffer + pos + 1, len - pos - 1);
+                        len--;
+                        buffer[len] = '\0';
+                        redraw_line(buffer, len, pos);
                     }
                 }
             }
         } else if (c >= 32 && c <= 126) { // Printable characters
-            if (pos < 255) {
-                buffer[pos++] = c;
-                if (write(STDOUT_FILENO, &c, 1) < 0) perror("write");
+            if (len < sizeof(buffer) - 1) {
+                memmove(buffer + pos + 1, buffer + pos, len - pos);
+                buffer[pos] = c;
+                len++;
+                pos++;
+                buffer[len] = '\0';
+                redraw_line(buffer, len, pos);
             }
         }
     }
@@ -587,16 +632,19 @@ void print_help(void) {
     printf("    exit, quit    : Exit the math terminal\n\n");
     printf("  Usage:\n");
     printf("    Enter arithmetic expressions to evaluate them.\n");
-    printf("    Assignment: variable = expression (e.g., x = 3.14 or A = [1,2;3,4]).\n");
+    printf("    Assignment: variable = expression (e.g., x = 3.14\n");
+    printf("    or A = [1,2;3,4]).\n");
     printf("    Matrix literals: use [ ] with commas separating columns and semicolons separating rows.\n\n");
     printf("  Supported Operations:\n");
     printf("    Addition:       +\n");
     printf("    Subtraction:    -\n");
-    printf("    Multiplication: * (matrix multiplication) and .* (element-wise multiplication)\n");
+    printf("    Multiplication: * (matrix multiplication) and .* (element-wise\n");
+    printf("    multiplication)\n");
     printf("    Division:       / (matrix division by scalar) and ./ (element-wise division)\n");
     printf("    Exponentiation: ^ (scalars only) and .^ (element-wise exponentiation)\n\n");
     printf("  Functions:\n");
-    printf("    Any _CALC unary function can be used and is applied element-wise on matrices.\n\n");
+    printf("    Any _CALC unary function can be used and is applied element-wise\n");
+    printf("    on matrices.\n\n");
     printf("Examples:\n");
     printf("  2 + 3 * 4            -> Evaluates to 14\n");
     printf("  x = 3.14             -> Assigns 3.14 to variable x\n");

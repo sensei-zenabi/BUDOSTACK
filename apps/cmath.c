@@ -195,6 +195,7 @@ Value parse_factor(void);
 Value parse_primary(void);
 Value parse_matrix_literal(void);
 Value call_function(const char *func, Value arg);
+Value parse_function_call(const char *func);
 
 Value deep_copy_value(Value v);
 
@@ -731,18 +732,7 @@ Value parse_primary(void) {
         skip_whitespace();
         if (*p == '(') {
             p++;
-            skip_whitespace();
-            Value arg = parse_expression();
-            skip_whitespace();
-            if (*p == ')') {
-                p++;
-            } else {
-                printf("Error: Expected ')' after function argument\n");
-                error_flag = 1;
-                Value err = { .type = VAL_SCALAR, .scalar = 0 };
-                return err;
-            }
-            return call_function(ident, arg);
+            return parse_function_call(ident);
         } else {
             struct Variable *var = get_variable_by_name(ident);
             if (var == NULL) {
@@ -911,6 +901,108 @@ Value call_function(const char *func, Value arg) {
         }
         return ret;
     }
+}
+
+Value parse_function_call(const char *func) {
+    skip_whitespace();
+    Value first = parse_expression();
+    if (error_flag) {
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+    }
+
+    skip_whitespace();
+    if (*p == ')') {
+        p++;
+        return call_function(func, first);
+    }
+
+    if (*p != ',') {
+        printf("Error: Expected ',' or ')' after function argument\n");
+        error_flag = 1;
+        if (first.type == VAL_MATRIX) {
+            free_value(&first);
+        }
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+    }
+
+    if (first.type != VAL_SCALAR) {
+        printf("Error: Multi-argument functions only support scalar inputs\n");
+        error_flag = 1;
+        free_value(&first);
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+    }
+
+    size_t cap = 128;
+    size_t len = 0;
+    char *expr = malloc(cap);
+    if (!expr) {
+        perror("malloc");
+        error_flag = 1;
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+    }
+    expr[0] = '\0';
+
+    if (!append_text(&expr, &len, &cap, func) ||
+        !append_text(&expr, &len, &cap, "(") ||
+        !append_number(&expr, &len, &cap, first.scalar)) {
+        free(expr);
+        error_flag = 1;
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+    }
+
+    while (*p == ',') {
+        p++;
+        if (!append_text(&expr, &len, &cap, ", ")) {
+            free(expr);
+            error_flag = 1;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        skip_whitespace();
+        Value arg = parse_expression();
+        if (error_flag) {
+            free(expr);
+            if (arg.type == VAL_MATRIX) {
+                free_value(&arg);
+            }
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        if (arg.type != VAL_SCALAR) {
+            printf("Error: Multi-argument functions only support scalar inputs\n");
+            error_flag = 1;
+            free(expr);
+            free_value(&arg);
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        if (!append_number(&expr, &len, &cap, arg.scalar)) {
+            free(expr);
+            error_flag = 1;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        skip_whitespace();
+    }
+
+    if (*p != ')') {
+        printf("Error: Expected ')' after function arguments\n");
+        error_flag = 1;
+        free(expr);
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+    }
+    p++;
+    if (!append_text(&expr, &len, &cap, ")")) {
+        free(expr);
+        error_flag = 1;
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+    }
+
+    double result = 0.0;
+    if (!eval_calc_expression(expr, &result)) {
+        fprintf(stderr, "Error: _CALC could not evaluate %s\n", expr);
+        error_flag = 1;
+        free(expr);
+        return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+    }
+    free(expr);
+    return (Value){ .type = VAL_SCALAR, .scalar = result };
 }
 
 /* --- Arithmetic Operation Implementations --- */

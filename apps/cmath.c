@@ -305,6 +305,38 @@ static int append_number_literal(char **buffer, size_t *len, size_t *cap, double
     return append_text(buffer, len, cap, temp, (size_t)written);
 }
 
+static int build_binary_expression(double lhs, const char *op, double rhs, char **expression) {
+    size_t cap = 64;
+    size_t len = 0;
+    char *buffer = malloc(cap);
+    if (!buffer) {
+        return 0;
+    }
+    buffer[0] = '\0';
+    if (!append_number_literal(&buffer, &len, &cap, lhs)) {
+        free(buffer);
+        return 0;
+    }
+    if (!append_text(&buffer, &len, &cap, " ", 1)) {
+        free(buffer);
+        return 0;
+    }
+    if (!append_text(&buffer, &len, &cap, op, strlen(op))) {
+        free(buffer);
+        return 0;
+    }
+    if (!append_text(&buffer, &len, &cap, " ", 1)) {
+        free(buffer);
+        return 0;
+    }
+    if (!append_number_literal(&buffer, &len, &cap, rhs)) {
+        free(buffer);
+        return 0;
+    }
+    *expression = buffer;
+    return 1;
+}
+
 static char *build_calc_expression(const char *input, int *requires_matrix, int *error) {
     size_t cap = 128;
     size_t len = 0;
@@ -471,6 +503,41 @@ static char *run_calc_expression(const char *expression, int *error) {
     return output;
 }
 
+static int eval_calc_expression(const char *expression, double *value) {
+    int error = 0;
+    char *output = run_calc_expression(expression, &error);
+    if (error || !output) {
+        free(output);
+        error_flag = 1;
+        return 0;
+    }
+
+    char *endptr = NULL;
+    double result = strtod(output, &endptr);
+    while (endptr && *endptr != '\0' && isspace((unsigned char)*endptr) != 0) {
+        endptr++;
+    }
+    if (!endptr || *endptr != '\0') {
+        free(output);
+        error_flag = 1;
+        return 0;
+    }
+    free(output);
+    *value = result;
+    return 1;
+}
+
+static int eval_calc_binary(double lhs, const char *op, double rhs, double *value) {
+    char *expression = NULL;
+    if (!build_binary_expression(lhs, op, rhs, &expression)) {
+        error_flag = 1;
+        return 0;
+    }
+    int ok = eval_calc_expression(expression, value);
+    free(expression);
+    return ok;
+}
+
 static int try_eval_with_calc(const char *expression, Value *result) {
     int requires_matrix = 0;
     int error = 0;
@@ -482,25 +549,12 @@ static int try_eval_with_calc(const char *expression, Value *result) {
         return 0;
     }
 
-    char *output = run_calc_expression(calc_expr, &error);
+    double value = 0.0;
+    int ok = eval_calc_expression(calc_expr, &value);
     free(calc_expr);
-    if (error || !output) {
-        free(output);
-        error_flag = 1;
+    if (!ok) {
         return 1;
     }
-
-    char *endptr = NULL;
-    double value = strtod(output, &endptr);
-    while (endptr && *endptr != '\0' && isspace((unsigned char)*endptr) != 0) {
-        endptr++;
-    }
-    if (!endptr || *endptr != '\0') {
-        free(output);
-        error_flag = 1;
-        return 1;
-    }
-    free(output);
     result->type = VAL_SCALAR;
     result->scalar = value;
     return 1;
@@ -551,19 +605,19 @@ void print_help(void) {
     printf("  Enter arithmetic expressions to evaluate them.\n");
     printf("  Assignment: variable = expression (e.g., x = 3.14 or A = [1,2;3,4]).\n");
     printf("  Matrix literals: use [ ] with commas separating columns and semicolons separating rows.\n\n");
-    printf("Supported Operations:\n");
+    printf("Scalar Evaluation:\n");
+    printf("  Scalar expressions are evaluated by _CALC.\n");
+    printf("  Operators: +, -, *, x, /, ^, parentheses, unary +/-\n");
+    printf("  Functions/constants follow _CALC (run: _CALC for the full list).\n\n");
+    printf("Matrix Operations:\n");
     printf("  Addition:       +\n");
     printf("  Subtraction:    -\n");
     printf("  Multiplication: * (matrix multiplication) and .* (element-wise multiplication)\n");
     printf("  Division:       / (matrix division by scalar) and ./ (element-wise division)\n");
-    printf("  Exponentiation: ^ (scalars only) and .^ (element-wise exponentiation)\n\n");
-    printf("Supported Functions (applied element-wise on matrices):\n");
-    printf("  sin, cos, tan, asin, acos, atan,\n");
-    printf("  log (natural log), log10 (base-10 log),\n");
-    printf("  sqrt, exp,\n");
-    printf("  abs (absolute value),\n");
-    printf("  sinh, cosh, tanh,\n");
-    printf("  floor, ceil\n\n");
+    printf("  Exponentiation: ^ (scalars only) and .^ (element-wise exponentiation)\n");
+    printf("  Functions (element-wise): sin, cos, tan, asin, acos, atan,\n");
+    printf("                           log, log10, sqrt, exp, abs,\n");
+    printf("                           sinh, cosh, tanh, floor, ceil\n\n");
     printf("Examples:\n");
     printf("  2 + 3 * 4            -> Evaluates to 14\n");
     printf("  x = 3.14             -> Assigns 3.14 to variable x\n");
@@ -842,47 +896,30 @@ Value parse_matrix_literal(void) {
 /* --- Function Call Implementation --- */
 Value call_function(const char *func, Value arg) {
     if (arg.type == VAL_SCALAR) {
-        double a = arg.scalar, res;
-        if (strcmp(func, "sin") == 0)
-            res = sin(a);
-        else if (strcmp(func, "cos") == 0)
-            res = cos(a);
-        else if (strcmp(func, "tan") == 0)
-            res = tan(a);
-        else if (strcmp(func, "asin") == 0)
-            res = asin(a);
-        else if (strcmp(func, "acos") == 0)
-            res = acos(a);
-        else if (strcmp(func, "atan") == 0)
-            res = atan(a);
-        else if (strcmp(func, "log") == 0)
-            res = log(a);
-        else if (strcmp(func, "log10") == 0)
-            res = log10(a);
-        else if (strcmp(func, "sqrt") == 0)
-            res = sqrt(a);
-        else if (strcmp(func, "exp") == 0)
-            res = exp(a);
-        else if (strcmp(func, "abs") == 0)
-            res = fabs(a);
-        else if (strcmp(func, "sinh") == 0)
-            res = sinh(a);
-        else if (strcmp(func, "cosh") == 0)
-            res = cosh(a);
-        else if (strcmp(func, "tanh") == 0)
-            res = tanh(a);
-        else if (strcmp(func, "floor") == 0)
-            res = floor(a);
-        else if (strcmp(func, "ceil") == 0)
-            res = ceil(a);
-        else {
-            printf("Error: Unknown function '%s'\n", func);
+        char *expression = NULL;
+        size_t cap = 64;
+        size_t len = 0;
+        expression = malloc(cap);
+        if (!expression) {
             error_flag = 1;
-            Value err = { .type = VAL_SCALAR, .scalar = 0 };
-            return err;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
-        Value ret = { .type = VAL_SCALAR, .scalar = res };
-        return ret;
+        expression[0] = '\0';
+        if (!append_text(&expression, &len, &cap, func, strlen(func)) ||
+            !append_text(&expression, &len, &cap, "(", 1) ||
+            !append_number_literal(&expression, &len, &cap, arg.scalar) ||
+            !append_text(&expression, &len, &cap, ")", 1)) {
+            free(expression);
+            error_flag = 1;
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        double result = 0.0;
+        int ok = eval_calc_expression(expression, &result);
+        free(expression);
+        if (!ok) {
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        return (Value){ .type = VAL_SCALAR, .scalar = result };
     } else {
         /* Matrix argument: apply element-wise */
         int rows = arg.matrix.rows, cols = arg.matrix.cols;
@@ -946,9 +983,11 @@ Value call_function(const char *func, Value arg) {
 Value add_values(Value a, Value b) {
     Value ret;
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        ret.type = VAL_SCALAR;
-        ret.scalar = a.scalar + b.scalar;
-        return ret;
+        double result = 0.0;
+        if (!eval_calc_binary(a.scalar, "+", b.scalar, &result)) {
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        return (Value){ .type = VAL_SCALAR, .scalar = result };
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in addition\n");
@@ -991,9 +1030,11 @@ Value add_values(Value a, Value b) {
 Value subtract_values(Value a, Value b) {
     Value ret;
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        ret.type = VAL_SCALAR;
-        ret.scalar = a.scalar - b.scalar;
-        return ret;
+        double result = 0.0;
+        if (!eval_calc_binary(a.scalar, "-", b.scalar, &result)) {
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        return (Value){ .type = VAL_SCALAR, .scalar = result };
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in subtraction\n");
@@ -1036,9 +1077,11 @@ Value subtract_values(Value a, Value b) {
 Value multiply_values(Value a, Value b) {
     Value ret;
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        ret.type = VAL_SCALAR;
-        ret.scalar = a.scalar * b.scalar;
-        return ret;
+        double result = 0.0;
+        if (!eval_calc_binary(a.scalar, "*", b.scalar, &result)) {
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        return (Value){ .type = VAL_SCALAR, .scalar = result };
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
         if (a.matrix.cols != b.matrix.rows) {
             printf("Error: Matrix dimensions do not match for multiplication\n");
@@ -1087,14 +1130,11 @@ Value multiply_values(Value a, Value b) {
 Value divide_values(Value a, Value b) {
     Value ret;
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        if (b.scalar == 0) {
-            printf("Error: Division by zero\n");
-            error_flag = 1;
+        double result = 0.0;
+        if (!eval_calc_binary(a.scalar, "/", b.scalar, &result)) {
             return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
-        ret.type = VAL_SCALAR;
-        ret.scalar = a.scalar / b.scalar;
-        return ret;
+        return (Value){ .type = VAL_SCALAR, .scalar = result };
     } else if (a.type == VAL_MATRIX && b.type == VAL_SCALAR) {
         if (b.scalar == 0) {
             printf("Error: Division by zero (matrix divided by scalar)\n");
@@ -1119,7 +1159,11 @@ Value divide_values(Value a, Value b) {
 
 Value power_values(Value a, Value b) {
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        return (Value){ .type = VAL_SCALAR, .scalar = pow(a.scalar, b.scalar) };
+        double result = 0.0;
+        if (!eval_calc_binary(a.scalar, "^", b.scalar, &result)) {
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        return (Value){ .type = VAL_SCALAR, .scalar = result };
     } else {
         printf("Error: Exponentiation (^) is only supported for scalars\n");
         error_flag = 1;
@@ -1132,7 +1176,11 @@ Value power_values(Value a, Value b) {
 Value elementwise_multiply_values(Value a, Value b) {
     Value ret;
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        return (Value){ .type = VAL_SCALAR, .scalar = a.scalar * b.scalar };
+        double result = 0.0;
+        if (!eval_calc_binary(a.scalar, "*", b.scalar, &result)) {
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        return (Value){ .type = VAL_SCALAR, .scalar = result };
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in element-wise multiplication\n");
@@ -1175,12 +1223,11 @@ Value elementwise_multiply_values(Value a, Value b) {
 Value elementwise_divide_values(Value a, Value b) {
     Value ret;
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        if (b.scalar == 0) {
-            printf("Error: Division by zero\n");
-            error_flag = 1;
+        double result = 0.0;
+        if (!eval_calc_binary(a.scalar, "/", b.scalar, &result)) {
             return (Value){ .type = VAL_SCALAR, .scalar = 0 };
         }
-        return (Value){ .type = VAL_SCALAR, .scalar = a.scalar / b.scalar };
+        return (Value){ .type = VAL_SCALAR, .scalar = result };
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in element-wise division\n");
@@ -1241,7 +1288,11 @@ Value elementwise_divide_values(Value a, Value b) {
 
 Value elementwise_pow_values(Value a, Value b) {
     if (a.type == VAL_SCALAR && b.type == VAL_SCALAR) {
-        return (Value){ .type = VAL_SCALAR, .scalar = pow(a.scalar, b.scalar) };
+        double result = 0.0;
+        if (!eval_calc_binary(a.scalar, "^", b.scalar, &result)) {
+            return (Value){ .type = VAL_SCALAR, .scalar = 0 };
+        }
+        return (Value){ .type = VAL_SCALAR, .scalar = result };
     } else if (a.type == VAL_MATRIX && b.type == VAL_MATRIX) {
         if (a.matrix.rows != b.matrix.rows || a.matrix.cols != b.matrix.cols) {
             printf("Error: Matrix dimension mismatch in element-wise exponentiation\n");

@@ -47,6 +47,7 @@
 #define MAX_VARS 100
 #define MAX_MATRIX_ROWS 100
 #define MAX_MATRIX_COLS 100
+#define MAX_INPUTS 32
 
 /* --- Command History and Line Editing --- */
 #define MAX_HISTORY 100
@@ -54,6 +55,8 @@
 /* Global history buffer for interactive command input */
 char *history[MAX_HISTORY];
 int history_count = 0;
+static double input_values[MAX_INPUTS];
+static size_t input_count = 0;
 
 /* Structure to save original terminal settings */
 struct termios orig_termios;
@@ -260,6 +263,7 @@ static int print_calc_help(void);
 static int append_text(char **buffer, size_t *len, size_t *cap, const char *text);
 static int append_number(char **buffer, size_t *len, size_t *cap, double value);
 static int eval_matrix_product(const Value *a, const Value *b, int row, int col, double *result);
+static int parse_input_reference(double *value);
 
 Value add_values(Value a, Value b);
 Value subtract_values(Value a, Value b);
@@ -306,6 +310,29 @@ static void exec_calc_command(const char *expression) {
         execlp("_CALC", "_CALC", (char *)NULL);
     }
     _exit(127);
+}
+
+static int parse_input_reference(double *value) {
+    if (strncmp(p, "input", 5) != 0) {
+        return 0;
+    }
+    p += 5;
+    if (!isdigit((unsigned char)*p)) {
+        return 0;
+    }
+    char *endptr = NULL;
+    long index = strtol(p, &endptr, 10);
+    if (p == endptr || index <= 0) {
+        return 0;
+    }
+    if ((size_t)index > input_count) {
+        fprintf(stderr, "Error: Input index %ld out of range (1-%zu)\n", index, input_count);
+        error_flag = 1;
+        return 1;
+    }
+    *value = input_values[index - 1];
+    p = endptr;
+    return 1;
 }
 
 static int print_calc_help(void) {
@@ -769,6 +796,17 @@ Value parse_primary(void) {
         ret.type = VAL_SCALAR;
         ret.scalar = num;
         return ret;
+    } else if (*p == '$') {
+        p++;
+        double value = 0.0;
+        if (parse_input_reference(&value)) {
+            Value ret = { .type = VAL_SCALAR, .scalar = value };
+            return ret;
+        }
+        printf("Error: Unknown input reference\n");
+        error_flag = 1;
+        Value err = { .type = VAL_SCALAR, .scalar = 0 };
+        return err;
     } else if (isalpha(*p)) {
         char ident[32];
         int i = 0;
@@ -1590,6 +1628,19 @@ int main(int argc, char *argv[]) {
     
     /* If a script file is provided, use it as input */
     if (argc > 1) {
+        for (int i = 2; i < argc; i++) {
+            if (input_count >= MAX_INPUTS) {
+                fprintf(stderr, "Error: Too many input values (max %d)\n", MAX_INPUTS);
+                exit(1);
+            }
+            char *endptr = NULL;
+            double value = strtod(argv[i], &endptr);
+            if (argv[i][0] == '\0' || endptr == argv[i] || *endptr != '\0') {
+                fprintf(stderr, "Error: Invalid input value '%s'\n", argv[i]);
+                exit(1);
+            }
+            input_values[input_count++] = value;
+        }
         if (freopen(argv[1], "r", stdin) == NULL) {
             perror("Error opening script file");
             exit(1);
@@ -1597,8 +1648,10 @@ int main(int argc, char *argv[]) {
         interactive = 0;
     }
 
-    printf("Welcome to Extended CMath - _CALC-powered math with matrix support.\n");
-    printf("Type 'help' for instructions, 'exit' or 'quit' to leave.\n");
+    if (interactive) {
+        printf("Welcome to Extended CMath - _CALC-powered math with matrix support.\n");
+        printf("Type 'help' for instructions, 'exit' or 'quit' to leave.\n");
+    }
 
     while (1) {
         char *input;
@@ -1613,7 +1666,10 @@ int main(int argc, char *argv[]) {
             input = line;
         }
         
-        if (strlen(input) == 0)
+        while (*input && isspace((unsigned char)*input)) {
+            input++;
+        }
+        if (input[0] == '\0' || input[0] == '#')
             continue;
         
         /* --- Check for trailing semicolon --- */
@@ -1652,6 +1708,33 @@ int main(int argc, char *argv[]) {
                 }
             } else {
                 printf("Error: Expected string literal after print command\n");
+            }
+            continue;
+        }
+
+        /* --- Handle "return" command --- */
+        if (strncmp(input, "return", 6) == 0 && (input[6] == ' ' || input[6] == '\t' || input[6] == '\0')) {
+            const char *expr_ptr = input + 6;
+            while (*expr_ptr && isspace((unsigned char)*expr_ptr)) {
+                expr_ptr++;
+            }
+            if (*expr_ptr == '\0') {
+                printf("Error: return requires an expression\n");
+                continue;
+            }
+            p = expr_ptr;
+            Value result = parse_expression();
+            if (error_flag) {
+                error_flag = 0;
+                continue;
+            }
+            if (!suppress_output) {
+                print_value(result);
+            }
+            if (result.type == VAL_MATRIX)
+                free_value(&result);
+            if (!interactive) {
+                break;
             }
             continue;
         }
@@ -1749,6 +1832,8 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-    printf("Goodbye.\n");
+    if (interactive) {
+        printf("Goodbye.\n");
+    }
     return 0;
 }

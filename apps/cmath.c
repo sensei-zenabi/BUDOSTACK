@@ -872,16 +872,13 @@ Value parse_matrix_literal(void) {
         int col = 0;
         while (1) {
             skip_whitespace();
-            if (!isdigit(*p) && *p != '.' && *p != '-' && *p != '+') {
-                printf("Error: Expected number in matrix literal\n");
-                error_flag = 1;
+            Value element = parse_expression();
+            if (error_flag) {
                 Value err = { .type = VAL_SCALAR, .scalar = 0 };
                 return err;
             }
-            char *endptr;
-            double num = strtod(p, &endptr);
-            if (p == endptr) {
-                printf("Error: Invalid number in matrix literal\n");
+            if (element.type != VAL_SCALAR) {
+                printf("Error: Matrix literals require scalar elements\n");
                 error_flag = 1;
                 Value err = { .type = VAL_SCALAR, .scalar = 0 };
                 return err;
@@ -892,16 +889,14 @@ Value parse_matrix_literal(void) {
                 Value err = { .type = VAL_SCALAR, .scalar = 0 };
                 return err;
             }
-            temp[row_count][col] = num;
+            temp[row_count][col] = element.scalar;
             col++;
-            p = endptr;
             skip_whitespace();
             if (*p == ',') {
                 p++;
                 continue;
-            } else {
-                break;
             }
+            break;
         }
         if (col_count == -1) {
             col_count = col;

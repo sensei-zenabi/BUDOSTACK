@@ -34,15 +34,11 @@ Tested distributions:
 
 Note! Internet connection is required.
 
-### LATEST RELEASE: v0.9.51 ###
+### LATEST RELEASE: v0.9.56 ###
 
 PROJECT STATUS: EARLY ACCESS from v0.8.0 to v1.0.0
 
-BUDOSTACK has entered "hardening" phase. This means that no major 
-new capabilities will be introduced, and the focus is making the 
-existing ones, such as TASK scripting, as robust and capable.
-
-During the hardening phase it is possible, that some of the already
-existing in-built capabilities will be deprecated to enable more
-focused user experience in the final product.
-
+BUDOSTACK is in early access phase. It means that features can be added
+or removed without notice and backwards compatibility. We recommend
+following the release notes and the impacted files to see which apps
+are impacted by each release until the official release of v1.0.0.

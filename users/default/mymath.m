@@ -16,19 +16,22 @@
 #
 #====================================================================
 
-print "This is example math application:"
+# Note! to enable echos, remove " and ;
 
-U = $input1
-R = $input2
+# print ""
+# print "This is example math application:"
 
-print "calculating current and power..."
+U = $input1;
+R = $input2;
 
-I = U / R
-P = U * I
+# print "calculating current and power..."
 
-print "outputting both as array"
+I = U / R;
+P = U * I;
 
-OUT = [I,P]
+# print "outputting both as array"
+
+OUT = [I,P];
 
 return OUT
 

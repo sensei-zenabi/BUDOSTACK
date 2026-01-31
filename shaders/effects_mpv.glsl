@@ -5,44 +5,17 @@
 // https://www.shadertoy.com/view/XlsczN
 // Modified by BUDOSTACK contributors (parameter adjustments).
 
-//!PARAM wiggle
-//!DESC Wiggle
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 0.0
-0.0
-
-//!PARAM smear
-//!DESC Chroma Smear
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 0.5
-0.10
-
-//!PARAM phosphor_decay_enable
-//!DESC Phosphor Decay
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 1.0
-1.0
-
-//!PARAM phosphor_decay_time_ms
-//!DESC Phosphor Decay Time (ms)
-//!TYPE float
-//!MINIMUM 1.0
-//!MAXIMUM 2000.0
-300.0
-
-//!PARAM phosphor_decay_threshold
-//!DESC Phosphor Decay Threshold (%)
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 100.0
-20.0
-
 //!HOOK MAIN
 //!BIND HOOKED
 //!DESC VHS Effects (mpv)
+
+///////////////////////  Runtime Parameters  ///////////////////////
+// Edit these values to taste when using mpv's legacy vo=gpu shader loader.
+#define wiggle 0.0
+#define smear 0.10
+#define phosphor_decay_enable 1.0
+#define phosphor_decay_time_ms 300.0
+#define phosphor_decay_threshold 20.0
 
 #define iTime mod(float(frame), 7.0)
 

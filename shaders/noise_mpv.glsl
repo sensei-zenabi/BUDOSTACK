@@ -4,86 +4,23 @@
 // license: public domain
 // Modified by BUDOSTACK contributors (parameter tuning).
 
-//!PARAM x_off_r
-//!DESC X Offset Red
-//!TYPE float
-//!MINIMUM -1.0
-//!MAXIMUM 1.0
-0.03
-
-//!PARAM y_off_r
-//!DESC Y Offset Red
-//!TYPE float
-//!MINIMUM -1.0
-//!MAXIMUM 1.0
-0.03
-
-//!PARAM x_off_g
-//!DESC X Offset Green
-//!TYPE float
-//!MINIMUM -1.0
-//!MAXIMUM 1.0
--0.03
-
-//!PARAM y_off_g
-//!DESC Y Offset Green
-//!TYPE float
-//!MINIMUM -1.0
-//!MAXIMUM 1.0
--0.03
-
-//!PARAM x_off_b
-//!DESC X Offset Blue
-//!TYPE float
-//!MINIMUM -1.0
-//!MAXIMUM 1.0
--0.03
-
-//!PARAM y_off_b
-//!DESC Y Offset Blue
-//!TYPE float
-//!MINIMUM -1.0
-//!MAXIMUM 1.0
-0.03
-
-//!PARAM grain_str
-//!DESC Grain Strength
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 16.0
-0.6
-
-//!PARAM grain_intensity
-//!DESC Grain Intensity
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 1.0
-0.1
-
-//!PARAM hotspot
-//!DESC Hotspot Toggle
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 1.0
-1.0
-
-//!PARAM vignette
-//!DESC Vignette Toggle
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 1.0
-1.0
-
-//!PARAM noise_toggle
-//!DESC Film Scratches
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 1.0
-0.0
-
 //!HOOK MAIN
 //!BIND HOOKED
 //!DESC Film Noise (mpv)
+
+///////////////////////  Runtime Parameters  ///////////////////////
+// Edit these values to taste when using mpv's legacy vo=gpu shader loader.
+#define x_off_r 0.03
+#define y_off_r 0.03
+#define x_off_g -0.03
+#define y_off_g -0.03
+#define x_off_b -0.03
+#define y_off_b 0.03
+#define grain_str 0.6
+#define grain_intensity 0.1
+#define hotspot 1.0
+#define vignette 1.0
+#define noise_toggle 0.0
 
 float hash(float n)
 {

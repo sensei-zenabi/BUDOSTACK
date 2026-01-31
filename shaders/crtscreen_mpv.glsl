@@ -8,91 +8,6 @@
 // Simple scanlines with curvature and mask effects lifted from crt-lottes
 // by hunterk
 
-///////////////////////  Runtime Parameters  ///////////////////////
-//!PARAM shadowMask
-//!DESC shadowMask
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 4.0
-2.0
-
-//!PARAM warpX
-//!DESC warpX
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 0.125
-0.02
-
-//!PARAM warpY
-//!DESC warpY
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 0.125
-0.02
-
-//!PARAM maskDark
-//!DESC maskDark
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 2.0
-0.6
-
-//!PARAM maskLight
-//!DESC maskLight
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 2.0
-1.8
-
-//!PARAM crt_gamma
-//!DESC CRT Gamma
-//!TYPE float
-//!MINIMUM 1.0
-//!MAXIMUM 4.0
-2.5
-
-//!PARAM monitor_gamma
-//!DESC Monitor Gamma
-//!TYPE float
-//!MINIMUM 1.0
-//!MAXIMUM 4.0
-2.5
-
-//!PARAM SCANLINE_SINE_COMP_A
-//!DESC Scanline Sine Comp A
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 0.10
-0.05
-
-//!PARAM SCANLINE_SINE_COMP_B
-//!DESC Scanline Intensity
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 1.0
-0.5
-
-//!PARAM SCANLINE_BASE_BRIGHTNESS
-//!DESC Scanline Base Brightness
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 3.0
-1.5
-
-//!PARAM bsmooth
-//!DESC Border Smoothness
-//!TYPE float
-//!MINIMUM 80.0
-//!MAXIMUM 2000.0
-100.0
-
-//!PARAM a_corner
-//!DESC Corner Roundness
-//!TYPE float
-//!MINIMUM 0.0
-//!MAXIMUM 0.2
-0.02
-
 //!HOOK MAIN
 //!BIND HOOKED
 //!DESC CRT Screen (mpv)
@@ -112,6 +27,21 @@
 ////////////////////////////////////////////////////////////////////
 //////////////////////////  END SETTINGS  //////////////////////////
 ////////////////////////////////////////////////////////////////////
+
+///////////////////////  Runtime Parameters  ///////////////////////
+// Edit these values to taste when using mpv's legacy vo=gpu shader loader.
+#define shadowMask 2.0
+#define warpX 0.02
+#define warpY 0.02
+#define maskDark 0.6
+#define maskLight 1.8
+#define crt_gamma 2.5
+#define monitor_gamma 2.5
+#define SCANLINE_SINE_COMP_A 0.05
+#define SCANLINE_SINE_COMP_B 0.5
+#define SCANLINE_BASE_BRIGHTNESS 1.5
+#define bsmooth 100.0
+#define a_corner 0.02
 
 // prevent stupid behavior
 #if defined ROTATE_SCANLINES && !defined SCANLINES

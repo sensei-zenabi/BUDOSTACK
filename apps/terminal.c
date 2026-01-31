@@ -110,6 +110,7 @@ static GLuint terminal_bound_texture = 0;
 static GLuint terminal_gl_history_texture = 0;
 static int terminal_history_width = 0;
 static int terminal_history_height = 0;
+static GLuint terminal_gl_blank_texture = 0;
 static GLuint terminal_cursor_texture = 0;
 static int terminal_cursor_width = 0;
 static int terminal_cursor_height = 0;
@@ -223,6 +224,7 @@ struct terminal_gl_shader {
     GLint uniform_input_size;
     GLint uniform_texture_sampler;
     GLint uniform_prev_sampler;
+    GLint uniform_play_sampler;
     GLint uniform_crt_gamma;
     GLint uniform_monitor_gamma;
     GLint uniform_distance;
@@ -373,6 +375,7 @@ static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int hei
 static int terminal_prepare_intermediate_targets(int width, int height);
 static int terminal_prepare_history_texture(int width, int height);
 static void terminal_update_history_texture(int width, int height);
+static int terminal_prepare_blank_texture(void);
 static int terminal_load_cursor_sprite(const char *path);
 static void terminal_destroy_cursor_sprite(void);
 static void terminal_set_mouse_cursor_visible(int visible);
@@ -2938,6 +2941,7 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     shader_info.uniform_input_size = glGetUniformLocation(program, "InputSize");
     shader_info.uniform_texture_sampler = glGetUniformLocation(program, "Texture");
     shader_info.uniform_prev_sampler = glGetUniformLocation(program, "Prev0");
+    shader_info.uniform_play_sampler = glGetUniformLocation(program, "play");
     shader_info.uniform_crt_gamma = glGetUniformLocation(program, "CRTgamma");
     shader_info.uniform_monitor_gamma = glGetUniformLocation(program, "monitorgamma");
     shader_info.uniform_distance = glGetUniformLocation(program, "d");
@@ -2963,6 +2967,14 @@ static int terminal_initialize_gl_program(const char *shader_path) {
     }
     if (shader_info.uniform_prev_sampler >= 0) {
         glUniform1i(shader_info.uniform_prev_sampler, 1);
+    }
+    if (shader_info.uniform_play_sampler >= 0) {
+        if (terminal_prepare_blank_texture() != 0) {
+            fprintf(stderr, "Failed to prepare blank texture for shader playback overlay.\n");
+            glUseProgram(0);
+            goto cleanup;
+        }
+        glUniform1i(shader_info.uniform_play_sampler, 2);
     }
     if (shader_info.uniform_frame_direction >= 0) {
         glUniform1i(shader_info.uniform_frame_direction, 1);
@@ -3271,6 +3283,36 @@ static void terminal_update_history_texture(int width, int height) {
     glActiveTexture(GL_TEXTURE0);
 }
 
+static int terminal_prepare_blank_texture(void) {
+    if (terminal_gl_blank_texture == 0) {
+        glGenTextures(1, &terminal_gl_blank_texture);
+    }
+    if (terminal_gl_blank_texture == 0) {
+        return -1;
+    }
+
+    terminal_bind_texture(terminal_gl_blank_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+    static const uint8_t blank_pixel[4] = {0u, 0u, 0u, 0u};
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, blank_pixel);
+    GLenum error = glGetError();
+    terminal_bind_texture(0);
+
+    if (error != GL_NO_ERROR) {
+        fprintf(stderr, "Failed to create blank texture (0x%x).\n", error);
+        glDeleteTextures(1, &terminal_gl_blank_texture);
+        terminal_gl_blank_texture = 0;
+        return -1;
+    }
+
+    return 0;
+}
+
 static int terminal_load_cursor_sprite(const char *path) {
     if (!path || !terminal_gl_ready) {
         return -1;
@@ -3462,6 +3504,10 @@ static void terminal_clear_gl_shaders(void) {
     if (terminal_gl_history_texture != 0) {
         glDeleteTextures(1, &terminal_gl_history_texture);
         terminal_gl_history_texture = 0;
+    }
+    if (terminal_gl_blank_texture != 0) {
+        glDeleteTextures(1, &terminal_gl_blank_texture);
+        terminal_gl_blank_texture = 0;
     }
     terminal_history_width = 0;
     terminal_history_height = 0;
@@ -8492,6 +8538,11 @@ int main(int argc, char **argv) {
                 if (shader->uniform_prev_sampler >= 0) {
                     glActiveTexture(GL_TEXTURE1);
                     terminal_bind_texture(history_ready ? terminal_gl_history_texture : 0);
+                    glActiveTexture(GL_TEXTURE0);
+                }
+                if (shader->uniform_play_sampler >= 0) {
+                    glActiveTexture(GL_TEXTURE2);
+                    terminal_bind_texture(terminal_gl_blank_texture);
                     glActiveTexture(GL_TEXTURE0);
                 }
 

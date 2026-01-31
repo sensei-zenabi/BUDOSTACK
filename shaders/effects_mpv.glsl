@@ -150,13 +150,10 @@ vec4 hook()
 
     float e_base = max(0.0, cos(uv.y * 4.0 + 0.3) - 0.75) * (s + 0.5) * 1.0;
     float e = min(0.30, e_base * e_base * e_base) * 25.0;
-    float r = (iTime * (2.0 * s));
-    (void)r;
+    // NOTE: r kept only in the original shader; not needed in mpv port.
 
     d = 0.051 + abs(sin(s / 4.0));
     float c = max(0.0001, 0.002 * d) * smear;
-    vec2 uvo = uv;
-    (void)uvo;
     vec4 final;
     final.xyz = Blur(uv, c + c * (uv.x));
     float y = rgb2yiq(final.xyz).r;

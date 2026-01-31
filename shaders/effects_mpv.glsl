@@ -148,7 +148,8 @@ vec4 hook()
 
     float s = 0.0001 * -d + 0.0001 * wiggle * sin(iTime);
 
-    float e = min(0.30, pow(max(0.0, cos(uv.y * 4.0 + 0.3) - 0.75) * (s + 0.5) * 1.0, 3.0)) * 25.0;
+    float e_base = max(0.0, cos(uv.y * 4.0 + 0.3) - 0.75) * (s + 0.5) * 1.0;
+    float e = min(0.30, e_base * e_base * e_base) * 25.0;
     float r = (iTime * (2.0 * s));
     (void)r;
 
@@ -167,7 +168,8 @@ vec4 hook()
     c *= 2.50;
     final.xyz = Blur(uv, c);
     float q = rgb2yiq(final.xyz).b;
-    final = vec4(yiq2rgb(vec3(y, i, q)) - pow(s + e * 2.0, 3.0), 1.0);
+    float se = s + e * 2.0;
+    final = vec4(yiq2rgb(vec3(y, i, q)) - (se * se * se), 1.0);
     final.xyz = apply_phosphor_decay(uv2, final.xyz);
 
     return final;

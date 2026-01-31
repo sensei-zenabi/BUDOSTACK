@@ -8,8 +8,8 @@
 // Explanation of parameter values: default min max increment
 #pragma parameter wiggle "Wiggle" 0.0 0.0 0.0 0.0
 #pragma parameter smear "Chroma Smear" 0.10 0.0 0.5 0.025
-#pragma parameter phosphor_decay_enable "Phosphor Decay" 0.5 0.0 1.0 1.0
-#pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 300.0 1.0 2000.0 1.0
+#pragma parameter phosphor_decay_enable "Phosphor Decay" 1.0 0.0 1.0 1.0
+#pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 200.0 1.0 2000.0 1.0
 #pragma parameter phosphor_decay_threshold "Phosphor Decay Threshold (%)" 20.0 0.0 100.0 1.0
 
 #if defined(VERTEX)

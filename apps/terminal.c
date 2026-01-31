@@ -8370,7 +8370,7 @@ int main(int argc, char **argv) {
         int cursor_ready_for_composition = terminal_cursor_enabled &&
                                            terminal_cursor_texture != 0 &&
                                            terminal_cursor_position_valid;
-        if (terminal_shaders_active() && cursor_ready_for_composition) {
+        if (terminal_shaders_active()) {
             if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) == 0) {
                 glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
@@ -8401,15 +8401,17 @@ int main(int argc, char **argv) {
                     glVertex2f(1.0f, 1.0f);
                     glEnd();
 
-                    glEnable(GL_BLEND);
-                    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    terminal_cursor_render(frame_width, frame_height, drawable_width, drawable_height);
-                    glDisable(GL_BLEND);
+                    if (cursor_ready_for_composition) {
+                        glEnable(GL_BLEND);
+                        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                        terminal_cursor_render(frame_width, frame_height, drawable_width, drawable_height);
+                        glDisable(GL_BLEND);
+                        cursor_composited_into_shader = 1;
+                    }
 
                     glDisable(GL_TEXTURE_2D);
                     terminal_bind_texture(0);
 
-                    cursor_composited_into_shader = 1;
                     source_texture = terminal_gl_intermediate_textures[1];
                     source_texture_width = (GLfloat)drawable_width;
                     source_texture_height = (GLfloat)drawable_height;

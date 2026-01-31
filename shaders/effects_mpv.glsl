@@ -1,4 +1,3 @@
-#version 130
 // mpv .hook port of effects.glsl
 // VHS shader
 // by hunterk
@@ -183,6 +182,7 @@ vec4 hook()
     d = 0.051 + abs(sin(s / 4.0));
     float c = max(0.0001, 0.002 * d) * smear;
     vec2 uvo = uv;
+    (void)uvo;
     vec4 final;
     final.xyz = Blur(uv, c + c * (uv.x));
     float y = rgb2yiq(final.xyz).r;

@@ -1,4 +1,3 @@
-#version 130
 // mpv .hook port of crtscreen.glsl
 // Corners lifted from fake-crt-geom. Defaults set nicely.
 // Parameter range extended to allow brightness compensation
@@ -8,22 +7,6 @@
 
 // Simple scanlines with curvature and mask effects lifted from crt-lottes
 // by hunterk
-
-////////////////////////////////////////////////////////////////////
-////////////////////////////  SETTINGS  ////////////////////////////
-/////  comment these lines to disable effects and gain speed  //////
-////////////////////////////////////////////////////////////////////
-
-#define MASK // fancy, expensive phosphor mask effect
-#define CURVATURE // applies barrel distortion to the screen
-//#define SCANLINES  // applies horizontal scanline effect
-//#define ROTATE_SCANLINES // for TATE games; also disables the mask effects, which look bad with it
-#define EXTRA_MASKS // disable these if you need extra registers freed up
-#define BORDER // border + rounded corners
-
-////////////////////////////////////////////////////////////////////
-//////////////////////////  END SETTINGS  //////////////////////////
-////////////////////////////////////////////////////////////////////
 
 ///////////////////////  Runtime Parameters  ///////////////////////
 //!PARAM shadowMask
@@ -110,14 +93,30 @@
 //!MAXIMUM 0.2
 0.02
 
+//!HOOK MAIN
+//!BIND HOOKED
+//!DESC CRT Screen (mpv)
+
+////////////////////////////////////////////////////////////////////
+////////////////////////////  SETTINGS  ////////////////////////////
+/////  comment these lines to disable effects and gain speed  //////
+////////////////////////////////////////////////////////////////////
+
+#define MASK // fancy, expensive phosphor mask effect
+#define CURVATURE // applies barrel distortion to the screen
+//#define SCANLINES  // applies horizontal scanline effect
+//#define ROTATE_SCANLINES // for TATE games; also disables the mask effects, which look bad with it
+#define EXTRA_MASKS // disable these if you need extra registers freed up
+#define BORDER // border + rounded corners
+
+////////////////////////////////////////////////////////////////////
+//////////////////////////  END SETTINGS  //////////////////////////
+////////////////////////////////////////////////////////////////////
+
 // prevent stupid behavior
 #if defined ROTATE_SCANLINES && !defined SCANLINES
     #define SCANLINES
 #endif
-
-//!HOOK MAIN
-//!BIND HOOKED
-//!DESC CRT Screen (mpv)
 
 #define SourceSize vec4(HOOKED_size, 1.0 / HOOKED_size)
 #define OutSize vec4(target_size, 1.0 / target_size)

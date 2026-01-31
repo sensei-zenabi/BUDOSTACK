@@ -1,4 +1,3 @@
-#version 130
 // mpv .hook port of noise.glsl
 // film noise
 // by hunterk

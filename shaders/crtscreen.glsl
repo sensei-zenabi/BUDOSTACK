@@ -24,7 +24,7 @@
 ////////////////////////////////////////////////////////////////////
 
 ///////////////////////  Runtime Parameters  ///////////////////////
-#pragma parameter shadowMask "shadowMask" 2.0 0.0 4.0 1.0
+#pragma parameter shadowMask "shadowMask" 4.0 0.0 4.0 1.0
 #pragma parameter warpX "warpX" 0.02 0.0 0.125 0.01
 #pragma parameter warpY "warpY" 0.02 0.0 0.125 0.01
 #pragma parameter maskDark "maskDark" 0.6 0.0 2.0 0.1

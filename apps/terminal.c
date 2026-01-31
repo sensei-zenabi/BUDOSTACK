@@ -8437,11 +8437,23 @@ int main(int argc, char **argv) {
                 }
 
                 int last_pass = (shader_index + 1u == terminal_gl_shader_count);
+                int pass_output_width = drawable_width;
+                int pass_output_height = drawable_height;
+                if (!last_pass) {
+                    pass_output_width = (int)source_input_width;
+                    pass_output_height = (int)source_input_height;
+                    if (pass_output_width <= 0) {
+                        pass_output_width = drawable_width;
+                    }
+                    if (pass_output_height <= 0) {
+                        pass_output_height = drawable_height;
+                    }
+                }
                 GLuint target_texture = 0;
                 int using_intermediate = 0;
 
                 if (!last_pass) {
-                    if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) != 0) {
+                    if (terminal_prepare_intermediate_targets(pass_output_width, pass_output_height) != 0) {
                         fprintf(stderr, "Failed to prepare intermediate render targets; skipping remaining shader passes.\n");
                         multipass_failed = 1;
                         last_pass = 1;
@@ -8457,7 +8469,7 @@ int main(int argc, char **argv) {
                             last_pass = 1;
                         } else {
                             using_intermediate = 1;
-                            glViewport(0, 0, drawable_width, drawable_height);
+                            glViewport(0, 0, pass_output_width, pass_output_height);
                             glClear(GL_COLOR_BUFFER_BIT);
                         }
                     }
@@ -8473,8 +8485,8 @@ int main(int argc, char **argv) {
                 terminal_shader_set_vec2(shader->uniform_output_size,
                                          shader->cached_output_size,
                                          &shader->has_cached_output_size,
-                                         (GLfloat)drawable_width,
-                                         (GLfloat)drawable_height);
+                                         (GLfloat)(last_pass ? drawable_width : pass_output_width),
+                                         (GLfloat)(last_pass ? drawable_height : pass_output_height));
                 if (shader->uniform_frame_count >= 0) {
                     glUniform1i(shader->uniform_frame_count, frame_value);
                 }
@@ -8555,10 +8567,10 @@ int main(int argc, char **argv) {
                 if (using_intermediate) {
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     source_texture = target_texture;
-                    source_texture_width = (GLfloat)drawable_width;
-                    source_texture_height = (GLfloat)drawable_height;
-                    source_input_width = (GLfloat)drawable_width;
-                    source_input_height = (GLfloat)drawable_height;
+                    source_texture_width = (GLfloat)pass_output_width;
+                    source_texture_height = (GLfloat)pass_output_height;
+                    source_input_width = (GLfloat)pass_output_width;
+                    source_input_height = (GLfloat)pass_output_height;
                 }
 
                 if (multipass_failed) {

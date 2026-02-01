@@ -28,6 +28,7 @@ static const int num_commands = sizeof(commands) / sizeof(commands[0]);
 struct completion_state {
     int active;
     size_t token_start;
+    size_t token_end;
     int used_filenames;
     char quote_char;
     char **matches;
@@ -218,9 +219,9 @@ char* read_input(void) {
         /* TAB pressed: trigger autocomplete */
         else if (c == '\t') {
             /* Find beginning of current token */
-            size_t token_start = find_token_start(buffer, pos);
+            size_t token_start = find_token_start(buffer, cursor);
             char token[INPUT_SIZE];
-            size_t token_len = pos - token_start;
+            size_t token_len = cursor - token_start;
             strncpy(token, buffer + token_start, token_len);
             token[token_len] = '\0';
             if (token_len == 0)
@@ -252,7 +253,8 @@ char* read_input(void) {
                 unescape_token(unescaped, raw_token, sizeof(raw_token));
             }
 
-            if (completion_state.active && completion_state.token_start == token_start) {
+            if (completion_state.active && completion_state.token_start == token_start &&
+                completion_state.token_end == cursor) {
                 if (completion_state.match_count > 0) {
                     completion_state.index =
                         (completion_state.index + 1u) % completion_state.match_count;
@@ -275,6 +277,7 @@ char* read_input(void) {
                     completion_state.used_filenames = 1;
                 }
                 completion_state.token_start = token_start;
+                completion_state.token_end = cursor;
                 completion_state.quote_char = quote_char;
                 completion_state.index = 0;
                 completion_state.active = completion_state.match_count > 1;
@@ -288,25 +291,41 @@ char* read_input(void) {
                                   formatted,
                                   sizeof(formatted));
                 size_t comp_len = strlen(formatted);
-                int erase_width = utf8_display_width_range(buffer, token_start, pos);
+                size_t tail_len = pos - cursor;
+                int old_line_width = utf8_display_width_range(buffer, 0, pos);
+                int erase_width = utf8_display_width_range(buffer, token_start, cursor);
                 for (int i = 0; i < erase_width; i++) {
                     printf("\b");
                 }
-                printf("%s", formatted);
-                int completion_width = utf8_string_display_width(formatted);
-                if (completion_width < erase_width) {
-                    int diff = erase_width - completion_width;
-                    for (int i = 0; i < diff; i++) {
+                if (token_start + comp_len + tail_len >= INPUT_SIZE) {
+                    size_t available = INPUT_SIZE - 1u - token_start - tail_len;
+                    if (available == 0) {
+                        continue;
+                    }
+                    comp_len = available;
+                    formatted[comp_len] = '\0';
+                }
+                memmove(buffer + token_start + comp_len, buffer + cursor, tail_len + 1);
+                memcpy(buffer + token_start, formatted, comp_len);
+                pos = token_start + comp_len + tail_len;
+                cursor = token_start + comp_len;
+
+                fwrite(formatted, 1, comp_len, stdout);
+                fwrite(buffer + cursor, 1, pos - cursor, stdout);
+
+                int new_line_width = utf8_display_width_range(buffer, 0, pos);
+                int clear_width = old_line_width - new_line_width;
+                if (clear_width > 0) {
+                    for (int i = 0; i < clear_width; i++) {
                         printf(" ");
                     }
-                    for (int i = 0; i < diff; i++) {
-                        printf("\b");
-                    }
+                }
+                int tail_width = utf8_display_width_range(buffer, cursor, pos);
+                int move_back = tail_width + (clear_width > 0 ? clear_width : 0);
+                for (int i = 0; i < move_back; i++) {
+                    printf("\b");
                 }
                 fflush(stdout);
-                memmove(buffer + token_start, formatted, comp_len + 1);
-                pos = token_start + comp_len;
-                cursor = pos;
             }
         }
         /* Handle backspace */
@@ -718,6 +737,7 @@ static void clear_completion_state(struct completion_state *state) {
     state->used_filenames = 0;
     state->quote_char = '\0';
     state->token_start = 0;
+    state->token_end = 0;
 }
 
 static char **collect_command_matches(const char *token, size_t *match_count) {

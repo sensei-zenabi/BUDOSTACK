@@ -161,6 +161,7 @@ static GLuint terminal_gl_framebuffer = 0;
 static GLuint terminal_gl_intermediate_textures[2] = {0u, 0u};
 static int terminal_intermediate_width = 0;
 static int terminal_intermediate_height = 0;
+static GLuint terminal_gl_history_texture_flipped = 0;
 
 struct terminal_render_cache_entry {
     uint32_t ch;
@@ -373,6 +374,7 @@ static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int hei
 static int terminal_prepare_intermediate_targets(int width, int height);
 static int terminal_prepare_history_texture(int width, int height);
 static void terminal_update_history_texture(int width, int height);
+static void terminal_update_flipped_history_texture(int width, int height);
 static int terminal_load_cursor_sprite(const char *path);
 static void terminal_destroy_cursor_sprite(void);
 static void terminal_set_mouse_cursor_visible(int visible);
@@ -3219,6 +3221,13 @@ static int terminal_prepare_history_texture(int width, int height) {
         return -1;
     }
 
+    if (terminal_gl_history_texture_flipped == 0) {
+        glGenTextures(1, &terminal_gl_history_texture_flipped);
+        if (terminal_gl_history_texture_flipped == 0) {
+            fprintf(stderr, "Failed to create flipped history texture.\n");
+        }
+    }
+
     int resized = 0;
     if (terminal_history_width != width || terminal_history_height != height) {
         resized = 1;
@@ -3234,6 +3243,19 @@ static int terminal_prepare_history_texture(int width, int height) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, NULL);
         terminal_bind_texture(0);
+
+        if (terminal_gl_history_texture_flipped != 0) {
+            terminal_bind_texture(terminal_gl_history_texture_flipped);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+            terminal_bind_texture(0);
+        }
+
         terminal_history_width = width;
         terminal_history_height = height;
 
@@ -3254,6 +3276,26 @@ static int terminal_prepare_history_texture(int width, int height) {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
             glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
         }
+
+        if (terminal_gl_history_texture_flipped != 0) {
+            if (terminal_gl_framebuffer == 0) {
+                glGenFramebuffers(1, &terminal_gl_framebuffer);
+            }
+            if (terminal_gl_framebuffer != 0) {
+                GLint viewport[4];
+                glGetIntegerv(GL_VIEWPORT, viewport);
+                glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_TEXTURE_2D, terminal_gl_history_texture_flipped, 0);
+                if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+                    glViewport(0, 0, width, height);
+                    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+                    glClear(GL_COLOR_BUFFER_BIT);
+                }
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+            }
+        }
     }
 
     return 0;
@@ -3269,6 +3311,62 @@ static void terminal_update_history_texture(int width, int height) {
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
     terminal_bind_texture(0);
     glActiveTexture(GL_TEXTURE0);
+
+    terminal_update_flipped_history_texture(width, height);
+}
+
+static void terminal_update_flipped_history_texture(int width, int height) {
+    if (terminal_gl_history_texture == 0 || terminal_gl_history_texture_flipped == 0 ||
+        width <= 0 || height <= 0) {
+        return;
+    }
+
+    if (terminal_gl_framebuffer == 0) {
+        glGenFramebuffers(1, &terminal_gl_framebuffer);
+        if (terminal_gl_framebuffer == 0) {
+            return;
+        }
+    }
+
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, terminal_gl_history_texture_flipped, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return;
+    }
+
+    glViewport(0, 0, width, height);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(0);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glActiveTexture(GL_TEXTURE0);
+    terminal_bind_texture(terminal_gl_history_texture);
+    glEnable(GL_TEXTURE_2D);
+
+    glBegin(GL_TRIANGLE_STRIP);
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex2f(-1.0f, -1.0f);
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex2f(1.0f, -1.0f);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex2f(-1.0f, 1.0f);
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex2f(1.0f, 1.0f);
+    glEnd();
+
+    glDisable(GL_TEXTURE_2D);
+    terminal_bind_texture(0);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 }
 
 static int terminal_load_cursor_sprite(const char *path) {
@@ -3462,6 +3560,10 @@ static void terminal_clear_gl_shaders(void) {
     if (terminal_gl_history_texture != 0) {
         glDeleteTextures(1, &terminal_gl_history_texture);
         terminal_gl_history_texture = 0;
+    }
+    if (terminal_gl_history_texture_flipped != 0) {
+        glDeleteTextures(1, &terminal_gl_history_texture_flipped);
+        terminal_gl_history_texture_flipped = 0;
     }
     terminal_history_width = 0;
     terminal_history_height = 0;
@@ -8490,8 +8592,16 @@ int main(int argc, char **argv) {
                                          source_input_height);
 
                 if (shader->uniform_prev_sampler >= 0) {
+                    GLuint history_texture = 0;
+                    if (history_ready) {
+                        if (source_texture == terminal_gl_texture && terminal_gl_history_texture_flipped != 0) {
+                            history_texture = terminal_gl_history_texture_flipped;
+                        } else {
+                            history_texture = terminal_gl_history_texture;
+                        }
+                    }
                     glActiveTexture(GL_TEXTURE1);
-                    terminal_bind_texture(history_ready ? terminal_gl_history_texture : 0);
+                    terminal_bind_texture(history_texture);
                     glActiveTexture(GL_TEXTURE0);
                 }
 

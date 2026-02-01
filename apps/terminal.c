@@ -8552,6 +8552,10 @@ int main(int argc, char **argv) {
                     }
                 }
 
+                if (history_ready && shader_index == 0u) {
+                    terminal_update_history_texture(drawable_width, drawable_height);
+                }
+
                 if (using_intermediate) {
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     source_texture = target_texture;
@@ -8566,9 +8570,6 @@ int main(int argc, char **argv) {
                 }
             }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            if (history_ready) {
-                terminal_update_history_texture(drawable_width, drawable_height);
-            }
         } else {
             glMatrixMode(GL_PROJECTION);
             glLoadIdentity();

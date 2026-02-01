@@ -372,7 +372,7 @@ static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
 static int terminal_prepare_history_texture(int width, int height);
-static void terminal_update_history_texture(int width, int height);
+static void terminal_update_history_from_texture(GLuint texture, int width, int height);
 static int terminal_load_cursor_sprite(const char *path);
 static void terminal_destroy_cursor_sprite(void);
 static void terminal_set_mouse_cursor_visible(int visible);
@@ -3259,16 +3259,53 @@ static int terminal_prepare_history_texture(int width, int height) {
     return 0;
 }
 
-static void terminal_update_history_texture(int width, int height) {
-    if (terminal_gl_history_texture == 0 || width <= 0 || height <= 0) {
+static void terminal_update_history_from_texture(GLuint texture, int width, int height) {
+    if (terminal_gl_history_texture == 0 || texture == 0 || width <= 0 || height <= 0) {
         return;
     }
 
-    glActiveTexture(GL_TEXTURE1);
-    terminal_bind_texture(terminal_gl_history_texture);
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
-    terminal_bind_texture(0);
-    glActiveTexture(GL_TEXTURE0);
+    if (terminal_gl_framebuffer == 0) {
+        glGenFramebuffers(1, &terminal_gl_framebuffer);
+    }
+    if (terminal_gl_framebuffer == 0) {
+        return;
+    }
+
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, terminal_gl_history_texture, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        glViewport(0, 0, width, height);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glUseProgram(0);
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+
+        glActiveTexture(GL_TEXTURE0);
+        terminal_bind_texture(texture);
+        glEnable(GL_TEXTURE_2D);
+
+        glBegin(GL_TRIANGLE_STRIP);
+        glTexCoord2f(0.0f, 1.0f);
+        glVertex2f(-1.0f, -1.0f);
+        glTexCoord2f(1.0f, 1.0f);
+        glVertex2f(1.0f, -1.0f);
+        glTexCoord2f(0.0f, 0.0f);
+        glVertex2f(-1.0f, 1.0f);
+        glTexCoord2f(1.0f, 0.0f);
+        glVertex2f(1.0f, 1.0f);
+        glEnd();
+
+        glDisable(GL_TEXTURE_2D);
+        terminal_bind_texture(0);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 }
 
 static int terminal_load_cursor_sprite(const char *path) {
@@ -8552,10 +8589,6 @@ int main(int argc, char **argv) {
                     }
                 }
 
-                if (history_ready && shader_index == 0u) {
-                    terminal_update_history_texture(drawable_width, drawable_height);
-                }
-
                 if (using_intermediate) {
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     source_texture = target_texture;
@@ -8570,6 +8603,9 @@ int main(int argc, char **argv) {
                 }
             }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            if (history_ready) {
+                terminal_update_history_from_texture(terminal_gl_texture, drawable_width, drawable_height);
+            }
         } else {
             glMatrixMode(GL_PROJECTION);
             glLoadIdentity();

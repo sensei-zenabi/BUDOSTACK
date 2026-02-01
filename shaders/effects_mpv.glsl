@@ -12,7 +12,7 @@
 ///////////////////////  Runtime Parameters  ///////////////////////
 // Edit these values to taste when using mpv's legacy vo=gpu shader loader.
 #define wiggle 0.0
-#define smear 0.10
+#define smear 0.2
 #define phosphor_decay_enable 1.0
 #define phosphor_decay_time_ms 300.0
 #define phosphor_decay_threshold 20.0

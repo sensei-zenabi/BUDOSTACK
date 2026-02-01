@@ -30,18 +30,18 @@
 
 ///////////////////////  Runtime Parameters  ///////////////////////
 // Edit these values to taste when using mpv's legacy vo=gpu shader loader.
-#define shadowMask 2.0
-#define warpX 0.02
-#define warpY 0.02
-#define maskDark 0.6
-#define maskLight 1.8
+#define shadowMask 3.0
+#define warpX 0.01
+#define warpY 0.01
+#define maskDark 0.9
+#define maskLight 1.1
 #define crt_gamma 2.5
 #define monitor_gamma 2.5
 #define SCANLINE_SINE_COMP_A 0.05
 #define SCANLINE_SINE_COMP_B 0.5
 #define SCANLINE_BASE_BRIGHTNESS 1.5
 #define bsmooth 100.0
-#define a_corner 0.02
+#define a_corner 0.01
 
 // prevent stupid behavior
 #if defined ROTATE_SCANLINES && !defined SCANLINES

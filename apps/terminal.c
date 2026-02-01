@@ -137,10 +137,10 @@ struct terminal_quad_vertex {
 };
 
 static const struct terminal_quad_vertex terminal_quad_vertices[4] = {
-    { { -1.0f, -1.0f, 0.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 1.0f } },
-    { {  1.0f, -1.0f, 0.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 1.0f } },
-    { { -1.0f,  1.0f, 0.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 0.0f } },
-    { {  1.0f,  1.0f, 0.0f, 1.0f }, { 1.0f, 0.0f }, { 1.0f, 0.0f } }
+    { { -1.0f, -1.0f, 0.0f, 1.0f }, { 0.0f, 1.0f }, { 0.0f, 0.0f } },
+    { {  1.0f, -1.0f, 0.0f, 1.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f } },
+    { { -1.0f,  1.0f, 0.0f, 1.0f }, { 0.0f, 0.0f }, { 0.0f, 1.0f } },
+    { {  1.0f,  1.0f, 0.0f, 1.0f }, { 1.0f, 0.0f }, { 1.0f, 1.0f } }
 };
 
 static GLuint terminal_quad_vbo = 0;
@@ -8554,10 +8554,10 @@ int main(int argc, char **argv) {
                         1.0f, 0.0f
                     };
                     static const GLfloat fallback_texcoords_fbo[8] = {
-                        0.0f, 1.0f,
-                        1.0f, 1.0f,
                         0.0f, 0.0f,
-                        1.0f, 0.0f
+                        1.0f, 0.0f,
+                        0.0f, 1.0f,
+                        1.0f, 1.0f
                     };
                     if (shader->attrib_vertex >= 0) {
                         glEnableVertexAttribArray((GLuint)shader->attrib_vertex);

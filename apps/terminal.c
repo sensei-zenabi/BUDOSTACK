@@ -107,7 +107,6 @@ static int terminal_texture_width = 0;
 static int terminal_texture_height = 0;
 static int terminal_gl_ready = 0;
 static GLuint terminal_bound_texture = 0;
-static GLuint terminal_gl_history_texture = 0;
 static int terminal_history_width = 0;
 static int terminal_history_height = 0;
 static GLuint terminal_cursor_texture = 0;
@@ -161,7 +160,6 @@ static GLuint terminal_gl_framebuffer = 0;
 static GLuint terminal_gl_intermediate_textures[2] = {0u, 0u};
 static int terminal_intermediate_width = 0;
 static int terminal_intermediate_height = 0;
-static GLuint terminal_gl_history_texture_flipped = 0;
 
 struct terminal_render_cache_entry {
     uint32_t ch;
@@ -242,6 +240,8 @@ struct terminal_gl_shader {
     GLint uniform_interlace_detect;
     GLint uniform_saturation;
     GLint uniform_inv_gamma;
+    GLuint history_texture;
+    GLuint history_texture_flipped;
     GLuint quad_vaos[2];
     int has_cached_mvp;
     GLfloat cached_mvp[16];
@@ -372,9 +372,13 @@ static void terminal_bind_texture(GLuint texture);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
-static int terminal_prepare_history_texture(int width, int height);
-static void terminal_update_history_texture(int width, int height);
-static void terminal_update_flipped_history_texture(int width, int height);
+static int terminal_prepare_shader_history(struct terminal_gl_shader *shader, int width, int height, int resized);
+static void terminal_update_shader_history(struct terminal_gl_shader *shader, int width, int height);
+static void terminal_update_flipped_history_texture(GLuint history_texture,
+                                                    GLuint history_texture_flipped,
+                                                    int width,
+                                                    int height);
+static void terminal_clear_shader_history(struct terminal_gl_shader *shader);
 static int terminal_load_cursor_sprite(const char *path);
 static void terminal_destroy_cursor_sprite(void);
 static void terminal_set_mouse_cursor_visible(int visible);
@@ -3209,32 +3213,60 @@ static int terminal_prepare_intermediate_targets(int width, int height) {
     return 0;
 }
 
-static int terminal_prepare_history_texture(int width, int height) {
-    if (width <= 0 || height <= 0) {
-        return -1;
+static void terminal_clear_history_texture(GLuint texture, int width, int height) {
+    if (texture == 0 || width <= 0 || height <= 0) {
+        return;
     }
-
-    if (terminal_gl_history_texture == 0) {
-        glGenTextures(1, &terminal_gl_history_texture);
-    }
-    if (terminal_gl_history_texture == 0) {
-        return -1;
-    }
-
-    if (terminal_gl_history_texture_flipped == 0) {
-        glGenTextures(1, &terminal_gl_history_texture_flipped);
-        if (terminal_gl_history_texture_flipped == 0) {
-            fprintf(stderr, "Failed to create flipped history texture.\n");
+    if (terminal_gl_framebuffer == 0) {
+        glGenFramebuffers(1, &terminal_gl_framebuffer);
+        if (terminal_gl_framebuffer == 0) {
+            return;
         }
     }
 
-    int resized = 0;
-    if (terminal_history_width != width || terminal_history_height != height) {
-        resized = 1;
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, texture, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        glViewport(0, 0, width, height);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+}
+
+static int terminal_prepare_shader_history(struct terminal_gl_shader *shader, int width, int height, int resized) {
+    if (!shader || width <= 0 || height <= 0) {
+        return -1;
     }
 
-    if (resized) {
-        terminal_bind_texture(terminal_gl_history_texture);
+    int created_history = 0;
+    int created_flipped = 0;
+
+    if (shader->history_texture == 0) {
+        glGenTextures(1, &shader->history_texture);
+        if (shader->history_texture != 0) {
+            created_history = 1;
+        }
+    }
+    if (shader->history_texture == 0) {
+        return -1;
+    }
+
+    if (shader->history_texture_flipped == 0) {
+        glGenTextures(1, &shader->history_texture_flipped);
+        if (shader->history_texture_flipped == 0) {
+            fprintf(stderr, "Failed to create flipped history texture.\n");
+        } else {
+            created_flipped = 1;
+        }
+    }
+
+    if (created_history || resized || terminal_history_width == 0 || terminal_history_height == 0) {
+        terminal_bind_texture(shader->history_texture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -3243,9 +3275,11 @@ static int terminal_prepare_history_texture(int width, int height) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
                      GL_RGBA, GL_UNSIGNED_BYTE, NULL);
         terminal_bind_texture(0);
+        terminal_clear_history_texture(shader->history_texture, width, height);
 
-        if (terminal_gl_history_texture_flipped != 0) {
-            terminal_bind_texture(terminal_gl_history_texture_flipped);
+        if (shader->history_texture_flipped != 0 &&
+            (created_flipped || resized || terminal_history_width == 0 || terminal_history_height == 0)) {
+            terminal_bind_texture(shader->history_texture_flipped);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -3254,70 +3288,35 @@ static int terminal_prepare_history_texture(int width, int height) {
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
                          GL_RGBA, GL_UNSIGNED_BYTE, NULL);
             terminal_bind_texture(0);
-        }
-
-        terminal_history_width = width;
-        terminal_history_height = height;
-
-        if (terminal_gl_framebuffer == 0) {
-            glGenFramebuffers(1, &terminal_gl_framebuffer);
-        }
-        if (terminal_gl_framebuffer != 0) {
-            GLint viewport[4];
-            glGetIntegerv(GL_VIEWPORT, viewport);
-            glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                   GL_TEXTURE_2D, terminal_gl_history_texture, 0);
-            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
-                glViewport(0, 0, width, height);
-                glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-                glClear(GL_COLOR_BUFFER_BIT);
-            }
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-        }
-
-        if (terminal_gl_history_texture_flipped != 0) {
-            if (terminal_gl_framebuffer == 0) {
-                glGenFramebuffers(1, &terminal_gl_framebuffer);
-            }
-            if (terminal_gl_framebuffer != 0) {
-                GLint viewport[4];
-                glGetIntegerv(GL_VIEWPORT, viewport);
-                glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
-                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                       GL_TEXTURE_2D, terminal_gl_history_texture_flipped, 0);
-                if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
-                    glViewport(0, 0, width, height);
-                    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-                    glClear(GL_COLOR_BUFFER_BIT);
-                }
-                glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-            }
+            terminal_clear_history_texture(shader->history_texture_flipped, width, height);
         }
     }
 
     return 0;
 }
 
-static void terminal_update_history_texture(int width, int height) {
-    if (terminal_gl_history_texture == 0 || width <= 0 || height <= 0) {
+static void terminal_update_shader_history(struct terminal_gl_shader *shader, int width, int height) {
+    if (!shader || shader->history_texture == 0 || width <= 0 || height <= 0) {
         return;
     }
 
     glActiveTexture(GL_TEXTURE1);
-    terminal_bind_texture(terminal_gl_history_texture);
+    terminal_bind_texture(shader->history_texture);
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
     terminal_bind_texture(0);
     glActiveTexture(GL_TEXTURE0);
 
-    terminal_update_flipped_history_texture(width, height);
+    terminal_update_flipped_history_texture(shader->history_texture,
+                                            shader->history_texture_flipped,
+                                            width,
+                                            height);
 }
 
-static void terminal_update_flipped_history_texture(int width, int height) {
-    if (terminal_gl_history_texture == 0 || terminal_gl_history_texture_flipped == 0 ||
-        width <= 0 || height <= 0) {
+static void terminal_update_flipped_history_texture(GLuint history_texture,
+                                                    GLuint history_texture_flipped,
+                                                    int width,
+                                                    int height) {
+    if (history_texture == 0 || history_texture_flipped == 0 || width <= 0 || height <= 0) {
         return;
     }
 
@@ -3332,7 +3331,7 @@ static void terminal_update_flipped_history_texture(int width, int height) {
     glGetIntegerv(GL_VIEWPORT, viewport);
     glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, terminal_gl_history_texture_flipped, 0);
+                           GL_TEXTURE_2D, history_texture_flipped, 0);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         return;
@@ -3348,7 +3347,7 @@ static void terminal_update_flipped_history_texture(int width, int height) {
     glLoadIdentity();
 
     glActiveTexture(GL_TEXTURE0);
-    terminal_bind_texture(terminal_gl_history_texture);
+    terminal_bind_texture(history_texture);
     glEnable(GL_TEXTURE_2D);
 
     glBegin(GL_TRIANGLE_STRIP);
@@ -3367,6 +3366,20 @@ static void terminal_update_flipped_history_texture(int width, int height) {
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+}
+
+static void terminal_clear_shader_history(struct terminal_gl_shader *shader) {
+    if (!shader) {
+        return;
+    }
+    if (shader->history_texture != 0) {
+        glDeleteTextures(1, &shader->history_texture);
+        shader->history_texture = 0;
+    }
+    if (shader->history_texture_flipped != 0) {
+        glDeleteTextures(1, &shader->history_texture_flipped);
+        shader->history_texture_flipped = 0;
+    }
 }
 
 static int terminal_load_cursor_sprite(const char *path) {
@@ -3552,18 +3565,11 @@ static void terminal_clear_gl_shaders(void) {
             if (terminal_gl_shaders[i].program != 0) {
                 glDeleteProgram(terminal_gl_shaders[i].program);
             }
+            terminal_clear_shader_history(&terminal_gl_shaders[i]);
             terminal_shader_clear_vaos(&terminal_gl_shaders[i]);
         }
         free(terminal_gl_shaders);
         terminal_gl_shaders = NULL;
-    }
-    if (terminal_gl_history_texture != 0) {
-        glDeleteTextures(1, &terminal_gl_history_texture);
-        terminal_gl_history_texture = 0;
-    }
-    if (terminal_gl_history_texture_flipped != 0) {
-        glDeleteTextures(1, &terminal_gl_history_texture_flipped);
-        terminal_gl_history_texture_flipped = 0;
     }
     terminal_history_width = 0;
     terminal_history_height = 0;
@@ -8525,9 +8531,11 @@ int main(int argc, char **argv) {
         if (terminal_shaders_active()) {
             static int frame_counter = 0;
             int frame_value = frame_counter++;
-            int history_ready = 0;
-            if (terminal_prepare_history_texture(drawable_width, drawable_height) == 0) {
-                history_ready = 1;
+            int history_resized = 0;
+            if (terminal_history_width != drawable_width || terminal_history_height != drawable_height) {
+                terminal_history_width = drawable_width;
+                terminal_history_height = drawable_height;
+                history_resized = 1;
             }
 
             int multipass_failed = 0;
@@ -8593,11 +8601,10 @@ int main(int argc, char **argv) {
 
                 if (shader->uniform_prev_sampler >= 0) {
                     GLuint history_texture = 0;
-                    if (history_ready) {
-                        if (source_texture == terminal_gl_texture && terminal_gl_history_texture_flipped != 0) {
-                            history_texture = terminal_gl_history_texture_flipped;
-                        } else {
-                            history_texture = terminal_gl_history_texture;
+                    if (terminal_prepare_shader_history(shader, drawable_width, drawable_height, history_resized) == 0) {
+                        history_texture = shader->history_texture;
+                        if (source_texture == terminal_gl_texture && shader->history_texture_flipped != 0) {
+                            history_texture = shader->history_texture_flipped;
                         }
                     }
                     glActiveTexture(GL_TEXTURE1);
@@ -8651,6 +8658,10 @@ int main(int argc, char **argv) {
 
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, terminal_quad_vertex_count);
 
+                if (shader->uniform_prev_sampler >= 0) {
+                    terminal_update_shader_history(shader, drawable_width, drawable_height);
+                }
+
                 if (using_vao) {
                     glBindVertexArray(0);
                 } else {
@@ -8676,9 +8687,6 @@ int main(int argc, char **argv) {
                 }
             }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            if (history_ready) {
-                terminal_update_history_texture(drawable_width, drawable_height);
-            }
         } else {
             glMatrixMode(GL_PROJECTION);
             glLoadIdentity();

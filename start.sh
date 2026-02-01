@@ -2,6 +2,7 @@
 
 ./apps/terminal \
     -s ./shaders/crtscreen.glsl \
-    -s ./shaders/noise.glsl
+    -s ./shaders/noise.glsl \
+    -s ./shaders/effects.glsl
 
 #./apps/terminal

@@ -265,13 +265,14 @@ int main(int argc, char **argv) {
 
     const char *shader_paths[] = {
       "./shaders/noise.glsl",
+      "./shaders/effects.glsl",
       "./shaders/crtscreen.glsl"
     };
     
     
     /* Load BUDOSTACK shaders */
     
-    if (budo_shader_stack_load(stack, shader_paths, 2u) != 0) {
+    if (budo_shader_stack_load(stack, shader_paths, 3u) != 0) {
         fprintf(stderr, "Failed to load shaders.\n");
         budo_shader_stack_destroy(stack);
         free(pixels);

@@ -42,6 +42,8 @@ struct budo_gl_shader {
     GLint uniform_interlace_detect;
     GLint uniform_saturation;
     GLint uniform_inv_gamma;
+    GLuint history_texture;
+    GLuint history_texture_flipped;
     GLuint quad_vaos[2];
     int has_cached_mvp;
     GLfloat cached_mvp[16];
@@ -62,7 +64,6 @@ struct budo_shader_stack {
     GLuint intermediate_textures[2];
     int intermediate_width;
     int intermediate_height;
-    GLuint history_texture;
     int history_width;
     int history_height;
 };
@@ -894,67 +895,182 @@ static int budo_prepare_intermediate_targets(struct budo_shader_stack *stack, in
     return 0;
 }
 
-static int budo_prepare_history_texture(struct budo_shader_stack *stack, int width, int height) {
-    if (!stack || width <= 0 || height <= 0) {
+static void budo_clear_history_texture(struct budo_shader_stack *stack, GLuint texture, int width, int height) {
+    if (!stack || texture == 0 || width <= 0 || height <= 0) {
+        return;
+    }
+    if (stack->framebuffer == 0) {
+        glGenFramebuffers(1, &stack->framebuffer);
+        if (stack->framebuffer == 0) {
+            return;
+        }
+    }
+
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glBindFramebuffer(GL_FRAMEBUFFER, stack->framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, texture, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
+        glViewport(0, 0, width, height);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+}
+
+static int budo_prepare_shader_history(struct budo_shader_stack *stack,
+                                       struct budo_gl_shader *shader,
+                                       int width,
+                                       int height,
+                                       int resized) {
+    if (!stack || !shader || width <= 0 || height <= 0) {
         return -1;
     }
 
-    if (stack->history_texture == 0) {
-        glGenTextures(1, &stack->history_texture);
+    int created_history = 0;
+    int created_flipped = 0;
+
+    if (shader->history_texture == 0) {
+        glGenTextures(1, &shader->history_texture);
+        if (shader->history_texture != 0) {
+            created_history = 1;
+        }
     }
-    if (stack->history_texture == 0) {
+    if (shader->history_texture == 0) {
         return -1;
     }
 
-    int resized = 0;
-    if (stack->history_width != width || stack->history_height != height) {
-        resized = 1;
+    if (shader->history_texture_flipped == 0) {
+        glGenTextures(1, &shader->history_texture_flipped);
+        if (shader->history_texture_flipped == 0) {
+            fprintf(stderr, "budo: Failed to create flipped history texture.\n");
+        } else {
+            created_flipped = 1;
+        }
     }
 
-    if (resized) {
-        budo_bind_texture(stack, stack->history_texture);
+    if (created_history || resized || stack->history_width == 0 || stack->history_height == 0) {
+        budo_bind_texture(stack, shader->history_texture);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
         budo_bind_texture(stack, 0);
-        stack->history_width = width;
-        stack->history_height = height;
+        budo_clear_history_texture(stack, shader->history_texture, width, height);
 
-        if (stack->framebuffer == 0) {
-            glGenFramebuffers(1, &stack->framebuffer);
-        }
-        if (stack->framebuffer != 0) {
-            GLint viewport[4];
-            glGetIntegerv(GL_VIEWPORT, viewport);
-            glBindFramebuffer(GL_FRAMEBUFFER, stack->framebuffer);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                   GL_TEXTURE_2D, stack->history_texture, 0);
-            if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
-                glViewport(0, 0, width, height);
-                glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-                glClear(GL_COLOR_BUFFER_BIT);
-            }
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        if (shader->history_texture_flipped != 0 &&
+            (created_flipped || resized || stack->history_width == 0 || stack->history_height == 0)) {
+            budo_bind_texture(stack, shader->history_texture_flipped);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                         GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+            budo_bind_texture(stack, 0);
+            budo_clear_history_texture(stack, shader->history_texture_flipped, width, height);
         }
     }
 
     return 0;
 }
 
-static void budo_update_history_texture(struct budo_shader_stack *stack, int width, int height) {
-    if (!stack || stack->history_texture == 0 || width <= 0 || height <= 0) {
+static void budo_update_flipped_history_texture(struct budo_shader_stack *stack,
+                                                GLuint history_texture,
+                                                GLuint history_texture_flipped,
+                                                int width,
+                                                int height) {
+    if (!stack || history_texture == 0 || history_texture_flipped == 0 || width <= 0 || height <= 0) {
+        return;
+    }
+
+    if (stack->framebuffer == 0) {
+        glGenFramebuffers(1, &stack->framebuffer);
+        if (stack->framebuffer == 0) {
+            return;
+        }
+    }
+
+    GLint viewport[4];
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    glBindFramebuffer(GL_FRAMEBUFFER, stack->framebuffer);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, history_texture_flipped, 0);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return;
+    }
+
+    glViewport(0, 0, width, height);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(0);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+
+    glActiveTexture(GL_TEXTURE0);
+    budo_bind_texture(stack, history_texture);
+    glEnable(GL_TEXTURE_2D);
+
+    glBegin(GL_TRIANGLE_STRIP);
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex2f(-1.0f, -1.0f);
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex2f(1.0f, -1.0f);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex2f(-1.0f, 1.0f);
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex2f(1.0f, 1.0f);
+    glEnd();
+
+    glDisable(GL_TEXTURE_2D);
+    budo_bind_texture(stack, 0);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+}
+
+static void budo_update_shader_history(struct budo_shader_stack *stack,
+                                       struct budo_gl_shader *shader,
+                                       int width,
+                                       int height) {
+    if (!stack || !shader || shader->history_texture == 0 || width <= 0 || height <= 0) {
         return;
     }
 
     glActiveTexture(GL_TEXTURE1);
-    budo_bind_texture(stack, stack->history_texture);
+    budo_bind_texture(stack, shader->history_texture);
     glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
     budo_bind_texture(stack, 0);
     glActiveTexture(GL_TEXTURE0);
+
+    budo_update_flipped_history_texture(stack,
+                                        shader->history_texture,
+                                        shader->history_texture_flipped,
+                                        width,
+                                        height);
+}
+
+static void budo_clear_shader_history(struct budo_gl_shader *shader) {
+    if (!shader) {
+        return;
+    }
+    if (shader->history_texture != 0) {
+        glDeleteTextures(1, &shader->history_texture);
+        shader->history_texture = 0;
+    }
+    if (shader->history_texture_flipped != 0) {
+        glDeleteTextures(1, &shader->history_texture_flipped);
+        shader->history_texture_flipped = 0;
+    }
 }
 
 int budo_shader_stack_init(struct budo_shader_stack **out_stack) {
@@ -1032,14 +1148,11 @@ void budo_shader_stack_clear(struct budo_shader_stack *stack) {
             if (stack->shaders[i].program != 0) {
                 glDeleteProgram(stack->shaders[i].program);
             }
+            budo_clear_shader_history(&stack->shaders[i]);
             budo_shader_clear_vaos(&stack->shaders[i]);
         }
         free(stack->shaders);
         stack->shaders = NULL;
-    }
-    if (stack->history_texture != 0) {
-        glDeleteTextures(1, &stack->history_texture);
-        stack->history_texture = 0;
     }
     stack->history_width = 0;
     stack->history_height = 0;
@@ -1068,9 +1181,11 @@ int budo_shader_stack_render(struct budo_shader_stack *stack,
     GLfloat current_input_height = (GLfloat)source_height;
     int current_from_fbo = source_tex_is_fbo != 0;
 
-    int history_ready = 0;
-    if (budo_prepare_history_texture(stack, output_width, output_height) == 0) {
-        history_ready = 1;
+    int history_resized = 0;
+    if (stack->history_width != output_width || stack->history_height != output_height) {
+        stack->history_width = output_width;
+        stack->history_height = output_height;
+        history_resized = 1;
     }
 
     int multipass_failed = 0;
@@ -1135,8 +1250,15 @@ int budo_shader_stack_render(struct budo_shader_stack *stack,
                              current_input_height);
 
         if (shader->uniform_prev_sampler >= 0) {
+            GLuint history_texture = 0;
+            if (budo_prepare_shader_history(stack, shader, output_width, output_height, history_resized) == 0) {
+                history_texture = shader->history_texture;
+                if (!current_from_fbo && shader->history_texture_flipped != 0) {
+                    history_texture = shader->history_texture_flipped;
+                }
+            }
             glActiveTexture(GL_TEXTURE1);
-            budo_bind_texture(stack, history_ready ? stack->history_texture : 0);
+            budo_bind_texture(stack, history_texture);
             glActiveTexture(GL_TEXTURE0);
         }
 
@@ -1184,6 +1306,10 @@ int budo_shader_stack_render(struct budo_shader_stack *stack,
 
         glDrawArrays(GL_TRIANGLE_STRIP, 0, budo_quad_vertex_count);
 
+        if (shader->uniform_prev_sampler >= 0) {
+            budo_update_shader_history(stack, shader, output_width, output_height);
+        }
+
         if (using_vao) {
             glBindVertexArray(0);
         } else {
@@ -1212,9 +1338,5 @@ int budo_shader_stack_render(struct budo_shader_stack *stack,
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glUseProgram(0);
-    if (history_ready) {
-        budo_update_history_texture(stack, output_width, output_height);
-    }
-
     return multipass_failed ? -1 : 0;
 }

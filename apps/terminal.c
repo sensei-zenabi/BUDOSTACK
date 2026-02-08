@@ -1016,6 +1016,7 @@ enum ansi_parser_state {
 };
 
 #define ANSI_MAX_PARAMS 16
+#define ANSI_OSC_BUFFER_SIZE (2u * 1024u * 1024u)
 
 struct ansi_parser {
     enum ansi_parser_state state;
@@ -1027,7 +1028,7 @@ struct ansi_parser {
     char charset_g1;
     char charset_target;
     int charset_use_g1;
-    char osc_buffer[131072];
+    char osc_buffer[ANSI_OSC_BUFFER_SIZE];
     size_t osc_length;
     uint32_t utf8_codepoint;
     uint32_t utf8_min_value;

@@ -1016,7 +1016,7 @@ enum ansi_parser_state {
 };
 
 #define ANSI_MAX_PARAMS 16
-#define ANSI_OSC_BUFFER_SIZE (2u * 1024u * 1024u)
+#define ANSI_OSC_BUFFER_SIZE (4u * 1024u * 1024u)
 
 struct ansi_parser {
     enum ansi_parser_state state;

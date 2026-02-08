@@ -10,6 +10,11 @@
 
 #include "../lib/stb_image.h"
 
+enum {
+    TERM_SPRITE_OSC_BUFFER_LIMIT = 4 * 1024 * 1024,
+    TERM_SPRITE_OSC_OVERHEAD = 256
+};
+
 static void print_usage(void) {
     fprintf(stderr,
             "Usage: _TERM_SPRITE -x <pixels> -y <pixels> (-file <path> | -sprite {w,h,\"data\"} | -data <base64> -width <px> -height <px>) [-layer <1-16>]\n");
@@ -96,6 +101,19 @@ static int encode_base64(const uint8_t *data, size_t size, char *out, size_t out
     }
 
     out[out_idx] = '\0';
+    return 0;
+}
+
+static int validate_encoded_size(size_t encoded_size) {
+    if (encoded_size == 0u) {
+        fprintf(stderr, "_TERM_SPRITE: encoded sprite data is empty.\n");
+        return -1;
+    }
+    if (encoded_size > TERM_SPRITE_OSC_BUFFER_LIMIT - TERM_SPRITE_OSC_OVERHEAD) {
+        fprintf(stderr, "_TERM_SPRITE: sprite data exceeds OSC buffer limit (%d bytes).\n",
+                TERM_SPRITE_OSC_BUFFER_LIMIT);
+        return -1;
+    }
     return 0;
 }
 
@@ -320,6 +338,10 @@ int main(int argc, char **argv) {
         if (parse_sprite_literal(sprite_literal, &width, &height, &encoded) != 0) {
             return EXIT_FAILURE;
         }
+        if (validate_encoded_size(strlen(encoded)) != 0) {
+            free(encoded);
+            return EXIT_FAILURE;
+        }
     } else if (data != NULL) {
         if (width_arg <= 0 || height_arg <= 0) {
             fprintf(stderr, "_TERM_SPRITE: -width and -height are required when using -data.\n");
@@ -330,6 +352,10 @@ int main(int argc, char **argv) {
         encoded = strdup(data);
         if (!encoded) {
             fprintf(stderr, "_TERM_SPRITE: failed to duplicate sprite data string.\n");
+            return EXIT_FAILURE;
+        }
+        if (validate_encoded_size(strlen(encoded)) != 0) {
+            free(encoded);
             return EXIT_FAILURE;
         }
     } else {
@@ -371,6 +397,10 @@ int main(int argc, char **argv) {
         if (encoded_size == 0 || encoded_size > SIZE_MAX - 1u) {
             stbi_image_free(pixels);
             fprintf(stderr, "_TERM_SPRITE: failed to compute encoded size.\n");
+            return EXIT_FAILURE;
+        }
+        if (validate_encoded_size(encoded_size) != 0) {
+            stbi_image_free(pixels);
             return EXIT_FAILURE;
         }
 

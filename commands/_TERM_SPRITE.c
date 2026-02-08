@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "../lib/stb_image.h"
 
@@ -17,7 +18,7 @@ enum {
 
 static void print_usage(void) {
     fprintf(stderr,
-            "Usage: _TERM_SPRITE -x <pixels> -y <pixels> (-file <path> | -sprite {w,h,\"data\"} | -data <base64> -width <px> -height <px>) [-layer <1-16>]\n");
+            "Usage: _TERM_SPRITE -x <pixels> -y <pixels> (-file <path> | -sprite {w,h,\"data\"} | -data <base64> -width <px> -height <px> | -datafile <path> -width <px> -height <px>) [-layer <1-16>]\n");
     fprintf(stderr, "  Draws a PNG or BMP sprite onto the terminal's pixel surface.\n");
     fprintf(stderr, "  Layers are numbered 1 (top) through 16 (bottom). Defaults to 1.\n");
     fprintf(stderr, "  Use -sprite with the literal produced by _TERM_SPRITE_LOAD to avoid passing width/height separately.\n");
@@ -114,6 +115,67 @@ static int validate_encoded_size(size_t encoded_size) {
                 TERM_SPRITE_OSC_BUFFER_LIMIT);
         return -1;
     }
+    return 0;
+}
+
+static int load_base64_file(const char *path, char **data_out) {
+    if (!path || !data_out) {
+        return -1;
+    }
+
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        perror("_TERM_SPRITE: stat");
+        return -1;
+    }
+    if (st.st_size <= 0) {
+        fprintf(stderr, "_TERM_SPRITE: sprite data file is empty.\n");
+        return -1;
+    }
+    if ((size_t)st.st_size > SIZE_MAX - 1u) {
+        fprintf(stderr, "_TERM_SPRITE: sprite data file is too large.\n");
+        return -1;
+    }
+
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        perror("_TERM_SPRITE: fopen");
+        return -1;
+    }
+
+    size_t file_size = (size_t)st.st_size;
+    char *buffer = malloc(file_size + 1u);
+    if (!buffer) {
+        fclose(fp);
+        fprintf(stderr, "_TERM_SPRITE: failed to allocate %zu bytes for sprite data.\n", file_size + 1u);
+        return -1;
+    }
+
+    size_t read_bytes = fread(buffer, 1u, file_size, fp);
+    if (read_bytes != file_size) {
+        if (ferror(fp)) {
+            perror("_TERM_SPRITE: fread");
+        } else {
+            fprintf(stderr, "_TERM_SPRITE: failed to read sprite data file.\n");
+        }
+        free(buffer);
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+    buffer[file_size] = '\0';
+
+    while (read_bytes > 0u && isspace((unsigned char)buffer[read_bytes - 1u])) {
+        read_bytes--;
+    }
+    buffer[read_bytes] = '\0';
+
+    if (validate_encoded_size(read_bytes) != 0) {
+        free(buffer);
+        return -1;
+    }
+
+    *data_out = buffer;
     return 0;
 }
 
@@ -250,6 +312,7 @@ int main(int argc, char **argv) {
     long height_arg = -1;
     const char *file = NULL;
     const char *data = NULL;
+    const char *datafile = NULL;
     const char *sprite_literal = NULL;
 
     for (int i = 1; i < argc; ++i) {
@@ -296,6 +359,12 @@ int main(int argc, char **argv) {
                 return EXIT_FAILURE;
             }
             data = argv[i];
+        } else if (strcmp(arg, "-datafile") == 0) {
+            if (++i >= argc) {
+                fprintf(stderr, "_TERM_SPRITE: missing value for -datafile.\n");
+                return EXIT_FAILURE;
+            }
+            datafile = argv[i];
         } else if (strcmp(arg, "-width") == 0) {
             if (++i >= argc) {
                 fprintf(stderr, "_TERM_SPRITE: missing value for -width.\n");
@@ -319,14 +388,15 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (origin_x < 0 || origin_y < 0 || (file == NULL && data == NULL && sprite_literal == NULL)) {
+    if (origin_x < 0 || origin_y < 0 ||
+        (file == NULL && data == NULL && datafile == NULL && sprite_literal == NULL)) {
         fprintf(stderr, "_TERM_SPRITE: missing required arguments.\n");
         print_usage();
         return EXIT_FAILURE;
     }
 
-    if ((file != NULL) + (data != NULL) + (sprite_literal != NULL) > 1) {
-        fprintf(stderr, "_TERM_SPRITE: specify only one of -file, -sprite, or -data.\n");
+    if ((file != NULL) + (data != NULL) + (datafile != NULL) + (sprite_literal != NULL) > 1) {
+        fprintf(stderr, "_TERM_SPRITE: specify only one of -file, -sprite, -data, or -datafile.\n");
         return EXIT_FAILURE;
     }
 
@@ -342,21 +412,27 @@ int main(int argc, char **argv) {
             free(encoded);
             return EXIT_FAILURE;
         }
-    } else if (data != NULL) {
+    } else if (data != NULL || datafile != NULL) {
         if (width_arg <= 0 || height_arg <= 0) {
-            fprintf(stderr, "_TERM_SPRITE: -width and -height are required when using -data.\n");
+            fprintf(stderr, "_TERM_SPRITE: -width and -height are required when using -data or -datafile.\n");
             return EXIT_FAILURE;
         }
         width = (int)width_arg;
         height = (int)height_arg;
-        encoded = strdup(data);
-        if (!encoded) {
-            fprintf(stderr, "_TERM_SPRITE: failed to duplicate sprite data string.\n");
-            return EXIT_FAILURE;
-        }
-        if (validate_encoded_size(strlen(encoded)) != 0) {
-            free(encoded);
-            return EXIT_FAILURE;
+        if (datafile != NULL) {
+            if (load_base64_file(datafile, &encoded) != 0) {
+                return EXIT_FAILURE;
+            }
+        } else {
+            encoded = strdup(data);
+            if (!encoded) {
+                fprintf(stderr, "_TERM_SPRITE: failed to duplicate sprite data string.\n");
+                return EXIT_FAILURE;
+            }
+            if (validate_encoded_size(strlen(encoded)) != 0) {
+                free(encoded);
+                return EXIT_FAILURE;
+            }
         }
     } else {
         int channels = 0;

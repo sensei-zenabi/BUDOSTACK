@@ -264,13 +264,16 @@ readable path and is resolved to an absolute path. `volume` is 0–100.
 **Usage:**
 ```
 _TERM_SPRITE -x <pixels> -y <pixels>
-            (-file <path> | -sprite {w,h,"data"} | -data <base64> -width <px> -height <px>)
+            (-file <path> | -sprite {w,h,"data"} | -data <base64> -width <px> -height <px>
+             | -datafile <path> -width <px> -height <px>)
             [-layer <1-16>]
 ```
 
 **Description:** Draws a sprite onto the terminal’s pixel surface. Provide a PNG/BMP
 via `-file`, a literal from `_TERM_SPRITE_LOAD` via `-sprite`, or raw base64 RGBA data
-via `-data` along with `-width`/`-height`. Layer 1 is topmost; default layer is 1.
+via `-data` along with `-width`/`-height`. Use `-datafile` to read base64 RGBA data
+from a file when the payload is too large for command-line arguments. Layer 1 is
+topmost; default layer is 1.
 
 ### `_TERM_SPRITE_LOAD`
 **Usage:** `_TERM_SPRITE_LOAD -file <path>`

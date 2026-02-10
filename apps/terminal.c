@@ -63,11 +63,12 @@
 #endif
 #define TERMINAL_CURSOR_BLINK_INTERVAL 500u
 #ifndef TERMINAL_TARGET_FPS
-#define TERMINAL_TARGET_FPS 30u
+#define TERMINAL_TARGET_FPS 60u
 #endif
 #ifndef TERMINAL_SHADER_TARGET_FPS
-#define TERMINAL_SHADER_TARGET_FPS 30u
+#define TERMINAL_SHADER_TARGET_FPS 60u
 #endif
+#define TERMINAL_MAX_TARGET_FPS 1000u
 
 #define TERMINAL_CURSOR_SPRITE_PATH "./tasks/assets/cursor.png"
 
@@ -101,6 +102,8 @@ static Uint32 terminal_render_frame_interval_ms = 0u;
 static int terminal_shaders_enabled = 1;
 static int terminal_vsync_enabled = 0;
 static int terminal_input_draw_requested = 0;
+static unsigned int terminal_runtime_target_fps = TERMINAL_TARGET_FPS;
+static unsigned int terminal_runtime_shader_target_fps = TERMINAL_SHADER_TARGET_FPS;
 
 static GLuint terminal_gl_texture = 0;
 static int terminal_texture_width = 0;
@@ -3668,9 +3671,32 @@ static int terminal_shaders_active(void) {
 
 static void terminal_print_usage(const char *progname) {
     const char *name = (progname && progname[0] != '\0') ? progname : "terminal";
-    fprintf(stderr, "Usage: %s [-s shader_path]...\n", name);
+    fprintf(stderr, "Usage: %s [-s shader_path]... [--fps hz] [--shader-fps hz]\n", name);
+    fprintf(stderr, "  --fps hz         Set render target FPS (0 disables frame pacing).\n");
+    fprintf(stderr, "  --shader-fps hz  Set shader animation FPS (0 disables animation pacing).\n");
     fprintf(stderr, "  Send OSC 777 'shader=enable|disable' via _TERM_SHADER to toggle shaders at runtime.\n");
     fprintf(stderr, "  Send OSC 777 'cursor_blink=enable|disable' via _TERM_CURSOR_BLINK to toggle cursor blinking.\n");
+}
+
+static int terminal_parse_fps_value(const char *text, unsigned int *out_value) {
+    char *endptr = NULL;
+    unsigned long parsed = 0ul;
+
+    if (!text || !out_value || text[0] == '\0') {
+        return -1;
+    }
+
+    errno = 0;
+    parsed = strtoul(text, &endptr, 10);
+    if (errno != 0 || !endptr || endptr[0] != '\0') {
+        return -1;
+    }
+    if (parsed > TERMINAL_MAX_TARGET_FPS) {
+        return -1;
+    }
+
+    *out_value = (unsigned int)parsed;
+    return 0;
 }
 
 static int psf_unicode_map_compare(const void *a, const void *b) {
@@ -7010,6 +7036,8 @@ int main(int argc, char **argv) {
     size_t shader_arg_count = 0u;
     struct shader_path_entry *shader_paths = NULL;
     size_t shader_path_count = 0u;
+    terminal_runtime_target_fps = TERMINAL_TARGET_FPS;
+    terminal_runtime_shader_target_fps = TERMINAL_SHADER_TARGET_FPS;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -7029,6 +7057,32 @@ int main(int argc, char **argv) {
             }
             shader_args = new_args;
             shader_args[shader_arg_count++] = value;
+        } else if (strcmp(arg, "--fps") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing FPS value after %s.\n", arg);
+                terminal_print_usage(progname);
+                free(shader_args);
+                return EXIT_FAILURE;
+            }
+            const char *value = argv[++i];
+            if (terminal_parse_fps_value(value, &terminal_runtime_target_fps) != 0) {
+                fprintf(stderr, "Invalid --fps value '%s' (expected 0-%u).\n", value, TERMINAL_MAX_TARGET_FPS);
+                free(shader_args);
+                return EXIT_FAILURE;
+            }
+        } else if (strcmp(arg, "--shader-fps") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Missing shader FPS value after %s.\n", arg);
+                terminal_print_usage(progname);
+                free(shader_args);
+                return EXIT_FAILURE;
+            }
+            const char *value = argv[++i];
+            if (terminal_parse_fps_value(value, &terminal_runtime_shader_target_fps) != 0) {
+                fprintf(stderr, "Invalid --shader-fps value '%s' (expected 0-%u).\n", value, TERMINAL_MAX_TARGET_FPS);
+                free(shader_args);
+                return EXIT_FAILURE;
+            }
         } else if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
             terminal_print_usage(progname);
             free(shader_args);
@@ -7396,8 +7450,8 @@ int main(int argc, char **argv) {
         SDL_ShowCursor(SDL_ENABLE);
     }
 
-    if (TERMINAL_SHADER_TARGET_FPS > 0u) {
-        terminal_shader_frame_interval_ms = 1000u / (Uint32)TERMINAL_SHADER_TARGET_FPS;
+    if (terminal_runtime_shader_target_fps > 0u) {
+        terminal_shader_frame_interval_ms = 1000u / (Uint32)terminal_runtime_shader_target_fps;
         if (terminal_shader_frame_interval_ms == 0u) {
             terminal_shader_frame_interval_ms = 1u;
         }
@@ -7408,8 +7462,8 @@ int main(int argc, char **argv) {
 
     if (terminal_vsync_enabled) {
         terminal_render_frame_interval_ms = 0u;
-    } else if (TERMINAL_TARGET_FPS > 0u) {
-        terminal_render_frame_interval_ms = 1000u / (Uint32)TERMINAL_TARGET_FPS;
+    } else if (terminal_runtime_target_fps > 0u) {
+        terminal_render_frame_interval_ms = 1000u / (Uint32)terminal_runtime_target_fps;
         if (terminal_render_frame_interval_ms == 0u) {
             terminal_render_frame_interval_ms = 1u;
         }
@@ -7420,7 +7474,7 @@ int main(int argc, char **argv) {
 
     int status = 0;
     int child_exited = 0;
-    unsigned char input_buffer[512];
+    unsigned char input_buffer[4096];
     int running = 1;
     const Uint32 cursor_blink_interval = TERMINAL_CURSOR_BLINK_INTERVAL;
     Uint32 cursor_last_toggle = SDL_GetTicks();

@@ -2580,6 +2580,7 @@ void editorDelChar(void) {
     if (E.cx == 0) {
         EditorLine *prev_line = &E.row[E.cy - 1];
         int prev_size = prev_line->size;
+        int join_cx = editorDisplayWidth(prev_line->chars);
         prev_line->chars = realloc(prev_line->chars, prev_size + line->size + 1);
         if (prev_line->chars == NULL)
             die("realloc");
@@ -2590,7 +2591,7 @@ void editorDelChar(void) {
         for (int j = E.cy; j < E.numrows - 1; j++)
             E.row[j] = E.row[j + 1];
         E.numrows--; E.cy--;
-        E.cx = editorDisplayWidth(prev_line->chars);
+        E.cx = join_cx;
         E.preferred_cx = E.cx;
     } else {
         int index = editorRowCxToByteIndex(line, E.cx);

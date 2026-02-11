@@ -29,6 +29,18 @@ Screenshots from BUDOSTACK built-in retro terminal emulator (apps/terminal).
 * `./start.sh` still launches BUDOSTACK inside the retro-styled `apps/terminal` emulator with the CRT shader stack enabled by default.
 * If you prefer to stay in your own GUI terminal emulator, you can run `./budostack` directly. The shell detects VTE/Konsole-style terminals and skips the resize escape sequence that used to displace the cursor, so the prompt and block cursor stay aligned.
 
+### apps/terminal runtime controls
+`apps/terminal` also supports runtime CLI frame pacing controls:
+* `--fps <hz>` controls display rendering pace (default `60`, `0` disables pacing).
+* `--shader-fps <hz>` controls shader animation pace (default `60`, `0` disables shader timing).
+
+Examples:
+* `./apps/terminal --fps 120`
+* `./apps/terminal --fps 0`
+* `./apps/terminal -s ./shaders/noise.glsl --shader-fps 30`
+
+Values are validated in the range `0..1000`.
+
 ## Licence:
 BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 
 copyleft license, that allows you to:

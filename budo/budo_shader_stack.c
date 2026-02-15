@@ -1163,6 +1163,8 @@ int budo_shader_stack_render(struct budo_shader_stack *stack,
                              GLuint source_texture,
                              int source_width,
                              int source_height,
+                             int source_input_width,
+                             int source_input_height,
                              int output_width,
                              int output_height,
                              int source_tex_is_fbo,
@@ -1177,8 +1179,8 @@ int budo_shader_stack_render(struct budo_shader_stack *stack,
     GLuint current_texture = source_texture;
     GLfloat current_texture_width = (GLfloat)source_width;
     GLfloat current_texture_height = (GLfloat)source_height;
-    GLfloat current_input_width = (GLfloat)source_width;
-    GLfloat current_input_height = (GLfloat)source_height;
+    GLfloat current_input_width = (GLfloat)((source_input_width > 0) ? source_input_width : source_width);
+    GLfloat current_input_height = (GLfloat)((source_input_height > 0) ? source_input_height : source_height);
     int current_from_fbo = source_tex_is_fbo != 0;
 
     int history_resized = 0;

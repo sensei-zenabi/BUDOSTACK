@@ -36,6 +36,7 @@
 #if BUDOSTACK_HAVE_SDL2
 #define GL_GLEXT_PROTOTYPES 1
 #include <SDL2/SDL_opengl.h>
+#include "../budo/budo_shader_stack.h"
 #define DR_MP3_IMPLEMENTATION
 #include "../lib/dr_mp3.h"
 #define STB_VORBIS_IMPLEMENTATION

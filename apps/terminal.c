@@ -147,8 +147,6 @@ static const struct terminal_quad_vertex terminal_quad_vertices[4] = {
 };
 
 static GLuint terminal_quad_vbo = 0;
-static const GLsizei terminal_quad_vertex_count = 4;
-
 static const GLfloat terminal_identity_mvp[16] = {
     1.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f,
@@ -373,13 +371,10 @@ static int terminal_shader_configure_vaos(struct terminal_gl_shader *shader);
 static void terminal_shader_clear_vaos(struct terminal_gl_shader *shader);
 static void terminal_shader_reset_uniform_cache(struct terminal_gl_shader *shader);
 static void terminal_shader_set_matrix(GLint location, GLfloat *cache, int *has_cache, const GLfloat *matrix);
-static void terminal_shader_set_vec2(GLint location, GLfloat *cache, int *has_cache, GLfloat x, GLfloat y);
 static void terminal_bind_texture(GLuint texture);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
-static int terminal_prepare_shader_history(struct terminal_gl_shader *shader, int width, int height, int resized);
-static void terminal_update_shader_history(struct terminal_gl_shader *shader, int width, int height);
 static void terminal_update_flipped_history_texture(GLuint history_texture,
                                                     GLuint history_texture_flipped,
                                                     int width,
@@ -2634,19 +2629,6 @@ static void terminal_shader_set_matrix(GLint location, GLfloat *cache, int *has_
     glUniformMatrix4fv(location, 1, GL_FALSE, matrix);
 }
 
-static void terminal_shader_set_vec2(GLint location, GLfloat *cache, int *has_cache, GLfloat x, GLfloat y) {
-    if (location < 0 || !cache || !has_cache) {
-        return;
-    }
-    if (*has_cache && cache[0] == x && cache[1] == y) {
-        return;
-    }
-    cache[0] = x;
-    cache[1] = y;
-    *has_cache = 1;
-    glUniform2f(location, x, y);
-}
-
 static void terminal_shader_clear_vaos(struct terminal_gl_shader *shader) {
     if (!shader) {
         return;
@@ -3242,80 +3224,6 @@ static void terminal_clear_history_texture(GLuint texture, int width, int height
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-}
-
-static int terminal_prepare_shader_history(struct terminal_gl_shader *shader, int width, int height, int resized) {
-    if (!shader || width <= 0 || height <= 0) {
-        return -1;
-    }
-
-    int created_history = 0;
-    int created_flipped = 0;
-
-    if (shader->history_texture == 0) {
-        glGenTextures(1, &shader->history_texture);
-        if (shader->history_texture != 0) {
-            created_history = 1;
-        }
-    }
-    if (shader->history_texture == 0) {
-        return -1;
-    }
-
-    if (shader->history_texture_flipped == 0) {
-        glGenTextures(1, &shader->history_texture_flipped);
-        if (shader->history_texture_flipped == 0) {
-            fprintf(stderr, "Failed to create flipped history texture.\n");
-        } else {
-            created_flipped = 1;
-        }
-    }
-
-    if (created_history || resized || terminal_history_width == 0 || terminal_history_height == 0) {
-        terminal_bind_texture(shader->history_texture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
-                     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-        terminal_bind_texture(0);
-        terminal_clear_history_texture(shader->history_texture, width, height);
-
-        if (shader->history_texture_flipped != 0 &&
-            (created_flipped || resized || terminal_history_width == 0 || terminal_history_height == 0)) {
-            terminal_bind_texture(shader->history_texture_flipped);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
-                         GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-            terminal_bind_texture(0);
-            terminal_clear_history_texture(shader->history_texture_flipped, width, height);
-        }
-    }
-
-    return 0;
-}
-
-static void terminal_update_shader_history(struct terminal_gl_shader *shader, int width, int height) {
-    if (!shader || shader->history_texture == 0 || width <= 0 || height <= 0) {
-        return;
-    }
-
-    glActiveTexture(GL_TEXTURE1);
-    terminal_bind_texture(shader->history_texture);
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, width, height);
-    terminal_bind_texture(0);
-    glActiveTexture(GL_TEXTURE0);
-
-    terminal_update_flipped_history_texture(shader->history_texture,
-                                            shader->history_texture_flipped,
-                                            width,
-                                            height);
 }
 
 static void terminal_update_flipped_history_texture(GLuint history_texture,
@@ -8552,8 +8460,6 @@ int main(int argc, char **argv) {
 
         glClear(GL_COLOR_BUFFER_BIT);
         GLuint source_texture = terminal_gl_texture;
-        GLfloat source_texture_width = (GLfloat)terminal_texture_width;
-        GLfloat source_texture_height = (GLfloat)terminal_texture_height;
         GLfloat source_input_width = (GLfloat)frame_width;
         GLfloat source_input_height = (GLfloat)frame_height;
         int cursor_composited_into_shader = 0;
@@ -8601,8 +8507,6 @@ int main(int argc, char **argv) {
 
                     cursor_composited_into_shader = 1;
                     source_texture = terminal_gl_intermediate_textures[1];
-                    source_texture_width = (GLfloat)drawable_width;
-                    source_texture_height = (GLfloat)drawable_height;
                     source_input_width = (GLfloat)drawable_width;
                     source_input_height = (GLfloat)drawable_height;
                 }

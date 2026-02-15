@@ -6,6 +6,17 @@
 # section below according to instructions.
 #=========================================================================
 
+#-------------------------------------------------------------------------
+# SKIP LAUNCHER
+
+SET $SELECTION = "n"
+RUN cls
+PRINT "Skip Launcher? [y/n]: "
+INPUT $SELECTION
+
+IF ($SELECTION == "y"):
+  GOTO EXIT
+END
 
 #-------------------------------------------------------------------------
 # INITIALIZAION

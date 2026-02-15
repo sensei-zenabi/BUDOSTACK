@@ -76,6 +76,7 @@ apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
 BUDO_SHADER_STACK_OBJ = ./budo/budo_shader_stack.o
 $(BUDO_SHADER_STACK_OBJ): CFLAGS += $(SDL2_CFLAGS)
+apps/terminal: $(BUDO_SHADER_STACK_OBJ)
 apps/terminal: EXTRA_OBJS += $(BUDO_SHADER_STACK_OBJ)
 endif
 

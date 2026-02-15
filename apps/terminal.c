@@ -375,10 +375,6 @@ static void terminal_bind_texture(GLuint texture);
 static int terminal_resize_render_targets(int width, int height);
 static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
 static int terminal_prepare_intermediate_targets(int width, int height);
-static void terminal_update_flipped_history_texture(GLuint history_texture,
-                                                    GLuint history_texture_flipped,
-                                                    int width,
-                                                    int height);
 static void terminal_clear_shader_history(struct terminal_gl_shader *shader);
 static int terminal_load_cursor_sprite(const char *path);
 static void terminal_destroy_cursor_sprite(void);
@@ -3199,87 +3195,6 @@ static int terminal_prepare_intermediate_targets(int width, int height) {
     }
 
     return 0;
-}
-
-static void terminal_clear_history_texture(GLuint texture, int width, int height) {
-    if (texture == 0 || width <= 0 || height <= 0) {
-        return;
-    }
-    if (terminal_gl_framebuffer == 0) {
-        glGenFramebuffers(1, &terminal_gl_framebuffer);
-        if (terminal_gl_framebuffer == 0) {
-            return;
-        }
-    }
-
-    GLint viewport[4];
-    glGetIntegerv(GL_VIEWPORT, viewport);
-    glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, texture, 0);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
-        glViewport(0, 0, width, height);
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-    }
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
-}
-
-static void terminal_update_flipped_history_texture(GLuint history_texture,
-                                                    GLuint history_texture_flipped,
-                                                    int width,
-                                                    int height) {
-    if (history_texture == 0 || history_texture_flipped == 0 || width <= 0 || height <= 0) {
-        return;
-    }
-
-    if (terminal_gl_framebuffer == 0) {
-        glGenFramebuffers(1, &terminal_gl_framebuffer);
-        if (terminal_gl_framebuffer == 0) {
-            return;
-        }
-    }
-
-    GLint viewport[4];
-    glGetIntegerv(GL_VIEWPORT, viewport);
-    glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                           GL_TEXTURE_2D, history_texture_flipped, 0);
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        return;
-    }
-
-    glViewport(0, 0, width, height);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    glUseProgram(0);
-    glMatrixMode(GL_PROJECTION);
-    glLoadIdentity();
-    glMatrixMode(GL_MODELVIEW);
-    glLoadIdentity();
-
-    glActiveTexture(GL_TEXTURE0);
-    terminal_bind_texture(history_texture);
-    glEnable(GL_TEXTURE_2D);
-
-    glBegin(GL_TRIANGLE_STRIP);
-    glTexCoord2f(0.0f, 1.0f);
-    glVertex2f(-1.0f, -1.0f);
-    glTexCoord2f(1.0f, 1.0f);
-    glVertex2f(1.0f, -1.0f);
-    glTexCoord2f(0.0f, 0.0f);
-    glVertex2f(-1.0f, 1.0f);
-    glTexCoord2f(1.0f, 0.0f);
-    glVertex2f(1.0f, 1.0f);
-    glEnd();
-
-    glDisable(GL_TEXTURE_2D);
-    terminal_bind_texture(0);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 }
 
 static void terminal_clear_shader_history(struct terminal_gl_shader *shader) {

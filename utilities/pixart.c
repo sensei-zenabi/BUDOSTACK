@@ -36,16 +36,20 @@ static const size_t PIXEL_PALETTE_SIZE = sizeof(PIXEL_PALETTE) / sizeof(PIXEL_PA
 static void print_help(void) {
     printf("pixart - convert an image into pixel art with palette quantization.\n\n");
     printf("Usage:\n");
-    printf("  pixart -mode <integer> -size <integer> -file <input> -output <output>\n\n");
+    printf("  pixart -mode <integer> [-size <integer> | -width <integer>] -file <input> -output <output>\n\n");
     printf("Options:\n");
     printf("  -mode <mode>        Dithering algorithm to use (default: 1)\n");
     printf("                        0 = None\n");
     printf("                        1 = Floyd-Steinberg error diffusion\n");
     printf("                        2 = Ordered 4x4 Bayer matrix\n");
     printf("  -size <percent>     Output size as percent of the source (default: 50)\n");
+    printf("  -width <pixels>     Output width in pixels; height scales proportionally\n");
+    printf("                      Cannot be used together with -size\n");
     printf("  -file <path>        Input image file (PNG/JPG/TGA/BMP and more)\n");
     printf("  -output <path>      Output PNG file path\n");
     printf("  -help               Show this help message\n");
+    printf("\n");
+    printf("Resizing preserves original 24-bit RGB values before dithering/quantization.\n");
 }
 
 static int parse_int(const char *text, int *out) {
@@ -233,6 +237,9 @@ int main(int argc, char *argv[]) {
     const char *input_path = NULL;
     const char *output_path = NULL;
     int size_pct = 50;
+    int size_given = 0;
+    int target_width = 0;
+    int width_given = 0;
     int dithering = DITHER_FLOYD_STEINBERG;
 
     for (int i = 1; i < argc; ++i) {
@@ -249,6 +256,13 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "pixart: invalid size value.\n");
                 return 1;
             }
+            size_given = 1;
+        } else if (strcmp(argv[i], "-width") == 0 && i + 1 < argc) {
+            if (!parse_int(argv[++i], &target_width)) {
+                fprintf(stderr, "pixart: invalid width value.\n");
+                return 1;
+            }
+            width_given = 1;
         } else if (strcmp(argv[i], "-file") == 0 && i + 1 < argc) {
             input_path = argv[++i];
         } else if (strcmp(argv[i], "-output") == 0 && i + 1 < argc) {
@@ -264,8 +278,18 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    if (size_pct <= 0 || size_pct > 800) {
+    if (size_given && width_given) {
+        fprintf(stderr, "pixart: -size and -width are mutually exclusive.\n");
+        return 1;
+    }
+
+    if (!width_given && (size_pct <= 0 || size_pct > 800)) {
         fprintf(stderr, "pixart: size must be between 1 and 800.\n");
+        return 1;
+    }
+
+    if (width_given && target_width <= 0) {
+        fprintf(stderr, "pixart: width must be greater than 0.\n");
         return 1;
     }
 
@@ -281,8 +305,15 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    long long scaled_w = (long long)width * size_pct / 100LL;
-    long long scaled_h = (long long)height * size_pct / 100LL;
+    long long scaled_w = 0;
+    long long scaled_h = 0;
+    if (target_width > 0) {
+        scaled_w = target_width;
+        scaled_h = ((long long)height * (long long)target_width + (long long)width / 2LL) / (long long)width;
+    } else {
+        scaled_w = (long long)width * size_pct / 100LL;
+        scaled_h = (long long)height * size_pct / 100LL;
+    }
     if (scaled_w < 1) scaled_w = 1;
     if (scaled_h < 1) scaled_h = 1;
     if (scaled_w > INT_MAX || scaled_h > INT_MAX) {
@@ -314,4 +345,3 @@ int main(int argc, char *argv[]) {
     free(quantized);
     return 0;
 }
-

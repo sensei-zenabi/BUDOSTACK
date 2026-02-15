@@ -9,7 +9,7 @@
 #===================================================================================
 
 ./apps/terminal \
-    -s ./shaders/noise.glsl \
-    -s ./shaders/effects.glsl \
-    -s ./shaders/crtscreen.glsl
+    -s ./budo/shaders/noise.glsl \
+    -s ./budo/shaders/effects.glsl \
+    -s ./budo/shaders/crtscreen.glsl
 

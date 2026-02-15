@@ -39,10 +39,10 @@ build_demo() {
         $SDL_IMAGE_DEFINE \
         $SDL_MIXER_DEFINE \
         $SDL_CFLAGS $SDL_IMAGE_CFLAGS $SDL_MIXER_CFLAGS \
-        -I"$SCRIPT_DIR" \
-        budo_graphics.c \
-        budo_audio.c \
-        budo_shader_stack.c \
+        -I"$SCRIPT_DIR" -I"$SCRIPT_DIR/lib" \
+        lib/budo_graphics.c \
+        lib/budo_audio.c \
+        lib/budo_shader_stack.c \
         "$source" \
         -o "$output" \
         $SDL_LIBS $SDL_IMAGE_LIBS $SDL_MIXER_LIBS $GL_LIBS -lm

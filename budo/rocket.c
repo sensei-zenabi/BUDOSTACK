@@ -1,6 +1,6 @@
-#include "budo_audio.h"
-#include "budo_graphics.h"
-#include "budo_shader_stack.h"
+#include "lib/budo_audio.h"
+#include "lib/budo_graphics.h"
+#include "lib/budo_shader_stack.h"
 
 #include <math.h>
 #include <stdio.h>

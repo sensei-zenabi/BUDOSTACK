@@ -84,16 +84,16 @@
   BUDOSTACK system folders containing all commands and in-built applications
   for content creation. The content of these folders should not be modified.
 
-  ./apps/        - System applications that do not use paging.
-  ./commands/    - BUDOSTACK TASK scripting commands (read manual.md).
-  ./documents/   - Documents provided by BUDOSTACK.
-  ./fonts/       - Built-in .ttf and .psf system fonts
-  ./games/       - Built-in games. Think of the as our 'minesweepers'.
-  ./lib/         - Shared system libraries used by applications and utilities.
-  ./screenshots/ - Contains the advertisement screenshots.
-  ./shaders/     - Shaders used for CRT simulation used in apps/terminal.
-  ./sounds/      - Collection of system sounds.
-  ./utilities/   - System utilities (utilities/nopaging.ini for exceptions).
+  ./apps/         - System applications that do not use paging.
+  ./commands/     - BUDOSTACK TASK scripting commands (read manual.md).
+  ./documents/    - Documents provided by BUDOSTACK.
+  ./fonts/        - Built-in .ttf and .psf system fonts
+  ./games/        - Built-in games. Think of the as our 'minesweepers'.
+  ./lib/          - Shared system libraries used by applications and utilities.
+  ./screenshots/  - Contains the advertisement screenshots.
+  ./budo/shaders/ - Shaders used for CRT simulation used in apps/terminal.
+  ./sounds/       - Collection of system sounds.
+  ./utilities/    - System utilities (utilities/nopaging.ini for exceptions).
 
 -----------------------------------------------------------------------------
 

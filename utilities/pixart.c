@@ -39,7 +39,7 @@ static void print_help(void) {
     printf("  pixart -mode <integer> [-size <integer> | -width <integer>] -file <input> -output <output>\n\n");
     printf("Options:\n");
     printf("  -mode <mode>        Dithering algorithm to use (default: 1)\n");
-    printf("                        0 = None\n");
+    printf("                        0 = None (no dithering, no palette reduction)\n");
     printf("                        1 = Floyd-Steinberg error diffusion\n");
     printf("                        2 = Ordered 4x4 Bayer matrix\n");
     printf("  -size <percent>     Output size as percent of the source (default: 50)\n");
@@ -195,12 +195,23 @@ static Pixel *apply_floyd_steinberg(const Pixel *input, int width, int height) {
 }
 
 static Pixel *quantize_image(const Pixel *input, int width, int height, DitheringMode mode) {
+    if (mode == DITHER_NONE) {
+        Pixel *copy = malloc((size_t)width * (size_t)height * sizeof(Pixel));
+        if (copy == NULL) {
+            return NULL;
+        }
+        memcpy(copy, input, (size_t)width * (size_t)height * sizeof(Pixel));
+        return copy;
+    }
+
     if (mode == DITHER_FLOYD_STEINBERG) {
         return apply_floyd_steinberg(input, width, height);
     }
+
     if (mode == DITHER_ORDERED_4x4) {
         return apply_ordered_dither(input, width, height);
     }
+
     Pixel *out = malloc((size_t)width * (size_t)height * sizeof(Pixel));
     if (out == NULL) {
         return NULL;
@@ -332,7 +343,7 @@ int main(int argc, char *argv[]) {
     Pixel *quantized = quantize_image(resized, (int)scaled_w, (int)scaled_h, (DitheringMode)dithering);
     free(resized);
     if (quantized == NULL) {
-        fprintf(stderr, "pixart: unable to apply dithering.\n");
+        fprintf(stderr, "pixart: unable to process colors.\n");
         return 1;
     }
 

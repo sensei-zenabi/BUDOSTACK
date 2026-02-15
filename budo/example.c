@@ -436,6 +436,8 @@ int main(int argc, char **argv) {
                                      texture,
                                      GAME_WIDTH,
                                      GAME_HEIGHT,
+                                     GAME_WIDTH,
+                                     GAME_HEIGHT,
                                      drawable_width,
                                      drawable_height,
                                      0,

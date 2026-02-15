@@ -73,6 +73,7 @@ endif
 
 ifeq ($(SDL2_ENABLED),1)
 apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
+budo/budo_shader_stack.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
 endif
 
@@ -143,8 +144,12 @@ $(TARGET): $(NON_COMMAND_OBJECTS) $(LIB_OBJS)
 	@echo "Linking $(TARGET)..."
 	$(CC) $(NON_COMMAND_OBJECTS) $(LIB_OBJS) $(LDFLAGS) -o $(TARGET)
 
+apps/terminal: apps/terminal.o budo/budo_shader_stack.o $(LIB_OBJS)
+	@echo "Linking $@..."
+	$(CC) apps/terminal.o budo/budo_shader_stack.o $(LIB_OBJS) $(LDFLAGS) -o $@
+
 # For each executable, link its corresponding object file with the lib objects.
-$(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS)
+$(COMMANDS_EXES) $(filter-out ./apps/terminal,$(APPS_EXES)) $(GAMES_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS)
 	@echo "Linking $@..."
 	$(CC) $< $(LIB_OBJS) $(LDFLAGS) -o $@
 

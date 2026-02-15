@@ -32,6 +32,8 @@ if (budo_shader_stack_init(&stack) == 0) {
                                  scene_texture,
                                  scene_width,
                                  scene_height,
+                                 input_width,
+                                 input_height,
                                  window_width,
                                  window_height,
                                  source_is_fbo,
@@ -43,6 +45,7 @@ if (budo_shader_stack_init(&stack) == 0) {
 ## Notes
 
 - `source_tex_is_fbo` should be `1` if your source texture comes from a framebuffer (so the shader stack flips texture coordinates correctly).
+- `source_input_width/source_input_height` should describe the logical input resolution fed into the current source texture (for correct `InputSize` uniforms after pre-composition steps).
 - The shader stack maintains its own history texture for `Prev0` uniforms.
 - If you want to change shader parameters at runtime, update the shader source or set uniforms after `budo_shader_stack_load` returns.
 

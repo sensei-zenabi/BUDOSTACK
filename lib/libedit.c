@@ -38,6 +38,7 @@ static const unsigned char COLOR_KEYTYPE_RGB[3]      = {0, 204, 204};   // Data 
 static const unsigned char COLOR_FUNCTION_RGB[3]     = {102, 255, 255}; // Function names
 static const unsigned char COLOR_NUMBER_RGB[3]       = {255, 204, 0};   // Numeric literals
 static const unsigned char COLOR_PAREN_RGB[3]        = {255, 0, 255};   // Parentheses and brackets
+static const unsigned char COLOR_IDENTIFIER_RGB[3]   = {153, 204, 255}; // Library and typedef identifiers
 static const unsigned char COLOR_HEADER_RGB[3]       = {255, 85, 85};   // Markdown headers
 static const unsigned char COLOR_BULLET_RGB[3]       = {0, 204, 102};   // List bullets
 static const unsigned char COLOR_TAG_RGB[3]          = {85, 170, 255};  // Markup tags
@@ -78,6 +79,112 @@ int libedit_is_plain_text(const char *filename) {
     return strcasecmp(ext, ".txt") == 0;
 }
 
+static int is_identifier_start_char(char c) {
+    return c == '_' || isalpha((unsigned char)c);
+}
+
+static int is_identifier_char(char c) {
+    return c == '_' || isalnum((unsigned char)c);
+}
+
+static int is_known_c_keyword(const char *word) {
+    static const char *keywords[] = {
+        "auto", "break", "case", "const", "continue", "default",
+        "do", "else", "enum", "extern", "for", "goto", "if",
+        "inline", "register", "restrict", "return", "sizeof",
+        "static", "struct", "switch", "typedef", "union", "volatile",
+        "while", "_Alignas", "_Alignof", "_Atomic", "_Bool",
+        "_Complex", "_Generic", "_Imaginary", "_Noreturn",
+        "_Static_assert", "_Thread_local", "_Pragma",
+        "int", "char", "float", "double", "long", "short",
+        "signed", "unsigned", "void"
+    };
+    size_t num_keywords = sizeof(keywords) / sizeof(keywords[0]);
+    for (size_t i = 0; i < num_keywords; i++) {
+        if (strcmp(word, keywords[i]) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int is_known_data_type(const char *word) {
+    static const char *data_types[] = {
+        "int", "char", "float", "double", "long", "short",
+        "signed", "unsigned", "void", "size_t", "ssize_t",
+        "uintptr_t", "intptr_t", "ptrdiff_t"
+    };
+    size_t num_data_types = sizeof(data_types) / sizeof(data_types[0]);
+    for (size_t i = 0; i < num_data_types; i++) {
+        if (strcmp(word, data_types[i]) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int parse_identifier(const char *line, size_t len, size_t i, char *word, size_t word_size,
+                            size_t *word_end) {
+    size_t j = i;
+    while (j < len && is_identifier_char(line[j]))
+        j++;
+    *word_end = j;
+    size_t word_len = j - i;
+    if (word_len == 0 || word_len >= word_size)
+        return 0;
+    memcpy(word, line + i, word_len);
+    word[word_len] = '\0';
+    return 1;
+}
+
+static size_t append_preprocessor_line(char *result, size_t ri, size_t buf_size,
+                                       const char *line, size_t len, size_t directive_start) {
+    size_t i = 0;
+    while (i < directive_start) {
+        result[ri++] = line[i++];
+    }
+
+    ri = append_color(result, ri, buf_size, COLOR_PREPROCESSOR_RGB);
+    result[ri++] = '#';
+    i = directive_start + 1;
+    while (i < len && isspace((unsigned char)line[i])) {
+        result[ri++] = line[i++];
+    }
+
+    char directive[32];
+    size_t directive_end = i;
+    int has_directive = parse_identifier(line, len, i, directive, sizeof(directive), &directive_end);
+    if (has_directive) {
+        while (i < directive_end) {
+            result[ri++] = line[i++];
+        }
+    }
+    ri = append_reset(result, ri, buf_size);
+
+    if (has_directive && strcmp(directive, "include") == 0) {
+        while (i < len && isspace((unsigned char)line[i])) {
+            result[ri++] = line[i++];
+        }
+        if (i < len && (line[i] == '"' || line[i] == '<')) {
+            char closer = line[i] == '<' ? '>' : '"';
+            ri = append_color(result, ri, buf_size, COLOR_STRING_RGB);
+            result[ri++] = line[i++];
+            while (i < len) {
+                result[ri++] = line[i];
+                if (line[i] == closer) {
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            ri = append_reset(result, ri, buf_size);
+        }
+    }
+
+    while (i < len) {
+        result[ri++] = line[i++];
+    }
+    return ri;
+}
+
 char *highlight_c_line(const char *line, int hl_in_comment) {
     size_t len = strlen(line);
     /* Allocate a generous buffer to hold extra escape codes. */
@@ -92,11 +199,7 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
     while (j < len && isspace((unsigned char)line[j]))
         j++;
     if (j < len && line[j] == '#') {
-        ri = append_color(result, ri, buf_size, COLOR_PREPROCESSOR_RGB);
-        /* Copy the entire preprocessor directive line */
-        memcpy(result + ri, line, len);
-        ri += len;
-        ri = append_reset(result, ri, buf_size);
+        ri = append_preprocessor_line(result, ri, buf_size, line, len, j);
         result[ri] = '\0';
         return result;
     }
@@ -172,53 +275,17 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                 continue;
             }
             /* Check for identifier (potential keyword) */
-            if ((line[i] == '_' || isalpha((unsigned char)line[i])) &&
-                (i == 0 || (!isalnum((unsigned char)line[i - 1]) && line[i - 1] != '_'))) {
-                size_t j = i;
-                while (j < len && (line[j] == '_' || isalnum((unsigned char)line[j])))
-                    j++;
-                size_t word_len = j - i;
+            if (is_identifier_start_char(line[i]) &&
+                (i == 0 || !is_identifier_char(line[i - 1]))) {
                 char word[64];
-                if (word_len < sizeof(word)) {
-                    memcpy(word, line + i, word_len);
-                    word[word_len] = '\0';
-                } else {
-                    word[0] = '\0';
+                size_t j = i;
+                if (!parse_identifier(line, len, i, word, sizeof(word), &j)) {
+                    result[ri++] = line[i++];
+                    continue;
                 }
-                static const char *keywords[] = {
-                    "auto", "break", "case", "const", "continue", "default",
-                    "do", "else", "enum", "extern", "for", "goto", "if",
-                    "inline", "register", "restrict", "return", "sizeof",
-                    "static", "struct", "switch", "typedef", "union", "volatile",
-                    "while", "_Alignas", "_Alignof", "_Atomic", "_Bool",
-                    "_Complex", "_Generic", "_Imaginary", "_Noreturn",
-                    "_Static_assert", "_Thread_local",
-                    "int", "char", "float", "double", "long", "short",
-                    "signed", "unsigned", "void"
-                };
-                size_t num_keywords = sizeof(keywords) / sizeof(keywords[0]);
-                int is_keyword = 0;
-                for (size_t k = 0; k < num_keywords; k++) {
-                    if (strcmp(word, keywords[k]) == 0) {
-                        is_keyword = 1;
-                        break;
-                    }
-                }
-                if (is_keyword) {
-                    int is_data_type = 0;
-                    static const char *data_types[] = {
-                        "int", "char", "float", "double", "long", "short",
-                        "signed", "unsigned", "void"
-                    };
-                    size_t num_data_types = sizeof(data_types) / sizeof(data_types[0]);
-                    for (size_t k = 0; k < num_data_types; k++) {
-                        if (strcmp(word, data_types[k]) == 0) {
-                            is_data_type = 1;
-                            break;
-                        }
-                    }
+                if (is_known_c_keyword(word)) {
                     const unsigned char *keyword_rgb =
-                        is_data_type ? COLOR_KEYTYPE_RGB : COLOR_KEYWORD_RGB;
+                        is_known_data_type(word) ? COLOR_KEYTYPE_RGB : COLOR_KEYWORD_RGB;
                     ri = append_color(result, ri, buf_size, keyword_rgb);
                     for (size_t k = i; k < j; k++) {
                         result[ri++] = line[k];
@@ -232,6 +299,16 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                         k2++;
                     if (k2 < len && line[k2] == '(') {
                         ri = append_color(result, ri, buf_size, COLOR_FUNCTION_RGB);
+                        for (size_t k = i; k < j; k++) {
+                            result[ri++] = line[k];
+                        }
+                        ri = append_reset(result, ri, buf_size);
+                        i = j;
+                        continue;
+                    }
+
+                    if (strchr(word, '_') != NULL) {
+                        ri = append_color(result, ri, buf_size, COLOR_IDENTIFIER_RGB);
                         for (size_t k = i; k < j; k++) {
                             result[ri++] = line[k];
                         }
@@ -280,6 +357,15 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                     }
                     while (i < len && isdigit((unsigned char)line[i])) {
                         result[ri++] = line[i++];
+                    }
+                }
+                while (i < len) {
+                    char suffix = line[i];
+                    if (suffix == 'u' || suffix == 'U' || suffix == 'l' || suffix == 'L' ||
+                        suffix == 'f' || suffix == 'F') {
+                        result[ri++] = line[i++];
+                    } else {
+                        break;
                     }
                 }
                 ri = append_reset(result, ri, buf_size);

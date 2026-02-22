@@ -7961,6 +7961,9 @@ int main(int argc, char **argv) {
                 }
             } else if (event.type == SDL_KEYDOWN) {
                 terminal_input_draw_requested = 1;
+#if BUDOSTACK_HAVE_SDL2
+                terminal_play_keyboard_sound();
+#endif
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = terminal_normalize_modifiers(event.key.keysym.mod);
                 int handled = 0;
@@ -8342,9 +8345,6 @@ int main(int argc, char **argv) {
                 }
 
                 if (handled) {
-#if BUDOSTACK_HAVE_SDL2
-                    terminal_play_keyboard_sound();
-#endif
                     terminal_selection_clear();
                     cursor_phase_visible = 1;
                     cursor_last_toggle = SDL_GetTicks();
@@ -8368,9 +8368,6 @@ int main(int argc, char **argv) {
                     if (terminal_send_bytes(master_fd, text, len) < 0) {
                         running = 0;
                     }
-#if BUDOSTACK_HAVE_SDL2
-                    terminal_play_keyboard_sound();
-#endif
                     cursor_phase_visible = 1;
                     cursor_last_toggle = SDL_GetTicks();
                 }

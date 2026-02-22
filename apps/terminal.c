@@ -7962,7 +7962,9 @@ int main(int argc, char **argv) {
             } else if (event.type == SDL_KEYDOWN) {
                 terminal_input_draw_requested = 1;
 #if BUDOSTACK_HAVE_SDL2
-                terminal_play_keyboard_sound();
+                if (event.key.repeat == 0) {
+                    terminal_play_keyboard_sound();
+                }
 #endif
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = terminal_normalize_modifiers(event.key.keysym.mod);

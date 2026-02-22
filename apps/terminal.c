@@ -292,6 +292,8 @@ static struct psf_font terminal_font = {0};
 #define TERMINAL_KEYBOARD_SOUND_FIRST_CHANNEL TERMINAL_SOUND_CHANNEL_COUNT
 #define TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT 4
 #define TERMINAL_AUDIO_CHANNEL_COUNT (TERMINAL_SOUND_CHANNEL_COUNT + TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT)
+#define TERMINAL_KEYBOARD_SOUND_BASE_VOLUME 0.35f
+#define TERMINAL_KEYBOARD_SOUND_VOLUME_VARIATION_PERCENT 10
 
 struct terminal_sound_channel {
     float *samples;
@@ -330,6 +332,7 @@ static int terminal_keyboard_sound_path_has_wav_extension(const char *path);
 static int terminal_keyboard_sound_library_add(const char *path);
 static int terminal_keyboard_sound_library_load(const char *directory_path);
 static void terminal_keyboard_sound_set_enabled(int enabled);
+static float terminal_keyboard_sound_random_volume(void);
 static void terminal_play_keyboard_sound(void);
 #endif
 
@@ -1087,6 +1090,21 @@ static void terminal_keyboard_sound_set_enabled(int enabled) {
     terminal_keyboard_sound_enabled = enabled ? 1 : 0;
 }
 
+static float terminal_keyboard_sound_random_volume(void) {
+    int range = TERMINAL_KEYBOARD_SOUND_VOLUME_VARIATION_PERCENT;
+    int offset_percent = (rand() % (range * 2 + 1)) - range;
+    float multiplier = 1.0f + ((float)offset_percent / 100.0f);
+    float volume = TERMINAL_KEYBOARD_SOUND_BASE_VOLUME * multiplier;
+
+    if (volume < 0.0f) {
+        volume = 0.0f;
+    } else if (volume > 1.0f) {
+        volume = 1.0f;
+    }
+
+    return volume;
+}
+
 static void terminal_play_keyboard_sound(void) {
     if (!terminal_keyboard_sound_enabled) {
         return;
@@ -1104,7 +1122,7 @@ static void terminal_play_keyboard_sound(void) {
     int channel_index = TERMINAL_KEYBOARD_SOUND_FIRST_CHANNEL + (int)terminal_keyboard_sound_next_channel;
     terminal_keyboard_sound_next_channel = (terminal_keyboard_sound_next_channel + 1u) % TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT;
 
-    if (terminal_sound_play(channel_index, sound_path, 0.35f) != 0) {
+    if (terminal_sound_play(channel_index, sound_path, terminal_keyboard_sound_random_volume()) != 0) {
         fprintf(stderr, "terminal: Failed to play keyboard sound '%s'.\n", sound_path);
     }
 }

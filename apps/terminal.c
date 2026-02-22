@@ -11,11 +11,13 @@
 #include <string.h>
 #include <stddef.h>
 #include <ctype.h>
+#include <dirent.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #if defined(__has_include)
@@ -286,6 +288,10 @@ static struct psf_font terminal_font = {0};
 
 #if BUDOSTACK_HAVE_SDL2
 #define TERMINAL_SOUND_CHANNEL_COUNT 32
+#define TERMINAL_KEYBOARD_SOUND_DIR "./sounds/key_presses"
+#define TERMINAL_KEYBOARD_SOUND_FIRST_CHANNEL TERMINAL_SOUND_CHANNEL_COUNT
+#define TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT 4
+#define TERMINAL_AUDIO_CHANNEL_COUNT (TERMINAL_SOUND_CHANNEL_COUNT + TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT)
 
 struct terminal_sound_channel {
     float *samples;
@@ -298,7 +304,18 @@ struct terminal_sound_channel {
 static SDL_AudioDeviceID terminal_audio_device = 0;
 static SDL_AudioSpec terminal_audio_spec = {0};
 static SDL_mutex *terminal_audio_mutex = NULL;
-static struct terminal_sound_channel terminal_sound_channels[TERMINAL_SOUND_CHANNEL_COUNT];
+static struct terminal_sound_channel terminal_sound_channels[TERMINAL_AUDIO_CHANNEL_COUNT];
+
+struct terminal_keyboard_sound_library {
+    char **paths;
+    size_t count;
+    size_t capacity;
+};
+
+static struct terminal_keyboard_sound_library terminal_keyboard_sound_library = {0};
+static int terminal_keyboard_sound_enabled = 1;
+static int terminal_keyboard_sound_seeded = 0;
+static size_t terminal_keyboard_sound_next_channel = 0u;
 
 static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int len);
 static void terminal_audio_channel_clear(struct terminal_sound_channel *channel);
@@ -308,6 +325,12 @@ static int terminal_audio_convert(const SDL_AudioSpec *source_spec, const void *
 static int terminal_audio_load_file(const char *path, float **out_samples, size_t *out_frames);
 static int terminal_sound_play(int channel_index, const char *path, float volume);
 static void terminal_sound_stop(int channel_index);
+static void terminal_keyboard_sound_library_free(void);
+static int terminal_keyboard_sound_path_has_wav_extension(const char *path);
+static int terminal_keyboard_sound_library_add(const char *path);
+static int terminal_keyboard_sound_library_load(const char *directory_path);
+static void terminal_keyboard_sound_set_enabled(int enabled);
+static void terminal_play_keyboard_sound(void);
 #endif
 
 struct terminal_buffer;
@@ -487,7 +510,7 @@ static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int l
 
     float *output = (float *)stream;
 
-    for (size_t channel_index = 0u; channel_index < TERMINAL_SOUND_CHANNEL_COUNT; channel_index++) {
+    for (size_t channel_index = 0u; channel_index < TERMINAL_AUDIO_CHANNEL_COUNT; channel_index++) {
         struct terminal_sound_channel *channel = &terminal_sound_channels[channel_index];
         if (!channel->active || !channel->samples || channel->frame_count == 0u) {
             continue;
@@ -593,12 +616,12 @@ static int terminal_initialize_audio(void) {
 static void terminal_shutdown_audio(void) {
     if (terminal_audio_mutex) {
         if (SDL_LockMutex(terminal_audio_mutex) == 0) {
-            for (size_t i = 0u; i < TERMINAL_SOUND_CHANNEL_COUNT; i++) {
+            for (size_t i = 0u; i < TERMINAL_AUDIO_CHANNEL_COUNT; i++) {
                 terminal_audio_channel_clear(&terminal_sound_channels[i]);
             }
             SDL_UnlockMutex(terminal_audio_mutex);
         } else {
-            for (size_t i = 0u; i < TERMINAL_SOUND_CHANNEL_COUNT; i++) {
+            for (size_t i = 0u; i < TERMINAL_AUDIO_CHANNEL_COUNT; i++) {
                 terminal_audio_channel_clear(&terminal_sound_channels[i]);
             }
         }
@@ -888,7 +911,7 @@ static int terminal_audio_load_file(const char *path, float **out_samples, size_
 }
 
 static int terminal_sound_play(int channel_index, const char *path, float volume) {
-    if (channel_index < 0 || channel_index >= (int)TERMINAL_SOUND_CHANNEL_COUNT) {
+    if (channel_index < 0 || channel_index >= (int)TERMINAL_AUDIO_CHANNEL_COUNT) {
         fprintf(stderr, "terminal: Sound channel %d out of range.\n", channel_index + 1);
         return -1;
     }
@@ -931,7 +954,7 @@ static int terminal_sound_play(int channel_index, const char *path, float volume
 }
 
 static void terminal_sound_stop(int channel_index) {
-    if (channel_index < 0 || channel_index >= (int)TERMINAL_SOUND_CHANNEL_COUNT) {
+    if (channel_index < 0 || channel_index >= (int)TERMINAL_AUDIO_CHANNEL_COUNT) {
         return;
     }
     if (!terminal_audio_mutex) {
@@ -945,6 +968,145 @@ static void terminal_sound_stop(int channel_index) {
 
     terminal_audio_channel_clear(&terminal_sound_channels[(size_t)channel_index]);
     SDL_UnlockMutex(terminal_audio_mutex);
+}
+
+static void terminal_keyboard_sound_library_free(void) {
+    if (terminal_keyboard_sound_library.paths) {
+        for (size_t i = 0u; i < terminal_keyboard_sound_library.count; i++) {
+            free(terminal_keyboard_sound_library.paths[i]);
+        }
+        free(terminal_keyboard_sound_library.paths);
+    }
+    terminal_keyboard_sound_library.paths = NULL;
+    terminal_keyboard_sound_library.count = 0u;
+    terminal_keyboard_sound_library.capacity = 0u;
+}
+
+static int terminal_keyboard_sound_path_has_wav_extension(const char *path) {
+    if (!path) {
+        return 0;
+    }
+    const char *extension = strrchr(path, '.');
+    if (!extension) {
+        return 0;
+    }
+    if (strcasecmp(extension, ".wav") == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+static int terminal_keyboard_sound_library_add(const char *path) {
+    if (!path || path[0] == '\0') {
+        return -1;
+    }
+
+    if (terminal_keyboard_sound_library.count == terminal_keyboard_sound_library.capacity) {
+        size_t next_capacity = terminal_keyboard_sound_library.capacity == 0u ? 8u : terminal_keyboard_sound_library.capacity * 2u;
+        if (next_capacity < terminal_keyboard_sound_library.capacity) {
+            fprintf(stderr, "terminal: Keyboard sound capacity overflow.\n");
+            return -1;
+        }
+        char **next_paths = realloc(terminal_keyboard_sound_library.paths, next_capacity * sizeof(*next_paths));
+        if (!next_paths) {
+            perror("terminal: realloc keyboard sound paths");
+            return -1;
+        }
+        terminal_keyboard_sound_library.paths = next_paths;
+        terminal_keyboard_sound_library.capacity = next_capacity;
+    }
+
+    char *copy = strdup(path);
+    if (!copy) {
+        perror("terminal: strdup keyboard sound path");
+        return -1;
+    }
+
+    terminal_keyboard_sound_library.paths[terminal_keyboard_sound_library.count] = copy;
+    terminal_keyboard_sound_library.count++;
+    return 0;
+}
+
+static int terminal_keyboard_sound_library_load(const char *directory_path) {
+    if (!directory_path || directory_path[0] == '\0') {
+        return -1;
+    }
+
+    terminal_keyboard_sound_library_free();
+
+    DIR *directory = opendir(directory_path);
+    if (!directory) {
+        fprintf(stderr, "terminal: Unable to open keyboard sound directory '%s': %s\n", directory_path, strerror(errno));
+        return -1;
+    }
+
+    struct dirent *entry = NULL;
+    while ((entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (!terminal_keyboard_sound_path_has_wav_extension(entry->d_name)) {
+            continue;
+        }
+
+        char full_path[PATH_MAX];
+        int written = snprintf(full_path, sizeof(full_path), "%s/%s", directory_path, entry->d_name);
+        if (written < 0 || (size_t)written >= sizeof(full_path)) {
+            fprintf(stderr, "terminal: Keyboard sound path too long for '%s'.\n", entry->d_name);
+            continue;
+        }
+
+        struct stat path_stat;
+        if (stat(full_path, &path_stat) != 0) {
+            fprintf(stderr, "terminal: Unable to stat keyboard sound '%s': %s\n", full_path, strerror(errno));
+            continue;
+        }
+        if (!S_ISREG(path_stat.st_mode)) {
+            continue;
+        }
+
+        if (terminal_keyboard_sound_library_add(full_path) != 0) {
+            closedir(directory);
+            return -1;
+        }
+    }
+
+    if (closedir(directory) != 0) {
+        fprintf(stderr, "terminal: Failed to close keyboard sound directory '%s': %s\n", directory_path, strerror(errno));
+    }
+
+    if (terminal_keyboard_sound_library.count == 0u) {
+        fprintf(stderr, "terminal: No .wav keyboard sounds found in '%s'.\n", directory_path);
+        return -1;
+    }
+
+    return 0;
+}
+
+static void terminal_keyboard_sound_set_enabled(int enabled) {
+    terminal_keyboard_sound_enabled = enabled ? 1 : 0;
+}
+
+static void terminal_play_keyboard_sound(void) {
+    if (!terminal_keyboard_sound_enabled) {
+        return;
+    }
+    if (terminal_keyboard_sound_library.count == 0u) {
+        return;
+    }
+    if (!terminal_keyboard_sound_seeded) {
+        srand((unsigned int)time(NULL));
+        terminal_keyboard_sound_seeded = 1;
+    }
+
+    size_t index = (size_t)(rand() % (int)terminal_keyboard_sound_library.count);
+    const char *sound_path = terminal_keyboard_sound_library.paths[index];
+    int channel_index = TERMINAL_KEYBOARD_SOUND_FIRST_CHANNEL + (int)terminal_keyboard_sound_next_channel;
+    terminal_keyboard_sound_next_channel = (terminal_keyboard_sound_next_channel + 1u) % TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT;
+
+    if (terminal_sound_play(channel_index, sound_path, 0.35f) != 0) {
+        fprintf(stderr, "terminal: Failed to play keyboard sound '%s'.\n", sound_path);
+    }
 }
 #endif
 
@@ -5399,6 +5561,7 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             char *token = strtok_r(copy, ";", &saveptr);
 #if BUDOSTACK_HAVE_SDL2
             char *sound_action = NULL;
+            char *keyboard_sound_action = NULL;
             char *sound_path = NULL;
             int sound_channel = -1;
             float sound_volume = 1.0f;
@@ -5528,6 +5691,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
 #if BUDOSTACK_HAVE_SDL2
                     } else if (strcmp(key, "sound") == 0 && value && *value != '\0') {
                         sound_action = value;
+                    } else if (strcmp(key, "keyboard_sound") == 0 && value && *value != '\0') {
+                        keyboard_sound_action = value;
                     } else if (strcmp(key, "channel") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
                         errno = 0;
@@ -5705,6 +5870,16 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                     } else {
                         fprintf(stderr, "terminal: Sound stop requires a valid channel.\n");
                     }
+                }
+            }
+
+            if (keyboard_sound_action) {
+                if (strcmp(keyboard_sound_action, "enable") == 0) {
+                    terminal_keyboard_sound_set_enabled(1);
+                } else if (strcmp(keyboard_sound_action, "disable") == 0) {
+                    terminal_keyboard_sound_set_enabled(0);
+                } else {
+                    fprintf(stderr, "terminal: keyboard_sound must be enable or disable.\n");
                 }
             }
 #endif
@@ -7237,6 +7412,9 @@ int main(int argc, char **argv) {
 #if BUDOSTACK_HAVE_SDL2
     if (terminal_initialize_audio() != 0) {
         fprintf(stderr, "terminal: Audio subsystem disabled due to initialization failure.\n");
+    } else if (terminal_keyboard_sound_library_load(TERMINAL_KEYBOARD_SOUND_DIR) != 0) {
+        fprintf(stderr, "terminal: Keyboard sounds disabled (no usable .wav files found).\n");
+        terminal_keyboard_sound_set_enabled(0);
     }
 #endif
 
@@ -7783,6 +7961,11 @@ int main(int argc, char **argv) {
                 }
             } else if (event.type == SDL_KEYDOWN) {
                 terminal_input_draw_requested = 1;
+#if BUDOSTACK_HAVE_SDL2
+                if (event.key.repeat == 0) {
+                    terminal_play_keyboard_sound();
+                }
+#endif
                 SDL_Keycode sym = event.key.keysym.sym;
                 SDL_Keymod mod = terminal_normalize_modifiers(event.key.keysym.mod);
                 int handled = 0;
@@ -8803,6 +8986,7 @@ int main(int argc, char **argv) {
     }
 #if BUDOSTACK_HAVE_SDL2
     terminal_shutdown_audio();
+    terminal_keyboard_sound_library_free();
 #endif
     SDL_DestroyWindow(window);
     SDL_Quit();

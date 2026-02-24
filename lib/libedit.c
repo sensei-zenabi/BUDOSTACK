@@ -33,6 +33,7 @@
 #define LIBEDIT_LANG_PYTHON 4
 #define LIBEDIT_LANG_MARKDOWN 5
 #define LIBEDIT_LANG_TEXT 6
+#define LIBEDIT_LANG_TASK 7
 
 /*
  * Syntax highlight colors (RGB definitions)
@@ -113,6 +114,8 @@ int libedit_get_language_mode(const char *filename) {
         return LIBEDIT_LANG_MARKDOWN;
     if (strcasecmp(ext, ".txt") == 0)
         return LIBEDIT_LANG_TEXT;
+    if (strcasecmp(ext, ".task") == 0)
+        return LIBEDIT_LANG_TASK;
 
     return LIBEDIT_LANG_NONE;
 }
@@ -612,6 +615,19 @@ static int match_keyword(const char *line, size_t len, size_t i, const char *key
     return 1;
 }
 
+static int match_keyword_nocase(const char *line, size_t len, size_t i, const char *keyword) {
+    size_t kw_len = strlen(keyword);
+    if (i + kw_len > len)
+        return 0;
+    if (strncasecmp(line + i, keyword, kw_len) != 0)
+        return 0;
+    if (i > 0 && !is_word_boundary(line, len, i - 1))
+        return 0;
+    if (!is_word_boundary(line, len, i + kw_len))
+        return 0;
+    return 1;
+}
+
 static char *highlight_shell_line(const char *line) {
     static const char *keywords[] = {
         "if", "then", "else", "elif", "fi", "for", "while", "do", "done",
@@ -803,6 +819,87 @@ py_continue:
     return result;
 }
 
+static char *highlight_task_line(const char *line) {
+    static const char *keywords[] = {
+        "SET", "INPUT", "IF", "ELSE", "END", "WHILE", "FOR", "PRINT",
+        "FUNCTION", "EVAL", "RETURN", "WAIT", "ECHO", "GOTO", "RUN", "CLEAR",
+        "TO", "AND", "OR", "BLOCKING", "NONBLOCKING", "ON", "OFF", "LEN"
+    };
+    size_t len = strlen(line);
+    size_t buf_size = len * 20 + 32;
+    char *result = malloc(buf_size);
+    size_t ri = 0;
+    size_t i = 0;
+
+    if (!result)
+        return NULL;
+
+    while (i < len) {
+        if (line[i] == '#') {
+            ri = append_color(result, ri, buf_size, COLOR_COMMENT_RGB);
+            while (i < len)
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            break;
+        }
+        if (line[i] == '"' || line[i] == '\'') {
+            char quote = line[i++];
+            ri = append_color(result, ri, buf_size, COLOR_STRING_RGB);
+            result[ri++] = quote;
+            while (i < len) {
+                result[ri++] = line[i];
+                if (line[i] == quote && line[i - 1] != '\\') {
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        if (line[i] == '$') {
+            ri = append_color(result, ri, buf_size, COLOR_IDENTIFIER_RGB);
+            result[ri++] = line[i++];
+            while (i < len && (isalnum((unsigned char)line[i]) || line[i] == '_'))
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        if (line[i] == '@') {
+            ri = append_color(result, ri, buf_size, COLOR_FUNCTION_RGB);
+            result[ri++] = line[i++];
+            while (i < len && (isalnum((unsigned char)line[i]) || line[i] == '_' || line[i] == '-'))
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        if (isdigit((unsigned char)line[i])) {
+            ri = append_color(result, ri, buf_size, COLOR_NUMBER_RGB);
+            while (i < len && (isdigit((unsigned char)line[i]) || line[i] == '.'))
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        for (size_t k = 0; k < sizeof(keywords) / sizeof(keywords[0]); k++) {
+            if (match_keyword_nocase(line, len, i, keywords[k])) {
+                size_t kw_len = strlen(keywords[k]);
+                ri = append_color(result, ri, buf_size, COLOR_KEYWORD_RGB);
+                memcpy(result + ri, line + i, kw_len);
+                ri += kw_len;
+                ri = append_reset(result, ri, buf_size);
+                i += kw_len;
+                goto task_continue;
+            }
+        }
+        result[ri++] = line[i++];
+task_continue:
+        ;
+    }
+
+    result[ri] = '\0';
+    return result;
+}
+
 char *libedit_highlight_line(const char *line, int mode, int hl_in_comment) {
     if (!line)
         return NULL;
@@ -817,6 +914,8 @@ char *libedit_highlight_line(const char *line, int mode, int hl_in_comment) {
         return highlight_python_line(line);
     if (mode == LIBEDIT_LANG_MARKDOWN)
         return highlight_other_line(line);
+    if (mode == LIBEDIT_LANG_TASK)
+        return highlight_task_line(line);
 
     return NULL;
 }

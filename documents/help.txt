@@ -53,7 +53,7 @@
  /* TOP Tips */
 
   edit     : Opens a basic file editor: edit <filename>.
-             Supported languages: C/C++, Markup, .txt
+             Supported files: .h/.c, .py, .bat, .sh, .txt, .md, .TASK
   restart  : A command to re-compile and restart BUDOSTACK. Use with caution!
              Use 'restart -f' to clean before building.
   runtask  : Run a TASK script. See below help for details.

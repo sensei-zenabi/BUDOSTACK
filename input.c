@@ -309,6 +309,7 @@ char* read_input(void) {
                 memcpy(buffer + token_start, formatted, comp_len);
                 pos = token_start + comp_len + tail_len;
                 cursor = token_start + comp_len;
+                completion_state.token_end = cursor;
 
                 fwrite(formatted, 1, comp_len, stdout);
                 fwrite(buffer + cursor, 1, pos - cursor, stdout);

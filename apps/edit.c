@@ -62,9 +62,10 @@ void abFree(struct abuf *ab) {
 #define DEL_KEY 1004  // Key code for Delete
 
 /* Prototype for the syntax highlighter from libedit.c */
-char *highlight_c_line(const char *line, int hl_in_comment);
-char *highlight_other_line(const char *line);
+char *libedit_highlight_line(const char *line, int mode, int hl_in_comment);
+int libedit_get_language_mode(const char *filename);
 int libedit_is_plain_text(const char *filename);
+int libedit_mode_uses_c_comments(int mode);
 
 /* Enumeration for editor keys.
    New keys added:
@@ -117,6 +118,7 @@ typedef struct {
     int preferred_cx;
     UndoState *undo_history[100];
     int undo_history_len;
+    int language_mode;
 } EditorBuffer;
 
 /* Global clipboard for cut/copy/paste functionality */
@@ -167,6 +169,7 @@ struct EditorConfig {
 
     UndoState *undo_history[100];
     int undo_history_len;
+    int language_mode;
 } E;
 
 #define MENU_FILES 0
@@ -325,11 +328,18 @@ void editorReplace(void);
 */
 void update_syntax(void) {
     int in_comment = 0;
+
+    if (!libedit_mode_uses_c_comments(E.language_mode)) {
+        for (int i = 0; i < E.numrows; i++)
+            E.row[i].hl_in_comment = 0;
+        return;
+    }
+
     for (int i = 0; i < E.numrows; i++) {
         E.row[i].hl_in_comment = in_comment;
         char *line = E.row[i].chars;
         int j = 0;
-        // Simple scan for multi-line comment delimiters (ignoring strings/chars)
+
         while (j < E.row[i].size) {
             if (!in_comment && j + 1 < E.row[i].size && line[j] == '/' && line[j + 1] == '*') {
                 in_comment = 1;
@@ -360,6 +370,7 @@ static void editorBufferReset(EditorBuffer *buf) {
     buf->sel_anchor_y = 0;
     buf->preferred_cx = 0;
     buf->undo_history_len = 0;
+    buf->language_mode = 0;
     for (int i = 0; i < 100; i++)
         buf->undo_history[i] = NULL;
 }
@@ -635,6 +646,7 @@ static void editorCaptureActiveBuffer(EditorBuffer *buf) {
     buf->sel_anchor_y = E.sel_anchor_y;
     buf->preferred_cx = E.preferred_cx;
     buf->undo_history_len = E.undo_history_len;
+    buf->language_mode = E.language_mode;
     for (int i = 0; i < E.undo_history_len; i++)
         buf->undo_history[i] = E.undo_history[i];
     for (int i = E.undo_history_len; i < 100; i++)
@@ -655,6 +667,7 @@ static void editorApplyBuffer(EditorBuffer *buf) {
     E.sel_anchor_y = buf->sel_anchor_y;
     E.preferred_cx = buf->preferred_cx;
     E.undo_history_len = buf->undo_history_len;
+    E.language_mode = buf->language_mode;
     for (int i = 0; i < buf->undo_history_len; i++)
         E.undo_history[i] = buf->undo_history[i];
     for (int i = buf->undo_history_len; i < 100; i++)
@@ -968,33 +981,18 @@ void editorProcessMenuKeypress(int c) {
 }
 
 int is_plain_text_file(void) {
-    return libedit_is_plain_text(E.filename);
+    return E.language_mode == 6 || libedit_is_plain_text(E.filename);
 }
 
-/* Returns nonzero when the current file should use C-style highlighting.
-   Markdown files opt out and receive the generic highlighter. */
 int is_c_source(void) {
-    if (is_plain_text_file())
-        return 0;
-
-    if (!E.filename)
-        return 1;
-
-    const char *ext = strrchr(E.filename, '.');
-    if (!ext)
-        return 1;
-
-    if (strcasecmp(ext, ".md") == 0 || strcasecmp(ext, ".markdown") == 0)
-        return 0;
-
-    return 1;
+    return E.language_mode == 1;
 }
 
 int is_other_source(void) {
     if (is_plain_text_file())
         return 0;
 
-    return !is_c_source();
+    return E.language_mode != 0 && !is_c_source();
 }
 
 int getRowNumWidth(void) {
@@ -1332,19 +1330,16 @@ void editorDrawRows(struct abuf *ab, int rn_width) {
                 editorRenderRowWithSelection(&E.row[file_row], file_row, text_width, ab);
             } else if (skip_highlight) {
                 editorRenderRow(&E.row[file_row], text_width, ab);
-            } else if (is_c_source()) {
-                /* Pass the current multi-line comment state for this line */
-                char *highlighted = highlight_c_line(E.row[file_row].chars, E.row[file_row].hl_in_comment);
-                if (highlighted) {
-                    abAppendHighlighted(ab, highlighted, E.coloff, text_width);
-                    free(highlighted);
-                }
             } else {
-                // Use this for all other files
-                char *highlighted = highlight_other_line(E.row[file_row].chars);
+                int hl_comment_state = E.row[file_row].hl_in_comment;
+                char *highlighted = libedit_highlight_line(E.row[file_row].chars,
+                                                           E.language_mode,
+                                                           hl_comment_state);
                 if (highlighted) {
                     abAppendHighlighted(ab, highlighted, E.coloff, text_width);
                     free(highlighted);
+                } else {
+                    editorRenderRow(&E.row[file_row], text_width, ab);
                 }
             }
             
@@ -2658,6 +2653,7 @@ void editorOpen(const char *filename) {
     E.filename = strdup(filename);
     if (E.filename == NULL)
         die("strdup");
+    E.language_mode = libedit_get_language_mode(E.filename);
     FILE *fp = fopen(filename, "r");
     if (!fp) {
         if (errno == ENOENT) {
@@ -2785,6 +2781,7 @@ int main(int argc, char *argv[]) {
     E.rowoff = 0; E.coloff = 0;
     E.numrows = 0; E.row = NULL;
     E.filename = NULL; E.dirty = 0;
+    E.language_mode = 0;
     E.status_message[0] = '\0';
     E.selecting = 0; E.sel_anchor_x = 0; E.sel_anchor_y = 0;
     E.preferred_cx = 0;

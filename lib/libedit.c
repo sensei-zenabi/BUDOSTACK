@@ -26,6 +26,14 @@
 #include <strings.h>
 #include <ctype.h>
 
+#define LIBEDIT_LANG_NONE 0
+#define LIBEDIT_LANG_C_FAMILY 1
+#define LIBEDIT_LANG_SHELL 2
+#define LIBEDIT_LANG_BATCH 3
+#define LIBEDIT_LANG_PYTHON 4
+#define LIBEDIT_LANG_MARKDOWN 5
+#define LIBEDIT_LANG_TEXT 6
+
 /*
  * Syntax highlight colors (RGB definitions)
  * Update the RGB values below to customize highlight colors.
@@ -77,6 +85,40 @@ int libedit_is_plain_text(const char *filename) {
         return 0;
 
     return strcasecmp(ext, ".txt") == 0;
+}
+
+int libedit_get_language_mode(const char *filename) {
+    const char *ext;
+
+    if (!filename)
+        return LIBEDIT_LANG_NONE;
+
+    ext = strrchr(filename, '.');
+    if (!ext)
+        return LIBEDIT_LANG_NONE;
+
+    if (strcasecmp(ext, ".c") == 0 || strcasecmp(ext, ".h") == 0 ||
+        strcasecmp(ext, ".cc") == 0 || strcasecmp(ext, ".cpp") == 0 ||
+        strcasecmp(ext, ".cxx") == 0 || strcasecmp(ext, ".hh") == 0 ||
+        strcasecmp(ext, ".hpp") == 0 || strcasecmp(ext, ".hxx") == 0) {
+        return LIBEDIT_LANG_C_FAMILY;
+    }
+    if (strcasecmp(ext, ".sh") == 0)
+        return LIBEDIT_LANG_SHELL;
+    if (strcasecmp(ext, ".bat") == 0)
+        return LIBEDIT_LANG_BATCH;
+    if (strcasecmp(ext, ".py") == 0)
+        return LIBEDIT_LANG_PYTHON;
+    if (strcasecmp(ext, ".md") == 0 || strcasecmp(ext, ".markdown") == 0)
+        return LIBEDIT_LANG_MARKDOWN;
+    if (strcasecmp(ext, ".txt") == 0)
+        return LIBEDIT_LANG_TEXT;
+
+    return LIBEDIT_LANG_NONE;
+}
+
+int libedit_mode_uses_c_comments(int mode) {
+    return mode == LIBEDIT_LANG_C_FAMILY;
 }
 
 static int is_identifier_start_char(char c) {
@@ -549,4 +591,232 @@ char *highlight_other_line(const char *line) {
     }
     result[ri] = '\0';
     return result;
+}
+
+static int is_word_boundary(const char *line, size_t len, size_t idx) {
+    if (idx >= len)
+        return 1;
+    return !isalnum((unsigned char)line[idx]) && line[idx] != '_';
+}
+
+static int match_keyword(const char *line, size_t len, size_t i, const char *keyword) {
+    size_t kw_len = strlen(keyword);
+    if (i + kw_len > len)
+        return 0;
+    if (strncmp(line + i, keyword, kw_len) != 0)
+        return 0;
+    if (i > 0 && !is_word_boundary(line, len, i - 1))
+        return 0;
+    if (!is_word_boundary(line, len, i + kw_len))
+        return 0;
+    return 1;
+}
+
+static char *highlight_shell_line(const char *line) {
+    static const char *keywords[] = {
+        "if", "then", "else", "elif", "fi", "for", "while", "do", "done",
+        "case", "esac", "function", "in", "select", "until", "return", "local"
+    };
+    size_t len = strlen(line);
+    size_t buf_size = len * 20 + 32;
+    char *result = malloc(buf_size);
+    size_t ri = 0;
+    size_t i = 0;
+
+    if (!result)
+        return NULL;
+
+    while (i < len) {
+        if (line[i] == '#') {
+            ri = append_color(result, ri, buf_size, COLOR_COMMENT_RGB);
+            while (i < len)
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            break;
+        }
+        if (line[i] == '"' || line[i] == '\'') {
+            char quote = line[i++];
+            ri = append_color(result, ri, buf_size, COLOR_STRING_RGB);
+            result[ri++] = quote;
+            while (i < len) {
+                result[ri++] = line[i];
+                if (line[i] == quote && line[i - 1] != '\\') {
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        if (line[i] == '$') {
+            ri = append_color(result, ri, buf_size, COLOR_IDENTIFIER_RGB);
+            result[ri++] = line[i++];
+            while (i < len && (isalnum((unsigned char)line[i]) || line[i] == '_' || line[i] == '{' || line[i] == '}'))
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        if (isdigit((unsigned char)line[i])) {
+            ri = append_color(result, ri, buf_size, COLOR_NUMBER_RGB);
+            while (i < len && isdigit((unsigned char)line[i]))
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        for (size_t k = 0; k < sizeof(keywords) / sizeof(keywords[0]); k++) {
+            if (match_keyword(line, len, i, keywords[k])) {
+                size_t kw_len = strlen(keywords[k]);
+                ri = append_color(result, ri, buf_size, COLOR_KEYWORD_RGB);
+                memcpy(result + ri, line + i, kw_len);
+                ri += kw_len;
+                ri = append_reset(result, ri, buf_size);
+                i += kw_len;
+                goto shell_continue;
+            }
+        }
+        result[ri++] = line[i++];
+shell_continue:
+        ;
+    }
+    result[ri] = '\0';
+    return result;
+}
+
+static char *highlight_batch_line(const char *line) {
+    static const char *keywords[] = {
+        "echo", "set", "if", "else", "for", "in", "goto", "call", "shift",
+        "setlocal", "endlocal", "exit", "not", "exist", "defined", "errorlevel"
+    };
+    size_t len = strlen(line);
+    size_t buf_size = len * 20 + 32;
+    char *result = malloc(buf_size);
+    size_t ri = 0;
+    size_t i = 0;
+
+    if (!result)
+        return NULL;
+
+    if ((len >= 3 && strncasecmp(line, "rem", 3) == 0 && isspace((unsigned char)line[3])) ||
+        (len >= 1 && line[0] == ':')) {
+        ri = append_color(result, ri, buf_size, COLOR_COMMENT_RGB);
+        memcpy(result + ri, line, len);
+        ri += len;
+        ri = append_reset(result, ri, buf_size);
+        result[ri] = '\0';
+        return result;
+    }
+
+    while (i < len) {
+        if (line[i] == '%') {
+            ri = append_color(result, ri, buf_size, COLOR_IDENTIFIER_RGB);
+            result[ri++] = line[i++];
+            while (i < len && line[i] != '%')
+                result[ri++] = line[i++];
+            if (i < len)
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        for (size_t k = 0; k < sizeof(keywords) / sizeof(keywords[0]); k++) {
+            size_t kw_len = strlen(keywords[k]);
+            if (i + kw_len <= len && strncasecmp(line + i, keywords[k], kw_len) == 0 &&
+                (i == 0 || isspace((unsigned char)line[i - 1])) &&
+                is_word_boundary(line, len, i + kw_len)) {
+                ri = append_color(result, ri, buf_size, COLOR_KEYWORD_RGB);
+                memcpy(result + ri, line + i, kw_len);
+                ri += kw_len;
+                ri = append_reset(result, ri, buf_size);
+                i += kw_len;
+                goto batch_continue;
+            }
+        }
+        result[ri++] = line[i++];
+batch_continue:
+        ;
+    }
+    result[ri] = '\0';
+    return result;
+}
+
+static char *highlight_python_line(const char *line) {
+    static const char *keywords[] = {
+        "def", "class", "if", "elif", "else", "for", "while", "try", "except",
+        "finally", "with", "as", "import", "from", "return", "yield", "lambda",
+        "True", "False", "None", "and", "or", "not", "pass", "break", "continue"
+    };
+    size_t len = strlen(line);
+    size_t buf_size = len * 20 + 32;
+    char *result = malloc(buf_size);
+    size_t ri = 0;
+    size_t i = 0;
+
+    if (!result)
+        return NULL;
+
+    while (i < len) {
+        if (line[i] == '#') {
+            ri = append_color(result, ri, buf_size, COLOR_COMMENT_RGB);
+            while (i < len)
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            break;
+        }
+        if (line[i] == '"' || line[i] == '\'') {
+            char quote = line[i++];
+            ri = append_color(result, ri, buf_size, COLOR_STRING_RGB);
+            result[ri++] = quote;
+            while (i < len) {
+                result[ri++] = line[i];
+                if (line[i] == quote && line[i - 1] != '\\') {
+                    i++;
+                    break;
+                }
+                i++;
+            }
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        if (isdigit((unsigned char)line[i])) {
+            ri = append_color(result, ri, buf_size, COLOR_NUMBER_RGB);
+            while (i < len && (isalnum((unsigned char)line[i]) || line[i] == '.'))
+                result[ri++] = line[i++];
+            ri = append_reset(result, ri, buf_size);
+            continue;
+        }
+        for (size_t k = 0; k < sizeof(keywords) / sizeof(keywords[0]); k++) {
+            if (match_keyword(line, len, i, keywords[k])) {
+                size_t kw_len = strlen(keywords[k]);
+                ri = append_color(result, ri, buf_size, COLOR_KEYWORD_RGB);
+                memcpy(result + ri, line + i, kw_len);
+                ri += kw_len;
+                ri = append_reset(result, ri, buf_size);
+                i += kw_len;
+                goto py_continue;
+            }
+        }
+        result[ri++] = line[i++];
+py_continue:
+        ;
+    }
+    result[ri] = '\0';
+    return result;
+}
+
+char *libedit_highlight_line(const char *line, int mode, int hl_in_comment) {
+    if (!line)
+        return NULL;
+
+    if (mode == LIBEDIT_LANG_C_FAMILY)
+        return highlight_c_line(line, hl_in_comment);
+    if (mode == LIBEDIT_LANG_SHELL)
+        return highlight_shell_line(line);
+    if (mode == LIBEDIT_LANG_BATCH)
+        return highlight_batch_line(line);
+    if (mode == LIBEDIT_LANG_PYTHON)
+        return highlight_python_line(line);
+    if (mode == LIBEDIT_LANG_MARKDOWN)
+        return highlight_other_line(line);
+
+    return NULL;
 }

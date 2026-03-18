@@ -119,6 +119,7 @@ typedef struct {
     UndoState *undo_history[100];
     int undo_history_len;
     int language_mode;
+    int restored_modified_rows;
 } EditorBuffer;
 
 /* Global clipboard for cut/copy/paste functionality */
@@ -170,6 +171,7 @@ struct EditorConfig {
     UndoState *undo_history[100];
     int undo_history_len;
     int language_mode;
+    int restored_modified_rows;
 } E;
 
 #define MENU_FILES 0
@@ -204,6 +206,7 @@ struct EditorSessionSlot {
     int rowoff;
     int coloff;
     int has_file;
+    int modified_rows;
 };
 
 /*** New Helper Function for Case-Insensitive Search ***/
@@ -371,6 +374,7 @@ static void editorBufferReset(EditorBuffer *buf) {
     buf->preferred_cx = 0;
     buf->undo_history_len = 0;
     buf->language_mode = 0;
+    buf->restored_modified_rows = -1;
     for (int i = 0; i < 100; i++)
         buf->undo_history[i] = NULL;
 }
@@ -435,6 +439,33 @@ static const char *editorSessionFilename(const char *filename, char *buffer, siz
     return filename;
 }
 
+static int editorCountModifiedRowsInBuffer(const EditorLine *rows, int numrows) {
+    int count = 0;
+    for (int i = 0; i < numrows; i++) {
+        if (rows[i].modified)
+            count++;
+    }
+    return count;
+}
+
+static int editorCurrentModifiedRows(void) {
+    int count = editorCountModifiedRowsInBuffer(E.row, E.numrows);
+    if (count == 0 && E.restored_modified_rows > 0)
+        return E.restored_modified_rows;
+    return count;
+}
+
+static void editorClearRestoredModifiedRows(void) {
+    E.restored_modified_rows = -1;
+}
+
+static void editorMarkLineModified(int row_index) {
+    if (row_index < 0 || row_index >= E.numrows)
+        return;
+    E.row[row_index].modified = 1;
+    editorClearRestoredModifiedRows();
+}
+
 static void editorClampCursor(void) {
     if (E.numrows <= 0) {
         E.cx = 0;
@@ -469,12 +500,14 @@ static void editorSaveSession(void) {
         int cy = 0;
         int rowoff = 0;
         int coloff = 0;
+        int modified_rows = 0;
         if (slot == E.active_slot) {
             filename = E.filename;
             cx = E.cx;
             cy = E.cy;
             rowoff = E.rowoff;
             coloff = E.coloff;
+            modified_rows = editorCurrentModifiedRows();
         } else {
             EditorBuffer *buf = &E.buffers[slot];
             filename = buf->filename;
@@ -482,13 +515,16 @@ static void editorSaveSession(void) {
             cy = buf->cy;
             rowoff = buf->rowoff;
             coloff = buf->coloff;
+            modified_rows = editorCountModifiedRowsInBuffer(buf->row, buf->numrows);
+            if (modified_rows == 0 && buf->restored_modified_rows > 0)
+                modified_rows = buf->restored_modified_rows;
         }
         const char *stored = "-";
         char resolved[PATH_MAX];
         if (filename && filename[0] != '\0')
             stored = editorSessionFilename(filename, resolved, sizeof(resolved));
-        fprintf(fp, "SLOT\t%d\t%d\t%d\t%d\t%d\t%s\n",
-                slot, cx, cy, rowoff, coloff, stored);
+        fprintf(fp, "SLOT\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n",
+                slot, cx, cy, rowoff, coloff, modified_rows, stored);
     }
     fclose(fp);
 }
@@ -498,12 +534,14 @@ static int editorParseSessionSlot(char *line, struct EditorSessionSlot slots[], 
     char *token = strtok_r(line, "\t", &saveptr);
     if (!token || strcmp(token, "SLOT") != 0)
         return 0;
-    char *fields[6];
-    for (size_t i = 0; i < 6; i++) {
+    char *fields[7] = {0};
+    for (size_t i = 0; i < 7; i++) {
         fields[i] = strtok_r(NULL, "\t", &saveptr);
         if (!fields[i])
-            return 0;
+            break;
     }
+    if (!fields[0] || !fields[1] || !fields[2] || !fields[3] || !fields[4] || !fields[5])
+        return 0;
     char *endptr = NULL;
     long slot_index = strtol(fields[0], &endptr, 10);
     if (endptr == fields[0] || slot_index < 0 || (size_t)slot_index >= slot_count)
@@ -513,11 +551,13 @@ static int editorParseSessionSlot(char *line, struct EditorSessionSlot slots[], 
     slot->cy = (int)strtol(fields[2], NULL, 10);
     slot->rowoff = (int)strtol(fields[3], NULL, 10);
     slot->coloff = (int)strtol(fields[4], NULL, 10);
-    if (strcmp(fields[5], "-") == 0) {
+    slot->modified_rows = fields[6] ? (int)strtol(fields[5], NULL, 10) : 0;
+    const char *filename_field = fields[6] ? fields[6] : fields[5];
+    if (strcmp(filename_field, "-") == 0) {
         slot->filename[0] = '\0';
         slot->has_file = 0;
     } else {
-        strncpy(slot->filename, fields[5], sizeof(slot->filename) - 1);
+        strncpy(slot->filename, filename_field, sizeof(slot->filename) - 1);
         slot->filename[sizeof(slot->filename) - 1] = '\0';
         slot->has_file = slot->filename[0] != '\0';
     }
@@ -539,6 +579,7 @@ static int editorLoadSession(void) {
         slots[i].rowoff = 0;
         slots[i].coloff = 0;
         slots[i].has_file = 0;
+        slots[i].modified_rows = 0;
     }
     int active_slot = 0;
     char line[PATH_MAX * 2];
@@ -572,6 +613,7 @@ static int editorLoadSession(void) {
         E.coloff = slots[slot].coloff;
         editorClampCursor();
         E.preferred_cx = E.cx;
+        E.restored_modified_rows = slots[slot].modified_rows;
         editorSetMenuTitleForSlot(slot, slots[slot].filename);
         loaded_any = 1;
     }
@@ -647,6 +689,7 @@ static void editorCaptureActiveBuffer(EditorBuffer *buf) {
     buf->preferred_cx = E.preferred_cx;
     buf->undo_history_len = E.undo_history_len;
     buf->language_mode = E.language_mode;
+    buf->restored_modified_rows = E.restored_modified_rows;
     for (int i = 0; i < E.undo_history_len; i++)
         buf->undo_history[i] = E.undo_history[i];
     for (int i = E.undo_history_len; i < 100; i++)
@@ -668,6 +711,7 @@ static void editorApplyBuffer(EditorBuffer *buf) {
     E.preferred_cx = buf->preferred_cx;
     E.undo_history_len = buf->undo_history_len;
     E.language_mode = buf->language_mode;
+    E.restored_modified_rows = buf->restored_modified_rows;
     for (int i = 0; i < buf->undo_history_len; i++)
         E.undo_history[i] = buf->undo_history[i];
     for (int i = buf->undo_history_len; i < 100; i++)
@@ -1261,6 +1305,7 @@ static void editorIndentLines(int start_line, int end_line, int direction) {
         }
     }
     if (changed) {
+        editorClearRestoredModifiedRows();
         E.dirty = 1;
         E.preferred_cx = E.cx;
     }
@@ -1380,6 +1425,16 @@ void editorDrawTopBar(struct abuf *ab) {
         len = cols;
     int padding = (cols - len) / 2;
     memcpy(line + padding, buf, (size_t)len);
+    char modified[32];
+    int modified_len = snprintf(modified, sizeof(modified), "Rows %d", editorCurrentModifiedRows());
+    if (modified_len > cols)
+        modified_len = cols;
+    if (modified_len > 0) {
+        int modified_col = cols - modified_len;
+        if (modified_col < 0)
+            modified_col = 0;
+        memcpy(line + modified_col, modified, (size_t)modified_len);
+    }
     int offset = 0;
     for (int i = 0; i < MENU_COUNT; i++) {
         char label[32];
@@ -2023,6 +2078,7 @@ void editorDeleteSelection(void) {
             E.cx = row_width;
     }
     E.selecting = 0;
+    editorMarkLineModified(start_line);
     E.dirty = 1;
     snprintf(E.status_message, sizeof(E.status_message), "Deleted selection");
 }
@@ -2037,7 +2093,7 @@ void editorDelCharAtCursor(void) {
        int next_index = editorRowCxToByteIndex(line, E.cx + 1);
        memmove(&line->chars[index], &line->chars[next_index], line->size - next_index + 1);
        line->size -= (next_index - index);
-       line->modified = 1;
+       editorMarkLineModified(E.cy);
        E.dirty = 1;
     } else if (E.cx == row_display_width && E.cy < E.numrows - 1) {
        EditorLine *next_line = &E.row[E.cy+1];
@@ -2046,7 +2102,7 @@ void editorDelCharAtCursor(void) {
        memcpy(line->chars + line->size, next_line->chars, next_line->size);
        line->size += next_line->size;
        line->chars[line->size] = '\0';
-       line->modified = 1;
+       editorMarkLineModified(E.cy);
        free(next_line->chars);
        for (int j = E.cy+1; j < E.numrows - 1; j++)
            E.row[j] = E.row[j+1];
@@ -2335,6 +2391,7 @@ void editorReplace(void) {
                 row->chars = new_chars;
                 row->size = strlen(new_chars);
                 row->modified = 1;
+                editorClearRestoredModifiedRows();
                 E.dirty = 1;
                 replace_count++;
                 start_byte = index + replace_len;
@@ -2410,6 +2467,7 @@ void editorCutSelection(void) {
                 E.row[start_line].chars + end_byte,
                 E.row[start_line].size - end_byte + 1);
         E.row[start_line].size = new_size;
+        editorMarkLineModified(start_line);
     } else {
         int first_sel_start = start_x;
         int last_sel_end = end_x;
@@ -2427,6 +2485,7 @@ void editorCutSelection(void) {
                E.row[end_line].chars,
                E.row[end_line].size + 1);
         E.row[start_line].size = new_size;
+        editorMarkLineModified(start_line);
         for (int i = end_line; i > start_line; i--) {
             free(E.row[i].chars);
             for (int j = i; j < E.numrows - 1; j++)
@@ -2563,6 +2622,7 @@ void editorInsertNewline(void) {
     E.row[E.cy + 1].hl_in_comment = 0;
     E.cy++;
     E.preferred_cx = E.cx;
+    editorClearRestoredModifiedRows();
     E.dirty = 1;
 }
 
@@ -2582,6 +2642,7 @@ void editorDelChar(void) {
         memcpy(prev_line->chars + prev_size, line->chars, line->size);
         prev_line->chars[prev_size + line->size] = '\0';
         prev_line->size = prev_size + line->size; prev_line->modified = 1;
+        editorClearRestoredModifiedRows();
         free(line->chars);
         for (int j = E.cy; j < E.numrows - 1; j++)
             E.row[j] = E.row[j + 1];
@@ -2595,7 +2656,7 @@ void editorDelChar(void) {
         line->size -= (index - prev_index);
         E.cx -= 1;
         E.preferred_cx = E.cx;
-        line->modified = 1;
+        editorMarkLineModified(E.cy);
     }
     E.dirty = 1;
 }
@@ -2622,6 +2683,7 @@ void editorClearBuffer(void) {
     E.sel_anchor_x = 0;
     E.sel_anchor_y = 0;
     E.preferred_cx = 0;
+    E.restored_modified_rows = -1;
     E.dirty = 0;
 }
 
@@ -2658,6 +2720,7 @@ void editorOpen(const char *filename) {
     if (!fp) {
         if (errno == ENOENT) {
             editorAppendLine("", 0);
+            editorClearRestoredModifiedRows();
             E.dirty = 0;
             return;
         } else {
@@ -2679,6 +2742,7 @@ void editorOpen(const char *filename) {
         }
     }
     free(line); fclose(fp);
+    editorClearRestoredModifiedRows();
     E.dirty = 0;
     if (E.numrows == 0)
         editorAppendLine("", 0);
@@ -2705,6 +2769,7 @@ void editorSave(void) {
     if (fd != -1) {
         if (write(fd, buf, total_len) == total_len) {
             close(fd); free(buf);
+            editorClearRestoredModifiedRows();
             E.dirty = 0;
             for (int i = 0; i < E.numrows; i++)
                 E.row[i].modified = 0;
@@ -2748,7 +2813,7 @@ void editorInsertChar(int c) {
     line->size++;
     E.cx++;
     E.preferred_cx = E.cx;
-    line->modified = 1; E.dirty = 1;
+    line->modified = 1; editorClearRestoredModifiedRows(); E.dirty = 1;
 }
 
 void editorInsertUTF8(const char *s, int len) {
@@ -2771,7 +2836,7 @@ void editorInsertUTF8(const char *s, int len) {
     if (width < 0) width = 1;
     E.cx += width;
     E.preferred_cx = E.cx;
-    line->modified = 1; E.dirty = 1;
+    line->modified = 1; editorClearRestoredModifiedRows(); E.dirty = 1;
 }
 
 /*** Modified Main ***/
@@ -2780,7 +2845,7 @@ int main(int argc, char *argv[]) {
     E.cx = 0; E.cy = 0;
     E.rowoff = 0; E.coloff = 0;
     E.numrows = 0; E.row = NULL;
-    E.filename = NULL; E.dirty = 0;
+    E.filename = NULL; E.restored_modified_rows = -1; E.dirty = 0;
     E.language_mode = 0;
     E.status_message[0] = '\0';
     E.selecting = 0; E.sel_anchor_x = 0; E.sel_anchor_y = 0;
@@ -2816,6 +2881,7 @@ int main(int argc, char *argv[]) {
         restored = editorLoadSession();
         if (!restored) {
             editorAppendLine("", 0);
+            editorClearRestoredModifiedRows();
             E.dirty = 0;
             editorMenuSetDirectory(".");
         }

@@ -448,11 +448,15 @@ static int editorCountModifiedRowsInBuffer(const EditorLine *rows, int numrows) 
     return count;
 }
 
+static int editorCombinedModifiedRows(int actual_count, int restored_count) {
+    if (restored_count > 0)
+        return actual_count + restored_count;
+    return actual_count;
+}
+
 static int editorCurrentModifiedRows(void) {
     int count = editorCountModifiedRowsInBuffer(E.row, E.numrows);
-    if (count == 0 && E.restored_modified_rows > 0)
-        return E.restored_modified_rows;
-    return count;
+    return editorCombinedModifiedRows(count, E.restored_modified_rows);
 }
 
 static void editorClearRestoredModifiedRows(void) {
@@ -463,7 +467,6 @@ static void editorMarkLineModified(int row_index) {
     if (row_index < 0 || row_index >= E.numrows)
         return;
     E.row[row_index].modified = 1;
-    editorClearRestoredModifiedRows();
 }
 
 static void editorClampCursor(void) {
@@ -515,9 +518,9 @@ static void editorSaveSession(void) {
             cy = buf->cy;
             rowoff = buf->rowoff;
             coloff = buf->coloff;
-            modified_rows = editorCountModifiedRowsInBuffer(buf->row, buf->numrows);
-            if (modified_rows == 0 && buf->restored_modified_rows > 0)
-                modified_rows = buf->restored_modified_rows;
+            modified_rows = editorCombinedModifiedRows(
+                editorCountModifiedRowsInBuffer(buf->row, buf->numrows),
+                buf->restored_modified_rows);
         }
         const char *stored = "-";
         char resolved[PATH_MAX];
@@ -1305,7 +1308,6 @@ static void editorIndentLines(int start_line, int end_line, int direction) {
         }
     }
     if (changed) {
-        editorClearRestoredModifiedRows();
         E.dirty = 1;
         E.preferred_cx = E.cx;
     }
@@ -2391,7 +2393,6 @@ void editorReplace(void) {
                 row->chars = new_chars;
                 row->size = strlen(new_chars);
                 row->modified = 1;
-                editorClearRestoredModifiedRows();
                 E.dirty = 1;
                 replace_count++;
                 start_byte = index + replace_len;
@@ -2622,7 +2623,6 @@ void editorInsertNewline(void) {
     E.row[E.cy + 1].hl_in_comment = 0;
     E.cy++;
     E.preferred_cx = E.cx;
-    editorClearRestoredModifiedRows();
     E.dirty = 1;
 }
 
@@ -2642,7 +2642,6 @@ void editorDelChar(void) {
         memcpy(prev_line->chars + prev_size, line->chars, line->size);
         prev_line->chars[prev_size + line->size] = '\0';
         prev_line->size = prev_size + line->size; prev_line->modified = 1;
-        editorClearRestoredModifiedRows();
         free(line->chars);
         for (int j = E.cy; j < E.numrows - 1; j++)
             E.row[j] = E.row[j + 1];
@@ -2813,7 +2812,7 @@ void editorInsertChar(int c) {
     line->size++;
     E.cx++;
     E.preferred_cx = E.cx;
-    line->modified = 1; editorClearRestoredModifiedRows(); E.dirty = 1;
+    line->modified = 1; E.dirty = 1;
 }
 
 void editorInsertUTF8(const char *s, int len) {
@@ -2836,7 +2835,7 @@ void editorInsertUTF8(const char *s, int len) {
     if (width < 0) width = 1;
     E.cx += width;
     E.preferred_cx = E.cx;
-    line->modified = 1; editorClearRestoredModifiedRows(); E.dirty = 1;
+    line->modified = 1; E.dirty = 1;
 }
 
 /*** Modified Main ***/

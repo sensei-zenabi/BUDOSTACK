@@ -232,6 +232,13 @@ terminal emulator.
 **Description:** Triggers rendering of the terminal pixel buffer. Use `-layer` to
 render only a single layer (1–16). Omitting `-layer` renders all layers.
 
+### `_TERM_TYPING_SOUND`
+**Usage:** `_TERM_TYPING_SOUND <enable|disable>`
+
+**Description:** Enables or disables keyboard typing sound effects in terminal apps by sending the corresponding OSC 777 control sequence to the BUDOSTACK terminal.
+
+---
+
 ### `_TERM_RESOLUTION`
 **Usage:** `_TERM_RESOLUTION <width> <height>`
 

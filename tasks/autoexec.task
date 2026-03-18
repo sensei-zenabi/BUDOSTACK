@@ -21,6 +21,10 @@ RUN _TERM_MOUSE_SHOW disable
 # Initialize variables
 
 SET $LOAD = 0
+SET $TYPING_SOUND = "disable"
+
+RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
+RUN _TERM_TYPING_SOUND $TYPING_SOUND
 
 # Set configurations for login
 
@@ -37,6 +41,7 @@ SET $MOUSE = "null"
 SET $LOGIN_SCREEN = "null"
 SET $LOGIN_MENU = "null"
 SET $RETROPROFILE = "vt220-green"
+SET $TYPING_SOUND = "disable"
 
 #-------------------------------------------------------------------------
 # SKIP LAUNCHER
@@ -322,6 +327,7 @@ IF ($MENU == "CONFIGURATION"):
   RUN _CONFIG -read LOGIN_SCREEN TO $LOGIN_SCREEN
   RUN _CONFIG -read LOGIN_MENU TO $LOGIN_MENU
   RUN _CONFIG -read _RETROPROFILE TO $RETROPROFILE
+  RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
   
   # Index retroprofile
   SET $RETROPROFILE_IDX = 0
@@ -345,8 +351,9 @@ IF ($MENU == "CONFIGURATION"):
   RUN _TEXT -x $MENU_X-3 -y 19 -text "Mouse Cursor    = " + $MOUSE
   RUN _TEXT -x $MENU_X-3 -y 21 -text "Login Screen    = " + $LOGIN_SCREEN
   RUN _TEXT -x $MENU_X-3 -y 23 -text "Login Menu      = " + $LOGIN_MENU
-  RUN _TEXT -x $MENU_X-3 -y 25 -text "Retro Profile   = " + $RETROPROFILE
-  RUN _TEXT -x $MENU_X-3 -y 27 -text "<-- MAIN MENU             "
+  RUN _TEXT -x $MENU_X-3 -y 25 -text "Typing Sound    = " + $TYPING_SOUND
+  RUN _TEXT -x $MENU_X-3 -y 27 -text "Retro Profile   = " + $RETROPROFILE
+  RUN _TEXT -x $MENU_X-3 -y 29 -text "<-- MAIN MENU             "
   
   EVAL DRAW_CURSOR($CURSOR_X-3, $CURSOR_Y)
     
@@ -376,8 +383,8 @@ IF ($MENU == "CONFIGURATION"):
   IF ($CURSOR_Y < 17):
     $CURSOR_Y = 17
   END
-  IF ($CURSOR_Y > 27):
-    $CURSOR_Y = 27
+  IF ($CURSOR_Y > 29):
+    $CURSOR_Y = 29
   END
   
   
@@ -420,9 +427,18 @@ IF ($MENU == "CONFIGURATION"):
       END
       IF ($LOGIN_MENU == "disable"):
         RUN _CONFIG -write LOGIN_MENU enable
-      EN
+      END
     END
     IF ($CURSOR_Y == 25):
+      # Set typing sound
+      IF ($TYPING_SOUND == "enable"):
+        RUN _CONFIG -write _TERM_TYPING_SOUND disable
+      END
+      IF ($TYPING_SOUND == "disable"):
+        RUN _CONFIG -write _TERM_TYPING_SOUND enable
+      END
+    END
+    IF ($CURSOR_Y == 27):
       # Switch retro profile
       $RETROPROFILE_IDX = $RETROPROFILE_IDX + 1
       IF ($RETROPROFILE_IDX > 3):
@@ -441,7 +457,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _RETROPROFILE vt220-green
       END
     END
-    IF ($CURSOR_Y == 27):
+    IF ($CURSOR_Y == 29):
       $MENU = "MAIN MENU"
     END
   
@@ -469,6 +485,9 @@ RUN _TERM_MOUSE_SHOW $MOUSE
 
 RUN _CONFIG -read _RETROPROFILE TO $RETROPROFILE
 RUN _RETROPROFILE apply $RETROPROFILE
+
+RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
+RUN _TERM_TYPING_SOUND $TYPING_SOUND
 
 # Return cursor blink
 RUN _TERM_CURSOR_BLINK enable

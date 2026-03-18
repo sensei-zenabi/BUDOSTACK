@@ -315,7 +315,7 @@ struct terminal_keyboard_sound_library {
 };
 
 static struct terminal_keyboard_sound_library terminal_keyboard_sound_library = {0};
-static int terminal_keyboard_sound_enabled = 1;
+static int terminal_keyboard_sound_enabled = 0;
 static int terminal_keyboard_sound_seeded = 0;
 static size_t terminal_keyboard_sound_next_channel = 0u;
 

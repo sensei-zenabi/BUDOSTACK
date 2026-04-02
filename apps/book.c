@@ -111,7 +111,7 @@ static int read_key(void) {
         }
         return KEY_NULL;
     }
-    return (int)c;
+    return (int)(unsigned char)c;
 }
 
 static int is_text_input_key(int key) {

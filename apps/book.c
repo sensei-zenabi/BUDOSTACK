@@ -20,6 +20,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <strings.h>
+#include <wchar.h>
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -123,6 +124,56 @@ static int is_text_input_key(int key) {
         return 1;
     }
     return isprint(byte) != 0;
+}
+
+static size_t utf8_prev_char_start(const char *text, size_t pos) {
+    if (pos == 0u) {
+        return 0u;
+    }
+    size_t i = pos - 1u;
+    while (i > 0u && (((unsigned char)text[i] & 0xc0u) == 0x80u)) {
+        i--;
+    }
+    return i;
+}
+
+static size_t utf8_next_char_end(const char *text, size_t len, size_t pos) {
+    if (pos >= len) {
+        return len;
+    }
+    size_t i = pos + 1u;
+    while (i < len && (((unsigned char)text[i] & 0xc0u) == 0x80u)) {
+        i++;
+    }
+    return i;
+}
+
+static int display_width_range(const char *text, size_t start, size_t end) {
+    if (start >= end) {
+        return 0;
+    }
+    mbstate_t ps;
+    memset(&ps, 0, sizeof(ps));
+    size_t i = start;
+    int width = 0;
+    while (i < end) {
+        wchar_t wc = 0;
+        size_t remaining = end - i;
+        size_t bytes = mbrtowc(&wc, &text[i], remaining, &ps);
+        if (bytes == (size_t)-1 || bytes == (size_t)-2 || bytes == 0u) {
+            memset(&ps, 0, sizeof(ps));
+            bytes = 1u;
+            width += 1;
+        } else {
+            int w = wcwidth(wc);
+            if (w < 0) {
+                w = 1;
+            }
+            width += w;
+        }
+        i += bytes;
+    }
+    return width;
 }
 
 struct PageSize {
@@ -388,9 +439,10 @@ static void backspace_char(struct BookState *state) {
         return;
     }
     push_undo(state);
-    memmove(&state->text[state->cursor - 1], &state->text[state->cursor], state->len - state->cursor);
-    state->len--;
-    state->cursor--;
+    size_t prev = utf8_prev_char_start(state->text, state->cursor);
+    memmove(&state->text[prev], &state->text[state->cursor], state->len - state->cursor);
+    state->len -= state->cursor - prev;
+    state->cursor = prev;
     state->text[state->len] = '\0';
     update_word_count(state);
 }
@@ -409,8 +461,9 @@ static void delete_char(struct BookState *state) {
         return;
     }
     push_undo(state);
-    memmove(&state->text[state->cursor], &state->text[state->cursor + 1], state->len - state->cursor - 1);
-    state->len--;
+    size_t next = utf8_next_char_end(state->text, state->len, state->cursor);
+    memmove(&state->text[state->cursor], &state->text[next], state->len - next);
+    state->len -= next - state->cursor;
     state->text[state->len] = '\0';
     update_word_count(state);
 }
@@ -507,7 +560,7 @@ static void wrap_text(struct BookState *state) {
     col = line_indent;
 
     while (i < state->len) {
-        char c = state->text[i];
+        unsigned char c = (unsigned char)state->text[i];
         if (c == '\n') {
             if (count >= cap) {
                 cap *= 2u;
@@ -529,10 +582,19 @@ static void wrap_text(struct BookState *state) {
         if (c == ' ') {
             last_space = i;
         }
-        col++;
+        size_t next_i = utf8_next_char_end(state->text, state->len, i);
+        int char_width = display_width_range(state->text, i, next_i);
+        if (char_width < 1) {
+            char_width = 1;
+        }
+        col += char_width;
         if (col > state->page_width) {
             size_t break_pos = (last_space != (size_t)(-1) && last_space >= start) ? last_space + 1u : i;
             size_t line_len = (last_space != (size_t)(-1) && last_space >= start) ? (last_space - start) : (i - start);
+            if (break_pos == start) {
+                break_pos = next_i;
+                line_len = next_i - start;
+            }
             if (count >= cap) {
                 cap *= 2u;
                 state->lines = realloc(state->lines, sizeof(struct WrappedLine) * cap);
@@ -549,7 +611,7 @@ static void wrap_text(struct BookState *state) {
             last_space = (size_t)(-1);
             continue;
         }
-        i++;
+        i = next_i;
     }
 
     if (start <= state->len) {
@@ -615,19 +677,47 @@ static size_t line_for_cursor(const struct BookState *state, int *out_col) {
         size_t end = start + state->lines[i].len;
         if (state->cursor < end || (state->cursor == end && state->cursor == state->len)) {
             if (out_col) {
-                int col = (int)(state->cursor - start) + state->lines[i].indent;
+                int col = display_width_range(state->text, start, state->cursor) + state->lines[i].indent;
                 if (col < 0) col = 0;
                 *out_col = col;
             }
             return i;
         }
         if (state->cursor == end && (i + 1 == state->line_count || state->lines[i + 1].start > end)) {
-            if (out_col) *out_col = (int)(state->lines[i].len) + state->lines[i].indent;
+            if (out_col) *out_col = display_width_range(state->text, start, end) + state->lines[i].indent;
             return i;
         }
     }
     if (out_col) *out_col = 0;
     return state->line_count - 1;
+}
+
+static size_t byte_for_display_col(const struct BookState *state, size_t line_idx, int col) {
+    if (line_idx >= state->line_count) {
+        return state->len;
+    }
+    size_t start = state->lines[line_idx].start;
+    size_t end = start + state->lines[line_idx].len;
+    int indent = state->lines[line_idx].indent;
+    if (col <= indent) {
+        return start;
+    }
+    int target = col - indent;
+    int used = 0;
+    size_t i = start;
+    while (i < end) {
+        size_t next = utf8_next_char_end(state->text, end, i);
+        int w = display_width_range(state->text, i, next);
+        if (w < 1) {
+            w = 1;
+        }
+        if (used + w > target) {
+            break;
+        }
+        used += w;
+        i = next;
+    }
+    return i;
 }
 
 static void scroll_to_cursor(struct BookState *state) {
@@ -649,12 +739,7 @@ static void move_cursor_up(struct BookState *state) {
         return;
     }
     size_t target_line = line - 1;
-    size_t start = state->lines[target_line].start;
-    size_t len = state->lines[target_line].len;
-    int indent = state->lines[target_line].indent;
-    size_t offset = col <= indent ? 0u : (size_t)(col - indent);
-    if (offset > len) offset = len;
-    state->cursor = start + offset;
+    state->cursor = byte_for_display_col(state, target_line, col);
 }
 
 static void move_cursor_down(struct BookState *state) {
@@ -665,23 +750,18 @@ static void move_cursor_down(struct BookState *state) {
         return;
     }
     size_t target_line = line + 1;
-    size_t start = state->lines[target_line].start;
-    size_t len = state->lines[target_line].len;
-    int indent = state->lines[target_line].indent;
-    size_t offset = col <= indent ? 0u : (size_t)(col - indent);
-    if (offset > len) offset = len;
-    state->cursor = start + offset;
+    state->cursor = byte_for_display_col(state, target_line, col);
 }
 
 static void move_cursor_left(struct BookState *state) {
     if (state->cursor > 0) {
-        state->cursor--;
+        state->cursor = utf8_prev_char_start(state->text, state->cursor);
     }
 }
 
 static void move_cursor_right(struct BookState *state) {
     if (state->cursor < state->len) {
-        state->cursor++;
+        state->cursor = utf8_next_char_end(state->text, state->len, state->cursor);
     }
 }
 
@@ -1236,12 +1316,7 @@ static void page_jump(struct BookState *state, int direction) {
     int target = (int)line + (direction * step);
     if (target < 0) target = 0;
     if (target >= (int)state->line_count) target = (int)state->line_count - 1;
-    size_t start = state->lines[target].start;
-    size_t len = state->lines[target].len;
-    int indent = state->lines[target].indent;
-    size_t offset = col <= indent ? 0u : (size_t)(col - indent);
-    if (offset > len) offset = len;
-    state->cursor = start + offset;
+    state->cursor = byte_for_display_col(state, (size_t)target, col);
 }
 
 int main(void) {

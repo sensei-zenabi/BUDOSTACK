@@ -161,6 +161,10 @@ struct BookState {
 
     char filename[PATH_MAX];
     size_t word_count;
+    int selecting;
+    size_t sel_anchor;
+    char *clipboard;
+    size_t clipboard_len;
 
     struct HistoryEntry undo[BOOK_HISTORY_LIMIT];
     struct HistoryEntry redo[BOOK_HISTORY_LIMIT];
@@ -323,7 +327,51 @@ static void insert_char(struct BookState *state, char c) {
     update_word_count(state);
 }
 
+static int has_selection(const struct BookState *state) {
+    return state->selecting && state->sel_anchor != state->cursor;
+}
+
+static void selection_bounds(const struct BookState *state, size_t *start, size_t *end) {
+    if (!has_selection(state)) {
+        *start = state->cursor;
+        *end = state->cursor;
+        return;
+    }
+    if (state->sel_anchor < state->cursor) {
+        *start = state->sel_anchor;
+        *end = state->cursor;
+    } else {
+        *start = state->cursor;
+        *end = state->sel_anchor;
+    }
+}
+
+static void clear_selection(struct BookState *state) {
+    state->selecting = 0;
+    state->sel_anchor = state->cursor;
+}
+
+static void delete_range(struct BookState *state, size_t start, size_t end) {
+    if (start >= end || end > state->len) {
+        return;
+    }
+    memmove(&state->text[start], &state->text[end], state->len - end);
+    state->len -= end - start;
+    state->text[state->len] = '\0';
+    state->cursor = start;
+    update_word_count(state);
+}
+
 static void backspace_char(struct BookState *state) {
+    if (has_selection(state)) {
+        push_undo(state);
+        size_t start = 0u;
+        size_t end = 0u;
+        selection_bounds(state, &start, &end);
+        delete_range(state, start, end);
+        clear_selection(state);
+        return;
+    }
     if (state->cursor == 0 || state->len == 0) {
         return;
     }
@@ -336,6 +384,15 @@ static void backspace_char(struct BookState *state) {
 }
 
 static void delete_char(struct BookState *state) {
+    if (has_selection(state)) {
+        push_undo(state);
+        size_t start = 0u;
+        size_t end = 0u;
+        selection_bounds(state, &start, &end);
+        delete_range(state, start, end);
+        clear_selection(state);
+        return;
+    }
     if (state->cursor >= state->len) {
         return;
     }
@@ -378,6 +435,14 @@ static int line_has_content(const char *text, size_t start, size_t end) {
 }
 
 static void insert_newline_with_indent(struct BookState *state) {
+    if (has_selection(state)) {
+        push_undo(state);
+        size_t start = 0u;
+        size_t end = 0u;
+        selection_bounds(state, &start, &end);
+        delete_range(state, start, end);
+        clear_selection(state);
+    }
     size_t line_start = state->cursor;
     while (line_start > 0 && state->text[line_start - 1] != '\n') {
         line_start--;
@@ -822,11 +887,15 @@ static void export_text(const struct BookState *state) {
 }
 
 static void copy_to_clipboard(const struct BookState *state) {
+    size_t start = 0u;
+    size_t end = state->len;
+    selection_bounds(state, &start, &end);
+    size_t bytes = end - start;
     FILE *fp = popen("xclip -selection clipboard", "w");
     if (!fp) {
         return;
     }
-    if (state->len > 0 && fwrite(state->text, 1, state->len, fp) != state->len) {
+    if (bytes > 0u && fwrite(&state->text[start], 1, bytes, fp) != bytes) {
         perror("fwrite");
     }
     pclose(fp);
@@ -837,25 +906,61 @@ static void paste_from_clipboard(struct BookState *state) {
     if (!fp) {
         return;
     }
-    push_undo(state);
-    char buffer[256];
+    char *buffer = NULL;
     size_t total = 0u;
-    while (!feof(fp)) {
-        size_t n = fread(buffer, 1, sizeof(buffer), fp);
-        if (n > 0) {
-            ensure_capacity(state, state->len + n + 1);
-            memmove(&state->text[state->cursor + n], &state->text[state->cursor], state->len - state->cursor);
-            memcpy(&state->text[state->cursor], buffer, n);
-            state->cursor += n;
-            state->len += n;
+    size_t cap = 0u;
+    char chunk[256];
+    for (;;) {
+        size_t n = fread(chunk, 1, sizeof(chunk), fp);
+        if (n > 0u) {
+            size_t needed = total + n + 1u;
+            if (needed > cap) {
+                size_t new_cap = cap == 0u ? 512u : cap;
+                while (new_cap < needed) {
+                    new_cap *= 2u;
+                }
+                char *new_buf = realloc(buffer, new_cap);
+                if (!new_buf) {
+                    free(buffer);
+                    pclose(fp);
+                    return;
+                }
+                buffer = new_buf;
+                cap = new_cap;
+            }
+            memcpy(&buffer[total], chunk, n);
             total += n;
         }
+        if (n < sizeof(chunk)) {
+            break;
+        }
     }
-    state->text[state->len] = '\0';
     pclose(fp);
-    if (total > 0u) {
-        update_word_count(state);
+    if (total == 0u) {
+        free(buffer);
+        return;
     }
+    buffer[total] = '\0';
+    push_undo(state);
+    if (has_selection(state)) {
+        size_t start = 0u;
+        size_t end = 0u;
+        selection_bounds(state, &start, &end);
+        delete_range(state, start, end);
+        clear_selection(state);
+    }
+    ensure_capacity(state, state->len + total + 1u);
+    if (!state->text) {
+        free(buffer);
+        return;
+    }
+    memmove(&state->text[state->cursor + total], &state->text[state->cursor], state->len - state->cursor);
+    memcpy(&state->text[state->cursor], buffer, total);
+    state->cursor += total;
+    state->len += total;
+    state->text[state->len] = '\0';
+    update_word_count(state);
+    free(buffer);
 }
 
 static void find_text(struct BookState *state) {
@@ -934,7 +1039,7 @@ static void draw_bars(const struct BookState *state) {
     // Top bar line 2
     printf("\x1b[7m");
     char top_line[256];
-    snprintf(top_line, sizeof(top_line), " Ctrl+F Find | ^+R Repl. | ^+Z Undo | ^+Y Redo    | ^+P Page %s |", PAGE_SIZES[state->page_index].name);
+    snprintf(top_line, sizeof(top_line), " Ctrl+T Select | ^+X Cut | ^+C Copy | ^+V Paste | ^+P Page %s |", PAGE_SIZES[state->page_index].name);
     printf("%-*.*s", state->cols, state->cols, top_line);
     printf("\x1b[0m\r\n");
 
@@ -958,6 +1063,9 @@ static void draw_content(const struct BookState *state) {
     int current_row = 0;
     int page_line_counter = state->page_height == 0 ? 0 : state->row_offset % state->page_height;
     size_t line_index = (size_t)state->row_offset;
+    size_t sel_start = 0u;
+    size_t sel_end = 0u;
+    selection_bounds(state, &sel_start, &sel_end);
     while (current_row < content_rows) {
         if (line_index >= state->line_count) {
             printf("\x1b[2K\r\n");
@@ -985,7 +1093,15 @@ static void draw_content(const struct BookState *state) {
         for (int j = 0; j < line->indent; j++) {
             putchar(' ');
         }
-        fwrite(&state->text[line->start], 1, line->len, stdout);
+        for (size_t i = 0u; i < line->len; i++) {
+            size_t idx = line->start + i;
+            int in_sel = (idx >= sel_start && idx < sel_end);
+            if (in_sel) {
+                printf("\x1b[7m%c\x1b[0m", state->text[idx]);
+            } else {
+                putchar(state->text[idx]);
+            }
+        }
         putchar('\r');
         putchar('\n');
         current_row++;
@@ -1033,7 +1149,8 @@ static void draw_bottom_bar(const struct BookState *state) {
 
     printf("\x1b[7m");
     char line2_left[256];
-    snprintf(line2_left, sizeof(line2_left), " %s | Words: %zu | %s", datebuf, state->word_count, state->status);
+    snprintf(line2_left, sizeof(line2_left), " %s | Words: %zu | %s%s", datebuf, state->word_count,
+             state->status, state->selecting ? " | SELECT" : "");
 
     int cols = state->cols;
     if (cols < 1) cols = 1;
@@ -1143,6 +1260,16 @@ int main(void) {
         }
         int c = read_key();
         switch (c) {
+            case CTRL_KEY('t'):
+                if (state.selecting) {
+                    clear_selection(&state);
+                    set_status(&state, "Selection canceled");
+                } else {
+                    state.selecting = 1;
+                    state.sel_anchor = state.cursor;
+                    set_status(&state, "Selection started");
+                }
+                break;
             case CTRL_KEY('q'):
                 running = 0;
                 break;
@@ -1178,7 +1305,29 @@ int main(void) {
                 break;
             case CTRL_KEY('c'):
                 copy_to_clipboard(&state);
-                set_status(&state, "Copied to clipboard");
+                if (has_selection(&state)) {
+                    size_t start = 0u;
+                    size_t end = 0u;
+                    selection_bounds(&state, &start, &end);
+                    set_status(&state, "Copied selection (%zu bytes)", end - start);
+                    clear_selection(&state);
+                } else {
+                    set_status(&state, "Copied document");
+                }
+                break;
+            case CTRL_KEY('x'):
+                if (has_selection(&state)) {
+                    size_t start = 0u;
+                    size_t end = 0u;
+                    selection_bounds(&state, &start, &end);
+                    copy_to_clipboard(&state);
+                    push_undo(&state);
+                    delete_range(&state, start, end);
+                    clear_selection(&state);
+                    set_status(&state, "Cut selection (%zu bytes)", end - start);
+                } else {
+                    set_status(&state, "No selection to cut");
+                }
                 break;
             case CTRL_KEY('v'):
                 paste_from_clipboard(&state);
@@ -1222,6 +1371,14 @@ int main(void) {
                 break;
             default:
                 if (isprint(c)) {
+                    if (has_selection(&state)) {
+                        push_undo(&state);
+                        size_t start = 0u;
+                        size_t end = 0u;
+                        selection_bounds(&state, &start, &end);
+                        delete_range(&state, start, end);
+                        clear_selection(&state);
+                    }
                     insert_char(&state, (char)c);
                 }
                 break;

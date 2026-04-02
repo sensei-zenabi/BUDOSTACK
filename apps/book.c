@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <locale.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -111,6 +112,17 @@ static int read_key(void) {
         return KEY_NULL;
     }
     return (int)c;
+}
+
+static int is_text_input_key(int key) {
+    if (key < 0 || key > 255) {
+        return 0;
+    }
+    unsigned char byte = (unsigned char)key;
+    if (byte >= 0x80) {
+        return 1;
+    }
+    return isprint(byte) != 0;
 }
 
 struct PageSize {
@@ -710,7 +722,7 @@ static char *prompt_user(struct BookState *state, const char *label) {
                 len--;
                 state->prompt[len] = '\0';
             }
-        } else if (isprint(key) && len + 1 < sizeof(state->prompt)) {
+        } else if (is_text_input_key(key) && len + 1 < sizeof(state->prompt)) {
             state->prompt[len++] = (char)key;
             state->prompt[len] = '\0';
         }
@@ -1233,6 +1245,7 @@ static void page_jump(struct BookState *state, int direction) {
 }
 
 int main(void) {
+    setlocale(LC_CTYPE, "");
     budostack_apply_terminal_layout();
     enable_raw_mode();
     struct BookState state = {0};
@@ -1370,7 +1383,7 @@ int main(void) {
                 insert_newline_with_indent(&state);
                 break;
             default:
-                if (isprint(c)) {
+                if (is_text_input_key(c)) {
                     if (has_selection(&state)) {
                         push_undo(&state);
                         size_t start = 0u;

@@ -60,6 +60,7 @@ static void clear_completion_state(struct completion_state *state);
 static void format_completion(const char *completion, int used_filenames, char quote_char,
                               char *formatted, size_t formatted_size);
 static int terminal_width_columns(void);
+static void wrapped_offset_to_row_col(int offset, int cols, int *row, int *col);
 static void redraw_input_line(const char *prompt, const char *buffer, size_t pos, size_t cursor,
                               struct render_state *state);
 
@@ -387,6 +388,35 @@ static int terminal_width_columns(void) {
     return (int)ws.ws_col;
 }
 
+static void wrapped_offset_to_row_col(int offset, int cols, int *row, int *col) {
+    int calc_row = 0;
+    int calc_col = 0;
+
+    if (cols <= 0 || offset <= 0) {
+        if (row) {
+            *row = 0;
+        }
+        if (col) {
+            *col = 0;
+        }
+        return;
+    }
+
+    calc_row = offset / cols;
+    calc_col = offset % cols;
+    if (calc_col == 0) {
+        calc_row -= 1;
+        calc_col = cols - 1;
+    }
+
+    if (row) {
+        *row = calc_row;
+    }
+    if (col) {
+        *col = calc_col;
+    }
+}
+
 static void redraw_input_line(const char *prompt, const char *buffer, size_t pos, size_t cursor,
                               struct render_state *state) {
     int cols = terminal_width_columns();
@@ -396,9 +426,12 @@ static void redraw_input_line(const char *prompt, const char *buffer, size_t pos
 
     int end_offset = prompt_width + line_width;
     int cursor_offset = prompt_width + cursor_width;
-    int end_row = end_offset / cols;
-    int cursor_row = cursor_offset / cols;
-    int cursor_col = cursor_offset % cols;
+    int end_row = 0;
+    int cursor_row = 0;
+    int cursor_col = 0;
+
+    wrapped_offset_to_row_col(end_offset, cols, &end_row, NULL);
+    wrapped_offset_to_row_col(cursor_offset, cols, &cursor_row, &cursor_col);
 
     if (state && state->cursor_row > 0) {
         printf("\033[%dA", state->cursor_row);

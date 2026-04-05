@@ -3849,6 +3849,21 @@ static int terminal_shaders_active(void) {
     return terminal_shaders_enabled && terminal_gl_shader_count > 0u;
 }
 
+static int terminal_shaders_require_animation(void) {
+    if (!terminal_shaders_active()) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < terminal_gl_shader_count; i++) {
+        const struct terminal_gl_shader *shader = &terminal_gl_shaders[i];
+        if (shader->uniform_frame_count >= 0 || shader->uniform_prev_sampler >= 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
 static void terminal_print_usage(const char *progname) {
     const char *name = (progname && progname[0] != '\0') ? progname : "terminal";
     fprintf(stderr, "Usage: %s [-s shader_path]... [--fps hz] [--shader-fps hz]\n", name);
@@ -8655,7 +8670,8 @@ int main(int argc, char **argv) {
         }
 
         shader_timing_enabled = (terminal_shaders_active() &&
-                                 terminal_shader_frame_interval_ms > 0u);
+                                 terminal_shader_frame_interval_ms > 0u &&
+                                 terminal_shaders_require_animation());
         if (shader_timing_enabled) {
             Uint32 elapsed = now - terminal_shader_last_frame_tick;
             if (elapsed >= terminal_shader_frame_interval_ms) {

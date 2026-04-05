@@ -10,6 +10,7 @@
 #include <wchar.h>
 #include <locale.h>
 #include <limits.h>
+#include <sys/ioctl.h>
 #include "input.h"
 
 #define INPUT_SIZE 1024
@@ -36,17 +37,19 @@ struct completion_state {
     size_t index;
 };
 
+struct render_state {
+    int cursor_row;
+};
+
 static int utf8_string_display_width(const char *s);
 static int utf8_display_width_range(const char *buffer, size_t start, size_t end);
 static size_t utf8_prev_char_start(const char *buffer, size_t cursor);
 static size_t utf8_next_char_start(const char *buffer, size_t cursor, size_t length);
 static size_t utf8_sequence_length(unsigned char first_byte);
 static size_t utf8_read_sequence(int first_byte, char *dst, size_t dst_size);
-static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space);
-static void move_to_end_of_line(const char *buffer, size_t *cursor, size_t pos);
-static void clear_line_contents(const char *buffer, size_t *pos, size_t *cursor);
 static char *system_clipboard_read(void);
-static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, size_t *cursor);
+static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, size_t *cursor,
+                                  const char *prompt, struct render_state *render);
 static size_t sanitize_text_input(const char *src, char *dest, size_t dest_size);
 static size_t find_token_start(const char *buffer, size_t pos);
 static void unescape_token(const char *src, char *dest, size_t dest_size);
@@ -56,6 +59,9 @@ static char **collect_filename_matches(const char *token, size_t *match_count);
 static void clear_completion_state(struct completion_state *state);
 static void format_completion(const char *completion, int used_filenames, char quote_char,
                               char *formatted, size_t formatted_size);
+static int terminal_width_columns(void);
+static void redraw_input_line(const char *prompt, const char *buffer, size_t pos, size_t cursor,
+                              struct render_state *state);
 
 /*
  * read_input()
@@ -72,13 +78,14 @@ static void format_completion(const char *completion, int used_filenames, char q
  * - Memory Management: Uses a fixed-size history buffer and shifts entries when full.
  * - Usability: Provides immediate feedback by replacing the current input with history commands.
  */
-char* read_input(void) {
+char* read_input(const char *prompt) {
     static char buffer[INPUT_SIZE];
     size_t pos = 0;        // End of current input
     size_t cursor = 0;     // Current cursor position within buffer
     struct termios oldt, newt;
     int in_paste_mode = 0;
     static struct completion_state completion_state = {0};
+    struct render_state render = {0};
 
     /* Static history storage */
     static char *history[MAX_HISTORY] = {0};
@@ -140,64 +147,38 @@ char* read_input(void) {
                 }
                 if (next2 == 'A') { /* Up arrow */
                     if (history_count > 0 && history_index > 0) {
-                                                move_to_end_of_line(buffer, &cursor, pos);
-						clear_line_contents(buffer, &pos, &cursor);
-						history_index--;
+                        history_index--;
                         strcpy(buffer, history[history_index]);
                         pos = strlen(buffer);
                         cursor = pos;
-                        printf("%s", buffer);
-                        fflush(stdout);
+                        redraw_input_line(prompt, buffer, pos, cursor, &render);
                     }
                     continue;
                 } else if (next2 == 'B') { /* Down arrow */
                     if (history_count > 0 && history_index < history_count - 1) {
-                        move_to_end_of_line(buffer, &cursor, pos);
-                        clear_line_contents(buffer, &pos, &cursor);
-
-                        // Load next history entry
                         history_index++;
                         strcpy(buffer, history[history_index]);
                         pos = strlen(buffer);
                         cursor = pos;
-                        printf("%s", buffer);
-                        fflush(stdout);
+                        redraw_input_line(prompt, buffer, pos, cursor, &render);
                     } else if (history_count > 0 && history_index == history_count - 1) {
-                        move_to_end_of_line(buffer, &cursor, pos);
-                        clear_line_contents(buffer, &pos, &cursor);
-
-                        // Go to "empty buffer" after history
                         history_index = history_count;
                         buffer[0] = '\0';
                         pos = 0;
                         cursor = 0;
-                        fflush(stdout);
+                        redraw_input_line(prompt, buffer, pos, cursor, &render);
                     }
                     continue;
                 } else if (next2 == 'C') { /* Right arrow */
                     if (cursor < pos) {
-                        size_t next = utf8_next_char_start(buffer, cursor, pos);
-                        fwrite(buffer + cursor, 1, next - cursor, stdout);
-                        cursor = next;
+                        cursor = utf8_next_char_start(buffer, cursor, pos);
+                        redraw_input_line(prompt, buffer, pos, cursor, &render);
                     }
                     continue;
                 } else if (next2 == 'D') { /* Left arrow */
                     if (cursor > 0) {
-                        size_t prev = utf8_prev_char_start(buffer, cursor);
-                        int move_width = utf8_display_width_range(buffer, prev, cursor);
-
-                        // FIX: Left arrow should ONLY move the cursor left,
-                        // not delete characters. So we print just '\b' and
-                        // DO NOT print " \b".
-                        //
-                        // This way:
-                        //  - All text stays visible on the line
-                        //  - Cursor moves left across characters (and across wrapped lines)
-                        for (int i = 0; i < move_width; i++) {
-                            printf("\b");
-                        }
-
-                        cursor = prev;
+                        cursor = utf8_prev_char_start(buffer, cursor);
+                        redraw_input_line(prompt, buffer, pos, cursor, &render);
                     }
                     continue;
                 } else if (next2 == '3') { /* Delete key sequence: ESC [ 3 ~ */
@@ -208,7 +189,7 @@ char* read_input(void) {
                             size_t removed_bytes = next - cursor;
                             memmove(buffer + cursor, buffer + next, pos - next + 1);
                             pos -= removed_bytes;
-                            redraw_from_cursor(buffer, cursor, 1);
+                            redraw_input_line(prompt, buffer, pos, cursor, &render);
                         }
                         continue;
                     }
@@ -293,10 +274,6 @@ char* read_input(void) {
                 size_t comp_len = strlen(formatted);
                 size_t tail_len = pos - cursor;
                 int old_line_width = utf8_display_width_range(buffer, 0, pos);
-                int erase_width = utf8_display_width_range(buffer, token_start, cursor);
-                for (int i = 0; i < erase_width; i++) {
-                    printf("\b");
-                }
                 if (token_start + comp_len + tail_len >= INPUT_SIZE) {
                     size_t available = INPUT_SIZE - 1u - token_start - tail_len;
                     if (available == 0) {
@@ -310,23 +287,8 @@ char* read_input(void) {
                 pos = token_start + comp_len + tail_len;
                 cursor = token_start + comp_len;
                 completion_state.token_end = cursor;
-
-                fwrite(formatted, 1, comp_len, stdout);
-                fwrite(buffer + cursor, 1, pos - cursor, stdout);
-
-                int new_line_width = utf8_display_width_range(buffer, 0, pos);
-                int clear_width = old_line_width - new_line_width;
-                if (clear_width > 0) {
-                    for (int i = 0; i < clear_width; i++) {
-                        printf(" ");
-                    }
-                }
-                int tail_width = utf8_display_width_range(buffer, cursor, pos);
-                int move_back = tail_width + (clear_width > 0 ? clear_width : 0);
-                for (int i = 0; i < move_back; i++) {
-                    printf("\b");
-                }
-                fflush(stdout);
+                (void)old_line_width;
+                redraw_input_line(prompt, buffer, pos, cursor, &render);
             }
         }
         /* Handle backspace */
@@ -345,10 +307,8 @@ char* read_input(void) {
                 memmove(buffer + char_start, buffer + cursor, pos - cursor + 1);
                 cursor = char_start;
                 pos -= removed_bytes;
-                for (int i = 0; i < removed_width; i++) {
-                    printf("\b");
-                }
-                redraw_from_cursor(buffer, cursor, 1);
+                (void)removed_width;
+                redraw_input_line(prompt, buffer, pos, cursor, &render);
             }
         }
         /* Paste clipboard with Ctrl+V */
@@ -356,7 +316,7 @@ char* read_input(void) {
             clear_completion_state(&completion_state);
             char *clipboard = system_clipboard_read();
             if (clipboard) {
-                insert_text_at_cursor(clipboard, buffer, &pos, &cursor);
+                insert_text_at_cursor(clipboard, buffer, &pos, &cursor, prompt, &render);
                 free(clipboard);
             }
         }
@@ -383,8 +343,7 @@ char* read_input(void) {
             memcpy(buffer + cursor, utf8_seq, seq_len);
             pos += seq_len;
             cursor += seq_len;
-            fwrite(utf8_seq, 1, seq_len, stdout);
-            redraw_from_cursor(buffer, cursor, 0);
+            redraw_input_line(prompt, buffer, pos, cursor, &render);
         }
     }
     buffer[pos] = '\0';
@@ -420,18 +379,50 @@ char* read_input(void) {
     return strdup(buffer);
 }
 
-static void redraw_from_cursor(const char *buffer, size_t cursor, int clear_extra_space) {
-    const char *tail = buffer + cursor;
-    int tail_width = utf8_string_display_width(tail);
-    printf("%s", tail);
-    if (clear_extra_space) {
-        printf(" ");
+static int terminal_width_columns(void) {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        return 80;
     }
-    int move_back = tail_width + (clear_extra_space ? 1 : 0);
-    for (int i = 0; i < move_back; i++) {
-        printf("\b");
+    return (int)ws.ws_col;
+}
+
+static void redraw_input_line(const char *prompt, const char *buffer, size_t pos, size_t cursor,
+                              struct render_state *state) {
+    int cols = terminal_width_columns();
+    int prompt_width = utf8_string_display_width(prompt ? prompt : "");
+    int line_width = utf8_display_width_range(buffer, 0, pos);
+    int cursor_width = utf8_display_width_range(buffer, 0, cursor);
+
+    int end_offset = prompt_width + line_width;
+    int cursor_offset = prompt_width + cursor_width;
+    int end_row = end_offset / cols;
+    int cursor_row = cursor_offset / cols;
+    int cursor_col = cursor_offset % cols;
+
+    if (state && state->cursor_row > 0) {
+        printf("\033[%dA", state->cursor_row);
+    }
+    printf("\r");
+    if (prompt) {
+        printf("%s", prompt);
+    }
+    if (pos > 0) {
+        fwrite(buffer, 1, pos, stdout);
+    }
+    printf("\033[J");
+    if (end_row > cursor_row) {
+        printf("\033[%dA", end_row - cursor_row);
+    }
+    printf("\r");
+    if (cursor_col > 0) {
+        printf("\033[%dC", cursor_col);
     }
     fflush(stdout);
+
+    if (state) {
+        state->cursor_row = cursor_row;
+    }
 }
 
 static size_t utf8_sequence_length(unsigned char first_byte) {
@@ -517,7 +508,8 @@ static char *system_clipboard_read(void) {
     return buf;
 }
 
-static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, size_t *cursor) {
+static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, size_t *cursor,
+                                  const char *prompt, struct render_state *render) {
     if (!text || !buffer || !pos || !cursor) {
         return;
     }
@@ -541,8 +533,7 @@ static void insert_text_at_cursor(const char *text, char *buffer, size_t *pos, s
     *pos += text_len;
     *cursor += text_len;
 
-    fwrite(sanitized, 1, text_len, stdout);
-    redraw_from_cursor(buffer, *cursor, 0);
+    redraw_input_line(prompt, buffer, *pos, *cursor, render);
 }
 
 static size_t find_token_start(const char *buffer, size_t pos) {
@@ -625,39 +616,6 @@ static int utf8_display_width_range(const char *buffer, size_t start, size_t end
     memcpy(temp, buffer + start, span);
     temp[span] = '\0';
     return utf8_string_display_width(temp);
-}
-
-// FIX: Replaces move_cursor_columns().
-// This function moves VISUALLY to the end of the line by reprinting characters.
-// Reprinting lets the terminal do the wrapping — ESC[nC does NOT wrap.
-static void move_to_end_of_line(const char *buffer, size_t *cursor, size_t pos) {
-    while (*cursor < pos) {
-        size_t next = utf8_next_char_start(buffer, *cursor, pos);
-
-        // FIX: printing characters ensures correct wrap behaviour
-        fwrite(buffer + *cursor, 1, next - *cursor, stdout);
-
-        *cursor = next;
-    }
-}
-
-// FIX: Clears entire input line using backspace + space.
-// Backspace is the ONLY cursor movement that safely moves across wrapped rows.
-static void clear_line_contents(const char *buffer, size_t *pos, size_t *cursor) {
-    while (*pos > 0) {
-        size_t prev = utf8_prev_char_start(buffer, *pos);
-        int width = utf8_display_width_range(buffer, prev, *pos);
-
-        // FIX: "\b \b" clears one printed cell at a time
-        // and works perfectly even on wrapped lines.
-        for (int i = 0; i < width; i++) {
-            printf("\b \b");
-        }
-
-        *pos = prev;
-    }
-    *cursor = 0;
-    fflush(stdout);
 }
 
 static int utf8_string_display_width(const char *s) {

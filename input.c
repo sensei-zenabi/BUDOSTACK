@@ -178,14 +178,21 @@ char* read_input(void) {
                     continue;
                 } else if (next2 == 'C') { /* Right arrow */
                     if (cursor < pos) {
-                        cursor = utf8_next_char_start(buffer, cursor, pos);
-                        render_input_line(buffer, pos, cursor, &rendered_rows);
+                        size_t next = utf8_next_char_start(buffer, cursor, pos);
+                        fwrite(buffer + cursor, 1, next - cursor, stdout);
+                        cursor = next;
+                        fflush(stdout);
                     }
                     continue;
                 } else if (next2 == 'D') { /* Left arrow */
                     if (cursor > 0) {
-                        cursor = utf8_prev_char_start(buffer, cursor);
-                        render_input_line(buffer, pos, cursor, &rendered_rows);
+                        size_t prev = utf8_prev_char_start(buffer, cursor);
+                        int move_width = utf8_display_width_range(buffer, prev, cursor);
+                        for (int i = 0; i < move_width; i++) {
+                            printf("\b");
+                        }
+                        cursor = prev;
+                        fflush(stdout);
                     }
                     continue;
                 } else if (next2 == '3') { /* Delete key sequence: ESC [ 3 ~ */

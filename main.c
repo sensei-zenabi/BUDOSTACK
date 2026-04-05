@@ -313,10 +313,14 @@ int search_mode(const char **lines, size_t line_count, const char *query);
 /* Displays the current working directory as the prompt. */
 void display_prompt(void) {
     char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof(cwd)) != NULL)
-        printf("%s$ ", cwd);
-    else
-        printf("shell$ ");
+    char prompt[PATH_MAX + 8];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+        snprintf(prompt, sizeof(prompt), "%s$ ", cwd);
+    } else {
+        snprintf(prompt, sizeof(prompt), "shell$ ");
+    }
+    input_set_prompt(prompt);
+    printf("%s", prompt);
 }
 
 /* search_mode remains unchanged from the original implementation. */

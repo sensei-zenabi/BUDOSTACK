@@ -1,0 +1,362 @@
+
+
+=============================== RELEASE NOTES ===============================
+
+ Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
+
+  Releance branch:         main
+  Release tag:             v0.9.65
+  Release commit number:   1454
+  Baseline release:        v0.9.60
+================== BUDOSTACK - The Martial Arts of Software  ================
+   ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
+   |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
+   |_____] |_____| |_____/ |_____| ______|    |    |     | |_____  |    \_   
+
+
+ Created by:      Ville Suoranta
+ Contact email:   ville.m.suoranta(at)gmail.com
+
+
+ License:         GPLv2
+
+  You can use, modify, and sell GPLv2 software freely, but if you distribute
+  it, you must provide the source code and keep it under the same license.
+
+  Note! Some files in sub-folders have their own licensing policies!
+
+
+ How to Install & Run?
+
+  1. Run ./setup.sh to install all dependencies required to run BUDOSTACK.
+
+  2. Run ./start.sh to start the built-in terminal with CRT simulation.
+
+  3. Modify the BUDOSTACK.desktop to create a desktop shortcut.
+
+  4. (Opt.) Use your own terminal, start with './budostack' and match the
+     displayed columns and rows using the 'runtask screen.task'.
+
+-----------------------------------------------------------------------------
+
+                           - SYSTEM REQUIREMENTS -
+
+ Operating System: Debian Linux
+
+ Hardware Requirements:
+
+  - Minimum CPU Intel CORE i5
+  - GPU with OpenGL support
+
+ Tested distributions:
+
+  - Ubuntu
+  - Kubuntu
+
+ Note! BUDOSTACK is intended to be ran with the apps/terminal application.
+       that supports 640x360 (80x45) and 800x450 (100x56) resolution modes.
+
+-----------------------------------------------------------------------------
+
+                            - GENERAL INFORMATION -
+
+ /* TOP Tips */
+
+  edit     : Opens a basic file editor: edit <filename>.
+             Supported files: .h/.c, .py, .bat, .sh, .txt, .md, .TASK
+  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!
+             Use 'restart -f' to clean before building.
+  runtask  : Run a TASK script. See below help for details.
+
+  update   : Update your BUDOSTACK version automatically.
+
+
+ /* Description */
+
+  BUDOSTACK is an environment for content creators that enjoy MS-DOS and
+  other older operating systems from the golden era of computing.
+
+
+ /* User Directories */
+
+  Folders reserved for user content, excluded from the build process triggered
+  by 'restart' and makefile.
+
+  ./budo/        - Folder containing budo* libraries for SDL based content
+                   creation from applications to games. Examples included.
+  ./tasks/       - Folder reserved for TASK scripts that can be launched from
+                   any location using the 'runtask mytask.task' scheme.
+  ./users/       - User folders for those who like them.
+
+
+ /* System Directories */
+
+  BUDOSTACK system folders containing all commands and in-built applications
+  for content creation. The content of these folders should not be modified.
+
+  ./apps/         - System applications that do not use paging.
+  ./commands/     - BUDOSTACK TASK scripting commands (read manual.md).
+  ./documents/    - Documents provided by BUDOSTACK.
+  ./fonts/        - Built-in .ttf and .psf system fonts
+  ./games/        - Built-in games. Think of the as our 'minesweepers'.
+  ./lib/          - Shared system libraries used by applications and utilities.
+  ./screenshots/  - Contains the advertisement screenshots.
+  ./budo/shaders/ - Shaders used for CRT simulation used in apps/terminal.
+  ./sounds/       - Collection of system sounds.
+  ./utilities/    - System utilities (utilities/nopaging.ini for exceptions).
+
+-----------------------------------------------------------------------------
+
+                             - SYSTEM UTILITIES -
+
+ In general BUDOSTACK passes commands as they are unless they are found from
+ the list of built-in commands. User can hence use linux through BUDOSTACK.
+
+ /* System Commands */
+
+  cd       : Change Directory, remember to put 'if space' in folder name.
+  cls      : Clear terminal screen.
+  crc32    : Calculate and/or verify CRC32 checksum of a file.
+  diff     : See the difference of two files.
+  display  : Display the contents of a file or an image supported by paint.
+  do       : Copy, move, or delete files and folders with prompts.
+  drives   : Lists all found drives.
+  find     : Find anything.
+  gitter   : Professional git helper for your daily development activities.
+  help     : Display this help message.
+  hw       : Learn your hardware specs just by typing 'hw'.
+  list     : List contents of a directory (type 'list -help').
+  makedir  : Create a new directory.
+  mute     : Enable/Disable Voice Assistant.
+  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'
+  runtask  : Run a proprietary .task script until CTRL+c is pressed.
+             Type: runtask -help for more details.
+  stats    : Displays basic hardware stats.
+  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'
+  exit     : Exit BUDOSTACK.
+
+-----------------------------------------------------------------------------
+
+                            - SYSTEM APPLICATIONS -
+
+ /* Office Tools */
+
+ Note! All csv related commands assume ; as delimiter!
+
+  book     : Focus writer for all who want to write.
+  cmath    : Math interpreter that has interactive mode and macro execution.
+             To run existing macro, type 'cmath mymacro.m'.
+  csvplot  : ASCII x-y plotter for .csv files.
+  csvprint : Pretty prints a .csv file.
+  slides   : Terminal slideset editor, to start 'slides myslides.sld'.
+             For help CTRL+H when the app is running.
+  table    : Lightweight spreadsheet tool, open file 'table mytable.csv'.
+             Uses commands/_CALC to evaluate equations.
+
+
+ /* Internet and Communications */
+
+  ctalk    : IRC like messaging tool. Type ctalk for instructions.
+  inet     : Interactive internet connection manager.
+  rss      : Lightweight rss news app, tested only with yle rss feed.
+
+
+ /* Other */
+
+  dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.
+  editprof.: Full name 'editprofile'. App for editing color scheme presets.
+  paint    : ASCII paint application to edit bitmaps.
+  pixart   : Turn images into pixel art and assets to your apps.
+  psfedit  : Font editor for .psf fonts.
+  signal   : Signal generator. Type 'signal' for help.
+  time     : Display time with IP-based timezone lookup and NTP clocks.
+             Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).
+
+-----------------------------------------------------------------------------
+
+                              - BUILT-IN GAMES -
+
+ A collection of games provided together with BUDOSTACK.
+
+ /* List of Games */
+
+  invaders : Space invaders clone tailored to terminal.
+  snake    : Snake clone, reminence from the good old Nokia days.
+  tictactoe: Classic tictactoe, but with bigger game area.
+
+-----------------------------------------------------------------------------
+
+                               - BUDO LIBRARIES -
+
+ Work-in-progress.
+
+-----------------------------------------------------------------------------
+
+                               - TASK LANGUAGE -
+
+ BUDOSTACK contains built-in TASK scripting language that can be used to
+ develop various applications. The instruction set is located in ./commands/
+ folder and all the commands contain help when executed without arguments.
+
+ Example TASK applications are located in ./tasks/ -folder.
+
+
+ /* BUDOSTACK Developer Tools */
+
+  compile              : Build a standalone binary from a TASK script.
+                         Type 'compile -help'.
+  floppycheck          : 'floppycheck ./file or ./folder/' estimates how many
+                         standard floppy disks the given content will take.
+
+ /* BUDOSTACK Example TASK Programs */
+
+  audiodemo.task       : Collection of in-built sound capabilities
+  autoexec.task        : Determines what happens before BUDOSTACK login screen
+  codedemo.task        : Coding basics: for, while, arrays, functions, etc.
+  csvdemo.task         : Dynamic .csv file manipulation demo
+  demo.task            : Demonstration of _TERM* command set.
+  keyboard.task        : Keyboard input reading and processing.
+  mouse.task           : Mouse input reading and processing.
+  release.task         : Used to generate release notes
+  screen.task          : Screen calibration TASK
+  waves.task           : Demonstration how to plot basic math
+
+-----------------------------------------------------------------------------
+
+                               - KNOWN ISSUES -
+
+ apps/slides:
+
+  Unable to copy-paste content between the app and clipboard.
+
+=============================================================================
+
+
+
+
+================================= CHANGE LOG ================================
+
+commit 2dae38732296ed4629db92160a10f7d0b5ef340e
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Sun Apr 5 22:03:57 2026 +0300
+
+    v0.9.65
+
+users/ville/readme.md
+
+commit 445de4b5e1a466f187dfe64a93bd9e0579a83ca4
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun Apr 5 21:50:29 2026 +0300
+
+    terminal: avoid unnecessary shader animation ticks for static passes
+
+apps/terminal.c
+
+commit d8b6bbc6edbef72914dc380d5d16bc6df67c8383
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun Apr 5 21:33:09 2026 +0300
+
+    Use CRLF on Enter to avoid multiline prompt overwrite
+
+input.c
+
+commit 5f5f4188c4fc8de7552e64062c4570ff9bedfaa0
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun Apr 5 21:28:26 2026 +0300
+
+    Fix multiline input redraw wrapping at terminal width
+
+input.c
+
+commit 73ec58ee585b27e96bd9ad43934d531d8b215182
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun Apr 5 21:20:52 2026 +0300
+
+    Fix wrapped prompt line editing and navigation
+
+input.c
+input.h
+main.c
+
+commit 83981e0865a3fa42c1b2cf2f0a7e89d2eae5426f
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Thu Apr 2 23:10:33 2026 +0300
+
+    Fix UTF-8 cursor width handling in book editor
+
+apps/book.c
+
+commit 5086cc424d6f0e0646b8f04128e21a5153cf79f8
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Thu Apr 2 23:05:19 2026 +0300
+
+    Fix signed-char key handling for UTF-8 input in apps/book
+
+apps/book.c
+
+commit 66efbe52730b41647cda87ca7134544addf7729e
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Thu Apr 2 22:59:29 2026 +0300
+
+    Fix nordic character input in apps/book
+
+apps/book.c
+
+commit f2c84be55ecb7dc4ce10822f2bafd6f3f1353c30
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Thu Apr 2 22:54:28 2026 +0300
+
+    apps/book: add Ctrl+T multiline selection with cut/copy/paste
+
+apps/book.c
+
+commit 966fc952ebc5ba1e9b25cd5a9ece0532f0a3d0f3
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Mar 18 18:58:48 2026 +0200
+
+    Add terminal typing sound toggle
+
+apps/terminal.c
+commands/_TERM_TYPING_SOUND.c
+commands/manual.md
+config.ini
+tasks/autoexec.task
+
+commit 25bec94fbd0f22ba0cc180e1de0806d84bfb8132
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Mar 18 18:06:23 2026 +0200
+
+    Edit: show per-tab modified-row counter and persist it in session
+    
+    ### Motivation
+    - Show a live count of modified rows for the currently displayed file in the `edit` UI so users can see how many rows have local changes.
+    - Track modified-row counts separately for each of the three editor tabs so switching tabs displays the correct count for that buffer.
+    - Preserve the per-tab modified-row counts when the user restores a previous `edit` session and clear the restored value once the user actually modifies, opens, or saves the file so the counter remains accurate.
+    
+    ### Description
+    - Added per-buffer/session state fields: `restored_modified_rows` in `EditorBuffer` and `E` and `modified_rows` in `EditorSessionSlot`, and carry that value through `editorCaptureActiveBuffer` / `editorApplyBuffer` to keep counters per tab.
+    - Persisted the modified-row count in the session file by extending `editorSaveSession` to write a `modified_rows` field and updated `editorParseSessionSlot`/`editorLoadSession` to parse and restore it.
+    - Implemented helper APIs `editorCountModifiedRowsInBuffer`, `editorCurrentModifiedRows`, `editorClearRestoredModifiedRows`, and `editorMarkLineModified` and hook them into edit operations so restored counters are cleared when the buffer is actually edited and marked whenever a line is changed.
+    - Rendered a top-right indicator `Rows N` in `editorDrawTopBar` that always shows the current file’s modified-row count (uses restored count if no in-memory modifications exist).
+    
+    ### Testing
+    - Ran `make clean all` from the repository root and the build completed successfully with no compiler warnings or errors; `./budo/build.sh` printed an environment warning about missing SDL2 development files but the `make`-based build finished cleanly.
+    - No other automated tests apply; visual behavior was exercised by building the `apps/edit` binary (visual screenshot not captured in this environment).
+
+apps/edit.c
+
+commit 3207bdc814edac313c680768300e9dbd4e9507ea
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Mar 18 17:57:06 2026 +0200
+
+    Add modified row counter to edit tabs
+
+apps/edit.c
+
+commit 25382bedb7d96ab97999b79c80803f24ce257e56
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Tue Feb 24 21:00:35 2026 +0200
+
+    updated edit supported files
+
+documents/help.txt

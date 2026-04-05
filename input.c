@@ -121,7 +121,10 @@ char* read_input(const char *prompt) {
         int c = getchar();
         if ((c == '\n' || c == '\r') && !in_paste_mode) {
             clear_completion_state(&completion_state);
-            putchar('\n');
+            if (fputs("\r\n", stdout) == EOF) {
+                perror("fputs");
+                exit(EXIT_FAILURE);
+            }
             break;
         }
         /* Handle escape sequences for arrow keys (command history navigation) */

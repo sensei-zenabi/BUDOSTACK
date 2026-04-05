@@ -58,6 +58,7 @@ static void format_completion(const char *completion, int used_filenames, char q
                               char *formatted, size_t formatted_size);
 static int get_terminal_columns(void);
 static size_t compute_visual_rows(int cols, int prompt_width, int content_width);
+static size_t compute_visual_row_index(size_t cells, int cols);
 static void render_input_line(const char *buffer, size_t pos, size_t cursor, size_t *previous_rows);
 
 void input_set_prompt(const char *prompt) {
@@ -805,7 +806,17 @@ static size_t compute_visual_rows(int cols, int prompt_width, int content_width)
     if (cells == 0u) {
         return 1u;
     }
-    return ((cells - 1u) / (size_t)cols) + 1u;
+    return (cells / (size_t)cols) + 1u;
+}
+
+static size_t compute_visual_row_index(size_t cells, int cols) {
+    if (cols <= 0) {
+        cols = 80;
+    }
+    if (cells == 0u) {
+        return 0u;
+    }
+    return cells / (size_t)cols;
 }
 
 static void render_input_line(const char *buffer, size_t pos, size_t cursor, size_t *previous_rows) {
@@ -844,14 +855,8 @@ static void render_input_line(const char *buffer, size_t pos, size_t cursor, siz
     size_t new_rows = compute_visual_rows(cols, prompt_width, full_width);
     size_t end_cells = (size_t)prompt_width + (size_t)full_width;
     size_t target_cells = (size_t)prompt_width + (size_t)cursor_width;
-    size_t end_row = 0u;
-    size_t target_row = 0u;
-    if (end_cells > 0u) {
-        end_row = (end_cells - 1u) / (size_t)cols;
-    }
-    if (target_cells > 0u) {
-        target_row = (target_cells - 1u) / (size_t)cols;
-    }
+    size_t end_row = compute_visual_row_index(end_cells, cols);
+    size_t target_row = compute_visual_row_index(target_cells, cols);
     if (end_row > target_row) {
         printf("\x1b[%zuA\r", end_row - target_row);
     } else {

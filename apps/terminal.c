@@ -1182,6 +1182,7 @@ struct terminal_buffer {
     uint32_t palette[256];
     uint32_t last_emitted;
     int last_emitted_valid;
+    int wrap_pending;
 };
 
 static void terminal_apply_scale(struct terminal_buffer *buffer, int scale);
@@ -4275,6 +4276,7 @@ static int terminal_buffer_init(struct terminal_buffer *buffer, size_t columns, 
     buffer->scroll_offset = 0u;
     buffer->last_emitted = 0u;
     buffer->last_emitted_valid = 0;
+    buffer->wrap_pending = 0;
 
     if (columns == 0u || rows == 0u) {
         buffer->cells = NULL;
@@ -4450,6 +4452,7 @@ static void terminal_buffer_free(struct terminal_buffer *buffer) {
     buffer->history_rows = 0u;
     buffer->history_start = 0u;
     buffer->scroll_offset = 0u;
+    buffer->wrap_pending = 0;
 }
 
 static int terminal_prepare_alternate_buffer(const struct terminal_buffer *source) {
@@ -4656,6 +4659,7 @@ static void terminal_buffer_index(struct terminal_buffer *buffer) {
     if (!buffer || buffer->rows == 0u) {
         return;
     }
+    buffer->wrap_pending = 0;
 
     if (buffer->cursor_row >= buffer->rows) {
         buffer->cursor_row = buffer->rows - 1u;
@@ -4679,6 +4683,7 @@ static void terminal_buffer_reverse_index(struct terminal_buffer *buffer) {
     if (!buffer || buffer->rows == 0u) {
         return;
     }
+    buffer->wrap_pending = 0;
 
     if (buffer->cursor_row >= buffer->rows) {
         buffer->cursor_row = buffer->rows - 1u;
@@ -4728,6 +4733,7 @@ static void terminal_buffer_set_cursor(struct terminal_buffer *buffer, size_t co
     }
     buffer->cursor_column = column;
     buffer->cursor_row = row;
+    buffer->wrap_pending = 0;
 }
 
 static void terminal_buffer_move_relative(struct terminal_buffer *buffer, int column_delta, int row_delta) {
@@ -4750,6 +4756,7 @@ static void terminal_buffer_move_relative(struct terminal_buffer *buffer, int co
     }
     buffer->cursor_column = (size_t)new_column;
     buffer->cursor_row = (size_t)new_row;
+    buffer->wrap_pending = 0;
 }
 
 static void terminal_buffer_clear_line_segment(struct terminal_buffer *buffer,
@@ -5061,9 +5068,11 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
     switch (ch) {
     case '\r':
         buffer->cursor_column = 0u;
+        buffer->wrap_pending = 0;
         return;
     case '\n':
         buffer->cursor_column = 0u;
+        buffer->wrap_pending = 0;
         terminal_buffer_index(buffer);
         return;
     case '\t': {
@@ -5107,6 +5116,7 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
          * If we cleared the cell here, every cursor move left would
          * visually delete characters, which is what we are seeing now.
          */
+        buffer->wrap_pending = 0;
         if (buffer->cursor_column > 0u) {
             buffer->cursor_column--;
         } else if (buffer->cursor_row > 0u) {
@@ -5117,6 +5127,11 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
     default:
         if (ch < 32u && ch != '\t') {
             return;
+        }
+        if (buffer->wrap_pending) {
+            buffer->cursor_column = 0u;
+            terminal_buffer_index(buffer);
+            buffer->wrap_pending = 0;
         }
         if (buffer->cursor_row >= buffer->rows) {
             terminal_buffer_index(buffer);
@@ -5142,7 +5157,11 @@ static void terminal_put_char(struct terminal_buffer *buffer, uint32_t ch) {
         terminal_cell_apply_current(buffer, cell, ch);
         buffer->last_emitted = ch;
         buffer->last_emitted_valid = 1;
-        buffer->cursor_column++;
+        if (buffer->cursor_column + 1u >= buffer->columns) {
+            buffer->wrap_pending = 1;
+        } else {
+            buffer->cursor_column++;
+        }
         return;
     }
 

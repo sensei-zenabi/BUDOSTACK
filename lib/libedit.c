@@ -77,6 +77,17 @@ static size_t append_reset(char *dest, size_t pos, size_t size) {
     return pos + rl;
 }
 
+static int is_escaped_at(const char *line, size_t pos) {
+    size_t backslash_count = 0;
+
+    while (pos > 0 && line[pos - 1] == '\\') {
+        backslash_count++;
+        pos--;
+    }
+
+    return (backslash_count % 2U) != 0U;
+}
+
 int libedit_is_plain_text(const char *filename) {
     if (!filename)
         return 0;
@@ -271,6 +282,36 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                 continue;
             }
         } else {
+            /* Check for string literal start */
+            if (line[i] == '"') {
+                ri = append_color(result, ri, buf_size, COLOR_STRING_RGB);
+                result[ri++] = line[i++];  // copy starting quote
+                while (i < len) {
+                    result[ri++] = line[i];
+                    if (line[i] == '"' && !is_escaped_at(line, i)) {
+                        i++;
+                        break;
+                    }
+                    i++;
+                }
+                ri = append_reset(result, ri, buf_size);
+                continue;
+            }
+            /* Check for character literal start */
+            if (line[i] == '\'') {
+                ri = append_color(result, ri, buf_size, COLOR_STRING_RGB);
+                result[ri++] = line[i++];  // copy starting single quote
+                while (i < len) {
+                    result[ri++] = line[i];
+                    if (line[i] == '\'' && !is_escaped_at(line, i)) {
+                        i++;
+                        break;
+                    }
+                    i++;
+                }
+                ri = append_reset(result, ri, buf_size);
+                continue;
+            }
             /* Check for start of multi-line comment */
             if (i + 1 < len && line[i] == '/' && line[i + 1] == '*') {
                 ri = append_color(result, ri, buf_size, COLOR_COMMENT_RGB);
@@ -288,36 +329,6 @@ char *highlight_c_line(const char *line, int hl_in_comment) {
                 }
                 ri = append_reset(result, ri, buf_size);
                 break;
-            }
-            /* Check for string literal start */
-            if (line[i] == '"') {
-                ri = append_color(result, ri, buf_size, COLOR_STRING_RGB);
-                result[ri++] = line[i++];  // copy starting quote
-                while (i < len) {
-                    result[ri++] = line[i];
-                    if (line[i] == '"' && (i == 0 || line[i - 1] != '\\')) {
-                        i++;
-                        break;
-                    }
-                    i++;
-                }
-                ri = append_reset(result, ri, buf_size);
-                continue;
-            }
-            /* Check for character literal start */
-            if (line[i] == '\'') {
-                ri = append_color(result, ri, buf_size, COLOR_STRING_RGB);
-                result[ri++] = line[i++];  // copy starting single quote
-                while (i < len) {
-                    result[ri++] = line[i];
-                    if (line[i] == '\'' && (i == 0 || line[i - 1] != '\\')) {
-                        i++;
-                        break;
-                    }
-                    i++;
-                }
-                ri = append_reset(result, ri, buf_size);
-                continue;
             }
             /* Check for identifier (potential keyword) */
             if (is_identifier_start_char(line[i]) &&

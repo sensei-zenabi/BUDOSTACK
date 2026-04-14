@@ -324,10 +324,20 @@ void editorDelCharAtCursor(void);
 void editorSearch(void);
 void editorReplace(void);
 
+static int editorCharIsEscaped(const char *line, int pos) {
+    int backslash_count = 0;
+    int i = pos - 1;
+
+    while (i >= 0 && line[i] == '\\') {
+        backslash_count++;
+        i--;
+    }
+
+    return (backslash_count % 2) != 0;
+}
+
 /* --- New Function: update_syntax ---
-   Updates each line’s multi-line comment state.
-   This simple state machine (which does not consider string/char literals) scans
-   through all lines so that the highlighter can know whether a line starts in a comment.
+   Updates each line’s multi-line comment state while respecting literals.
 */
 void update_syntax(void) {
     int in_comment = 0;
@@ -342,15 +352,43 @@ void update_syntax(void) {
         E.row[i].hl_in_comment = in_comment;
         char *line = E.row[i].chars;
         int j = 0;
+        int in_string = 0;
+        int in_char = 0;
 
         while (j < E.row[i].size) {
-            if (!in_comment && j + 1 < E.row[i].size && line[j] == '/' && line[j + 1] == '*') {
-                in_comment = 1;
-                j += 2;
+            if (in_comment) {
+                if (j + 1 < E.row[i].size && line[j] == '*' && line[j + 1] == '/') {
+                    in_comment = 0;
+                    j += 2;
+                    continue;
+                }
+                j++;
                 continue;
             }
-            if (in_comment && j + 1 < E.row[i].size && line[j] == '*' && line[j + 1] == '/') {
-                in_comment = 0;
+
+            if (!in_char && line[j] == '"' && !editorCharIsEscaped(line, j)) {
+                in_string = !in_string;
+                j++;
+                continue;
+            }
+
+            if (!in_string && line[j] == '\'' && !editorCharIsEscaped(line, j)) {
+                in_char = !in_char;
+                j++;
+                continue;
+            }
+
+            if (in_string || in_char) {
+                j++;
+                continue;
+            }
+
+            if (j + 1 < E.row[i].size && line[j] == '/' && line[j + 1] == '/') {
+                break;
+            }
+
+            if (!in_comment && j + 1 < E.row[i].size && line[j] == '/' && line[j + 1] == '*') {
+                in_comment = 1;
                 j += 2;
                 continue;
             }

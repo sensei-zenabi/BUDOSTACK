@@ -8959,6 +8959,7 @@ int main(int argc, char **argv) {
             }
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         } else {
+            glUseProgram(0);
             glMatrixMode(GL_PROJECTION);
             glLoadIdentity();
             glMatrixMode(GL_MODELVIEW);

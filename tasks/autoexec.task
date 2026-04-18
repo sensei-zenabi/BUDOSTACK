@@ -22,9 +22,13 @@ RUN _TERM_MOUSE_SHOW disable
 
 SET $LOAD = 0
 SET $TYPING_SOUND = "disable"
+SET $SHADER = "disable"
 
 RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
 RUN _TERM_TYPING_SOUND $TYPING_SOUND
+
+RUN _CONFIG -read _TERM_SHADER TO $SHADER
+RUN _TERM_SHADER $SHADER
 
 # Set configurations for login
 
@@ -42,6 +46,7 @@ SET $LOGIN_SCREEN = "null"
 SET $LOGIN_MENU = "null"
 SET $RETROPROFILE = "vt220-green"
 SET $TYPING_SOUND = "disable"
+SET $SHADER = "disable"
 
 #-------------------------------------------------------------------------
 # SKIP LAUNCHER
@@ -328,6 +333,7 @@ IF ($MENU == "CONFIGURATION"):
   RUN _CONFIG -read LOGIN_MENU TO $LOGIN_MENU
   RUN _CONFIG -read _RETROPROFILE TO $RETROPROFILE
   RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
+  RUN _CONFIG -read _TERM_SHADER TO $SHADER
   
   # Index retroprofile
   SET $RETROPROFILE_IDX = 0
@@ -353,7 +359,8 @@ IF ($MENU == "CONFIGURATION"):
   RUN _TEXT -x $MENU_X-3 -y 23 -text "Login Menu      = " + $LOGIN_MENU
   RUN _TEXT -x $MENU_X-3 -y 25 -text "Typing Sound    = " + $TYPING_SOUND
   RUN _TEXT -x $MENU_X-3 -y 27 -text "Retro Profile   = " + $RETROPROFILE
-  RUN _TEXT -x $MENU_X-3 -y 29 -text "<-- MAIN MENU             "
+  RUN _TEXT -x $MENU_X-3 -y 29 -text "Shader Passes   = " + $SHADER
+  RUN _TEXT -x $MENU_X-3 -y 31 -text "<-- MAIN MENU             "
   
   EVAL DRAW_CURSOR($CURSOR_X-3, $CURSOR_Y)
     
@@ -383,8 +390,8 @@ IF ($MENU == "CONFIGURATION"):
   IF ($CURSOR_Y < 17):
     $CURSOR_Y = 17
   END
-  IF ($CURSOR_Y > 29):
-    $CURSOR_Y = 29
+  IF ($CURSOR_Y > 31):
+    $CURSOR_Y = 31
   END
   
   
@@ -458,6 +465,15 @@ IF ($MENU == "CONFIGURATION"):
       END
     END
     IF ($CURSOR_Y == 29):
+      # Set shader passes
+      IF ($SHADER == "enable"):
+        RUN _CONFIG -write _TERM_SHADER disable
+      END
+      IF ($SHADER == "disable"):
+        RUN _CONFIG -write _TERM_SHADER enable
+      END
+    END
+    IF ($CURSOR_Y == 31):
       $MENU = "MAIN MENU"
     END
   
@@ -488,6 +504,9 @@ RUN _RETROPROFILE apply $RETROPROFILE
 
 RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
 RUN _TERM_TYPING_SOUND $TYPING_SOUND
+
+RUN _CONFIG -read _TERM_SHADER TO $SHADER
+RUN _TERM_SHADER $SHADER
 
 # Return cursor blink
 RUN _TERM_CURSOR_BLINK enable

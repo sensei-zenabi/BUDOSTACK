@@ -102,6 +102,12 @@ static Uint32 terminal_shader_frame_interval_ms = 0u;
 static Uint32 terminal_render_last_frame_tick = 0u;
 static Uint32 terminal_render_frame_interval_ms = 0u;
 static int terminal_shaders_enabled = 1;
+enum terminal_crt_mode {
+    TERMINAL_CRT_MODE_DISABLE = 0,
+    TERMINAL_CRT_MODE_LIGHT = 1,
+    TERMINAL_CRT_MODE_SHADER = 2
+};
+static enum terminal_crt_mode terminal_crt_mode = TERMINAL_CRT_MODE_SHADER;
 static int terminal_vsync_enabled = 0;
 static int terminal_input_draw_requested = 0;
 static unsigned int terminal_runtime_target_fps = TERMINAL_TARGET_FPS;
@@ -3846,7 +3852,75 @@ static int terminal_enable_shaders(void) {
 }
 
 static int terminal_shaders_active(void) {
-    return terminal_shaders_enabled && terminal_gl_shader_count > 0u;
+    return terminal_crt_mode == TERMINAL_CRT_MODE_SHADER &&
+           terminal_shaders_enabled &&
+           terminal_gl_shader_count > 0u;
+}
+
+static void terminal_apply_lightweight_crt(uint8_t *framebuffer, int width, int height) {
+    if (!framebuffer || width <= 1 || height <= 1) {
+        return;
+    }
+
+    size_t pixel_count = (size_t)width * (size_t)height;
+    if (pixel_count == 0u || pixel_count > SIZE_MAX / 4u) {
+        return;
+    }
+
+    size_t byte_count = pixel_count * 4u;
+    uint8_t *source = (uint8_t *)malloc(byte_count);
+    if (!source) {
+        return;
+    }
+    memcpy(source, framebuffer, byte_count);
+
+    const float curve_strength_x = 0.085f;
+    const float curve_strength_y = 0.105f;
+    const float center_x = ((float)width - 1.0f) * 0.5f;
+    const float center_y = ((float)height - 1.0f) * 0.5f;
+    const float inv_center_x = center_x > 0.0f ? 1.0f / center_x : 0.0f;
+    const float inv_center_y = center_y > 0.0f ? 1.0f / center_y : 0.0f;
+
+    for (int y = 0; y < height; y++) {
+        float ny = ((float)y - center_y) * inv_center_y;
+        for (int x = 0; x < width; x++) {
+            float nx = ((float)x - center_x) * inv_center_x;
+            float radius2 = nx * nx + ny * ny;
+            float warp = 1.0f + radius2 * 0.35f;
+            float warped_nx = nx * (1.0f + curve_strength_x * warp);
+            float warped_ny = ny * (1.0f + curve_strength_y * warp);
+            float src_xf = center_x + warped_nx * center_x;
+            float src_yf = center_y + warped_ny * center_y;
+            int src_x = (int)src_xf;
+            int src_y = (int)src_yf;
+
+            uint8_t r = 0u;
+            uint8_t g = 0u;
+            uint8_t b = 0u;
+            uint8_t a = 255u;
+            if (src_x >= 0 && src_x < width && src_y >= 0 && src_y < height) {
+                size_t src_idx = ((size_t)src_y * (size_t)width + (size_t)src_x) * 4u;
+                r = source[src_idx + 0u];
+                g = source[src_idx + 1u];
+                b = source[src_idx + 2u];
+                a = source[src_idx + 3u];
+            }
+
+            if ((y & 1) != 0) {
+                r = (uint8_t)((unsigned int)r * 200u / 255u);
+                g = (uint8_t)((unsigned int)g * 200u / 255u);
+                b = (uint8_t)((unsigned int)b * 200u / 255u);
+            }
+
+            size_t dst_idx = ((size_t)y * (size_t)width + (size_t)x) * 4u;
+            framebuffer[dst_idx + 0u] = r;
+            framebuffer[dst_idx + 1u] = g;
+            framebuffer[dst_idx + 2u] = b;
+            framebuffer[dst_idx + 3u] = a;
+        }
+    }
+
+    free(source);
 }
 
 static int terminal_shaders_require_animation(void) {
@@ -3869,7 +3943,7 @@ static void terminal_print_usage(const char *progname) {
     fprintf(stderr, "Usage: %s [-s shader_path]... [--fps hz] [--shader-fps hz]\n", name);
     fprintf(stderr, "  --fps hz         Set render target FPS (0 disables frame pacing).\n");
     fprintf(stderr, "  --shader-fps hz  Set shader animation FPS (0 disables animation pacing).\n");
-    fprintf(stderr, "  Send OSC 777 'shader=enable|disable' via _TERM_SHADER to toggle shaders at runtime.\n");
+    fprintf(stderr, "  Send OSC 777 'shader=disable|light|shader' via _TERM_SHADER to set CRT mode at runtime.\n");
     fprintf(stderr, "  Send OSC 777 'cursor_blink=enable|disable' via _TERM_CURSOR_BLINK to toggle cursor blinking.\n");
 }
 
@@ -5582,8 +5656,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int mouse_query_requested = 0;
     int mouse_visibility_requested = 0;
     int mouse_visibility_show = 0;
-    int shader_toggle_requested = 0;
-    int shader_enable_requested = 0;
+    int shader_mode_requested = 0;
+    enum terminal_crt_mode requested_crt_mode = terminal_crt_mode;
     int cursor_blink_toggle_requested = 0;
     int cursor_blink_enable_requested = 1;
 
@@ -5706,12 +5780,15 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             resolution_requested = 1;
                         }
                     } else if (strcmp(key, "shader") == 0 && value && *value != '\0') {
-                        if (strcmp(value, "enable") == 0) {
-                            shader_toggle_requested = 1;
-                            shader_enable_requested = 1;
+                        if (strcmp(value, "shader") == 0 || strcmp(value, "enable") == 0) {
+                            shader_mode_requested = 1;
+                            requested_crt_mode = TERMINAL_CRT_MODE_SHADER;
+                        } else if (strcmp(value, "light") == 0) {
+                            shader_mode_requested = 1;
+                            requested_crt_mode = TERMINAL_CRT_MODE_LIGHT;
                         } else if (strcmp(value, "disable") == 0) {
-                            shader_toggle_requested = 1;
-                            shader_enable_requested = 0;
+                            shader_mode_requested = 1;
+                            requested_crt_mode = TERMINAL_CRT_MODE_DISABLE;
                         }
                     } else if (strcmp(key, "cursor_blink") == 0 && value && *value != '\0') {
                         if (strcmp(value, "enable") == 0) {
@@ -6080,9 +6157,11 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 }
             }
 
-            if (shader_toggle_requested) {
-                if (shader_enable_requested) {
+            if (shader_mode_requested) {
+                terminal_crt_mode = requested_crt_mode;
+                if (terminal_crt_mode == TERMINAL_CRT_MODE_SHADER) {
                     if (terminal_enable_shaders() != 0) {
+                        terminal_crt_mode = TERMINAL_CRT_MODE_DISABLE;
                         fprintf(stderr, "terminal: Failed to enable shaders; remaining disabled.\n");
                     }
                 } else {
@@ -8732,6 +8811,9 @@ int main(int argc, char **argv) {
         }
 
         if (frame_dirty) {
+            if (terminal_crt_mode == TERMINAL_CRT_MODE_LIGHT) {
+                terminal_apply_lightweight_crt(framebuffer, frame_width, frame_height);
+            }
             if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
                 fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
                 running = 0;

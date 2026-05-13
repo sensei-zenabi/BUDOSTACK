@@ -5,8 +5,10 @@
 #include <string.h>
 
 static void print_usage(void) {
-    fprintf(stderr, "Usage: _TERM_SHADER <enable|disable>\n");
-    fprintf(stderr, "  Enables or disables terminal shader passes.\n");
+    fprintf(stderr, "Usage: _TERM_SHADER <disable|light|shader>\n");
+    fprintf(stderr, "  disable : disable CRT post-processing effects.\n");
+    fprintf(stderr, "  light   : enable lightweight CPU CRT simulation (curvature + scanlines).\n");
+    fprintf(stderr, "  shader  : enable full shader stack CRT processing.\n");
 }
 
 int main(int argc, char **argv) {
@@ -16,8 +18,10 @@ int main(int argc, char **argv) {
     }
 
     const char *action = argv[1];
-    if (strcmp(action, "enable") != 0 && strcmp(action, "disable") != 0) {
-        fprintf(stderr, "_TERM_SHADER: action must be 'enable' or 'disable'.\n");
+    if (strcmp(action, "disable") != 0 &&
+        strcmp(action, "light") != 0 &&
+        strcmp(action, "shader") != 0) {
+        fprintf(stderr, "_TERM_SHADER: action must be 'disable', 'light', or 'shader'.\n");
         print_usage();
         return EXIT_FAILURE;
     }

@@ -252,9 +252,12 @@ render only a single layer (1–16). Omitting `-layer` renders all layers.
 **Description:** Sets pixel scaling: `1` for original resolution, `2` for double.
 
 ### `_TERM_SHADER`
-**Usage:** `_TERM_SHADER <enable|disable>`
+**Usage:** `_TERM_SHADER <disable|light|shader>`
 
-**Description:** Enables or disables terminal shader passes.
+**Description:** Sets CRT post-processing mode in `apps/terminal`:
+- `disable`: no CRT post-processing.
+- `light`: lightweight CPU-based CRT simulation (curvature + scanlines), no shader stack required.
+- `shader`: full shader-stack CRT mode.
 
 ### `_TERM_SOUND_PLAY`
 **Usage:** `_TERM_SOUND_PLAY <channel> <audiofile> <volume>`

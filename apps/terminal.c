@@ -8553,6 +8553,14 @@ int main(int argc, char **argv) {
         }
 
         int full_redraw = terminal_force_full_redraw;
+        if (terminal_crt_mode == TERMINAL_CRT_MODE_LIGHT) {
+            /*
+             * Lightweight CRT post-processing is applied on the CPU after glyph
+             * rasterization. Force a full source redraw so we always warp from a
+             * clean terminal frame and avoid stacking/cascade artifacts.
+             */
+            full_redraw = 1;
+        }
         terminal_force_full_redraw = 0;
         int frame_dirty = 0;
         int shader_timing_enabled = 0;

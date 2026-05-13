@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.65
-  Release commit number:   1454
-  Baseline release:        v0.9.60
+  Release tag:             v0.9.66
+  Release commit number:   1458
+  Baseline release:        v0.9.65
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -236,127 +236,28 @@
 
 ================================= CHANGE LOG ================================
 
-commit 2dae38732296ed4629db92160a10f7d0b5ef340e
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sun Apr 5 22:03:57 2026 +0300
-
-    v0.9.65
-
-users/ville/readme.md
-
-commit 445de4b5e1a466f187dfe64a93bd9e0579a83ca4
+commit b714b590b23feb5095bd287afa56f0528cf20f9e
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun Apr 5 21:50:29 2026 +0300
+Date:   Sat Apr 18 22:27:39 2026 +0300
 
-    terminal: avoid unnecessary shader animation ticks for static passes
+    Add shader toggle to autoexec configuration menu
 
-apps/terminal.c
-
-commit d8b6bbc6edbef72914dc380d5d16bc6df67c8383
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun Apr 5 21:33:09 2026 +0300
-
-    Use CRLF on Enter to avoid multiline prompt overwrite
-
-input.c
-
-commit 5f5f4188c4fc8de7552e64062c4570ff9bedfaa0
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun Apr 5 21:28:26 2026 +0300
-
-    Fix multiline input redraw wrapping at terminal width
-
-input.c
-
-commit 73ec58ee585b27e96bd9ad43934d531d8b215182
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun Apr 5 21:20:52 2026 +0300
-
-    Fix wrapped prompt line editing and navigation
-
-input.c
-input.h
-main.c
-
-commit 83981e0865a3fa42c1b2cf2f0a7e89d2eae5426f
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Thu Apr 2 23:10:33 2026 +0300
-
-    Fix UTF-8 cursor width handling in book editor
-
-apps/book.c
-
-commit 5086cc424d6f0e0646b8f04128e21a5153cf79f8
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Thu Apr 2 23:05:19 2026 +0300
-
-    Fix signed-char key handling for UTF-8 input in apps/book
-
-apps/book.c
-
-commit 66efbe52730b41647cda87ca7134544addf7729e
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Thu Apr 2 22:59:29 2026 +0300
-
-    Fix nordic character input in apps/book
-
-apps/book.c
-
-commit f2c84be55ecb7dc4ce10822f2bafd6f3f1353c30
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Thu Apr 2 22:54:28 2026 +0300
-
-    apps/book: add Ctrl+T multiline selection with cut/copy/paste
-
-apps/book.c
-
-commit 966fc952ebc5ba1e9b25cd5a9ece0532f0a3d0f3
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Mar 18 18:58:48 2026 +0200
-
-    Add terminal typing sound toggle
-
-apps/terminal.c
-commands/_TERM_TYPING_SOUND.c
-commands/manual.md
 config.ini
 tasks/autoexec.task
 
-commit 25bec94fbd0f22ba0cc180e1de0806d84bfb8132
+commit 43fc4f079b6a7397a32d1c0f52286f929d27e56e
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Mar 18 18:06:23 2026 +0200
+Date:   Sat Apr 18 22:21:55 2026 +0300
 
-    Edit: show per-tab modified-row counter and persist it in session
-    
-    ### Motivation
-    - Show a live count of modified rows for the currently displayed file in the `edit` UI so users can see how many rows have local changes.
-    - Track modified-row counts separately for each of the three editor tabs so switching tabs displays the correct count for that buffer.
-    - Preserve the per-tab modified-row counts when the user restores a previous `edit` session and clear the restored value once the user actually modifies, opens, or saves the file so the counter remains accurate.
-    
-    ### Description
-    - Added per-buffer/session state fields: `restored_modified_rows` in `EditorBuffer` and `E` and `modified_rows` in `EditorSessionSlot`, and carry that value through `editorCaptureActiveBuffer` / `editorApplyBuffer` to keep counters per tab.
-    - Persisted the modified-row count in the session file by extending `editorSaveSession` to write a `modified_rows` field and updated `editorParseSessionSlot`/`editorLoadSession` to parse and restore it.
-    - Implemented helper APIs `editorCountModifiedRowsInBuffer`, `editorCurrentModifiedRows`, `editorClearRestoredModifiedRows`, and `editorMarkLineModified` and hook them into edit operations so restored counters are cleared when the buffer is actually edited and marked whenever a line is changed.
-    - Rendered a top-right indicator `Rows N` in `editorDrawTopBar` that always shows the current file’s modified-row count (uses restored count if no in-memory modifications exist).
-    
-    ### Testing
-    - Ran `make clean all` from the repository root and the build completed successfully with no compiler warnings or errors; `./budo/build.sh` printed an environment warning about missing SDL2 development files but the `make`-based build finished cleanly.
-    - No other automated tests apply; visual behavior was exercised by building the `apps/edit` binary (visual screenshot not captured in this environment).
+    Fix terminal shader disable fallback rendering
+
+apps/terminal.c
+
+commit dd6417e22dcb66f31a7d5e54612a5cece424a38b
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue Apr 14 23:13:18 2026 +0300
+
+    Fix C comment highlighting inside string/char literals
 
 apps/edit.c
-
-commit 3207bdc814edac313c680768300e9dbd4e9507ea
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Mar 18 17:57:06 2026 +0200
-
-    Add modified row counter to edit tabs
-
-apps/edit.c
-
-commit 25382bedb7d96ab97999b79c80803f24ce257e56
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Tue Feb 24 21:00:35 2026 +0200
-
-    updated edit supported files
-
-documents/help.txt
+lib/libedit.c

@@ -13,7 +13,7 @@
   You can use, modify, and sell GPLv2 software freely, but if you distribute
   it, you must provide the source code and keep it under the same license.
 
-  Note! Some files in sub-folders have their own licensing policies!
+  Note! Some files in sub-folders have their own licensing policies.
 
 
  How to Install & Run?
@@ -22,172 +22,215 @@
 
   2. Run ./start.sh to start the built-in terminal with CRT simulation.
 
-  3. Modify the BUDOSTACK.desktop to create a desktop shortcut.
+  3. Modify BUDOSTACK.desktop to create a desktop shortcut.
 
-  4. (Opt.) Use your own terminal, start with './budostack' and match the
-     displayed columns and rows using the 'runtask screen.task'.
+  4. (Optional) Use your own terminal. Start with './budostack', then match
+     displayed columns and rows using 'runtask screen.task'.
 
------------------------------------------------------------------------------
+  5. After launch, type 'help' for this reference and 'list' to inspect files.
+
+----------------------------------------------------------------------------- 
+
+                             - QUICK START (60s) -
+
+  Type these commands after logging in:
+
+  1) list
+     Show files and folders in the current location.
+
+  2) cd tasks
+     Move into the built-in TASK script directory.
+
+  3) list
+     See available demo scripts.
+
+  4) runtask demo.task
+     Run a graphics/audio TASK demo.
+
+  5) edit notes.txt
+     Create and edit a personal text file.
+
+  6) help
+     Return to this manual at any time.
+
+----------------------------------------------------------------------------- 
 
                            - SYSTEM REQUIREMENTS -
 
- Operating System: Debian Linux
+ Required:
 
- Hardware Requirements:
+  - POSIX-compliant Linux environment.
+  - OpenGL-capable GPU when using apps/terminal CRT simulation.
 
-  - Minimum CPU Intel CORE i5
-  - GPU with OpenGL support
+ Recommended:
+
+  - x86_64 CPU equivalent to modern desktop class hardware.
+  - Terminal resolution support for 640x360 (80x45) and 800x450 (100x56)
+    when running through apps/terminal.
 
  Tested distributions:
 
   - Ubuntu
   - Kubuntu
 
- Note! BUDOSTACK is intended to be ran with the apps/terminal application.
-       that supports 640x360 (80x45) and 800x450 (100x56) resolution modes.
+ Last validated: 2026-05-14
 
------------------------------------------------------------------------------
+----------------------------------------------------------------------------- 
+
+                            - COMMON COMMANDS -
+
+  edit <file>             : Open the basic file editor.
+  list                    : List directory contents.
+  cd <folder>             : Change current directory.
+  runtask <name.task>     : Run a TASK script.
+  display <file>          : Display text/image file content.
+  do                      : Copy, move, or delete with prompts.
+  pack <in> <out.zip>     : Create an archive.
+  unpack <archive>        : Extract an archive.
+  restart                 : Re-compile and restart BUDOSTACK.
+  exit                    : Exit BUDOSTACK.
+
+----------------------------------------------------------------------------- 
 
                             - GENERAL INFORMATION -
 
- /* TOP Tips */
+ /* Top Tips */
 
   edit     : Opens a basic file editor: edit <filename>.
              Supported files: .h/.c, .py, .bat, .sh, .txt, .md, .TASK
-  restart  : A command to re-compile and restart BUDOSTACK. Use with caution!
+  restart  : Re-compile and restart BUDOSTACK. Use with caution.
              Use 'restart -f' to clean before building.
-  runtask  : Run a TASK script. See below help for details.
-
+  runtask  : Run a TASK script. See TASK section below for details.
   update   : Update your BUDOSTACK version automatically.
 
 
  /* Description */
 
-  BUDOSTACK is an environment for content creators that enjoy MS-DOS and
-  other older operating systems from the golden era of computing.
+  BUDOSTACK is an environment for content creators who enjoy MS-DOS and
+  other classic operating systems from the golden era of computing.
 
 
  /* User Directories */
 
-  Folders reserved for user content, excluded from the build process triggered
-  by 'restart' and makefile.
+  Folders reserved for user content. These are excluded from the build
+  process triggered by 'restart' and the makefile.
 
-  ./budo/        - Folder containing budo* libraries for SDL based content
-                   creation from applications to games. Examples included.
+  ./budo/        - Folder containing budo* libraries for SDL-based content
+                   creation, from applications to games. Examples included.
   ./tasks/       - Folder reserved for TASK scripts that can be launched from
                    any location using the 'runtask mytask.task' scheme.
-  ./users/       - User folders for those who like them.
+  ./users/       - User folders for those who prefer separated workspaces.
 
 
  /* System Directories */
 
-  BUDOSTACK system folders containing all commands and in-built applications
-  for content creation. The content of these folders should not be modified.
+  BUDOSTACK system folders contain built-in commands and applications for
+  content creation. Their contents should not be modified.
 
   ./apps/         - System applications that do not use paging.
   ./commands/     - BUDOSTACK TASK scripting commands (read manual.md).
   ./documents/    - Documents provided by BUDOSTACK.
-  ./fonts/        - Built-in .ttf and .psf system fonts
-  ./games/        - Built-in games. Think of the as our 'minesweepers'.
-  ./lib/          - Shared system libraries used by applications and utilities.
-  ./screenshots/  - Contains the advertisement screenshots.
-  ./budo/shaders/ - Shaders used for CRT simulation used in apps/terminal.
+  ./fonts/        - Built-in .ttf and .psf system fonts.
+  ./games/        - Built-in games. Think of them as our "minesweepers".
+  ./lib/          - Shared system libraries used by apps and utilities.
+  ./screenshots/  - Advertisement screenshots.
+  ./budo/shaders/ - CRT simulation shaders used in apps/terminal.
   ./sounds/       - Collection of system sounds.
-  ./utilities/    - System utilities (utilities/nopaging.ini for exceptions).
+  ./utilities/    - System utilities (see utilities/nopaging.ini exceptions).
 
------------------------------------------------------------------------------
+----------------------------------------------------------------------------- 
 
                              - SYSTEM UTILITIES -
 
- In general BUDOSTACK passes commands as they are unless they are found from
- the list of built-in commands. User can hence use linux through BUDOSTACK.
+ BUDOSTACK passes commands as entered unless they match built-in commands.
+ This means you can still use Linux commands through BUDOSTACK.
 
  /* System Commands */
 
-  cd       : Change Directory, remember to put 'if space' in folder name.
+  cd       : Change directory. Put path in quotes if it contains spaces.
   cls      : Clear terminal screen.
   crc32    : Calculate and/or verify CRC32 checksum of a file.
-  diff     : See the difference of two files.
-  display  : Display the contents of a file or an image supported by paint.
+  diff     : See the difference between two files.
+  display  : Display contents of a file or an image supported by paint.
   do       : Copy, move, or delete files and folders with prompts.
-  drives   : Lists all found drives.
-  find     : Find anything.
-  gitter   : Professional git helper for your daily development activities.
+  drives   : List all detected drives.
+  find     : Find files and folders.
+  gitter   : Professional Git helper for daily development activities.
   help     : Display this help message.
-  hw       : Learn your hardware specs just by typing 'hw'.
-  list     : List contents of a directory (type 'list -help').
+  hw       : Show hardware specifications.
+  list     : List directory contents (type 'list -help').
   makedir  : Create a new directory.
-  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'
-  runtask  : Run a proprietary .task script until CTRL+c is pressed.
+  pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'.
+  runtask  : Run a proprietary .task script until CTRL+C is pressed.
              Type: runtask -help for more details.
-  stats    : Displays basic hardware stats.
-  unpack   : Unpack what has been packed, e.g. 'unpack myfolder.zip'
+  stats    : Display basic hardware stats.
+  unpack   : Unpack content, e.g. 'unpack myfolder.zip'.
   exit     : Exit BUDOSTACK.
 
------------------------------------------------------------------------------
+----------------------------------------------------------------------------- 
 
                             - SYSTEM APPLICATIONS -
 
  /* Office Tools */
 
- Note! All csv related commands assume ; as delimiter!
+ Note! All CSV related commands assume ';' as delimiter.
 
-  book     : Focus writer for all who want to write.
-  cmath    : Math interpreter that has interactive mode and macro execution.
+  book     : Focus writer for everyone who wants to write.
+  cmath    : Math interpreter with interactive mode and macro execution.
              To run existing macro, type 'cmath mymacro.m'.
   csvplot  : ASCII x-y plotter for .csv files.
-  csvprint : Pretty prints a .csv file.
-  slides   : Terminal slideset editor, to start 'slides myslides.sld'.
-             For help CTRL+H when the app is running.
-  table    : Lightweight spreadsheet tool, open file 'table mytable.csv'.
+  csvprint : Pretty-print a .csv file.
+  slides   : Terminal slide editor. Start with 'slides myslides.sld'.
+             Press CTRL+H for help when the app is running.
+  table    : Lightweight spreadsheet tool. Open file 'table mytable.csv'.
              Uses commands/_CALC to evaluate equations.
 
 
  /* Internet and Communications */
 
-  ctalk    : IRC like messaging tool. Type ctalk for instructions.
+  ctalk    : IRC-like messaging tool. Type 'ctalk' for instructions.
   inet     : Interactive internet connection manager.
-  rss      : Lightweight rss news app, tested only with yle rss feed.
+  rss      : Lightweight RSS news app (tested with YLE RSS feed).
 
 
  /* Other */
 
-  dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.
-  editprof.: Full name 'editprofile'. App for editing color scheme presets.
+  dungeon  : Role-playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.
+  editprof.: Full name 'editprofile'. Edit color scheme presets.
   paint    : ASCII paint application to edit bitmaps.
-  pixart   : Turn images into pixel art and assets to your apps.
+  pixart   : Turn images into pixel art and app assets.
   psfedit  : Font editor for .psf fonts.
   signal   : Signal generator. Type 'signal' for help.
   time     : Display time with IP-based timezone lookup and NTP clocks.
              Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).
 
------------------------------------------------------------------------------
+----------------------------------------------------------------------------- 
 
                               - BUILT-IN GAMES -
 
- A collection of games provided together with BUDOSTACK.
+ A collection of games provided with BUDOSTACK.
 
  /* List of Games */
 
-  invaders : Space invaders clone tailored to terminal.
-  snake    : Snake clone, reminence from the good old Nokia days.
-  tictactoe: Classic tictactoe, but with bigger game area.
+  invaders : Space Invaders clone tailored to terminal.
+  snake    : Snake clone, a reminiscence of the old Nokia days.
+  tictactoe: Classic tic-tac-toe, but with a larger game area.
 
------------------------------------------------------------------------------
+----------------------------------------------------------------------------- 
 
                                - BUDO LIBRARIES -
 
- Work-in-progress.
+ Work in progress.
 
------------------------------------------------------------------------------
+----------------------------------------------------------------------------- 
 
                                - TASK LANGUAGE -
 
- BUDOSTACK contains built-in TASK scripting language that can be used to
+ BUDOSTACK contains a built-in TASK scripting language that can be used to
  develop various applications. The instruction set is located in ./commands/
- folder and all the commands contain help when executed without arguments.
+ and all commands contain help when executed without arguments.
 
- Example TASK applications are located in ./tasks/ -folder.
+ Example TASK applications are located in the ./tasks/ folder.
 
 
  /* BUDOSTACK Developer Tools */
@@ -195,7 +238,7 @@
   compile              : Build a standalone binary from a TASK script.
                          Type 'compile -help'.
   floppycheck          : 'floppycheck ./file or ./folder/' estimates how many
-                         standard floppy disks the given content will take.
+                         standard floppy disks the given content will require.
 
  /* TASK Commands from ./commands/ */
 
@@ -245,18 +288,38 @@
 
  /* BUDOSTACK Example TASK Programs */
 
-  audiodemo.task       : Collection of in-built sound capabilities
-  autoexec.task        : Determines what happens before BUDOSTACK login screen
+  audiodemo.task       : Collection of in-built sound capabilities.
+  autoexec.task        : Determines what happens before BUDOSTACK login screen.
   codedemo.task        : Coding basics: for, while, arrays, functions, etc.
-  csvdemo.task         : Dynamic .csv file manipulation demo
+  csvdemo.task         : Dynamic .csv file manipulation demo.
   demo.task            : Demonstration of _TERM* command set.
   keyboard.task        : Keyboard input reading and processing.
   mouse.task           : Mouse input reading and processing.
-  release.task         : Used to generate release notes
-  screen.task          : Screen calibration TASK
-  waves.task           : Demonstration how to plot basic math
+  release.task         : Used to generate release notes.
+  screen.task          : Screen calibration TASK.
+  waves.task           : Demonstration of plotting basic math.
 
------------------------------------------------------------------------------
+----------------------------------------------------------------------------- 
+
+                                - LICENSE NOTES -
+
+ BUDOSTACK core source is distributed under GPLv2.
+
+ Some asset directories are distributed under their own terms. Always check
+ each folder's LICENSE.txt before reuse or redistribution:
+
+  - ./fonts/
+  - ./budo/shaders/
+  - ./sounds/
+
+ Redistribution reminder:
+
+  - If you distribute GPLv2-covered BUDOSTACK components, provide source code
+    and preserve GPLv2 licensing terms.
+  - If you distribute assets from exception directories, follow each folder's
+    LICENSE.txt conditions in addition to GPL obligations for covered code.
+
+----------------------------------------------------------------------------- 
 
                                - KNOWN ISSUES -
 

@@ -44,7 +44,6 @@
   - Kubuntu
 
  Note! BUDOSTACK is intended to be ran with the apps/terminal application.
-       that supports 640x360 (80x45) and 800x450 (100x56) resolution modes.
 
 -----------------------------------------------------------------------------
 
@@ -255,13 +254,5 @@
   release.task         : Used to generate release notes
   screen.task          : Screen calibration TASK
   waves.task           : Demonstration how to plot basic math
-
------------------------------------------------------------------------------
-
-                               - KNOWN ISSUES -
-
- apps/slides:
-
-  Unable to copy-paste content between the app and clipboard.
 
 =============================================================================

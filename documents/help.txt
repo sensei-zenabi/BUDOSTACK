@@ -197,6 +197,52 @@
   floppycheck          : 'floppycheck ./file or ./folder/' estimates how many
                          standard floppy disks the given content will take.
 
+ /* TASK Commands from ./commands/ */
+
+  _BAR                 : Draw a titled progress bar (0-100%) at cursor or -x/-y.
+  _BEEP                : Play a tone with note and duration in milliseconds.
+  _CALC                : Evaluate a math expression and print the result.
+  _CLEAR               : Clear the terminal screen using ANSI escape sequences.
+  _CONFIG              : Read or write key-value settings in config.ini.
+  _CSVFILTER           : Filter semicolon-separated CSV rows with comparisons.
+  _CSVSTATS            : Compute count/sum/mean/min/max/variance/stddev from CSV.
+  _DICE                : Roll D&D dice notation like 2d20 and print total.
+  _DISPLAY             : Draw PNG/BMP image at text grid position -x/-y.
+  _EXE                 : Run app/utility and render output at -x/-y offset.
+  _FROMCSV             : Read one CSV cell by 1-based row and column index.
+  _GETHEIGHT           : Print terminal height in rows.
+  _GETROW              : Print current cursor row.
+  _GETWIDTH            : Print terminal width in columns.
+  _HELLO               : Print hello world test line.
+  _IMAGE               : Draw PNG/BMP image at text grid position -x/-y.
+  _KEYS                : Wait for key input and print mapped numeric key code.
+  _LIST                : List directory entries as TASK array literal.
+  _RECT                : Draw a filled or outlined rectangle using color index.
+  _RETROPROFILE        : List/show/apply/reset retro color profiles.
+  _TERM_CLEAN          : Clear pixel rectangle area from terminal render layer.
+  _TERM_CURSOR_BLINK   : Enable or disable blinking cursor in terminal.
+  _TERM_KEYBOARD       : Read buffered key events as TASK array literal.
+  _TERM_MARGIN         : Set terminal pixel render margin.
+  _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
+  _TERM_MOUSE_SHOW     : Show or hide terminal mouse cursor.
+  _TERM_RENDER         : Trigger full render or render selected layer.
+  _TERM_RESOLUTION     : Set pixel resolution (LOW/HIGH or width/height).
+  _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
+  _TERM_SHADER         : Enable or disable terminal shader.
+  _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32) volume 0-100.
+  _TERM_SOUND_STOP     : Stop audio playback on selected channel (1-32).
+  _TERM_SPRITE         : Draw sprite from file/literal/base64 on chosen layer.
+  _TERM_SPRITE_LOAD    : Load sprite and output reusable TASK sprite literal.
+  _TERM_TEXT           : Draw UTF-8 text in pixel space with color and layer.
+  _TERM_TYPING_SOUND   : Enable or disable keyboard typing sound effects.
+  _TEST                : Print terminal diagnostic grid and size info.
+  _TEXT                : Print text at column/row with optional color.
+  _TIMER               : Start/stop/get/reset stopwatch in milliseconds.
+  _TOCSV               : Write value to CSV cell by 1-based row and column.
+  _TOFILE              : Show guidance for output logging via shell helper.
+  _VERSION             : Print current repository commit-count version.
+  _WAIT                : Sleep for given number of milliseconds.
+
  /* BUDOSTACK Example TASK Programs */
 
   audiodemo.task       : Collection of in-built sound capabilities

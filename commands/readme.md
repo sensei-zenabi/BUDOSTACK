@@ -20,4 +20,4 @@ General Guidelines for Commands:
 - Measure X and Y positions from top-left corner as glyphs or pixels.
 - Write their output to stdout excluding _TERM* commands.
 - Print help when command is written to command line without any arguments.
-- 
+- Remember to add all commands to ./documents/help.txt

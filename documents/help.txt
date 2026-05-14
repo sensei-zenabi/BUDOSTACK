@@ -117,7 +117,6 @@
   hw       : Learn your hardware specs just by typing 'hw'.
   list     : List contents of a directory (type 'list -help').
   makedir  : Create a new directory.
-  mute     : Enable/Disable Voice Assistant.
   pack     : Pack anything, e.g. 'pack myfolder myfolder.zip'
   runtask  : Run a proprietary .task script until CTRL+c is pressed.
              Type: runtask -help for more details.

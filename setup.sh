@@ -39,7 +39,6 @@ PACKAGES=(
     "libsdl2-mixer-dev" # Optional: SDL_mixer support for background music
     "mesa-common-dev"   # Required: OpenGL headers
     "libgl1-mesa-dev"   # Required: libGL for shader-based terminal
-    "espeak"            # Optional: Speech assist
 )
 
 # Function: prompt_user

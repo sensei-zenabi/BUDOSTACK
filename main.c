@@ -26,14 +26,12 @@
 
 extern void printlogo();
 extern void login();
-extern void say();
 
 /* Global variable to control paging.
  * 1: paging enabled (default)
  * 0: paging disabled (used for realtime commands)
  */
 int paging_enabled = 1;
-int espeak_enable = 0;
 
 /* Global variable to store the base directory (extracted from the executable path)
  * so that relative paths like apps/ can be resolved.
@@ -1261,7 +1259,6 @@ int main(int argc, char *argv[]) {
     }
 
     printf("\nSYSTEM READY");
-    say("system ready");
     printf("\nType 'help' for command list.");
     printf("\nType 'exit' to quit.\n\n");
 
@@ -1290,7 +1287,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
         input[strcspn(input, "\n")] = '\0';
-        if (espeak_enable) { say(input); };
                 
         /* NEW: "restart" command handling.
          * When the user types "restart" or "restart -f", the shell first changes its working directory to the base directory,
@@ -1337,19 +1333,6 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        if (strcmp(input, "mute") == 0) {
-            // set say() off / on
-            espeak_enable = !espeak_enable;
-            if (espeak_enable) {
-                printf("Voice assist enabled\n");
-            }
-            else {
-                printf("Voice assist disabled\n");
-            }
-            free(input);
-            continue;
-        }
-        
         if (strcmp(input, "exit") == 0) {
             free(input);
             break;

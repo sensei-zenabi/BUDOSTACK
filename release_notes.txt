@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.66
-  Release commit number:   1458
-  Baseline release:        v0.9.65
+  Release tag:             v0.9.8
+  Release commit number:   1465
+  Baseline release:        v0.9.66
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -54,7 +54,6 @@
   - Kubuntu
 
  Note! BUDOSTACK is intended to be ran with the apps/terminal application.
-       that supports 640x360 (80x45) and 800x450 (100x56) resolution modes.
 
 -----------------------------------------------------------------------------
 
@@ -207,6 +206,52 @@
   floppycheck          : 'floppycheck ./file or ./folder/' estimates how many
                          standard floppy disks the given content will take.
 
+ /* TASK Commands from ./commands/ */
+
+  _BAR                 : Draw a titled progress bar (0-100%) at cursor or -x/-y.
+  _BEEP                : Play a tone with note and duration in milliseconds.
+  _CALC                : Evaluate a math expression and print the result.
+  _CLEAR               : Clear the terminal screen using ANSI escape sequences.
+  _CONFIG              : Read or write key-value settings in config.ini.
+  _CSVFILTER           : Filter semicolon-separated CSV rows with comparisons.
+  _CSVSTATS            : Compute count/sum/mean/min/max/variance/stddev from CSV.
+  _DICE                : Roll D&D dice notation like 2d20 and print total.
+  _DISPLAY             : Draw PNG/BMP image at text grid position -x/-y.
+  _EXE                 : Run app/utility and render output at -x/-y offset.
+  _FROMCSV             : Read one CSV cell by 1-based row and column index.
+  _GETHEIGHT           : Print terminal height in rows.
+  _GETROW              : Print current cursor row.
+  _GETWIDTH            : Print terminal width in columns.
+  _HELLO               : Print hello world test line.
+  _IMAGE               : Draw PNG/BMP image at text grid position -x/-y.
+  _KEYS                : Wait for key input and print mapped numeric key code.
+  _LIST                : List directory entries as TASK array literal.
+  _RECT                : Draw a filled or outlined rectangle using color index.
+  _RETROPROFILE        : List/show/apply/reset retro color profiles.
+  _TERM_CLEAN          : Clear pixel rectangle area from terminal render layer.
+  _TERM_CURSOR_BLINK   : Enable or disable blinking cursor in terminal.
+  _TERM_KEYBOARD       : Read buffered key events as TASK array literal.
+  _TERM_MARGIN         : Set terminal pixel render margin.
+  _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
+  _TERM_MOUSE_SHOW     : Show or hide terminal mouse cursor.
+  _TERM_RENDER         : Trigger full render or render selected layer.
+  _TERM_RESOLUTION     : Set pixel resolution (LOW/HIGH or width/height).
+  _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
+  _TERM_SHADER         : Enable or disable terminal shader.
+  _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32) volume 0-100.
+  _TERM_SOUND_STOP     : Stop audio playback on selected channel (1-32).
+  _TERM_SPRITE         : Draw sprite from file/literal/base64 on chosen layer.
+  _TERM_SPRITE_LOAD    : Load sprite and output reusable TASK sprite literal.
+  _TERM_TEXT           : Draw UTF-8 text in pixel space with color and layer.
+  _TERM_TYPING_SOUND   : Enable or disable keyboard typing sound effects.
+  _TEST                : Print terminal diagnostic grid and size info.
+  _TEXT                : Print text at column/row with optional color.
+  _TIMER               : Start/stop/get/reset stopwatch in milliseconds.
+  _TOCSV               : Write value to CSV cell by 1-based row and column.
+  _TOFILE              : Show guidance for output logging via shell helper.
+  _VERSION             : Print current repository commit-count version.
+  _WAIT                : Sleep for given number of milliseconds.
+
  /* BUDOSTACK Example TASK Programs */
 
   audiodemo.task       : Collection of in-built sound capabilities
@@ -220,14 +265,6 @@
   screen.task          : Screen calibration TASK
   waves.task           : Demonstration how to plot basic math
 
------------------------------------------------------------------------------
-
-                               - KNOWN ISSUES -
-
- apps/slides:
-
-  Unable to copy-paste content between the app and clipboard.
-
 =============================================================================
 
 
@@ -235,28 +272,54 @@
 
 ================================= CHANGE LOG ================================
 
-commit b714b590b23feb5095bd287afa56f0528cf20f9e
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Apr 18 22:27:39 2026 +0300
+commit 8c29592b41372b8c72c1c703e4610d4d795dc265
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu May 14 22:22:25 2026 +0300
 
-    Add shader toggle to autoexec configuration menu
+    new default setting
+
+users/.retroprofile
+
+commit 1999e39bcafa4e84e6bb0d5a75b3d6f011c49b88
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu May 14 22:21:59 2026 +0300
+
+    removed unnecessary stuff
+
+documents/help.txt
+
+commit c73d372c9f97d944f6cfc580c6db9a2136645723
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu May 14 22:19:45 2026 +0300
+
+    new default settings
 
 config.ini
-tasks/autoexec.task
 
-commit 43fc4f079b6a7397a32d1c0f52286f929d27e56e
+commit 2efb7b80a62a64b8801dc68e3d4e2821f28d0287
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu May 14 21:59:59 2026 +0300
+
+    added help.txt instructions
+
+commands/readme.md
+
+commit ba00da296a36c1f7fc9142459cc19a3de6b084e3
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Apr 18 22:21:55 2026 +0300
+Date:   Thu May 14 21:56:23 2026 +0300
 
-    Fix terminal shader disable fallback rendering
+    docs(help): expand TASK LANGUAGE command reference
 
-apps/terminal.c
+documents/help.txt
 
-commit dd6417e22dcb66f31a7d5e54612a5cece424a38b
+commit 3d48d7dddb69e799277645819356991ef34144c7
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Tue Apr 14 23:13:18 2026 +0300
+Date:   Thu May 14 21:48:27 2026 +0300
 
-    Fix C comment highlighting inside string/char literals
+    Remove espeak voice-assist integration
 
-apps/edit.c
-lib/libedit.c
+documents/help.txt
+lib/libconsole.c
+main.c
+release_notes.txt
+setup.sh

@@ -323,7 +323,7 @@ void print_file_info(const char *filepath, const char *display_name) {
         memset(size_unit, '.', SIZE_UNIT_WIDTH);
         size_unit[SIZE_UNIT_WIDTH] = '\0';
     }
-    format_center_dotted_field(file_is_tracked(filepath) ? "x" : "", git_value, 3);
+    format_center_dotted_field(file_is_tracked(filepath) ? "X" : "", git_value, 3);
 
     printf(
         "%-*s %-11s %s %s %s %-20s\n",

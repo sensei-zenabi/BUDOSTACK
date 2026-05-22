@@ -225,6 +225,16 @@ static void print_size_field(off_t size, size_t width, int trailing_space) {
     }
 }
 
+static void print_size_placeholder(size_t width, int trailing_space) {
+    for (size_t i = 0; i < width; i++) {
+        putchar('.');
+    }
+
+    if (trailing_space) {
+        putchar(' ');
+    }
+}
+
 // Convert file mode to a permission string (similar to ls -l output)
 void mode_to_string(mode_t mode, char *str) {
     str[0] = S_ISDIR(mode) ? 'd' : (S_ISLNK(mode) ? 'l' : '-');
@@ -333,7 +343,7 @@ void print_file_info(const char *filepath, const char *display_name) {
     print_dot_field(truncated_name, NAME_DISPLAY_WIDTH, 1);
     print_dot_field(perms, PERMS_DISPLAY_WIDTH, 0);
     if (S_ISDIR(st.st_mode)) {
-        print_padded_field("", SIZE_DISPLAY_WIDTH, 1, 1);
+        print_size_placeholder(SIZE_DISPLAY_WIDTH, 1);
     } else {
         print_size_field(st.st_size, SIZE_DISPLAY_WIDTH, 1);
     }

@@ -152,6 +152,36 @@ static void print_dot_field(const char *value, size_t width, int trailing_space)
 }
 
 
+static void print_padded_field(const char *value, size_t width, int align_mode, int trailing_space) {
+    size_t len = strlen(value);
+    size_t left_pad = 0;
+    size_t right_pad = 0;
+
+    if (len < width) {
+        size_t pad_total = width - len;
+        if (align_mode > 0) {
+            left_pad = pad_total;
+        } else if (align_mode < 0) {
+            right_pad = pad_total;
+        } else {
+            left_pad = pad_total / 2;
+            right_pad = pad_total - left_pad;
+        }
+    }
+
+    for (size_t i = 0; i < left_pad; i++) {
+        putchar(' ');
+    }
+    fputs(value, stdout);
+    for (size_t i = 0; i < right_pad; i++) {
+        putchar(' ');
+    }
+
+    if (trailing_space) {
+        putchar(' ');
+    }
+}
+
 static void format_size_value(off_t size, char *buffer, size_t buffer_size) {
     static const char *units[] = {"B", "kB", "MB", "GB", "TB"};
     double value = (double)size;
@@ -278,8 +308,8 @@ void print_file_info(const char *filepath, const char *display_name) {
 
     print_dot_field(truncated_name, NAME_DISPLAY_WIDTH, 1);
     print_dot_field(perms, PERMS_DISPLAY_WIDTH, 1);
-    print_dot_field(sizebuf, SIZE_DISPLAY_WIDTH, 1);
-    print_dot_field(gitbuf, GIT_DISPLAY_WIDTH, 1);
+    print_padded_field(sizebuf, SIZE_DISPLAY_WIDTH, 1, 1);
+    print_padded_field(gitbuf, GIT_DISPLAY_WIDTH, 0, 1);
     printf("%s\n", timebuf);
 }
 
@@ -294,10 +324,10 @@ void list_directory(const char *dir_path) {
     }
 
     printf("\n");
-    print_dot_field("Filename", NAME_DISPLAY_WIDTH, 1);
-    print_dot_field("Permissions", PERMS_DISPLAY_WIDTH, 1);
-    print_dot_field("Size", SIZE_DISPLAY_WIDTH, 1);
-    print_dot_field("Git", GIT_DISPLAY_WIDTH, 1);
+    print_padded_field("Filename", NAME_DISPLAY_WIDTH, -1, 1);
+    print_padded_field("Permissions", PERMS_DISPLAY_WIDTH, -1, 1);
+    print_padded_field("Size", SIZE_DISPLAY_WIDTH, 0, 1);
+    print_padded_field("Git", GIT_DISPLAY_WIDTH, 0, 1);
     printf("%s\n", "Last Modified");
     print_separator();
 
@@ -428,10 +458,10 @@ void list_recursive_search(const char *pattern) {
         "Recursive search for %s matching pattern '%s':\n",
         list_folders_only ? "folders" : "files",
         pattern);
-    print_dot_field("Filename", NAME_DISPLAY_WIDTH, 1);
-    print_dot_field("Permissions", PERMS_DISPLAY_WIDTH, 1);
-    print_dot_field("Size", SIZE_DISPLAY_WIDTH, 1);
-    print_dot_field("Git", GIT_DISPLAY_WIDTH, 1);
+    print_padded_field("Filename", NAME_DISPLAY_WIDTH, -1, 1);
+    print_padded_field("Permissions", PERMS_DISPLAY_WIDTH, -1, 1);
+    print_padded_field("Size", SIZE_DISPLAY_WIDTH, 0, 1);
+    print_padded_field("Git", GIT_DISPLAY_WIDTH, 0, 1);
     printf("%s\n", "Last Modified");
     print_separator();
 
@@ -526,10 +556,10 @@ int main(int argc, char *argv[]) {
 
     if (file_count > 0) {
         printf("Files:\n");
-        print_dot_field("Filename", NAME_DISPLAY_WIDTH, 1);
-        print_dot_field("Permissions", PERMS_DISPLAY_WIDTH, 1);
-        print_dot_field("Size", SIZE_DISPLAY_WIDTH, 1);
-        print_dot_field("Git", GIT_DISPLAY_WIDTH, 1);
+        print_padded_field("Filename", NAME_DISPLAY_WIDTH, -1, 1);
+        print_padded_field("Permissions", PERMS_DISPLAY_WIDTH, -1, 1);
+        print_padded_field("Size", SIZE_DISPLAY_WIDTH, 0, 1);
+        print_padded_field("Git", GIT_DISPLAY_WIDTH, 0, 1);
         printf("%s\n", "Last Modified");
         print_separator();
         for (int i = 0; i < file_count; i++) {

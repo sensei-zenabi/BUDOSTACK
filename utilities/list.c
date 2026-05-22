@@ -182,8 +182,8 @@ static void print_padded_field(const char *value, size_t width, int align_mode, 
     }
 }
 
-static void format_size_value(off_t size, char *buffer, size_t buffer_size) {
-    static const char *units[] = {"B", "kB", "MB", "GB", "TB"};
+static void format_size_parts(off_t size, char *number_buf, size_t number_buf_size, char *unit_buf, size_t unit_buf_size) {
+    static const char *units[] = {" B", "kB", "MB", "GB", "TB"};
     double value = (double)size;
     size_t unit_index = 0;
 
@@ -192,10 +192,35 @@ static void format_size_value(off_t size, char *buffer, size_t buffer_size) {
         unit_index++;
     }
 
+    snprintf(unit_buf, unit_buf_size, "%s", units[unit_index]);
     if (unit_index == 0) {
-        snprintf(buffer, buffer_size, "%ld %s", (long)size, units[unit_index]);
+        snprintf(number_buf, number_buf_size, "%ld", (long)size);
     } else {
-        snprintf(buffer, buffer_size, "%.1f %s", value, units[unit_index]);
+        snprintf(number_buf, number_buf_size, "%.1f", value);
+    }
+}
+
+static void print_size_field(off_t size, size_t width, int trailing_space) {
+    char number_buf[32];
+    char unit_buf[3];
+    size_t number_len;
+    size_t number_width;
+
+    format_size_parts(size, number_buf, sizeof(number_buf), unit_buf, sizeof(unit_buf));
+    number_len = strlen(number_buf);
+    number_width = width > 2 ? width - 2 : 0;
+
+    if (number_len < number_width) {
+        for (size_t i = number_len; i < number_width; i++) {
+            putchar('.');
+        }
+    }
+
+    fputs(number_buf, stdout);
+    fputs(unit_buf, stdout);
+
+    if (trailing_space) {
+        putchar(' ');
     }
 }
 
@@ -300,15 +325,13 @@ void print_file_info(const char *filepath, const char *display_name) {
     char truncated_name[NAME_DISPLAY_WIDTH + 1];
     format_display_name(formatted_name_buffer, truncated_name, NAME_DISPLAY_WIDTH);
 
-    char sizebuf[32];
     char gitbuf[GIT_DISPLAY_WIDTH + 1];
 
-    format_size_value(st.st_size, sizebuf, sizeof(sizebuf));
     snprintf(gitbuf, sizeof(gitbuf), "%s", file_is_tracked(filepath) ? "x" : "");
 
     print_dot_field(truncated_name, NAME_DISPLAY_WIDTH, 1);
     print_dot_field(perms, PERMS_DISPLAY_WIDTH, 1);
-    print_padded_field(sizebuf, SIZE_DISPLAY_WIDTH, 1, 1);
+    print_size_field(st.st_size, SIZE_DISPLAY_WIDTH, 1);
     print_padded_field(gitbuf, GIT_DISPLAY_WIDTH, 0, 1);
     printf("%s\n", timebuf);
 }

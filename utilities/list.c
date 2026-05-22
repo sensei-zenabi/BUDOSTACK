@@ -13,7 +13,7 @@
 #include <sys/wait.h>
 
 #define NAME_DISPLAY_WIDTH 31
-#define SIZE_VALUE_WIDTH 9
+#define SIZE_VALUE_WIDTH 10
 #define SIZE_UNIT_WIDTH 2
 #define SIZE_COLUMN_WIDTH (SIZE_VALUE_WIDTH + 1 + SIZE_UNIT_WIDTH)
 
@@ -181,8 +181,26 @@ static void format_size(off_t size_bytes, char *value_buf, size_t value_buf_size
         snprintf(value_buf, value_buf_size, "%lld", (long long)size_bytes);
     } else {
         snprintf(value_buf, value_buf_size, "%.1f", size);
+        for (size_t i = 0; value_buf[i] != '\0'; i++) {
+            if (value_buf[i] == '.') {
+                value_buf[i] = ',';
+            }
+        }
     }
     snprintf(unit_buf, unit_buf_size, "%s", units[unit_index]);
+}
+
+static void format_dotted_field(const char *input, char *output, size_t width) {
+    size_t input_len = strlen(input);
+    if (input_len >= width) {
+        memcpy(output, input + (input_len - width), width);
+        output[width] = '\0';
+        return;
+    }
+
+    size_t dots = width - input_len;
+    memset(output, '.', dots);
+    memcpy(output + dots, input, input_len + 1);
 }
 
 // Filter function for scandir
@@ -254,18 +272,22 @@ void print_file_info(const char *filepath, const char *display_name) {
     char truncated_name[NAME_DISPLAY_WIDTH + 1];
     format_display_name(formatted_name_buffer, truncated_name, NAME_DISPLAY_WIDTH);
 
-    char size_value[32] = "";
+    char size_value_raw[32] = "";
+    char size_value[SIZE_VALUE_WIDTH + 1];
     char size_unit[8] = "";
     if (!S_ISDIR(st.st_mode)) {
-        format_size(st.st_size, size_value, sizeof(size_value), size_unit, sizeof(size_unit));
+        format_size(st.st_size, size_value_raw, sizeof(size_value_raw), size_unit, sizeof(size_unit));
+        format_dotted_field(size_value_raw, size_value, SIZE_VALUE_WIDTH);
+    } else {
+        memset(size_value, '.', SIZE_VALUE_WIDTH);
+        size_value[SIZE_VALUE_WIDTH] = '\0';
     }
 
     printf(
-        "%-*s %-11s %*s %-*s %-3s %-20s\n",
+        "%-*s %-11s %s %*s %-3s %-20s\n",
         NAME_DISPLAY_WIDTH,
         truncated_name,
         perms,
-        SIZE_VALUE_WIDTH,
         size_value,
         SIZE_UNIT_WIDTH,
         size_unit,

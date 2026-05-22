@@ -13,6 +13,9 @@
 #include <sys/wait.h>
 
 #define NAME_DISPLAY_WIDTH 31
+#define SIZE_VALUE_WIDTH 9
+#define SIZE_UNIT_WIDTH 2
+#define SIZE_COLUMN_WIDTH (SIZE_VALUE_WIDTH + 1 + SIZE_UNIT_WIDTH)
 
 // Global base path used in filter and comparator
 static const char *base_path;
@@ -164,6 +167,24 @@ static void print_separator(void) {
     putchar('\n');
 }
 
+static void format_size(off_t size_bytes, char *value_buf, size_t value_buf_size, char *unit_buf, size_t unit_buf_size) {
+    static const char *units[] = {"B", "kB", "MB", "GB", "TB"};
+    double size = (double)size_bytes;
+    int unit_index = 0;
+
+    while (size >= 1000.0 && unit_index < 4) {
+        size /= 1000.0;
+        unit_index++;
+    }
+
+    if (unit_index == 0) {
+        snprintf(value_buf, value_buf_size, "%lld", (long long)size_bytes);
+    } else {
+        snprintf(value_buf, value_buf_size, "%.1f", size);
+    }
+    snprintf(unit_buf, unit_buf_size, "%s", units[unit_index]);
+}
+
 // Filter function for scandir
 int filter(const struct dirent *entry) {
     int is_dir = entry_is_directory(entry);
@@ -233,14 +254,35 @@ void print_file_info(const char *filepath, const char *display_name) {
     char truncated_name[NAME_DISPLAY_WIDTH + 1];
     format_display_name(formatted_name_buffer, truncated_name, NAME_DISPLAY_WIDTH);
 
+    char size_value[32] = "";
+    char size_unit[8] = "";
+    if (!S_ISDIR(st.st_mode)) {
+        format_size(st.st_size, size_value, sizeof(size_value), size_unit, sizeof(size_unit));
+    }
+
     printf(
-        "%-*s %-11s %-10ld %-3s %-20s\n",
+        "%-*s %-11s %*s %-*s %-3s %-20s\n",
         NAME_DISPLAY_WIDTH,
         truncated_name,
         perms,
-        (long)st.st_size,
+        SIZE_VALUE_WIDTH,
+        size_value,
+        SIZE_UNIT_WIDTH,
+        size_unit,
         file_is_tracked(filepath) ? "x" : "",
         timebuf);
+}
+
+static void print_table_header(void) {
+    printf(
+        "%-*s %-11s %*s %-3s %-20s\n",
+        NAME_DISPLAY_WIDTH,
+        "Filename",
+        "Permissions",
+        SIZE_COLUMN_WIDTH,
+        "Size",
+        "Git",
+        "Last Modified");
 }
 
 // List a single directory (non-recursive)
@@ -254,14 +296,7 @@ void list_directory(const char *dir_path) {
     }
 
     printf("\n");
-    printf(
-        "%-*s %-11s %-10s %-3s %-20s\n",
-        NAME_DISPLAY_WIDTH,
-        "Filename",
-        "Permissions",
-        "Size",
-        "Git",
-        "Last Modified");
+    print_table_header();
     print_separator();
 
     for (int i = 0; i < n; i++) {
@@ -391,14 +426,7 @@ void list_recursive_search(const char *pattern) {
         "Recursive search for %s matching pattern '%s':\n",
         list_folders_only ? "folders" : "files",
         pattern);
-    printf(
-        "%-*s %-11s %-10s %-3s %-20s\n",
-        NAME_DISPLAY_WIDTH,
-        "Filename",
-        "Permissions",
-        "Size",
-        "Git",
-        "Last Modified");
+    print_table_header();
     print_separator();
 
     for (size_t i = 0; i < matches_count; i++) {
@@ -492,14 +520,7 @@ int main(int argc, char *argv[]) {
 
     if (file_count > 0) {
         printf("Files:\n");
-        printf(
-            "%-*s %-11s %-10s %-3s %-20s\n",
-            NAME_DISPLAY_WIDTH,
-            "Filename",
-            "Permissions",
-            "Size",
-            "Git",
-            "Last Modified");
+        print_table_header();
         print_separator();
         for (int i = 0; i < file_count; i++) {
             print_file_info(file_paths[i], file_paths[i]);

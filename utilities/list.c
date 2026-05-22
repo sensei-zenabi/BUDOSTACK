@@ -310,25 +310,27 @@ void print_file_info(const char *filepath, const char *display_name) {
 
     char size_value_raw[32] = "";
     char size_value[SIZE_VALUE_WIDTH + 1];
-    char size_unit[8] = "";
+    char size_unit_raw[8] = "";
+    char size_unit[SIZE_UNIT_WIDTH + 1];
     char git_value[4];
     if (!S_ISDIR(st.st_mode)) {
-        format_size(st.st_size, size_value_raw, sizeof(size_value_raw), size_unit, sizeof(size_unit));
+        format_size(st.st_size, size_value_raw, sizeof(size_value_raw), size_unit_raw, sizeof(size_unit_raw));
         format_dotted_field(size_value_raw, size_value, SIZE_VALUE_WIDTH);
+        format_dotted_field(size_unit_raw, size_unit, SIZE_UNIT_WIDTH);
     } else {
         memset(size_value, '.', SIZE_VALUE_WIDTH);
         size_value[SIZE_VALUE_WIDTH] = '\0';
-        snprintf(size_unit, sizeof(size_unit), "..");
+        memset(size_unit, '.', SIZE_UNIT_WIDTH);
+        size_unit[SIZE_UNIT_WIDTH] = '\0';
     }
     format_center_dotted_field(file_is_tracked(filepath) ? "x" : "", git_value, 3);
 
     printf(
-        "%-*s %-11s %s %*s %s %-20s\n",
+        "%-*s %-11s %s %s %s %-20s\n",
         NAME_DISPLAY_WIDTH,
         truncated_name,
         perms,
         size_value,
-        SIZE_UNIT_WIDTH,
         size_unit,
         git_value,
         timebuf);

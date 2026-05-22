@@ -1,53 +1,75 @@
 #include <stdio.h>
-#include <string.h>
 
 /*
- * Design Principles:
- * - Written in plain C using -std=c11 and only standard libraries.
- * - No header files are created; everything is contained in a single file.
- * - The code includes comments to clarify design decisions.
- * - If the program is started with the "-a" argument (i.e. "help -a"),
- *   a reserved section is printed for future hidden features or advanced help.
+ * Quick Git reference for everyday software engineering tasks,
+ * with emphasis on embedded and Python workflows.
  */
-int main() {
-  // Print header information
-  printf("\n"
-         "================== GITTER - I remember so you don't have to!  ================\n"
-         "\n"
-         "  git log --name-only         : display commits and related files\n"
-         "\n"
-         "  git commit -m 'message'     : make a commit with message\n"
-         "\n"
-         "  git commit -m 'closes #nn'  : close issue with commit message\n"
-         "\n"
-         "  git fetch origin            : fetch available branches\n"
-         "\n"
-         "  git checkout <branch_name>  : switch into a selected branch\n"
-         "\n"
-         "  git merge <branch_name>     : merge selected branch into current branch\n"
-         "\n"
-         "  git tag --sort=-v:refname   : list tags from newest to oldest\n"
-         "\n"
-         "  git revert <commit_hash>    : reverts a bad commit, do 'git push' afterwards\n"
-         "\n"
-         "  git ls-files --others       : display non tracked files\n"
-         "\n"
-         "                              : force branch as new main HEAD\n"
-         "\n"
-         "  git checkout main\n"
-         "  git reset --hard feature/new-architecture\n"
-         "  git push --force origin main\n"
-         "\n"
-         "                              : force pull HEAD\n"
-         "\n"
-         "  git fetch origin\n"
-         "  git reset --hard origin/HEAD\n"
-         "\n"
-         "                              : restore file to specific commit\n"
-         "\n"
-         "  git restore --source <commit_hash> -- path/to/file\n"
-         "\n"
-         "\n");
-                
-  return 0;
+int main(void)
+{
+    printf(
+        "\n"
+        "==================== GITTER: PRACTICAL GIT TROUBLESHOOTING ====================\n"
+        "\n"
+        "Daily situational awareness\n"
+        "  git status -sb                         # branch + concise dirty state\n"
+        "  git log --oneline --graph --decorate -20\n"
+        "                                         # recent history with branch pointers\n"
+        "  git diff                               # unstaged changes\n"
+        "  git diff --staged                      # staged changes\n"
+        "\n"
+        "Safe commits (professional baseline)\n"
+        "  git add -p                             # stage only intended hunks\n"
+        "  git commit -m \"<scope>: <what/why>\"    # concise, reviewable message\n"
+        "  git commit --amend                     # fix last commit before push\n"
+        "\n"
+        "Branch sync and cleanup\n"
+        "  git fetch --prune origin               # update remotes + drop deleted refs\n"
+        "  git switch main && git pull --ff-only  # never create accidental merge commits\n"
+        "  git switch -c fix/<topic>              # isolated fix branch\n"
+        "\n"
+        "Recover from common mistakes\n"
+        "  git restore --staged <file>            # unstage without losing edits\n"
+        "  git restore <file>                     # discard local file edits\n"
+        "  git reset --soft HEAD~1                # undo commit, keep changes staged\n"
+        "  git reset --mixed HEAD~1               # undo commit, keep changes unstaged\n"
+        "  git revert <commit>                    # safe rollback on shared branches\n"
+        "  git reflog                             # find lost commits/branch tips\n"
+        "\n"
+        "Conflict resolution (merge or rebase)\n"
+        "  git status                             # list conflicted files\n"
+        "  git checkout --ours <file>             # keep local side\n"
+        "  git checkout --theirs <file>           # keep incoming side\n"
+        "  git add <file> && git rebase --continue\n"
+        "                                         # or: git merge --continue\n"
+        "  git rebase --abort                     # abort risky/unclear conflict session\n"
+        "\n"
+        "Remote correction patterns (use with intent)\n"
+        "  git push --force-with-lease            # safer force-push after rebasing\n"
+        "  git fetch origin && git reset --hard origin/main\n"
+        "                                         # reset local branch to remote state\n"
+        "\n"
+        "Embedded workflows (C/C++ firmware repos)\n"
+        "  git bisect start                       # locate regressions by commit\n"
+        "  git bisect bad                         # mark current revision as bad\n"
+        "  git bisect good <known-good-commit>    # mark known stable baseline\n"
+        "  git clean -fd                          # remove untracked build artifacts\n"
+        "  git clean -fdx                         # also remove ignored artifacts (careful)\n"
+        "  git submodule update --init --recursive\n"
+        "                                         # sync HAL/vendor submodules\n"
+        "\n"
+        "Python workflows (apps, tooling, CI)\n"
+        "  git ls-files '*.py'                    # see tracked Python files\n"
+        "  git grep -n \"TODO\\|FIXME\" -- '*.py'     # find actionable debt quickly\n"
+        "  git stash push -m \"wip: <topic>\"        # park work before urgent context switch\n"
+        "  git stash pop                          # restore stashed work\n"
+        "  git worktree add ../hotfix <branch>    # parallel checkout for quick patching\n"
+        "\n"
+        "Notes\n"
+        "  - Prefer revert over reset on shared history.\n"
+        "  - Prefer --force-with-lease over --force.\n"
+        "  - Always run tests/build before push.\n"
+        "===============================================================================\n"
+        "\n");
+
+    return 0;
 }

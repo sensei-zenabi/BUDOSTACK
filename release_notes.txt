@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.8
-  Release commit number:   1465
-  Baseline release:        v0.9.66
+  Release tag:             v0.9.81
+  Release commit number:   1481
+  Baseline release:        v0.9.8
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -272,54 +272,123 @@
 
 ================================= CHANGE LOG ================================
 
-commit 8c29592b41372b8c72c1c703e4610d4d795dc265
+commit 07fff926dec0637850eb02e84365e01815499d59
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 23:37:34 2026 +0300
+
+    utilities: format gitter output for 80-column display
+
+utilities/gitter.c
+
+commit 199856043bf81ccbc075beb840b6ec18b8acf65c
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 23:33:19 2026 +0300
+
+    utilities: simplify gitter for first-time git users
+
+utilities/gitter.c
+
+commit 09b72f7f511891c928cb0a13faadbf89658e6c86
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 23:27:58 2026 +0300
+
+    utilities: refine gitter with layman decision paths
+
+utilities/gitter.c
+
+commit 5207bb296f2475701fa5a821a9cc222870dfb6e5
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 23:21:22 2026 +0300
+
+    utilities: strengthen gitter git troubleshooting guide
+
+utilities/gitter.c
+
+commit 9f6c39d01957840ed91fb1cbde9178489c987abb
 Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 22:22:25 2026 +0300
+Date:   Fri May 22 23:16:30 2026 +0300
 
-    new default setting
-
-users/.retroprofile
-
-commit 1999e39bcafa4e84e6bb0d5a75b3d6f011c49b88
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 22:21:59 2026 +0300
-
-    removed unnecessary stuff
-
-documents/help.txt
-
-commit c73d372c9f97d944f6cfc580c6db9a2136645723
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 22:19:45 2026 +0300
-
-    new default settings
+    changed default settings
 
 config.ini
+users/.retroprofile
 
-commit 2efb7b80a62a64b8801dc68e3d4e2821f28d0287
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 21:59:59 2026 +0300
-
-    added help.txt instructions
-
-commands/readme.md
-
-commit ba00da296a36c1f7fc9142459cc19a3de6b084e3
+commit 601664e45d08fb9f8a9fecf5730c4d126e917e38
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 21:56:23 2026 +0300
+Date:   Fri May 22 22:48:11 2026 +0300
 
-    docs(help): expand TASK LANGUAGE command reference
+    Center Last Modified header text
 
-documents/help.txt
+utilities/list.c
 
-commit 3d48d7dddb69e799277645819356991ef34144c7
+commit 4dd468b148ccfeb47b84a87e19dc7ecef0555897
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 21:48:27 2026 +0300
+Date:   Fri May 22 22:32:10 2026 +0300
 
-    Remove espeak voice-assist integration
+    Use uppercase Git tracking marker
 
-documents/help.txt
-lib/libconsole.c
-main.c
-release_notes.txt
-setup.sh
+utilities/list.c
+
+commit 8920ba69ac870564cc89f438d4e59415cd17e5f8
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 22:29:27 2026 +0300
+
+    Dot-fill size unit field padding
+
+utilities/list.c
+
+commit dc01faed1755edbaacb69c156aae5e6683dffca2
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 22:25:42 2026 +0300
+
+    Center Size header text in list table
+
+utilities/list.c
+
+commit 51ca05346d5379de69ab68be84cbacf63e209392
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 22:21:50 2026 +0300
+
+    Center Git marker with dotted fill
+
+utilities/list.c
+
+commit 2dc9581837f7e5b0bd90ec054586f3460dc84aba
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 22:18:36 2026 +0300
+
+    Tune list separators and directory size dots to match spec
+
+utilities/list.c
+
+commit a120d11bcedc3abd4172a75a19db9ddea56ce728
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 22:13:15 2026 +0300
+
+    Match list filename column dotted fill formatting
+
+utilities/list.c
+
+commit 9366043d848b8a6b34d148c7a0e716915a8a1c60
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 22:10:51 2026 +0300
+
+    Include seconds in list last-modified output
+
+utilities/list.c
+
+commit bcad0fdf69f39e0935fff68f026948ada53dd222
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 22:06:55 2026 +0300
+
+    Adjust list size padding and unit alignment
+
+utilities/list.c
+
+commit c24b1748a63e2a029e41d5eeaeed22ca67952b83
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 22:01:29 2026 +0300
+
+    Improve list size column formatting
+
+utilities/list.c

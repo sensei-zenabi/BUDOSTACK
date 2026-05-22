@@ -16,6 +16,7 @@
 #define SIZE_VALUE_WIDTH 10
 #define SIZE_UNIT_WIDTH 2
 #define SIZE_COLUMN_WIDTH (SIZE_VALUE_WIDTH + 1 + SIZE_UNIT_WIDTH)
+#define TABLE_TOTAL_WIDTH 81
 
 // Global base path used in filter and comparator
 static const char *base_path;
@@ -168,7 +169,7 @@ static int entry_is_directory(const struct dirent *entry) {
 }
 
 static void print_separator(void) {
-    for (int i = 0; i < 79; i++) {
+    for (int i = 0; i < TABLE_TOTAL_WIDTH; i++) {
         putchar('-');
     }
     putchar('\n');
@@ -288,6 +289,7 @@ void print_file_info(const char *filepath, const char *display_name) {
     } else {
         memset(size_value, '.', SIZE_VALUE_WIDTH);
         size_value[SIZE_VALUE_WIDTH] = '\0';
+        snprintf(size_unit, sizeof(size_unit), "..");
     }
 
     printf(

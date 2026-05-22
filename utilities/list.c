@@ -211,6 +211,20 @@ static void format_dotted_field(const char *input, char *output, size_t width) {
     memcpy(output + dots, input, input_len + 1);
 }
 
+static void format_center_dotted_field(const char *input, char *output, size_t width) {
+    size_t input_len = strlen(input);
+    if (input_len >= width) {
+        memcpy(output, input, width);
+        output[width] = '\0';
+        return;
+    }
+
+    memset(output, '.', width);
+    size_t offset = (width - input_len) / 2;
+    memcpy(output + offset, input, input_len);
+    output[width] = '\0';
+}
+
 // Filter function for scandir
 int filter(const struct dirent *entry) {
     int is_dir = entry_is_directory(entry);
@@ -283,6 +297,7 @@ void print_file_info(const char *filepath, const char *display_name) {
     char size_value_raw[32] = "";
     char size_value[SIZE_VALUE_WIDTH + 1];
     char size_unit[8] = "";
+    char git_value[4];
     if (!S_ISDIR(st.st_mode)) {
         format_size(st.st_size, size_value_raw, sizeof(size_value_raw), size_unit, sizeof(size_unit));
         format_dotted_field(size_value_raw, size_value, SIZE_VALUE_WIDTH);
@@ -291,16 +306,17 @@ void print_file_info(const char *filepath, const char *display_name) {
         size_value[SIZE_VALUE_WIDTH] = '\0';
         snprintf(size_unit, sizeof(size_unit), "..");
     }
+    format_center_dotted_field(file_is_tracked(filepath) ? "x" : "", git_value, 3);
 
     printf(
-        "%-*s %-11s %s %*s %-3s %-20s\n",
+        "%-*s %-11s %s %*s %s %-20s\n",
         NAME_DISPLAY_WIDTH,
         truncated_name,
         perms,
         size_value,
         SIZE_UNIT_WIDTH,
         size_unit,
-        file_is_tracked(filepath) ? "x" : "",
+        git_value,
         timebuf);
 }
 

@@ -14,7 +14,7 @@
 
 #define NAME_DISPLAY_WIDTH 31
 #define PERMS_DISPLAY_WIDTH 11
-#define SIZE_DISPLAY_WIDTH 10
+#define SIZE_DISPLAY_WIDTH 12
 #define GIT_DISPLAY_WIDTH 3
 
 // Global base path used in filter and comparator
@@ -140,13 +140,32 @@ static void print_dot_field(const char *value, size_t width, int trailing_space)
     fputs(value, stdout);
 
     if (len < width) {
-        for (size_t i = len; i < width; i++) {
+        putchar(' ');
+        for (size_t i = len + 1; i < width; i++) {
             putchar('.');
         }
     }
 
     if (trailing_space) {
         putchar(' ');
+    }
+}
+
+
+static void format_size_value(off_t size, char *buffer, size_t buffer_size) {
+    static const char *units[] = {"B", "kB", "MB", "GB", "TB"};
+    double value = (double)size;
+    size_t unit_index = 0;
+
+    while (value >= 1024.0 && unit_index < (sizeof(units) / sizeof(units[0])) - 1) {
+        value /= 1024.0;
+        unit_index++;
+    }
+
+    if (unit_index == 0) {
+        snprintf(buffer, buffer_size, "%ld %s", (long)size, units[unit_index]);
+    } else {
+        snprintf(buffer, buffer_size, "%.1f %s", value, units[unit_index]);
     }
 }
 
@@ -254,7 +273,7 @@ void print_file_info(const char *filepath, const char *display_name) {
     char sizebuf[32];
     char gitbuf[GIT_DISPLAY_WIDTH + 1];
 
-    snprintf(sizebuf, sizeof(sizebuf), "%ld", (long)st.st_size);
+    format_size_value(st.st_size, sizebuf, sizeof(sizebuf));
     snprintf(gitbuf, sizeof(gitbuf), "%s", file_is_tracked(filepath) ? "x" : "");
 
     print_dot_field(truncated_name, NAME_DISPLAY_WIDTH, 1);

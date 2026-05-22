@@ -260,7 +260,7 @@ void print_file_info(const char *filepath, const char *display_name) {
     mode_to_string(st.st_mode, perms);
     char timebuf[20];
     struct tm *tm_info = localtime(&st.st_mtime);
-    strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M", tm_info);
+    strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", tm_info);
 
     char formatted_name_buffer[1024];
     if (S_ISDIR(st.st_mode) && strcmp(display_name, ".") != 0 && strcmp(display_name, "..") != 0) {

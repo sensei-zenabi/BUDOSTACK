@@ -225,6 +225,20 @@ static void format_center_dotted_field(const char *input, char *output, size_t w
     output[width] = '\0';
 }
 
+static void format_center_space_field(const char *input, char *output, size_t width) {
+    size_t input_len = strlen(input);
+    if (input_len >= width) {
+        memcpy(output, input, width);
+        output[width] = '\0';
+        return;
+    }
+
+    memset(output, ' ', width);
+    size_t offset = (width - input_len) / 2;
+    memcpy(output + offset, input, input_len);
+    output[width] = '\0';
+}
+
 // Filter function for scandir
 int filter(const struct dirent *entry) {
     int is_dir = entry_is_directory(entry);
@@ -321,13 +335,15 @@ void print_file_info(const char *filepath, const char *display_name) {
 }
 
 static void print_table_header(void) {
+    char centered_size[SIZE_COLUMN_WIDTH + 1];
+    format_center_space_field("Size", centered_size, SIZE_COLUMN_WIDTH);
+
     printf(
-        "%-*s %-11s %*s %-3s %-20s\n",
+        "%-*s %-11s %s %-3s %-20s\n",
         NAME_DISPLAY_WIDTH,
         "Filename",
         "Permissions",
-        SIZE_COLUMN_WIDTH,
-        "Size",
+        centered_size,
         "Git",
         "Last Modified");
 }

@@ -13,6 +13,9 @@
 #include <sys/wait.h>
 
 #define NAME_DISPLAY_WIDTH 31
+#define PERMS_DISPLAY_WIDTH 11
+#define SIZE_DISPLAY_WIDTH 10
+#define GIT_DISPLAY_WIDTH 3
 
 // Global base path used in filter and comparator
 static const char *base_path;
@@ -132,6 +135,21 @@ static void format_display_name(const char *input, char *output, size_t width) {
     output[width] = '\0';
 }
 
+static void print_dot_field(const char *value, size_t width, int trailing_space) {
+    size_t len = strlen(value);
+    fputs(value, stdout);
+
+    if (len < width) {
+        for (size_t i = len; i < width; i++) {
+            putchar('.');
+        }
+    }
+
+    if (trailing_space) {
+        putchar(' ');
+    }
+}
+
 // Convert file mode to a permission string (similar to ls -l output)
 void mode_to_string(mode_t mode, char *str) {
     str[0] = S_ISDIR(mode) ? 'd' : (S_ISLNK(mode) ? 'l' : '-');
@@ -233,14 +251,17 @@ void print_file_info(const char *filepath, const char *display_name) {
     char truncated_name[NAME_DISPLAY_WIDTH + 1];
     format_display_name(formatted_name_buffer, truncated_name, NAME_DISPLAY_WIDTH);
 
-    printf(
-        "%-*s %-11s %-10ld %-3s %-20s\n",
-        NAME_DISPLAY_WIDTH,
-        truncated_name,
-        perms,
-        (long)st.st_size,
-        file_is_tracked(filepath) ? "x" : "",
-        timebuf);
+    char sizebuf[32];
+    char gitbuf[GIT_DISPLAY_WIDTH + 1];
+
+    snprintf(sizebuf, sizeof(sizebuf), "%ld", (long)st.st_size);
+    snprintf(gitbuf, sizeof(gitbuf), "%s", file_is_tracked(filepath) ? "x" : "");
+
+    print_dot_field(truncated_name, NAME_DISPLAY_WIDTH, 1);
+    print_dot_field(perms, PERMS_DISPLAY_WIDTH, 1);
+    print_dot_field(sizebuf, SIZE_DISPLAY_WIDTH, 1);
+    print_dot_field(gitbuf, GIT_DISPLAY_WIDTH, 1);
+    printf("%s\n", timebuf);
 }
 
 // List a single directory (non-recursive)
@@ -254,14 +275,11 @@ void list_directory(const char *dir_path) {
     }
 
     printf("\n");
-    printf(
-        "%-*s %-11s %-10s %-3s %-20s\n",
-        NAME_DISPLAY_WIDTH,
-        "Filename",
-        "Permissions",
-        "Size",
-        "Git",
-        "Last Modified");
+    print_dot_field("Filename", NAME_DISPLAY_WIDTH, 1);
+    print_dot_field("Permissions", PERMS_DISPLAY_WIDTH, 1);
+    print_dot_field("Size", SIZE_DISPLAY_WIDTH, 1);
+    print_dot_field("Git", GIT_DISPLAY_WIDTH, 1);
+    printf("%s\n", "Last Modified");
     print_separator();
 
     for (int i = 0; i < n; i++) {
@@ -391,14 +409,11 @@ void list_recursive_search(const char *pattern) {
         "Recursive search for %s matching pattern '%s':\n",
         list_folders_only ? "folders" : "files",
         pattern);
-    printf(
-        "%-*s %-11s %-10s %-3s %-20s\n",
-        NAME_DISPLAY_WIDTH,
-        "Filename",
-        "Permissions",
-        "Size",
-        "Git",
-        "Last Modified");
+    print_dot_field("Filename", NAME_DISPLAY_WIDTH, 1);
+    print_dot_field("Permissions", PERMS_DISPLAY_WIDTH, 1);
+    print_dot_field("Size", SIZE_DISPLAY_WIDTH, 1);
+    print_dot_field("Git", GIT_DISPLAY_WIDTH, 1);
+    printf("%s\n", "Last Modified");
     print_separator();
 
     for (size_t i = 0; i < matches_count; i++) {
@@ -492,14 +507,11 @@ int main(int argc, char *argv[]) {
 
     if (file_count > 0) {
         printf("Files:\n");
-        printf(
-            "%-*s %-11s %-10s %-3s %-20s\n",
-            NAME_DISPLAY_WIDTH,
-            "Filename",
-            "Permissions",
-            "Size",
-            "Git",
-            "Last Modified");
+        print_dot_field("Filename", NAME_DISPLAY_WIDTH, 1);
+        print_dot_field("Permissions", PERMS_DISPLAY_WIDTH, 1);
+        print_dot_field("Size", SIZE_DISPLAY_WIDTH, 1);
+        print_dot_field("Git", GIT_DISPLAY_WIDTH, 1);
+        printf("%s\n", "Last Modified");
         print_separator();
         for (int i = 0; i < file_count; i++) {
             print_file_info(file_paths[i], file_paths[i]);

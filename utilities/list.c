@@ -120,6 +120,13 @@ static void format_display_name(const char *input, char *output, size_t width) {
     size_t len = strlen(input);
     if (len <= width) {
         snprintf(output, width + 1, "%s", input);
+        if (len < width) {
+            output[len] = ' ';
+            for (size_t i = len + 1; i < width; i++) {
+                output[i] = '.';
+            }
+            output[width] = '\0';
+        }
         return;
     }
 

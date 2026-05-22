@@ -261,10 +261,23 @@ static int entry_is_directory(const struct dirent *entry) {
 }
 
 static void print_separator(void) {
-    for (int i = 0; i < 79; i++) {
+    const int total_width = NAME_DISPLAY_WIDTH + PERMS_DISPLAY_WIDTH + SIZE_DISPLAY_WIDTH +
+        GIT_DISPLAY_WIDTH + 4 + (int)strlen("Last Modified");
+
+    for (int i = 0; i < total_width; i++) {
         putchar('-');
     }
     putchar('\n');
+}
+
+
+static void print_table_header(void) {
+    print_dot_field("Filename", NAME_DISPLAY_WIDTH, 1);
+    print_dot_field("Permissions", PERMS_DISPLAY_WIDTH, 1);
+    print_dot_field("Size", SIZE_DISPLAY_WIDTH, 1);
+    print_dot_field("Git", GIT_DISPLAY_WIDTH, 1);
+    printf("%s\n", "Last Modified");
+    print_separator();
 }
 
 // Filter function for scandir
@@ -362,12 +375,7 @@ void list_directory(const char *dir_path) {
     }
 
     printf("\n");
-    print_padded_field("Filename", NAME_DISPLAY_WIDTH, -1, 1);
-    print_padded_field("Permissions", PERMS_DISPLAY_WIDTH, -1, 1);
-    print_padded_field("Size", SIZE_DISPLAY_WIDTH, 0, 1);
-    print_padded_field("Git", GIT_DISPLAY_WIDTH, 0, 1);
-    printf("%s\n", "Last Modified");
-    print_separator();
+    print_table_header();
 
     for (int i = 0; i < n; i++) {
         char fullpath[1024];
@@ -496,12 +504,7 @@ void list_recursive_search(const char *pattern) {
         "Recursive search for %s matching pattern '%s':\n",
         list_folders_only ? "folders" : "files",
         pattern);
-    print_padded_field("Filename", NAME_DISPLAY_WIDTH, -1, 1);
-    print_padded_field("Permissions", PERMS_DISPLAY_WIDTH, -1, 1);
-    print_padded_field("Size", SIZE_DISPLAY_WIDTH, 0, 1);
-    print_padded_field("Git", GIT_DISPLAY_WIDTH, 0, 1);
-    printf("%s\n", "Last Modified");
-    print_separator();
+    print_table_header();
 
     for (size_t i = 0; i < matches_count; i++) {
         print_file_info(matches[i], matches[i]);
@@ -594,12 +597,7 @@ int main(int argc, char *argv[]) {
 
     if (file_count > 0) {
         printf("Files:\n");
-        print_padded_field("Filename", NAME_DISPLAY_WIDTH, -1, 1);
-        print_padded_field("Permissions", PERMS_DISPLAY_WIDTH, -1, 1);
-        print_padded_field("Size", SIZE_DISPLAY_WIDTH, 0, 1);
-        print_padded_field("Git", GIT_DISPLAY_WIDTH, 0, 1);
-        printf("%s\n", "Last Modified");
-        print_separator();
+        print_table_header();
         for (int i = 0; i < file_count; i++) {
             print_file_info(file_paths[i], file_paths[i]);
             free(file_paths[i]);

@@ -8,7 +8,7 @@ int main(void)
 {
     printf(
         "\n"
-        "==================== GITTER: GIT BASICS FOR YOUR DAILY JOB ====================\n"
+        "=============== GITTER: GIT BASICS FOR YOUR DAILY JOB ===============\n"
         "\n"
         "1) First check: \"what is going on?\"\n"
         "  git status\n"
@@ -57,7 +57,7 @@ int main(void)
         "  - Do not use force push unless a senior asks you.\n"
         "  - Write commit messages that explain the change.\n"
         "  - Build and test before push.\n"
-        "===============================================================================\n"
+        "======================================================================\n"
         "\n");
 
     return 0;

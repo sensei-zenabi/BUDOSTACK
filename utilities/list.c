@@ -183,7 +183,7 @@ static void print_padded_field(const char *value, size_t width, int align_mode, 
 }
 
 static void format_size_parts(off_t size, char *number_buf, size_t number_buf_size, char *unit_buf, size_t unit_buf_size) {
-    static const char *units[] = {" B", "kB", "MB", "GB", "TB"};
+    static const char *units[] = {"B", "kB", "MB", "GB", "TB"};
     double value = (double)size;
     size_t unit_index = 0;
 
@@ -208,7 +208,7 @@ static void print_size_field(off_t size, size_t width, int trailing_space) {
 
     format_size_parts(size, number_buf, sizeof(number_buf), unit_buf, sizeof(unit_buf));
     number_len = strlen(number_buf);
-    number_width = width > 2 ? width - 2 : 0;
+    number_width = width > 3 ? width - 3 : 0;
 
     if (number_len < number_width) {
         for (size_t i = number_len; i < number_width; i++) {
@@ -217,6 +217,7 @@ static void print_size_field(off_t size, size_t width, int trailing_space) {
     }
 
     fputs(number_buf, stdout);
+    putchar(' ');
     fputs(unit_buf, stdout);
 
     if (trailing_space) {
@@ -330,8 +331,12 @@ void print_file_info(const char *filepath, const char *display_name) {
     snprintf(gitbuf, sizeof(gitbuf), "%s", file_is_tracked(filepath) ? "x" : "");
 
     print_dot_field(truncated_name, NAME_DISPLAY_WIDTH, 1);
-    print_dot_field(perms, PERMS_DISPLAY_WIDTH, 1);
-    print_size_field(st.st_size, SIZE_DISPLAY_WIDTH, 1);
+    print_dot_field(perms, PERMS_DISPLAY_WIDTH, 0);
+    if (S_ISDIR(st.st_mode)) {
+        print_padded_field("", SIZE_DISPLAY_WIDTH, 1, 1);
+    } else {
+        print_size_field(st.st_size, SIZE_DISPLAY_WIDTH, 1);
+    }
     print_padded_field(gitbuf, GIT_DISPLAY_WIDTH, 0, 1);
     printf("%s\n", timebuf);
 }

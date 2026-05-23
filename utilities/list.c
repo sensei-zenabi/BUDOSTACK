@@ -12,7 +12,7 @@
 #include <fnmatch.h>
 #include <sys/wait.h>
 
-#define NAME_DISPLAY_WIDTH 31
+#define NAME_DISPLAY_WIDTH 30
 #define SIZE_VALUE_WIDTH 9
 #define SIZE_UNIT_WIDTH 2
 #define SIZE_COLUMN_WIDTH (SIZE_VALUE_WIDTH + 1 + SIZE_UNIT_WIDTH)

@@ -253,6 +253,60 @@ static uint8_t apply_brightness(uint8_t value, float factor) {
     return clamp_u8(out);
 }
 
+static float srgb_to_linear(uint8_t value) {
+    float x = value / 255.0f;
+    return powf(x, 2.2f);
+}
+
+static uint8_t linear_to_srgb(float linear) {
+    float clamped = fminf(fmaxf(linear, 0.0f), 1.0f);
+    float srgb = powf(clamped, 1.0f / 2.2f);
+    int out = (int)(srgb * 255.0f + 0.5f);
+    return clamp_u8(out);
+}
+
+static void apply_brightness_rgb(uint8_t in_r, uint8_t in_g, uint8_t in_b, float factor,
+                                 uint8_t *out_r, uint8_t *out_g, uint8_t *out_b) {
+    float r = srgb_to_linear(in_r);
+    float g = srgb_to_linear(in_g);
+    float b = srgb_to_linear(in_b);
+
+    if (factor <= 1.0f) {
+        *out_r = apply_brightness(in_r, factor);
+        *out_g = apply_brightness(in_g, factor);
+        *out_b = apply_brightness(in_b, factor);
+        return;
+    }
+
+    float y = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+    float target_y = fminf(y * factor, 1.0f);
+    float maxc = fmaxf(r, fmaxf(g, b));
+    float scale = factor;
+    if (maxc > 0.0f) {
+        float max_scale = 1.0f / maxc;
+        if (scale > max_scale) scale = max_scale;
+    }
+
+    float r1 = fminf(r * scale, 1.0f);
+    float g1 = fminf(g * scale, 1.0f);
+    float b1 = fminf(b * scale, 1.0f);
+    float y1 = 0.2126f * r1 + 0.7152f * g1 + 0.0722f * b1;
+
+    float t = 0.0f;
+    if (target_y > y1 && y1 < 1.0f) {
+        t = (target_y - y1) / (1.0f - y1);
+        t = fminf(fmaxf(t, 0.0f), 1.0f);
+    }
+
+    float rf = r1 + t * (1.0f - r1);
+    float gf = g1 + t * (1.0f - g1);
+    float bf = b1 + t * (1.0f - b1);
+
+    *out_r = linear_to_srgb(rf);
+    *out_g = linear_to_srgb(gf);
+    *out_b = linear_to_srgb(bf);
+}
+
 static void init_palettes(void) {
     static int initialized = 0;
     if (initialized) return;
@@ -260,9 +314,8 @@ static void init_palettes(void) {
         for (int i = 0; i < PALETTE_COLORS; i++) {
             Color c = base_palette[i];
             // Always apply factor; palette 3 uses 1.00 so it's identical to base
-            c.r = apply_brightness(base_palette[i].r, palette_factors[variant]);
-            c.g = apply_brightness(base_palette[i].g, palette_factors[variant]);
-            c.b = apply_brightness(base_palette[i].b, palette_factors[variant]);
+            apply_brightness_rgb(base_palette[i].r, base_palette[i].g, base_palette[i].b,
+                                 palette_factors[variant], &c.r, &c.g, &c.b);
             c.term256 = rgb_to_ansi256(c.r, c.g, c.b);
             palettes[variant][i] = c;
         }
@@ -366,9 +419,8 @@ static void set_palette_position_fifths(int pos) {
     float interpolated_factor = (1.0f - t) * palette_factors[lower] + t * palette_factors[upper];
     for (int i = 0; i < PALETTE_COLORS; i++) {
         Color out = base_palette[i];
-        out.r = apply_brightness(base_palette[i].r, interpolated_factor);
-        out.g = apply_brightness(base_palette[i].g, interpolated_factor);
-        out.b = apply_brightness(base_palette[i].b, interpolated_factor);
+        apply_brightness_rgb(base_palette[i].r, base_palette[i].g, base_palette[i].b,
+                             interpolated_factor, &out.r, &out.g, &out.b);
         out.term256 = rgb_to_ansi256(out.r, out.g, out.b);
         temp_palette[i] = out;
     }

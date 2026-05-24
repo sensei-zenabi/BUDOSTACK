@@ -211,20 +211,6 @@ static void format_dotted_field(const char *input, char *output, size_t width) {
     memcpy(output + dots, input, input_len + 1);
 }
 
-static void format_center_dotted_field(const char *input, char *output, size_t width) {
-    size_t input_len = strlen(input);
-    if (input_len >= width) {
-        memcpy(output, input, width);
-        output[width] = '\0';
-        return;
-    }
-
-    memset(output, '.', width);
-    size_t offset = (width - input_len) / 2;
-    memcpy(output + offset, input, input_len);
-    output[width] = '\0';
-}
-
 static void format_center_space_field(const char *input, char *output, size_t width) {
     size_t input_len = strlen(input);
     if (input_len >= width) {
@@ -323,7 +309,7 @@ void print_file_info(const char *filepath, const char *display_name) {
         memset(size_unit, '.', SIZE_UNIT_WIDTH);
         size_unit[SIZE_UNIT_WIDTH] = '\0';
     }
-    format_center_dotted_field(file_is_tracked(filepath) ? "X" : "", git_value, 3);
+    format_center_space_field(file_is_tracked(filepath) ? "X" : "", git_value, 3);
 
     printf(
         "%-*s %-11s %s %s %s %-20s\n",

@@ -287,7 +287,7 @@ static uint8_t nearest_palette_index(uint8_t r, uint8_t g, uint8_t b) {
     init_palettes();
     int best_index = 0;
     int best_dist = INT_MAX;
-    for (int i = 0; i < TEMP_TOTAL_COLORS; i++) {
+    for (int i = 0; i < TOTAL_COLORS; i++) {
         const Color *c = color_from_index((uint8_t)i);
         if (!c) continue;
         int dr = (int)r - (int)c->r;
@@ -319,7 +319,9 @@ static const Color *color_from_active_palette(int color_index) {
 
 static uint8_t active_palette_color_index(int color_index) {
     if (temp_palette_active) {
-        return (uint8_t)(TEMP_PALETTE_BASE + color_index);
+        const Color *c = color_from_active_palette(color_index);
+        if (!c) return (uint8_t)(current_palette_variant * PALETTE_COLORS + color_index);
+        return nearest_palette_index(c->r, c->g, c->b);
     }
     return (uint8_t)(current_palette_variant * PALETTE_COLORS + color_index);
 }

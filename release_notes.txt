@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.81
-  Release commit number:   1481
-  Baseline release:        v0.9.8
+  Release tag:             v0.9.83
+  Release commit number:   1515
+  Baseline release:        v0.9.81
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -272,123 +272,267 @@
 
 ================================= CHANGE LOG ================================
 
-commit 07fff926dec0637850eb02e84365e01815499d59
+commit 5b112bfe110c9eb5e1eeeeb182cf792d2a511c72
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 15:45:56 2026 +0300
+
+    update
+
+tasks/autoexec.task
+
+commit fef9cdaca0880208474df59a646a0cfa99d27277
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 23:37:34 2026 +0300
+Date:   Sun May 24 15:39:40 2026 +0300
 
-    utilities: format gitter output for 80-column display
+    Add colors.task preview script for RETROPROFILE palette
 
-utilities/gitter.c
+tasks/colors.task
 
-commit 199856043bf81ccbc075beb840b6ec18b8acf65c
+commit 67bdd02c6fb71314d1336d7a9c90f6e60a3dc42d
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 15:36:04 2026 +0300
+
+    update
+
+tasks/autoexec.task
+
+commit 212caeb2e7d644ac0fe3ec2da66f20bb97e9f91b
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 15:27:44 2026 +0300
+
+    update
+
+tasks/assets/login_logo.png
+
+commit 45f8a547ca3de6f02e754a961675679512598b99
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 23:33:19 2026 +0300
+Date:   Sun May 24 15:01:34 2026 +0300
 
-    utilities: simplify gitter for first-time git users
+    paint: preserve intermediate palette colors on image load
 
-utilities/gitter.c
+apps/paint.c
 
-commit 09b72f7f511891c928cb0a13faadbf89658e6c86
+commit 3a8d8e7d038f22793aeddfd9e46902ab30407922
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 14:55:21 2026 +0300
+
+    update
+
+tasks/assets/login_logo.png
+
+commit af7740f4960bd698a64a226ea1dde243b4ca678d
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 23:27:58 2026 +0300
+Date:   Sun May 24 14:40:47 2026 +0300
 
-    utilities: refine gitter with layman decision paths
+    paint: tint saturated palette-4 colors white in 5% steps to 5.0
 
-utilities/gitter.c
+apps/paint.c
 
-commit 5207bb296f2475701fa5a821a9cc222870dfb6e5
+commit 2ba0a22fa4a7d14ca608c4d962e72acb1f735996
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 23:21:22 2026 +0300
+Date:   Sun May 24 14:36:51 2026 +0300
 
-    utilities: strengthen gitter git troubleshooting guide
+    paint: brighten all colors during palette 4→5 blend
 
-utilities/gitter.c
+apps/paint.c
 
-commit 9f6c39d01957840ed91fb1cbde9178489c987abb
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 23:16:30 2026 +0300
+commit 4e7e1a34355e9d6580e25533cf6d6ac35e153ace
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 14:32:19 2026 +0300
 
-    changed default settings
+    paint: add subtle highlight boost during palette 4→5 blend
+
+apps/paint.c
+
+commit 03d565ad5e5d558f29202ee30de9e285edcc6363
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 14:01:28 2026 +0300
+
+    update
+
+tasks/assets/login_logo.png
+
+commit 27d91222121fdffa7ed6223f024bad98b19f3f88
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 13:54:40 2026 +0300
+
+    paint: allow painting and fill with intermediate custom colors
+
+apps/paint.c
+
+commit 887bc66cb59589b63c7ef92a7d93bea7bb75d2c4
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 13:47:45 2026 +0300
+
+    paint: add stepped intermediate palette levels without recoloring canvas
+
+apps/paint.c
+
+commit fb1a4ea1504aedf9b04a43be70cdf5cd71d5ef3c
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 13:28:58 2026 +0300
+
+    paint: keep canvas stable during +/- palette brightness tweaks
+
+apps/paint.c
+
+commit 048f284655b7907b4e71fd598f7d9175e92e0a8b
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 13:13:58 2026 +0300
+
+    update
+
+tasks/assets/login_logo.png
+
+commit a464f4305ca1aa83a122d1e3b82075ec56278fac
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 13:06:27 2026 +0300
+
+    paint: add temporary palette brightness adjust with +/-
+
+apps/paint.c
+
+commit a3d8de8dd89854ea6f43b3c3d477027d82e927f1
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 12:49:42 2026 +0300
+
+    good palette
+
+apps/paint.c
+
+commit 460b2106b92b3c0afa4fe5a9e4302bd3236b99c6
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 12:46:05 2026 +0300
+
+    paint: brighten palette 5 variant
+
+apps/paint.c
+
+commit 8f7b84fd43878f2d824dd348496ada517acc0ea1
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 12:35:11 2026 +0300
+
+    updated
+
+tasks/assets/login_logo.png
+
+commit d3167735d7074b228d94c24af809476cd2614922
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 12:30:31 2026 +0300
+
+    Fix paint palette 2 brightness separation
+
+apps/paint.c
+
+commit 493be49198d5c23ec3d6a3c68ce161830e1ba7a3
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 12:26:25 2026 +0300
+
+    Tune paint palette 1 darker and rebalance palette 2
+
+apps/paint.c
+
+commit 22b1f9d25a0f1cc9d7dbd52d69296cba4d72dd85
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 12:22:30 2026 +0300
+
+    Darken paint palette 1 for near-black overlay use
+
+apps/paint.c
+
+commit 55cd787b10d92cf2661c93a64643c31ecfffc7aa
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 12:09:22 2026 +0300
+
+    new logo, still in the making
+
+tasks/assets/login_logo.png
+tasks/autoexec.task
+
+commit 183d1580bdae004fe04323643367daf6ecdecb01
+Merge: 188fa89 f0b8878
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 11:21:49 2026 +0300
+
+    Merge branch 'codex/add-select,-cut,-copy,-paste-tool'
+
+commit f0b887841d0532082ddbcdceee096daf3c165e2b
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 11:20:04 2026 +0300
+
+    apps/paint: strengthen border contrast for all colors
+
+apps/paint.c
+
+commit f41c4ea5b960983ff5c36d3f6f9835594e0b83e2
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 11:15:57 2026 +0300
+
+    apps/paint: render full selection border on empty cells
+
+apps/paint.c
+
+commit 6dd00ba96ec556050e6824f48b005fbed162a7c1
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 11:11:18 2026 +0300
+
+    apps/paint: force full redraw while selection is active
+
+apps/paint.c
+
+commit da2d97f92ec5d63e3328f6532f2aedf0562169f0
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 11:06:48 2026 +0300
+
+    apps/paint: render alternating bright/dark selection border
+
+apps/paint.c
+
+commit 6a681e50e3df43d3fd5afe2054f14509bacc1d53
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun May 24 10:59:42 2026 +0300
+
+    apps/paint: add selection clipboard cut/copy/paste tool
+
+apps/paint.c
+
+commit 188fa895e440e619544e975ebad048c45d0c7f3f
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 10:59:13 2026 +0300
+
+    fixed the total width to fit LOW resolution
+
+utilities/list.c
+
+commit f38b8ceab08a244497d4e5b8edbff98ed17bbdf4
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 09:30:11 2026 +0300
+
+    deleted obsolete game folder
+
+tasks/game/character.png
+tasks/game/level1.png
+
+commit 4b48282d4e1ab5e0269a42aaa9fb340aad726ba4
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sat May 23 22:11:21 2026 +0300
+
+    new default configuration
 
 config.ini
-users/.retroprofile
 
-commit 601664e45d08fb9f8a9fecf5730c4d126e917e38
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:48:11 2026 +0300
+commit cffe0ef8d19969b3b1319296635a440e4d36142b
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sat May 23 22:09:48 2026 +0300
 
-    Center Last Modified header text
-
-utilities/list.c
-
-commit 4dd468b148ccfeb47b84a87e19dc7ecef0555897
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:32:10 2026 +0300
-
-    Use uppercase Git tracking marker
+    now it fits to LOW resolution
 
 utilities/list.c
 
-commit 8920ba69ac870564cc89f438d4e59415cd17e5f8
+commit 1c9fe4df18c5e4ec3cb8342fe0050280bd5612c1
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:29:27 2026 +0300
+Date:   Sat May 23 22:06:57 2026 +0300
 
-    Dot-fill size unit field padding
-
-utilities/list.c
-
-commit dc01faed1755edbaacb69c156aae5e6683dffca2
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:25:42 2026 +0300
-
-    Center Size header text in list table
-
-utilities/list.c
-
-commit 51ca05346d5379de69ab68be84cbacf63e209392
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:21:50 2026 +0300
-
-    Center Git marker with dotted fill
-
-utilities/list.c
-
-commit 2dc9581837f7e5b0bd90ec054586f3460dc84aba
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:18:36 2026 +0300
-
-    Tune list separators and directory size dots to match spec
-
-utilities/list.c
-
-commit a120d11bcedc3abd4172a75a19db9ddea56ce728
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:13:15 2026 +0300
-
-    Match list filename column dotted fill formatting
-
-utilities/list.c
-
-commit 9366043d848b8a6b34d148c7a0e716915a8a1c60
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:10:51 2026 +0300
-
-    Include seconds in list last-modified output
-
-utilities/list.c
-
-commit bcad0fdf69f39e0935fff68f026948ada53dd222
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:06:55 2026 +0300
-
-    Adjust list size padding and unit alignment
-
-utilities/list.c
-
-commit c24b1748a63e2a029e41d5eeaeed22ca67952b83
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri May 22 22:01:29 2026 +0300
-
-    Improve list size column formatting
+    Adjust list size column width for low-res terminal
 
 utilities/list.c

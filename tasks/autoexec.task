@@ -92,9 +92,9 @@ END
 
 RUN clear
 RUN _WAIT 200
-RUN _DISPLAY -x 0 -y 15 -file assets/login_logo.png
+RUN _DISPLAY -x 0 -y 0 -file assets/login_logo.png
 RUN _WAIT 1500
-RUN _TEXT -x 17 -y 31 -text "...WELCOME BACK TO GOLDEN AGE OF COMPUTING..."
+RUN _TEXT -x 17 -y 13 -text "...WELCOME BACK TO GOLDEN AGE OF COMPUTING..."
 RUN _WAIT 1000
 RUN _TEXT -x 2 -y 43 -text "Created by: Ville Suoranta"
 RUN _TEXT -x 2 -y 44 -text "email: ville.m.suoranta(at)gmail.com"

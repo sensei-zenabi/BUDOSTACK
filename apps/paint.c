@@ -1186,17 +1186,42 @@ static int point_on_selection_border(int x, int y) {
     return x == x0 || x == x1 || y == y0 || y == y1;
 }
 
+static int color_luma(const Color *c) {
+    if (!c) return 0;
+    return ((int)c->r * 299 + (int)c->g * 587 + (int)c->b * 114) / 1000;
+}
+
+static Color border_variant_from_base(const Color *base, int brighten) {
+    Color out = *base;
+    if (brighten) {
+        out.r = apply_brightness(base->r, 1.5f);
+        out.g = apply_brightness(base->g, 1.5f);
+        out.b = apply_brightness(base->b, 1.5f);
+        if (color_luma(&out) < 96) {
+            out.r = clamp_u8((int)out.r + 96);
+            out.g = clamp_u8((int)out.g + 96);
+            out.b = clamp_u8((int)out.b + 96);
+        }
+    } else {
+        out.r = apply_brightness(base->r, 0.5f);
+        out.g = apply_brightness(base->g, 0.5f);
+        out.b = apply_brightness(base->b, 0.5f);
+        if (color_luma(&out) > 160) {
+            out.r = clamp_u8((int)out.r - 96);
+            out.g = clamp_u8((int)out.g - 96);
+            out.b = clamp_u8((int)out.b - 96);
+        }
+    }
+    return out;
+}
+
 static void draw_selection_border_cell(uint8_t idx, int x, int y) {
 #if USE_ANSI_COLOR
     int brighten = ((x + y) & 1) == 0;
     if (idx != EMPTY && idx < TOTAL_COLORS) {
         const Color *base = color_from_index(idx);
         if (base) {
-            Color adjusted = *base;
-            float factor = brighten ? 1.25f : 0.75f;
-            adjusted.r = apply_brightness(base->r, factor);
-            adjusted.g = apply_brightness(base->g, factor);
-            adjusted.b = apply_brightness(base->b, factor);
+            Color adjusted = border_variant_from_base(base, brighten);
             set_bg_color_ansi(&adjusted);
             write(STDOUT_FILENO, "\x1b[39m", 5);
             write(STDOUT_FILENO, " ", 1);

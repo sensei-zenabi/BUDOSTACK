@@ -203,6 +203,7 @@ static Color custom_colors[MAX_CUSTOM_COLORS];
 static int custom_color_count = 0;
 static int palette_step_offset = 0;
 static int palette_position_fifths = 10; /* 0..20 maps palette 1.0 .. 5.0 */
+static const float palette_factors[PALETTE_VARIANTS] = {0.03f, 0.12f, 0.4135f, 1.0f, 5.0f};
 
 static uint8_t clamp_u8(int v) {
     if (v < 0) return 0;
@@ -255,14 +256,13 @@ static uint8_t apply_brightness(uint8_t value, float factor) {
 static void init_palettes(void) {
     static int initialized = 0;
     if (initialized) return;
-    const float factors[PALETTE_VARIANTS] = {0.03f, 0.12f, 0.4135f, 1.0f, 5.00f};
     for (int variant = 0; variant < PALETTE_VARIANTS; variant++) {
         for (int i = 0; i < PALETTE_COLORS; i++) {
             Color c = base_palette[i];
             // Always apply factor; palette 3 uses 1.00 so it's identical to base
-            c.r = apply_brightness(base_palette[i].r, factors[variant]);
-            c.g = apply_brightness(base_palette[i].g, factors[variant]);
-            c.b = apply_brightness(base_palette[i].b, factors[variant]);
+            c.r = apply_brightness(base_palette[i].r, palette_factors[variant]);
+            c.g = apply_brightness(base_palette[i].g, palette_factors[variant]);
+            c.b = apply_brightness(base_palette[i].b, palette_factors[variant]);
             c.term256 = rgb_to_ansi256(c.r, c.g, c.b);
             palettes[variant][i] = c;
         }
@@ -363,14 +363,12 @@ static void set_palette_position_fifths(int pos) {
     int upper = lower + 1;
     if (upper >= PALETTE_VARIANTS) upper = PALETTE_VARIANTS - 1;
     float t = (float)palette_step_offset / 5.0f;
+    float interpolated_factor = (1.0f - t) * palette_factors[lower] + t * palette_factors[upper];
     for (int i = 0; i < PALETTE_COLORS; i++) {
-        const Color *c0 = color_from_variant(lower, i);
-        const Color *c1 = color_from_variant(upper, i);
-        if (!c0 || !c1) continue;
-        Color out = *c0;
-        out.r = clamp_u8((int)((1.0f - t) * c0->r + t * c1->r + 0.5f));
-        out.g = clamp_u8((int)((1.0f - t) * c0->g + t * c1->g + 0.5f));
-        out.b = clamp_u8((int)((1.0f - t) * c0->b + t * c1->b + 0.5f));
+        Color out = base_palette[i];
+        out.r = apply_brightness(base_palette[i].r, interpolated_factor);
+        out.g = apply_brightness(base_palette[i].g, interpolated_factor);
+        out.b = apply_brightness(base_palette[i].b, interpolated_factor);
         out.term256 = rgb_to_ansi256(out.r, out.g, out.b);
         temp_palette[i] = out;
     }

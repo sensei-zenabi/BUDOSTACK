@@ -1204,9 +1204,17 @@ static void draw_selection_border_cell(uint8_t idx, int x, int y) {
             return;
         }
     }
-    const char *seq = brighten ? "\x1b[97m" : "\x1b[30m";
-    write(STDOUT_FILENO, seq, 5);
-    write(STDOUT_FILENO, "#", 1);
+    Color empty_border_color = {
+        brighten ? 235 : 35,
+        brighten ? 235 : 35,
+        brighten ? 235 : 35,
+        'A',
+        "SelectionBorderEmpty",
+        0
+    };
+    set_bg_color_ansi(&empty_border_color);
+    write(STDOUT_FILENO, "\x1b[39m", 5);
+    write(STDOUT_FILENO, " ", 1);
     reset_ansi_colors();
 #else
     (void)idx;

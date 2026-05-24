@@ -91,13 +91,13 @@ END
 # Display intro logo and play starting tune
 
 RUN clear
-RUN _WAIT 200
+RUN _WAIT 50
 RUN _DISPLAY -x 0 -y 0 -file assets/login_logo.png
-RUN _WAIT 1500
+RUN _TERM_SOUND_PLAY 1 ../sounds/static_orchard.mp3 90
+RUN _WAIT 8300
 RUN _TEXT -x 4 -y 41 -text "Created by: Ville Suoranta" -color 1
 RUN _TEXT -x 4 -y 42 -text "email: ville.m.suoranta(at)gmail.com"
-INPUT $TEMP
-
+RUN _WAIT 4700
 
 #-------------------------------------------------------------------------
 # BUDOSTACK LAUNCHER

@@ -793,7 +793,7 @@ static int handle_key_event(int key, int *running) {
                 int old_x = cursor_x;
                 int old_y = cursor_y;
                 cursor_y--;
-                if (!update_cursor_partial(old_x, old_y)) {
+                if (selection_is_active() || !update_cursor_partial(old_x, old_y)) {
                     need_render = 1;
                 }
             }
@@ -803,7 +803,7 @@ static int handle_key_event(int key, int *running) {
                 int old_x = cursor_x;
                 int old_y = cursor_y;
                 cursor_y++;
-                if (!update_cursor_partial(old_x, old_y)) {
+                if (selection_is_active() || !update_cursor_partial(old_x, old_y)) {
                     need_render = 1;
                 }
             }
@@ -813,7 +813,7 @@ static int handle_key_event(int key, int *running) {
                 int old_x = cursor_x;
                 int old_y = cursor_y;
                 cursor_x--;
-                if (!update_cursor_partial(old_x, old_y)) {
+                if (selection_is_active() || !update_cursor_partial(old_x, old_y)) {
                     need_render = 1;
                 }
             }
@@ -823,7 +823,7 @@ static int handle_key_event(int key, int *running) {
                 int old_x = cursor_x;
                 int old_y = cursor_y;
                 cursor_x++;
-                if (!update_cursor_partial(old_x, old_y)) {
+                if (selection_is_active() || !update_cursor_partial(old_x, old_y)) {
                     need_render = 1;
                 }
             }

@@ -16,7 +16,7 @@
 #define SIZE_VALUE_WIDTH 9
 #define SIZE_UNIT_WIDTH 2
 #define SIZE_COLUMN_WIDTH (SIZE_VALUE_WIDTH + 1 + SIZE_UNIT_WIDTH)
-#define TABLE_TOTAL_WIDTH 81
+#define TABLE_TOTAL_WIDTH 80
 
 // Global base path used in filter and comparator
 static const char *base_path;

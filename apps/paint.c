@@ -245,7 +245,7 @@ static uint8_t apply_brightness(uint8_t value, float factor) {
 static void init_palettes(void) {
     static int initialized = 0;
     if (initialized) return;
-    const float factors[PALETTE_VARIANTS] = {0.15f, 0.3f, 0.45f, 0.8f, 1.25};
+    const float factors[PALETTE_VARIANTS] = {0.03f, 0.12f, 0.4135f, 0.8f, 0.797f};
     for (int variant = 0; variant < PALETTE_VARIANTS; variant++) {
         for (int i = 0; i < PALETTE_COLORS; i++) {
             Color c = base_palette[i];

@@ -156,7 +156,7 @@ static void prompt(const char *msg, char *out, size_t cap);
 static int refresh_cursor_cell_partial(void);
 static int update_cursor_partial(int old_x, int old_y);
 static int selection_is_active(void);
-static int point_in_selection(int x, int y);
+static int point_on_selection_border(int x, int y);
 static int copy_selection_to_clipboard(int cut);
 static int paste_clipboard_at_cursor(void);
 
@@ -1176,13 +1176,46 @@ static int selection_is_active(void) {
     return select_tool_active && selection_has_anchor;
 }
 
-static int point_in_selection(int x, int y) {
+static int point_on_selection_border(int x, int y) {
     if (!selection_is_active()) return 0;
     int x0 = selection_start_x < cursor_x ? selection_start_x : cursor_x;
     int y0 = selection_start_y < cursor_y ? selection_start_y : cursor_y;
     int x1 = selection_start_x > cursor_x ? selection_start_x : cursor_x;
     int y1 = selection_start_y > cursor_y ? selection_start_y : cursor_y;
-    return x >= x0 && x <= x1 && y >= y0 && y <= y1;
+    if (x < x0 || x > x1 || y < y0 || y > y1) return 0;
+    return x == x0 || x == x1 || y == y0 || y == y1;
+}
+
+static void draw_selection_border_cell(uint8_t idx, int x, int y) {
+#if USE_ANSI_COLOR
+    int brighten = ((x + y) & 1) == 0;
+    if (idx != EMPTY && idx < TOTAL_COLORS) {
+        const Color *base = color_from_index(idx);
+        if (base) {
+            Color adjusted = *base;
+            float factor = brighten ? 1.25f : 0.75f;
+            adjusted.r = apply_brightness(base->r, factor);
+            adjusted.g = apply_brightness(base->g, factor);
+            adjusted.b = apply_brightness(base->b, factor);
+            set_bg_color_ansi(&adjusted);
+            write(STDOUT_FILENO, "\x1b[39m", 5);
+            write(STDOUT_FILENO, " ", 1);
+            reset_ansi_colors();
+            return;
+        }
+    }
+    const char *seq = brighten ? "\x1b[97m" : "\x1b[30m";
+    write(STDOUT_FILENO, seq, 5);
+    write(STDOUT_FILENO, "#", 1);
+    reset_ansi_colors();
+#else
+    (void)idx;
+    (void)x;
+    (void)y;
+    write(STDOUT_FILENO, "\x1b[7m", 4);
+    write(STDOUT_FILENO, "#", 1);
+    write(STDOUT_FILENO, "\x1b[0m", 4);
+#endif
 }
 
 typedef struct {
@@ -1315,8 +1348,14 @@ static void render(void){
 
             uint8_t idx = pixels[y * img_w + x];
             int cursor_here = (x == cursor_x && y == cursor_y);
-            int selection_here = point_in_selection(x, y);
-            draw_cell(idx, cursor_here || selection_here);
+            int selection_border = point_on_selection_border(x, y);
+            if (cursor_here) {
+                draw_cell(idx, 1);
+            } else if (selection_border) {
+                draw_selection_border_cell(idx, x, y);
+            } else {
+                draw_cell(idx, 0);
+            }
         }
     }
 

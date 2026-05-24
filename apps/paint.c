@@ -706,13 +706,14 @@ static int load_bmp(const char *path){
     int row_bytes = w * 3;
     int padding = (4 - (row_bytes % 4)) & 3;
 
+    custom_color_count = 0;
     memset(pixels, EMPTY, sizeof(pixels));
     // Read bottom-up
     for (int y = h-1; y >= 0; y--) {
         for (int x = 0; x < w; x++) {
             int b = fgetc(f), g = fgetc(f), r = fgetc(f);
             if (b==EOF || g==EOF || r==EOF) { fclose(f); return -1; }
-            pixels[y*w + x] = nearest_palette_index((uint8_t)r, (uint8_t)g, (uint8_t)b);
+            pixels[y*w + x] = nearest_custom_or_create((uint8_t)r, (uint8_t)g, (uint8_t)b);
         }
         for (int p=0;p<padding;p++) fgetc(f);
     }
@@ -733,6 +734,7 @@ static int load_png(const char *path){
         stbi_image_free(data);
         return -1;
     }
+    custom_color_count = 0;
     memset(pixels, EMPTY, sizeof(pixels));
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
@@ -751,7 +753,7 @@ static int load_png(const char *path){
                 g = (uint8_t)((((uint32_t)g) * (uint32_t)a + 127U) / 255U);
                 b = (uint8_t)((((uint32_t)b) * (uint32_t)a + 127U) / 255U);
             }
-            pixels[y*w + x] = nearest_palette_index(r, g, b);
+            pixels[y*w + x] = nearest_custom_or_create(r, g, b);
         }
     }
     stbi_image_free(data);

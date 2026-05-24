@@ -6,7 +6,7 @@
  *  - Arrow-keys move cursor, auto-scrolling viewport
  *  - A–Z paints with 26-color palette; Backspace/Delete erases
  *  - Ctrl+F then color floods a region using 4-direction adjacency
- *  - Ctrl+1..Ctrl+5 cycle palette brightness (3 = default)
+ *  - 1..5 select palette; +/- temporarily adjusts selected palette brightness
  *  - Max resolution 320x200
  *  - Works in a terminal using raw mode (termios) + ANSI escapes
  *
@@ -193,6 +193,8 @@ static const Color base_palette[PALETTE_COLORS] = {
 
 static Color palettes[PALETTE_VARIANTS][PALETTE_COLORS];
 static int current_palette_variant = 2; /* 0-based; palette 3 is default */
+static const float palette_base_factors[PALETTE_VARIANTS] = {0.03f, 0.12f, 0.4135f, 1.0f, 5.0f};
+static float palette_brightness_offsets[PALETTE_VARIANTS] = {0};
 
 static uint8_t clamp_u8(int v) {
     if (v < 0) return 0;
@@ -242,20 +244,30 @@ static uint8_t apply_brightness(uint8_t value, float factor) {
     return clamp_u8(out);
 }
 
+static float clamp_brightness_factor(float factor) {
+    if (factor < 0.01f) return 0.01f;
+    if (factor > 8.0f) return 8.0f;
+    return factor;
+}
+
+static void rebuild_palette_variant(int variant) {
+    if (variant < 0 || variant >= PALETTE_VARIANTS) return;
+    float factor = clamp_brightness_factor(palette_base_factors[variant] + palette_brightness_offsets[variant]);
+    for (int i = 0; i < PALETTE_COLORS; i++) {
+        Color c = base_palette[i];
+        c.r = apply_brightness(base_palette[i].r, factor);
+        c.g = apply_brightness(base_palette[i].g, factor);
+        c.b = apply_brightness(base_palette[i].b, factor);
+        c.term256 = rgb_to_ansi256(c.r, c.g, c.b);
+        palettes[variant][i] = c;
+    }
+}
+
 static void init_palettes(void) {
     static int initialized = 0;
     if (initialized) return;
-    const float factors[PALETTE_VARIANTS] = {0.03f, 0.12f, 0.4135f, 1.0f, 5.00f};
     for (int variant = 0; variant < PALETTE_VARIANTS; variant++) {
-        for (int i = 0; i < PALETTE_COLORS; i++) {
-            Color c = base_palette[i];
-            // Always apply factor; palette 3 uses 1.00 so it's identical to base
-            c.r = apply_brightness(base_palette[i].r, factors[variant]);
-            c.g = apply_brightness(base_palette[i].g, factors[variant]);
-            c.b = apply_brightness(base_palette[i].b, factors[variant]);
-            c.term256 = rgb_to_ansi256(c.r, c.g, c.b);
-            palettes[variant][i] = c;
-        }
+        rebuild_palette_variant(variant);
     }
     initialized = 1;
 }
@@ -301,6 +313,24 @@ static void set_current_palette_variant(int variant) {
     if (variant < 0) variant = 0;
     if (variant >= PALETTE_VARIANTS) variant = PALETTE_VARIANTS - 1;
     current_palette_variant = variant;
+}
+
+static void reset_palette_variant_brightness(int variant) {
+    init_palettes();
+    if (variant < 0 || variant >= PALETTE_VARIANTS) return;
+    palette_brightness_offsets[variant] = 0.0f;
+    rebuild_palette_variant(variant);
+}
+
+static void adjust_current_palette_brightness(float delta) {
+    init_palettes();
+    int variant = current_palette_variant;
+    if (variant < 0 || variant >= PALETTE_VARIANTS) return;
+    palette_brightness_offsets[variant] += delta;
+    float factor = palette_base_factors[variant] + palette_brightness_offsets[variant];
+    factor = clamp_brightness_factor(factor);
+    palette_brightness_offsets[variant] = factor - palette_base_factors[variant];
+    rebuild_palette_variant(variant);
 }
 
 /* -------- Undo/Redo -------- */
@@ -839,23 +869,36 @@ static int handle_key_event(int key, int *running) {
             break;
 
         case '1':
+            reset_palette_variant_brightness(0);
             set_current_palette_variant(0);
             need_render = 1;
             break;
         case '2':
+            reset_palette_variant_brightness(1);
             set_current_palette_variant(1);
             need_render = 1;
             break;
         case '3':
+            reset_palette_variant_brightness(2);
             set_current_palette_variant(2);
             need_render = 1;
             break;
         case '4':
+            reset_palette_variant_brightness(3);
             set_current_palette_variant(3);
             need_render = 1;
             break;
         case '5':
+            reset_palette_variant_brightness(4);
             set_current_palette_variant(4);
+            need_render = 1;
+            break;
+        case '+':
+            adjust_current_palette_brightness(0.10f);
+            need_render = 1;
+            break;
+        case '-':
+            adjust_current_palette_brightness(-0.10f);
             need_render = 1;
             break;
 
@@ -986,7 +1029,8 @@ static int build_status_lines(int cols, char lines[][256], int max_lines) {
     const char *shortcuts[] = {
         "Draw:A-Z",
         "Fill:^F+Color",
-        "Brightness:^1-^5",
+        "Palette:1-5",
+        "Brightness:+/-",
         "Erase:Backspace/Delete",
         "Resize:^R",
         "Select:^T",

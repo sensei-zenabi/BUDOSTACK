@@ -348,10 +348,15 @@ static void set_current_palette_variant(int variant) {
     palette_position_fifths = variant * 5;
 }
 
-static Color apply_palette45_highlight_boost(const Color *base, float t) {
+static int is_palette4_saturated_color(const Color *palette4) {
+    if (!palette4) return 0;
+    return (palette4->r == 255 || palette4->g == 255 || palette4->b == 255);
+}
+
+static Color apply_palette45_highlight_boost(const Color *base, int step) {
     Color out = *base;
-    float eased = t * t * (3.0f - 2.0f * t); /* smoothstep */
-    float white_mix = 0.10f * eased;
+    float white_mix = 0.05f * (float)step; /* 5% per step: 0..25% */
+    if (white_mix > 0.25f) white_mix = 0.25f;
     out.r = clamp_u8((int)(out.r + (255.0f - out.r) * white_mix + 0.5f));
     out.g = clamp_u8((int)(out.g + (255.0f - out.g) * white_mix + 0.5f));
     out.b = clamp_u8((int)(out.b + (255.0f - out.b) * white_mix + 0.5f));
@@ -365,6 +370,22 @@ static void set_palette_position_fifths(int pos) {
     current_palette_variant = pos / 5;
     palette_step_offset = pos - (current_palette_variant * 5);
     if (palette_step_offset == 0) {
+        if (current_palette_variant == 4) {
+            for (int i = 0; i < PALETTE_COLORS; i++) {
+                const Color *c = color_from_variant(4, i);
+                const Color *p4 = color_from_variant(3, i);
+                if (!c || !p4) continue;
+                temp_palette[i] = *c;
+                if (is_palette4_saturated_color(p4)) {
+                    temp_palette[i] = apply_palette45_highlight_boost(c, 5);
+                }
+                temp_palette[i].term256 = rgb_to_ansi256(temp_palette[i].r,
+                                                         temp_palette[i].g,
+                                                         temp_palette[i].b);
+            }
+            temp_palette_active = 1;
+            return;
+        }
         temp_palette_active = 0;
         return;
     }
@@ -381,8 +402,8 @@ static void set_palette_position_fifths(int pos) {
         out.r = clamp_u8((int)((1.0f - t) * c0->r + t * c1->r + 0.5f));
         out.g = clamp_u8((int)((1.0f - t) * c0->g + t * c1->g + 0.5f));
         out.b = clamp_u8((int)((1.0f - t) * c0->b + t * c1->b + 0.5f));
-        if (lower == 3 && upper == 4) {
-            out = apply_palette45_highlight_boost(&out, t);
+        if (lower == 3 && upper == 4 && is_palette4_saturated_color(c0)) {
+            out = apply_palette45_highlight_boost(&out, palette_step_offset);
         }
         out.term256 = rgb_to_ansi256(out.r, out.g, out.b);
         temp_palette[i] = out;

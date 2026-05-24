@@ -278,29 +278,37 @@ static void apply_brightness_rgb(uint8_t in_r, uint8_t in_g, uint8_t in_b, float
         return;
     }
 
+    /*
+     * Brighten by increasing linear luminance Y while preserving hue/chroma
+     * direction as much as possible:
+     *   C = RGB - Y,  RGB' = Y_target + k * C
+     * where k is the largest value that keeps RGB' in gamut [0,1].
+     * This is a standard gamut-mapping style approach that brightens smoothly
+     * without the stronger whitening shift of direct RGB->white blends.
+     */
     float y = 0.2126f * r + 0.7152f * g + 0.0722f * b;
     float target_y = fminf(y * factor, 1.0f);
-    float maxc = fmaxf(r, fmaxf(g, b));
-    float scale = factor;
-    if (maxc > 0.0f) {
-        float max_scale = 1.0f / maxc;
-        if (scale > max_scale) scale = max_scale;
+    float cr = r - y;
+    float cg = g - y;
+    float cb = b - y;
+    float k_max = 1.0f;
+
+    float comps[3] = {cr, cg, cb};
+    for (int i = 0; i < 3; i++) {
+        float c = comps[i];
+        if (c > 0.0f) {
+            float bound = (1.0f - target_y) / c;
+            if (bound < k_max) k_max = bound;
+        } else if (c < 0.0f) {
+            float bound = (0.0f - target_y) / c;
+            if (bound < k_max) k_max = bound;
+        }
     }
+    if (k_max < 0.0f) k_max = 0.0f;
 
-    float r1 = fminf(r * scale, 1.0f);
-    float g1 = fminf(g * scale, 1.0f);
-    float b1 = fminf(b * scale, 1.0f);
-    float y1 = 0.2126f * r1 + 0.7152f * g1 + 0.0722f * b1;
-
-    float t = 0.0f;
-    if (target_y > y1 && y1 < 1.0f) {
-        t = (target_y - y1) / (1.0f - y1);
-        t = fminf(fmaxf(t, 0.0f), 1.0f);
-    }
-
-    float rf = r1 + t * (1.0f - r1);
-    float gf = g1 + t * (1.0f - g1);
-    float bf = b1 + t * (1.0f - b1);
+    float rf = target_y + k_max * cr;
+    float gf = target_y + k_max * cg;
+    float bf = target_y + k_max * cb;
 
     *out_r = linear_to_srgb(rf);
     *out_g = linear_to_srgb(gf);

@@ -348,6 +348,16 @@ static void set_current_palette_variant(int variant) {
     palette_position_fifths = variant * 5;
 }
 
+static Color apply_palette45_highlight_boost(const Color *base, float t) {
+    Color out = *base;
+    float eased = t * t * (3.0f - 2.0f * t); /* smoothstep */
+    float white_mix = 0.06f * eased;
+    out.r = clamp_u8((int)(out.r + (255.0f - out.r) * white_mix + 0.5f));
+    out.g = clamp_u8((int)(out.g + (255.0f - out.g) * white_mix + 0.5f));
+    out.b = clamp_u8((int)(out.b + (255.0f - out.b) * white_mix + 0.5f));
+    return out;
+}
+
 static void set_palette_position_fifths(int pos) {
     if (pos < 0) pos = 0;
     if (pos > (PALETTE_VARIANTS - 1) * 5) pos = (PALETTE_VARIANTS - 1) * 5;
@@ -371,6 +381,10 @@ static void set_palette_position_fifths(int pos) {
         out.r = clamp_u8((int)((1.0f - t) * c0->r + t * c1->r + 0.5f));
         out.g = clamp_u8((int)((1.0f - t) * c0->g + t * c1->g + 0.5f));
         out.b = clamp_u8((int)((1.0f - t) * c0->b + t * c1->b + 0.5f));
+        if (lower == 3 && upper == 4 &&
+            out.r == c1->r && out.g == c1->g && out.b == c1->b) {
+            out = apply_palette45_highlight_boost(&out, t);
+        }
         out.term256 = rgb_to_ansi256(out.r, out.g, out.b);
         temp_palette[i] = out;
     }

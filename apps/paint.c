@@ -124,6 +124,13 @@ static int view_x = 0, view_y = 0;
 static int dirty = 0; // unsaved changes
 static int fill_color_pending = 0;
 static char current_file_path[512];
+static int select_tool_active = 0;
+static int selection_has_anchor = 0;
+static int selection_start_x = 0;
+static int selection_start_y = 0;
+static int clipboard_w = 0;
+static int clipboard_h = 0;
+static uint8_t clipboard_pixels[MAX_W * MAX_H];
 
 static void set_current_file_path(const char *path) {
     if (!path || !*path) {
@@ -148,6 +155,10 @@ static int redo_action(void);
 static void prompt(const char *msg, char *out, size_t cap);
 static int refresh_cursor_cell_partial(void);
 static int update_cursor_partial(int old_x, int old_y);
+static int selection_is_active(void);
+static int point_in_selection(int x, int y);
+static int copy_selection_to_clipboard(int cut);
+static int paste_clipboard_at_cursor(void);
 
 /* Palette: 26 entries mapped to letters A..Z (RGB 0..255) */
 typedef struct { uint8_t r,g,b; char letter; const char *name; int term256; } Color;
@@ -878,6 +889,32 @@ static int handle_key_event(int key, int *running) {
                 need_render = 1;
             }
             break;
+        case 20: /* Ctrl+T */
+            select_tool_active = !select_tool_active;
+            if (select_tool_active) {
+                selection_has_anchor = 1;
+                selection_start_x = cursor_x;
+                selection_start_y = cursor_y;
+            } else {
+                selection_has_anchor = 0;
+            }
+            need_render = 1;
+            break;
+        case 3:  /* Ctrl+C */
+            if (copy_selection_to_clipboard(0)) {
+                need_render = 1;
+            }
+            break;
+        case 24: /* Ctrl+X */
+            if (copy_selection_to_clipboard(1)) {
+                need_render = 1;
+            }
+            break;
+        case 22: /* Ctrl+V */
+            if (paste_clipboard_at_cursor()) {
+                need_render = 1;
+            }
+            break;
         case 17: /* Ctrl+Q */
             if (dirty) {
                 char ans[8];
@@ -934,10 +971,11 @@ static int build_status_lines(int cols, char lines[][256], int max_lines) {
     }
     char line1[256];
     const char *fill_msg = fill_color_pending ? "  Fill:Pick color" : "";
+    const char *select_msg = select_tool_active ? "  Select:ON" : "";
     snprintf(line1, sizeof(line1),
-        " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%d  %s%s",
+        " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%d  %s%s%s",
         img_w, img_h, cursor_x, cursor_y, view_x, view_y,
-        current_palette_variant + 1, dirty ? "Dirty" : "Saved", fill_msg);
+        current_palette_variant + 1, dirty ? "Dirty" : "Saved", fill_msg, select_msg);
     line1[sizeof(line1) - 1] = '\0';
     strncpy(lines[0], line1, sizeof(lines[0]) - 1);
     lines[0][sizeof(lines[0]) - 1] = '\0';
@@ -951,6 +989,10 @@ static int build_status_lines(int cols, char lines[][256], int max_lines) {
         "Brightness:^1-^5",
         "Erase:Backspace/Delete",
         "Resize:^R",
+        "Select:^T",
+        "Copy:^C",
+        "Cut:^X",
+        "Paste:^V",
         "Undo:^Z",
         "Redo:^Y",
         "Save:^S",
@@ -1130,6 +1172,19 @@ static void draw_cell(uint8_t idx, int highlight){
     reset_ansi_colors();
 }
 
+static int selection_is_active(void) {
+    return select_tool_active && selection_has_anchor;
+}
+
+static int point_in_selection(int x, int y) {
+    if (!selection_is_active()) return 0;
+    int x0 = selection_start_x < cursor_x ? selection_start_x : cursor_x;
+    int y0 = selection_start_y < cursor_y ? selection_start_y : cursor_y;
+    int x1 = selection_start_x > cursor_x ? selection_start_x : cursor_x;
+    int y1 = selection_start_y > cursor_y ? selection_start_y : cursor_y;
+    return x >= x0 && x <= x1 && y >= y0 && y <= y1;
+}
+
 typedef struct {
     int rows;
     int cols;
@@ -1259,7 +1314,9 @@ static void render(void){
             }
 
             uint8_t idx = pixels[y * img_w + x];
-            draw_cell(idx, x == cursor_x && y == cursor_y);
+            int cursor_here = (x == cursor_x && y == cursor_y);
+            int selection_here = point_in_selection(x, y);
+            draw_cell(idx, cursor_here || selection_here);
         }
     }
 
@@ -1401,6 +1458,74 @@ static int paint_at_cursor(uint8_t color_idx){
     *p = color_idx;
     dirty = 1;
     return 1;
+}
+
+static int copy_selection_to_clipboard(int cut) {
+    if (!selection_is_active()) return 0;
+    int x0 = selection_start_x < cursor_x ? selection_start_x : cursor_x;
+    int y0 = selection_start_y < cursor_y ? selection_start_y : cursor_y;
+    int x1 = selection_start_x > cursor_x ? selection_start_x : cursor_x;
+    int y1 = selection_start_y > cursor_y ? selection_start_y : cursor_y;
+    int w = x1 - x0 + 1;
+    int h = y1 - y0 + 1;
+    if (w <= 0 || h <= 0 || w > MAX_W || h > MAX_H) return 0;
+
+    clipboard_w = w;
+    clipboard_h = h;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            clipboard_pixels[y * w + x] = pixels[(y0 + y) * img_w + (x0 + x)];
+        }
+    }
+
+    if (cut) {
+        size_t changed_count = 0;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int px = x0 + x;
+                int py = y0 + y;
+                uint8_t *p = &pixels[py * img_w + px];
+                if (*p != EMPTY) {
+                    push_change((uint16_t)px, (uint16_t)py, *p, EMPTY);
+                    *p = EMPTY;
+                    changed_count++;
+                }
+            }
+        }
+        if (changed_count > 0) {
+            push_change_marker(changed_count);
+            dirty = 1;
+        }
+    }
+
+    select_tool_active = 0;
+    selection_has_anchor = 0;
+    return 1;
+}
+
+static int paste_clipboard_at_cursor(void) {
+    if (clipboard_w <= 0 || clipboard_h <= 0) return 0;
+    size_t changed_count = 0;
+    for (int y = 0; y < clipboard_h; y++) {
+        int py = cursor_y + y;
+        if (py < 0 || py >= img_h) continue;
+        for (int x = 0; x < clipboard_w; x++) {
+            int px = cursor_x + x;
+            if (px < 0 || px >= img_w) continue;
+            uint8_t src = clipboard_pixels[y * clipboard_w + x];
+            uint8_t *dst = &pixels[py * img_w + px];
+            if (*dst == src) continue;
+            push_change((uint16_t)px, (uint16_t)py, *dst, src);
+            *dst = src;
+            changed_count++;
+        }
+    }
+    if (changed_count > 0) {
+        push_change_marker(changed_count);
+        dirty = 1;
+        return 1;
+    }
+    return 0;
 }
 
 static void flood_fill_at_cursor(uint8_t color_idx){

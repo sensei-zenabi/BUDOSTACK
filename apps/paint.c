@@ -1227,7 +1227,7 @@ static void draw_cell(uint8_t idx, int highlight){
 #if USE_ANSI_COLOR
         write(STDOUT_FILENO, "\x1b[39m", 5);
 #endif
-    } else if (idx < TEMP_TOTAL_COLORS) {
+    } else if (idx < EMPTY) {
         cell_color = color_from_index(idx);
 #if USE_ANSI_COLOR
         ch = ' ';
@@ -1321,7 +1321,7 @@ static Color border_variant_from_base(const Color *base, int brighten) {
 static void draw_selection_border_cell(uint8_t idx, int x, int y) {
 #if USE_ANSI_COLOR
     int brighten = ((x + y) & 1) == 0;
-    if (idx != EMPTY && idx < TEMP_TOTAL_COLORS) {
+    if (idx != EMPTY && idx < EMPTY) {
         const Color *base = color_from_index(idx);
         if (base) {
             Color adjusted = border_variant_from_base(base, brighten);
@@ -1626,7 +1626,7 @@ static void load_dialog(void){
 
 static int paint_at_cursor(uint8_t color_idx){
     if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return 0;
-    if (color_idx != EMPTY && color_idx >= TEMP_TOTAL_COLORS) return 0;
+    if (color_idx != EMPTY && color_idx >= EMPTY) return 0;
     uint8_t *p = &pixels[cursor_y*img_w + cursor_x];
     if (*p == color_idx) return 0; // no-op
     push_change(cursor_x, cursor_y, *p, color_idx);
@@ -1705,7 +1705,7 @@ static int paste_clipboard_at_cursor(void) {
 
 static void flood_fill_at_cursor(uint8_t color_idx){
     if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return;
-    if (color_idx != EMPTY && color_idx >= TEMP_TOTAL_COLORS) return;
+    if (color_idx != EMPTY && color_idx >= EMPTY) return;
 
     uint8_t target = pixels[cursor_y*img_w + cursor_x];
     if (target == color_idx) return;

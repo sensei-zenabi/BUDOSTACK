@@ -57,6 +57,8 @@
 #define TOTAL_COLORS (PALETTE_VARIANTS * PALETTE_COLORS)
 #define TEMP_PALETTE_BASE TOTAL_COLORS
 #define TEMP_TOTAL_COLORS (TOTAL_COLORS + PALETTE_COLORS)
+#define CUSTOM_COLOR_BASE TEMP_TOTAL_COLORS
+#define MAX_CUSTOM_COLORS (EMPTY - CUSTOM_COLOR_BASE)
 
 static struct termios orig_termios;
 
@@ -197,6 +199,10 @@ static Color palettes[PALETTE_VARIANTS][PALETTE_COLORS];
 static int current_palette_variant = 2; /* 0-based; palette 3 is default */
 static Color temp_palette[PALETTE_COLORS];
 static int temp_palette_active = 0;
+static Color custom_colors[MAX_CUSTOM_COLORS];
+static int custom_color_count = 0;
+static int palette_step_offset = 0;
+static int palette_position_fifths = 10; /* 0..20 maps palette 1.0 .. 5.0 */
 
 static uint8_t clamp_u8(int v) {
     if (v < 0) return 0;
@@ -274,9 +280,14 @@ static inline const Color *color_from_variant(int variant, int color_index) {
 
 static inline const Color *color_from_index(uint8_t idx) {
     init_palettes();
-    if (idx >= TEMP_TOTAL_COLORS) return NULL;
+    if (idx >= EMPTY) return NULL;
     if (idx >= TEMP_PALETTE_BASE) {
-        return &temp_palette[idx - TEMP_PALETTE_BASE];
+        if (idx < TEMP_TOTAL_COLORS) {
+            return &temp_palette[idx - TEMP_PALETTE_BASE];
+        }
+        int custom = idx - CUSTOM_COLOR_BASE;
+        if (custom >= 0 && custom < custom_color_count) return &custom_colors[custom];
+        return NULL;
     }
     int variant = idx / PALETTE_COLORS;
     int color_index = idx % PALETTE_COLORS;
@@ -303,12 +314,67 @@ static uint8_t nearest_palette_index(uint8_t r, uint8_t g, uint8_t b) {
     return (uint8_t)best_index;
 }
 
+static uint8_t nearest_custom_or_create(uint8_t r, uint8_t g, uint8_t b) {
+    int best = -1;
+    int best_dist = INT_MAX;
+    for (int i = 0; i < custom_color_count; i++) {
+        int dr = (int)r - (int)custom_colors[i].r;
+        int dg = (int)g - (int)custom_colors[i].g;
+        int db = (int)b - (int)custom_colors[i].b;
+        int dist = dr*dr + dg*dg + db*db;
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = i;
+            if (dist == 0) break;
+        }
+    }
+    if (best_dist <= 4 && best >= 0) return (uint8_t)(CUSTOM_COLOR_BASE + best);
+    if (custom_color_count < MAX_CUSTOM_COLORS) {
+        Color c = {r, g, b, '?', "Custom", rgb_to_ansi256(r, g, b)};
+        custom_colors[custom_color_count] = c;
+        custom_color_count++;
+        return (uint8_t)(CUSTOM_COLOR_BASE + custom_color_count - 1);
+    }
+    return nearest_palette_index(r, g, b);
+}
+
 static void set_current_palette_variant(int variant) {
     init_palettes();
     if (variant < 0) variant = 0;
     if (variant >= PALETTE_VARIANTS) variant = PALETTE_VARIANTS - 1;
     current_palette_variant = variant;
     temp_palette_active = 0;
+    palette_step_offset = 0;
+    palette_position_fifths = variant * 5;
+}
+
+static void set_palette_position_fifths(int pos) {
+    if (pos < 0) pos = 0;
+    if (pos > (PALETTE_VARIANTS - 1) * 5) pos = (PALETTE_VARIANTS - 1) * 5;
+    palette_position_fifths = pos;
+    current_palette_variant = pos / 5;
+    palette_step_offset = pos - (current_palette_variant * 5);
+    if (palette_step_offset == 0) {
+        temp_palette_active = 0;
+        return;
+    }
+
+    int lower = current_palette_variant;
+    int upper = lower + 1;
+    if (upper >= PALETTE_VARIANTS) upper = PALETTE_VARIANTS - 1;
+    float t = (float)palette_step_offset / 5.0f;
+    for (int i = 0; i < PALETTE_COLORS; i++) {
+        const Color *c0 = color_from_variant(lower, i);
+        const Color *c1 = color_from_variant(upper, i);
+        if (!c0 || !c1) continue;
+        Color out = *c0;
+        out.r = clamp_u8((int)((1.0f - t) * c0->r + t * c1->r + 0.5f));
+        out.g = clamp_u8((int)((1.0f - t) * c0->g + t * c1->g + 0.5f));
+        out.b = clamp_u8((int)((1.0f - t) * c0->b + t * c1->b + 0.5f));
+        out.term256 = rgb_to_ansi256(out.r, out.g, out.b);
+        temp_palette[i] = out;
+    }
+    temp_palette_active = 1;
 }
 
 static const Color *color_from_active_palette(int color_index) {
@@ -321,23 +387,9 @@ static uint8_t active_palette_color_index(int color_index) {
     if (temp_palette_active) {
         const Color *c = color_from_active_palette(color_index);
         if (!c) return (uint8_t)(current_palette_variant * PALETTE_COLORS + color_index);
-        return nearest_palette_index(c->r, c->g, c->b);
+        return nearest_custom_or_create(c->r, c->g, c->b);
     }
     return (uint8_t)(current_palette_variant * PALETTE_COLORS + color_index);
-}
-
-static void adjust_active_palette_brightness(float factor) {
-    for (int i = 0; i < PALETTE_COLORS; i++) {
-        const Color *src = color_from_active_palette(i);
-        if (!src) continue;
-        Color adjusted = *src;
-        adjusted.r = apply_brightness(src->r, factor);
-        adjusted.g = apply_brightness(src->g, factor);
-        adjusted.b = apply_brightness(src->b, factor);
-        adjusted.term256 = rgb_to_ansi256(adjusted.r, adjusted.g, adjusted.b);
-        temp_palette[i] = adjusted;
-    }
-    temp_palette_active = 1;
 }
 
 /* -------- Undo/Redo -------- */
@@ -876,31 +928,31 @@ static int handle_key_event(int key, int *running) {
             break;
 
         case '1':
-            set_current_palette_variant(0);
+            set_palette_position_fifths(0);
             need_render = 1;
             break;
         case '2':
-            set_current_palette_variant(1);
+            set_palette_position_fifths(5);
             need_render = 1;
             break;
         case '3':
-            set_current_palette_variant(2);
+            set_palette_position_fifths(10);
             need_render = 1;
             break;
         case '4':
-            set_current_palette_variant(3);
+            set_palette_position_fifths(15);
             need_render = 1;
             break;
         case '5':
-            set_current_palette_variant(4);
+            set_palette_position_fifths(20);
             need_render = 1;
             break;
         case '+':
-            adjust_active_palette_brightness(1.08f);
+            set_palette_position_fifths(palette_position_fifths + 1);
             need_render = 1;
             break;
         case '-':
-            adjust_active_palette_brightness(0.92f);
+            set_palette_position_fifths(palette_position_fifths - 1);
             need_render = 1;
             break;
 
@@ -1015,12 +1067,17 @@ static int build_status_lines(int cols, char lines[][256], int max_lines) {
         return 0;
     }
     char line1[256];
+    char palette_label[16];
     const char *fill_msg = fill_color_pending ? "  Fill:Pick color" : "";
     const char *select_msg = select_tool_active ? "  Select:ON" : "";
+    int whole = 1 + (palette_position_fifths / 5);
+    int frac = (palette_position_fifths % 5) * 2;
+    snprintf(palette_label, sizeof(palette_label), "%d.%d", whole, frac);
+    palette_label[sizeof(palette_label) - 1] = '\0';
     snprintf(line1, sizeof(line1),
-        " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%d  %s%s%s",
+        " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%s  %s%s%s",
         img_w, img_h, cursor_x, cursor_y, view_x, view_y,
-        current_palette_variant + 1, dirty ? "Dirty" : "Saved", fill_msg, select_msg);
+        palette_label, dirty ? "Dirty" : "Saved", fill_msg, select_msg);
     line1[sizeof(line1) - 1] = '\0';
     strncpy(lines[0], line1, sizeof(lines[0]) - 1);
     lines[0][sizeof(lines[0]) - 1] = '\0';

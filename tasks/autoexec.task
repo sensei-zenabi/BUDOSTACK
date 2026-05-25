@@ -74,10 +74,6 @@ END
 
 RUN _CLEAR
 
-#-------------------------------------------------------------------------
-# BUDOSTACK INTRO
-@INTRO
-
 # Following INTRO will run only in ./apps/terminal
 
 RUN _TERM_ACTIVE TO $TERM_ACTIVE
@@ -96,6 +92,9 @@ IF ($TERM_ACTIVE == "1"):
     RUN _WAIT 250
     GOTO LOADING
   END
+
+  # Implement 2 seconds of commodore 64 loading noise HERE
+  # TBD
 
   # Display intro logo and play starting tune
   

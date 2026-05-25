@@ -171,6 +171,12 @@ alphabetically.
 0–15 use the active retro palette; 16 is the default foreground, 17 is the default
 background, and 18 is the cursor highlight.
 
+### `_RAND`
+**Usage:** `_RAND [min max]`
+
+**Description:** Prints a random integer. With no arguments it prints a value in the
+range `0..100`. With `min max`, it prints a value in the inclusive range `min..max`.
+
 ### `_RETROPROFILE`
 **Usage:** `_RETROPROFILE <command> [profile]`
 

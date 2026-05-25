@@ -68,8 +68,8 @@
 
  /* User Directories */
 
-  Folders reserved for user content, excluded from the build process triggered
-  by 'restart' and makefile.
+  Folders reserved for user content. They are excluded from the build process
+  triggered by 'restart' and makefile.
 
   ./budo/        - Folder containing budo* libraries for SDL based content
                    creation from applications to games. Examples included.
@@ -88,7 +88,8 @@
   ./documents/    - Documents provided by BUDOSTACK.
   ./fonts/        - Built-in .ttf and .psf system fonts
   ./games/        - Built-in games. Think of the as our 'minesweepers'.
-  ./lib/          - Shared system libraries used by applications and utilities.
+  ./lib/          - Shared system libraries used by applications
+                   and utilities.
   ./screenshots/  - Contains the advertisement screenshots.
   ./budo/shaders/ - Shaders used for CRT simulation used in apps/terminal.
   ./sounds/       - Collection of system sounds.
@@ -198,13 +199,17 @@
 
  /* TASK Commands from ./commands/ */
 
-  _BAR                 : Draw a titled progress bar (0-100%) at cursor or -x/-y.
+  _BAR                 : Draw a titled progress bar (0-100%) at cursor
+                         or -x/-y.
   _BEEP                : Play a tone with note and duration in milliseconds.
   _CALC                : Evaluate a math expression and print the result.
-  _CLEAR               : Clear the terminal screen using ANSI escape sequences.
+  _CLEAR               : Clear the terminal screen using ANSI
+                         escape sequences.
   _CONFIG              : Read or write key-value settings in config.ini.
-  _CSVFILTER           : Filter semicolon-separated CSV rows with comparisons.
-  _CSVSTATS            : Compute count/sum/mean/min/max/variance/stddev from CSV.
+  _CSVFILTER           : Filter semicolon-separated CSV rows
+                         with comparisons.
+  _CSVSTATS            : Compute count/sum/mean/min/max/variance/stddev
+                         from CSV.
   _DICE                : Roll D&D dice notation like 2d20 and print total.
   _DISPLAY             : Draw PNG/BMP image at text grid position -x/-y.
   _EXE                 : Run app/utility and render output at -x/-y offset.
@@ -214,11 +219,16 @@
   _GETWIDTH            : Print terminal width in columns.
   _HELLO               : Print hello world test line.
   _IMAGE               : Draw PNG/BMP image at text grid position -x/-y.
-  _KEYS                : Wait for key input and print mapped numeric key code.
+  _KEYS                : Wait for key input and print mapped
+                         numeric key code.
   _LIST                : List directory entries as TASK array literal.
-  _RECT                : Draw a filled or outlined rectangle using color index.
+  _RAND                : Print random integer in range [min,max].
+                         Default 0-100.
+  _RECT                : Draw a filled or outlined rectangle
+                         using color index.
   _RETROPROFILE        : List/show/apply/reset retro color profiles.
-  _TERM_CLEAN          : Clear pixel rectangle area from terminal render layer.
+  _TERM_CLEAN          : Clear pixel rectangle area from terminal
+                         render layer.
   _TERM_CURSOR_BLINK   : Enable or disable blinking cursor in terminal.
   _TERM_ACTIVE         : Print 1 in apps/terminal, else 0.
   _TERM_KEYBOARD       : Read buffered key events as TASK array literal.
@@ -229,9 +239,11 @@
   _TERM_RESOLUTION     : Set pixel resolution (LOW/HIGH or width/height).
   _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
   _TERM_SHADER         : Enable or disable terminal shader.
-  _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32) volume 0-100.
+  _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32)
+                         volume 0-100.
   _TERM_SOUND_STOP     : Stop audio playback on selected channel (1-32).
-  _TERM_SPRITE         : Draw sprite from file/literal/base64 on chosen layer.
+  _TERM_SPRITE         : Draw sprite from file/literal/base64
+                         on chosen layer.
   _TERM_SPRITE_LOAD    : Load sprite and output reusable TASK sprite literal.
   _TERM_TEXT           : Draw UTF-8 text in pixel space with color and layer.
   _TERM_TYPING_SOUND   : Enable or disable keyboard typing sound effects.
@@ -246,7 +258,8 @@
  /* BUDOSTACK Example TASK Programs */
 
   audiodemo.task       : Collection of in-built sound capabilities
-  autoexec.task        : Determines what happens before BUDOSTACK login screen
+  autoexec.task        : Determines what happens before
+                         BUDOSTACK login screen
   codedemo.task        : Coding basics: for, while, arrays, functions, etc.
   csvdemo.task         : Dynamic .csv file manipulation demo
   demo.task            : Demonstration of _TERM* command set.

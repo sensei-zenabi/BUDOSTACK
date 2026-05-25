@@ -192,8 +192,6 @@
 
  /* BUDOSTACK Developer Tools */
 
-  compile              : Build a standalone binary from a TASK script.
-                         Type 'compile -help'.
   floppycheck          : 'floppycheck ./file or ./folder/' estimates how many
                          standard floppy disks the given content will take.
 

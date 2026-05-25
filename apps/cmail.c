@@ -129,6 +129,17 @@ static int load_config(CmailConfig *cfg)
     return 0;
 }
 
+
+static void print_gmail_setup(void)
+{
+    printf("Gmail setup (as of May 25, 2026):\n");
+    printf("  1) Turn on 2-Step Verification in your Google Account.\n");
+    printf("  2) Create a Google App Password for Mail.\n");
+    printf("  3) Copy apps/cmail.ini.example to cmail.ini and fill values.\n");
+    printf("  4) Use imap.gmail.com:993 and smtp.gmail.com:465.\n");
+    printf("  5) Put the 16-character App Password in the password field.\n\n");
+}
+
 static void print_help(void)
 {
     printf("cmail - ASCII email app\n\n");
@@ -274,8 +285,10 @@ int main(void)
     char input[CMAIL_MAX_LINE];
 
     print_help();
+    print_gmail_setup();
 
     if (load_config(&cfg) != 0) {
+        fprintf(stderr, "Hint: cp apps/cmail.ini.example cmail.ini\n");
         fprintf(stderr, "Create %s and try again.\n", CMAIL_CONFIG);
         return 1;
     }

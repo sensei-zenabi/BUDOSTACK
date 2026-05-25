@@ -220,6 +220,7 @@
   _RETROPROFILE        : List/show/apply/reset retro color profiles.
   _TERM_CLEAN          : Clear pixel rectangle area from terminal render layer.
   _TERM_CURSOR_BLINK   : Enable or disable blinking cursor in terminal.
+  _TERM_ACTIVE         : Print 1 in apps/terminal, else 0.
   _TERM_KEYBOARD       : Read buffered key events as TASK array literal.
   _TERM_MARGIN         : Set terminal pixel render margin.
   _TERM_MOUSE          : Read mouse X/Y and left/right button counters.

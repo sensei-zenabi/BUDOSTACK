@@ -193,6 +193,12 @@ Layer 1 is topmost; default layer is 1.
 **Description:** Enables (`enable`) or disables (`disable`) the blinking text cursor
 in the terminal emulator. When disabled, the cursor is hidden.
 
+### `_TERM_ACTIVE`
+**Usage:** `_TERM_ACTIVE`
+
+**Description:** Prints `1` when TASK scripts are running inside `./apps/terminal`.
+Prints `0` when running in a plain Linux terminal.
+
 ### `_TERM_KEYBOARD`
 **Usage:** `_TERM_KEYBOARD`
 

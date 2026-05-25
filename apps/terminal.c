@@ -7105,9 +7105,11 @@ static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
         close(master_fd);
 
         const char *term_value = getenv("TERM");
-        if (!term_value || term_value[0] == '\0') {
+        if (!term_value || term_value[0] == ' ') {
             setenv("TERM", "xterm-256color", 1);
         }
+
+        setenv("BUDOSTACK_TERM_ACTIVE", "TRUE", 1);
 
         execl(exe_path, exe_path, (char *)NULL);
         perror("execl");

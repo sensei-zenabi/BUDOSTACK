@@ -16,9 +16,10 @@ static void print_help(const char *progname) {
     printf("  %s demo.task\n", progname);
     printf("  %s demo\n", progname);
     printf("\n");
-    printf("Creates a standalone executable that embeds the given TASK script\n");
-    printf("from './tasks/'. The resulting binary bundles the runtime so it can\n");
-    printf("run outside BUDOSTACK while still using the project's assets.\n");
+    printf("Builds an executable from a TASK script in './tasks/'.\n");
+    printf("Supports any valid TASK commands, including _TERM* commands.\n");
+    printf("The script is embedded and executed through apps/runtask.c runtime.\n");
+    printf("BUDOSTACK runtime assets/environment are still required at runtime.\n");
 }
 
 static int has_task_extension(const char *name) {
@@ -237,7 +238,18 @@ static int write_stub(FILE *fp,
 
     const char body[] =
         "static int write_script(char *path, size_t path_size) {\n"
-        "    char tmpl[] = \"/tmp/budotask_XXXXXX\";\n"
+        "    char tmpl[PATH_MAX];\n"
+        "    if (embedded_base[0] != '\\0') {\n"
+        "        if (snprintf(tmpl, sizeof(tmpl), \"%s/.budotask_XXXXXX\", embedded_base) >= (int)sizeof(tmpl)) {\n"
+        "            fprintf(stderr, \"Error: temporary path too long\\n\");\n"
+        "            return -1;\n"
+        "        }\n"
+        "    } else {\n"
+        "        if (snprintf(tmpl, sizeof(tmpl), \"./.budotask_XXXXXX\") >= (int)sizeof(tmpl)) {\n"
+        "            fprintf(stderr, \"Error: temporary path too long\\n\");\n"
+        "            return -1;\n"
+        "        }\n"
+        "    }\n"
         "    int fd = mkstemp(tmpl);\n"
         "    if (fd < 0) {\n"
         "        perror(\"mkstemp\");\n"

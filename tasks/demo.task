@@ -164,7 +164,7 @@ WHILE ($X<290):
   
   IF ($MOUSE_EVENTS[2] > 0 AND $SPRITE_FRAME == 1 AND $FRAME_CHANGE == 0):
     SET $SPRITE_FRAME = 0
-  EN
+  END
   
   # Draw the character new position
   

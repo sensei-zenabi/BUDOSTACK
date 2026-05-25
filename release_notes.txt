@@ -1,13 +1,11 @@
-
-
 =============================== RELEASE NOTES ===============================
 
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.83
-  Release commit number:   1515
-  Baseline release:        v0.9.81
+  Release tag:             v0.9.84
+  Release commit number:   1534
+  Baseline release:        v0.9.83
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -78,8 +76,8 @@
 
  /* User Directories */
 
-  Folders reserved for user content, excluded from the build process triggered
-  by 'restart' and makefile.
+  Folders reserved for user content. They are excluded from the build process
+  triggered by 'restart' and makefile.
 
   ./budo/        - Folder containing budo* libraries for SDL based content
                    creation from applications to games. Examples included.
@@ -98,7 +96,8 @@
   ./documents/    - Documents provided by BUDOSTACK.
   ./fonts/        - Built-in .ttf and .psf system fonts
   ./games/        - Built-in games. Think of the as our 'minesweepers'.
-  ./lib/          - Shared system libraries used by applications and utilities.
+  ./lib/          - Shared system libraries used by applications
+                   and utilities.
   ./screenshots/  - Contains the advertisement screenshots.
   ./budo/shaders/ - Shaders used for CRT simulation used in apps/terminal.
   ./sounds/       - Collection of system sounds.
@@ -121,6 +120,8 @@
   do       : Copy, move, or delete files and folders with prompts.
   drives   : Lists all found drives.
   find     : Find anything.
+  floppy-  : 'floppycheck ./file or ./folder/' estimates how many
+   check     standard floppy disks the given content will take.
   gitter   : Professional git helper for your daily development activities.
   help     : Display this help message.
   hw       : Learn your hardware specs just by typing 'hw'.
@@ -197,24 +198,21 @@
  folder and all the commands contain help when executed without arguments.
 
  Example TASK applications are located in ./tasks/ -folder.
-
-
- /* BUDOSTACK Developer Tools */
-
-  compile              : Build a standalone binary from a TASK script.
-                         Type 'compile -help'.
-  floppycheck          : 'floppycheck ./file or ./folder/' estimates how many
-                         standard floppy disks the given content will take.
+ 
 
  /* TASK Commands from ./commands/ */
 
-  _BAR                 : Draw a titled progress bar (0-100%) at cursor or -x/-y.
+  _BAR                 : Draw a titled progress bar (0-100%) at cursor
+                         or -x/-y.
   _BEEP                : Play a tone with note and duration in milliseconds.
   _CALC                : Evaluate a math expression and print the result.
-  _CLEAR               : Clear the terminal screen using ANSI escape sequences.
+  _CLEAR               : Clear the terminal screen using ANSI
+                         escape sequences.
   _CONFIG              : Read or write key-value settings in config.ini.
-  _CSVFILTER           : Filter semicolon-separated CSV rows with comparisons.
-  _CSVSTATS            : Compute count/sum/mean/min/max/variance/stddev from CSV.
+  _CSVFILTER           : Filter semicolon-separated CSV rows
+                         with comparisons.
+  _CSVSTATS            : Compute count/sum/mean/min/max/variance/stddev
+                         from CSV.
   _DICE                : Roll D&D dice notation like 2d20 and print total.
   _DISPLAY             : Draw PNG/BMP image at text grid position -x/-y.
   _EXE                 : Run app/utility and render output at -x/-y offset.
@@ -224,12 +222,18 @@
   _GETWIDTH            : Print terminal width in columns.
   _HELLO               : Print hello world test line.
   _IMAGE               : Draw PNG/BMP image at text grid position -x/-y.
-  _KEYS                : Wait for key input and print mapped numeric key code.
+  _KEYS                : Wait for key input and print mapped
+                         numeric key code.
   _LIST                : List directory entries as TASK array literal.
-  _RECT                : Draw a filled or outlined rectangle using color index.
+  _RAND                : Print random integer in range [min,max].
+                         Default 0-100.
+  _RECT                : Draw a filled or outlined rectangle
+                         using color index.
   _RETROPROFILE        : List/show/apply/reset retro color profiles.
-  _TERM_CLEAN          : Clear pixel rectangle area from terminal render layer.
+  _TERM_CLEAN          : Clear pixel rectangle area from terminal
+                         render layer.
   _TERM_CURSOR_BLINK   : Enable or disable blinking cursor in terminal.
+  _TERM_ACTIVE         : Print 1 in apps/terminal, else 0.
   _TERM_KEYBOARD       : Read buffered key events as TASK array literal.
   _TERM_MARGIN         : Set terminal pixel render margin.
   _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
@@ -238,9 +242,11 @@
   _TERM_RESOLUTION     : Set pixel resolution (LOW/HIGH or width/height).
   _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
   _TERM_SHADER         : Enable or disable terminal shader.
-  _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32) volume 0-100.
+  _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32)
+                         volume 0-100.
   _TERM_SOUND_STOP     : Stop audio playback on selected channel (1-32).
-  _TERM_SPRITE         : Draw sprite from file/literal/base64 on chosen layer.
+  _TERM_SPRITE         : Draw sprite from file/literal/base64
+                         on chosen layer.
   _TERM_SPRITE_LOAD    : Load sprite and output reusable TASK sprite literal.
   _TERM_TEXT           : Draw UTF-8 text in pixel space with color and layer.
   _TERM_TYPING_SOUND   : Enable or disable keyboard typing sound effects.
@@ -255,7 +261,8 @@
  /* BUDOSTACK Example TASK Programs */
 
   audiodemo.task       : Collection of in-built sound capabilities
-  autoexec.task        : Determines what happens before BUDOSTACK login screen
+  autoexec.task        : Determines what happens before
+                         BUDOSTACK login screen
   codedemo.task        : Coding basics: for, while, arrays, functions, etc.
   csvdemo.task         : Dynamic .csv file manipulation demo
   demo.task            : Demonstration of _TERM* command set.
@@ -272,267 +279,166 @@
 
 ================================= CHANGE LOG ================================
 
-commit 5b112bfe110c9eb5e1eeeeb182cf792d2a511c72
+commit 0fe384c66c5c706f30a847f6d9358a0e8bf98dd0
 Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 15:45:56 2026 +0300
+Date:   Mon May 25 22:45:27 2026 +0300
 
-    update
+    changed to correct folder
+
+documents/dict_linux.txt
+
+commit 637c9d1d7f6a3e80272f6a884bcdf5f60d68e219
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 22:44:47 2026 +0300
+
+    update floppycheck
+
+documents/help.txt
+
+commit 9c7e80d300c001abcefe7164c988ec3f2db549d2
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 22:40:57 2026 +0300
+
+    Remove compile utility and clean help documentation
+
+documents/help.txt
+utilities/compile.c
+
+commit 4637b4ef9e3a921281603e675ab05260056770b1
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 22:34:25 2026 +0300
+
+    Fix compiled TASK runtime path and demo script typo
+
+tasks/demo.task
+utilities/compile.c
+
+commit 7058ae8c73e552a7d9847abec7008343d0e72022
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 21:49:23 2026 +0300
+
+    Revert "Add _SCRAPE command for raw HTTP GET scraping"
+    
+    This reverts commit f9838751764996760f4b203c68324b2a401c3a04.
+
+commands/_SCRAPE.c
+
+commit e6bdfa6ce0ef24f6c695bfe9a6cc6b1921013909
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 21:49:05 2026 +0300
+
+    Revert "Add HTTPS support to _SCRAPE via optional OpenSSL"
+    
+    This reverts commit 7cfbe3895d6bf7fc6eb3c4ed08b507e74a65bd91.
+
+commands/_SCRAPE.c
+makefile
+
+commit 7cfbe3895d6bf7fc6eb3c4ed08b507e74a65bd91
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 21:34:30 2026 +0300
+
+    Add HTTPS support to _SCRAPE via optional OpenSSL
+
+commands/_SCRAPE.c
+makefile
+
+commit f9838751764996760f4b203c68324b2a401c3a04
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 18:09:47 2026 +0300
+
+    Add _SCRAPE command for raw HTTP GET scraping
+
+commands/_SCRAPE.c
+
+commit a242c14c6addfc69f9cfa98f2ba9dfeef5d93740
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 18:01:45 2026 +0300
+
+    docs: wrap help text to 77 chars and add _RAND command
+
+documents/help.txt
+
+commit 54888aee4d19d6f85d4cfffc17b90dd21e19e72a
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 17:56:11 2026 +0300
+
+    removed to noise section
 
 tasks/autoexec.task
 
-commit fef9cdaca0880208474df59a646a0cfa99d27277
+commit e752df2b2273512a0a84bf0b3228474fa657c32b
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 15:39:40 2026 +0300
+Date:   Mon May 25 17:49:55 2026 +0300
 
-    Add colors.task preview script for RETROPROFILE palette
+    Add _RAND command and C64 loading noise intro effect
 
-tasks/colors.task
-
-commit 67bdd02c6fb71314d1336d7a9c90f6e60a3dc42d
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 15:36:04 2026 +0300
-
-    update
-
+commands/_RAND.c
+commands/manual.md
 tasks/autoexec.task
 
-commit 212caeb2e7d644ac0fe3ec2da66f20bb97e9f91b
+commit e11804435d852a180cf3e5dbba9e33d45a9a5caf
 Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 15:27:44 2026 +0300
-
-    update
-
-tasks/assets/login_logo.png
-
-commit 45f8a547ca3de6f02e754a961675679512598b99
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 15:01:34 2026 +0300
-
-    paint: preserve intermediate palette colors on image load
-
-apps/paint.c
-
-commit 3a8d8e7d038f22793aeddfd9e46902ab30407922
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 14:55:21 2026 +0300
-
-    update
-
-tasks/assets/login_logo.png
-
-commit af7740f4960bd698a64a226ea1dde243b4ca678d
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 14:40:47 2026 +0300
-
-    paint: tint saturated palette-4 colors white in 5% steps to 5.0
-
-apps/paint.c
-
-commit 2ba0a22fa4a7d14ca608c4d962e72acb1f735996
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 14:36:51 2026 +0300
-
-    paint: brighten all colors during palette 4→5 blend
-
-apps/paint.c
-
-commit 4e7e1a34355e9d6580e25533cf6d6ac35e153ace
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 14:32:19 2026 +0300
-
-    paint: add subtle highlight boost during palette 4→5 blend
-
-apps/paint.c
-
-commit 03d565ad5e5d558f29202ee30de9e285edcc6363
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 14:01:28 2026 +0300
-
-    update
-
-tasks/assets/login_logo.png
-
-commit 27d91222121fdffa7ed6223f024bad98b19f3f88
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 13:54:40 2026 +0300
-
-    paint: allow painting and fill with intermediate custom colors
-
-apps/paint.c
-
-commit 887bc66cb59589b63c7ef92a7d93bea7bb75d2c4
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 13:47:45 2026 +0300
-
-    paint: add stepped intermediate palette levels without recoloring canvas
-
-apps/paint.c
-
-commit fb1a4ea1504aedf9b04a43be70cdf5cd71d5ef3c
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 13:28:58 2026 +0300
-
-    paint: keep canvas stable during +/- palette brightness tweaks
-
-apps/paint.c
-
-commit 048f284655b7907b4e71fd598f7d9175e92e0a8b
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 13:13:58 2026 +0300
-
-    update
-
-tasks/assets/login_logo.png
-
-commit a464f4305ca1aa83a122d1e3b82075ec56278fac
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 13:06:27 2026 +0300
-
-    paint: add temporary palette brightness adjust with +/-
-
-apps/paint.c
-
-commit a3d8de8dd89854ea6f43b3c3d477027d82e927f1
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 12:49:42 2026 +0300
-
-    good palette
-
-apps/paint.c
-
-commit 460b2106b92b3c0afa4fe5a9e4302bd3236b99c6
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 12:46:05 2026 +0300
-
-    paint: brighten palette 5 variant
-
-apps/paint.c
-
-commit 8f7b84fd43878f2d824dd348496ada517acc0ea1
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 12:35:11 2026 +0300
+Date:   Mon May 25 17:44:28 2026 +0300
 
     updated
 
-tasks/assets/login_logo.png
+tasks/autoexec.task
 
-commit d3167735d7074b228d94c24af809476cd2614922
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 12:30:31 2026 +0300
-
-    Fix paint palette 2 brightness separation
-
-apps/paint.c
-
-commit 493be49198d5c23ec3d6a3c68ce161830e1ba7a3
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 12:26:25 2026 +0300
-
-    Tune paint palette 1 darker and rebalance palette 2
-
-apps/paint.c
-
-commit 22b1f9d25a0f1cc9d7dbd52d69296cba4d72dd85
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 12:22:30 2026 +0300
-
-    Darken paint palette 1 for near-black overlay use
-
-apps/paint.c
-
-commit 55cd787b10d92cf2661c93a64643c31ecfffc7aa
+commit 2bea38ee7cea111998b8eb44f999d46637c61d9f
 Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 12:09:22 2026 +0300
+Date:   Mon May 25 17:35:08 2026 +0300
 
-    new logo, still in the making
+    intro applies only to in-built terminal
 
+tasks/autoexec.task
+
+commit c1489fed225ff3a68ffb5164ef44c1ca04a12737
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 17:23:50 2026 +0300
+
+    Fix TERM empty-check literal in terminal spawn
+
+apps/terminal.c
+
+commit a2de1cef171fb68c9cfba21cd3991ac1775635ce
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 14:47:48 2026 +0300
+
+    Change _TERM_ACTIVE to numeric output
+
+apps/terminal.c
+commands/_TERM_ACTIVE.c
+commands/manual.md
+documents/help.txt
+tasks/autoexec.task
+
+commit 7a900ae5a3201a5eb2619c86efbcc0fad942df41
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 23:25:22 2026 +0300
+
+    new intro
+
+icon_logo.png
+tasks/autoexec.task
+
+commit e511e1bfea8ffde361ddd191a76c110151061b54
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 22:52:43 2026 +0300
+
+    newlogin
+
+sounds/561996__neopolitansixth__chipsound-logo-jingle.wav
+sounds/564237__breviceps__retro-audio-logo.wav
+sounds/credits.txt
+sounds/static_orchard.mp3
 tasks/assets/login_logo.png
 tasks/autoexec.task
 
-commit 183d1580bdae004fe04323643367daf6ecdecb01
-Merge: 188fa89 f0b8878
+commit ae80147f0db8640eefc3f0de707adfeb2fea4f54
 Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 11:21:49 2026 +0300
+Date:   Sun May 24 21:34:15 2026 +0300
 
-    Merge branch 'codex/add-select,-cut,-copy,-paste-tool'
+    improved
 
-commit f0b887841d0532082ddbcdceee096daf3c165e2b
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 11:20:04 2026 +0300
-
-    apps/paint: strengthen border contrast for all colors
-
-apps/paint.c
-
-commit f41c4ea5b960983ff5c36d3f6f9835594e0b83e2
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 11:15:57 2026 +0300
-
-    apps/paint: render full selection border on empty cells
-
-apps/paint.c
-
-commit 6dd00ba96ec556050e6824f48b005fbed162a7c1
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 11:11:18 2026 +0300
-
-    apps/paint: force full redraw while selection is active
-
-apps/paint.c
-
-commit da2d97f92ec5d63e3328f6532f2aedf0562169f0
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 11:06:48 2026 +0300
-
-    apps/paint: render alternating bright/dark selection border
-
-apps/paint.c
-
-commit 6a681e50e3df43d3fd5afe2054f14509bacc1d53
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun May 24 10:59:42 2026 +0300
-
-    apps/paint: add selection clipboard cut/copy/paste tool
-
-apps/paint.c
-
-commit 188fa895e440e619544e975ebad048c45d0c7f3f
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 10:59:13 2026 +0300
-
-    fixed the total width to fit LOW resolution
-
-utilities/list.c
-
-commit f38b8ceab08a244497d4e5b8edbff98ed17bbdf4
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 09:30:11 2026 +0300
-
-    deleted obsolete game folder
-
-tasks/game/character.png
-tasks/game/level1.png
-
-commit 4b48282d4e1ab5e0269a42aaa9fb340aad726ba4
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sat May 23 22:11:21 2026 +0300
-
-    new default configuration
-
-config.ini
-
-commit cffe0ef8d19969b3b1319296635a440e4d36142b
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sat May 23 22:09:48 2026 +0300
-
-    now it fits to LOW resolution
-
-utilities/list.c
-
-commit 1c9fe4df18c5e4ec3cb8342fe0050280bd5612c1
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat May 23 22:06:57 2026 +0300
-
-    Adjust list size column width for low-res terminal
-
-utilities/list.c
+tasks/assets/login_logo.png

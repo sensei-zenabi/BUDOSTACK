@@ -74,25 +74,32 @@ END
 
 RUN _CLEAR
 
-# Display "simulated" loading screen and play related sound effects
+#-------------------------------------------------------------------------
+# BUDOSTACK INTRO
+@INTRO
 
-RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-@LOADING
-RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
-IF ($LOAD == 50):
-  RUN _TERM_SOUND_PLAY 2 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-END
-IF ($LOAD < 100):
-  SET $LOAD = $LOAD + 10
-  RUN _WAIT 250
-  GOTO LOADING
-END
-
-# Display intro logo and play starting tune only in apps/terminal
+# Following INTRO will run only in ./apps/terminal
 
 RUN _TERM_ACTIVE TO $TERM_ACTIVE
 IF ($TERM_ACTIVE == "1"):
-  RUN clear
+
+  # Display "simulated" loading screen and play related sound effects
+
+  RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+  @LOADING
+  RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
+  IF ($LOAD == 50):
+    RUN _TERM_SOUND_PLAY 2 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+  END
+  IF ($LOAD < 100):
+    SET $LOAD = $LOAD + 10
+    RUN _WAIT 250
+    GOTO LOADING
+  END
+
+  # Display intro logo and play starting tune
+  
+  RUN _CLEAR
   RUN _WAIT 50
   RUN _DISPLAY -x 18 -y 2 -file ../icon_logo.png
   RUN _TERM_SOUND_PLAY 1 ../sounds/static_orchard.mp3 90
@@ -101,6 +108,7 @@ IF ($TERM_ACTIVE == "1"):
   RUN _TEXT -x 4 -y 42 -text "Created by: Ville Suoranta" -color 1
   RUN _TEXT -x 4 -y 43 -text "email: ville.m.suoranta(at)gmail.com"
   RUN _WAIT 4700
+
 END
 
 #-------------------------------------------------------------------------

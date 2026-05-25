@@ -177,6 +177,14 @@ background, and 18 is the cursor highlight.
 **Description:** Prints a random integer. With no arguments it prints a value in the
 range `0..100`. With `min max`, it prints a value in the inclusive range `min..max`.
 
+
+### `_SCRAPE`
+**Usage:** `_SCRAPE <URL> [-readable] [-o <file>]`
+
+**Description:** Fetches a web page over HTTP or HTTPS and prints the raw response
+(status line, headers, and body). Use `-readable` to parse HTML body content into
+plain human-readable text. Use `-o <file>` to write the output to a file.
+
 ### `_RETROPROFILE`
 **Usage:** `_RETROPROFILE <command> [profile]`
 

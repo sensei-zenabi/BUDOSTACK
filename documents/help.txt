@@ -224,6 +224,8 @@
   _LIST                : List directory entries as TASK array literal.
   _RAND                : Print random integer in range [min,max].
                          Default 0-100.
+  _SCRAPE              : Fetch HTTP/HTTPS pages, print raw response
+                         or parse HTML to readable text.
   _RECT                : Draw a filled or outlined rectangle
                          using color index.
   _RETROPROFILE        : List/show/apply/reset retro color profiles.

@@ -76,22 +76,6 @@ apps/terminal.o: CFLAGS += $(SDL2_CFLAGS)
 apps/terminal: LDFLAGS += $(SDL2_LIBS) $(SDL2_GL_LIBS)
 endif
 
-OPENSSL_CFLAGS ?= $(shell pkg-config --cflags openssl 2>/dev/null)
-OPENSSL_LIBS ?= $(shell pkg-config --libs openssl 2>/dev/null)
-
-ifeq ($(strip $(OPENSSL_LIBS)),)
-OPENSSL_AVAILABLE = 0
-else
-OPENSSL_AVAILABLE = 1
-endif
-
-ifeq ($(OPENSSL_AVAILABLE),1)
-commands/_SCRAPE.o: CFLAGS += $(OPENSSL_CFLAGS) -DBUDOSTACK_HAVE_OPENSSL=1
-commands/_SCRAPE: LDFLAGS += $(OPENSSL_LIBS)
-else
-commands/_SCRAPE.o: CFLAGS += -DBUDOSTACK_HAVE_OPENSSL=0
-endif
-
 # --------------------------------------------------------------------
 # Build logic
 # --------------------------------------------------------------------

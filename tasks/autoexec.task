@@ -93,22 +93,6 @@ IF ($TERM_ACTIVE == "1"):
     GOTO LOADING
   END
 
-  # Implement 2 seconds of commodore 64 loading noise HERE
-  # Draw random stripes to mimic C64 tape loading noise.
-  SET $NOISE_TICKS = 0
-  @C64_NOISE
-  RUN _RAND 0 74 TO $NOISE_X
-  RUN _RAND 0 42 TO $NOISE_Y
-  RUN _RAND 1 5 TO $NOISE_W
-  RUN _RAND 1 2 TO $NOISE_H
-  RUN _RAND 0 18 TO $NOISE_COLOR
-  RUN _RECT -x $NOISE_X -y $NOISE_Y -width $NOISE_W -height $NOISE_H -color $NOISE_COLOR -fill on
-  RUN _WAIT 25
-  SET $NOISE_TICKS = $NOISE_TICKS + 1
-  IF ($NOISE_TICKS < 80):
-    GOTO C64_NOISE
-  END
-
   # Display intro logo and play starting tune
   
   RUN _CLEAR

@@ -112,6 +112,8 @@
   do       : Copy, move, or delete files and folders with prompts.
   drives   : Lists all found drives.
   find     : Find anything.
+  floppy-  : 'floppycheck ./file or ./folder/' estimates how many
+   check     standard floppy disks the given content will take.
   gitter   : Professional git helper for your daily development activities.
   help     : Display this help message.
   hw       : Learn your hardware specs just by typing 'hw'.
@@ -188,12 +190,7 @@
  folder and all the commands contain help when executed without arguments.
 
  Example TASK applications are located in ./tasks/ -folder.
-
-
- /* BUDOSTACK Developer Tools */
-
-  floppycheck          : 'floppycheck ./file or ./folder/' estimates how many
-                         standard floppy disks the given content will take.
+ 
 
  /* TASK Commands from ./commands/ */
 

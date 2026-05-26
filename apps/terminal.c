@@ -7720,6 +7720,7 @@ int main(int argc, char **argv) {
     const Uint32 cursor_blink_interval = TERMINAL_CURSOR_BLINK_INTERVAL;
     Uint32 cursor_last_toggle = SDL_GetTicks();
     int cursor_phase_visible = 1;
+    int suppress_textinput_once = 0;
 
     while (running) {
         terminal_selection_validate(buffer);
@@ -8053,6 +8054,7 @@ int main(int argc, char **argv) {
                         terminal_force_full_redraw = 1;
                         terminal_background_dirty = 1;
                     }
+                    suppress_textinput_once = 1;
                     continue;
                 }
 
@@ -8438,6 +8440,10 @@ int main(int argc, char **argv) {
                     continue;
                 }
             } else if (event.type == SDL_TEXTINPUT) {
+                if (suppress_textinput_once) {
+                    suppress_textinput_once = 0;
+                    continue;
+                }
                 terminal_input_draw_requested = 1;
                 const char *text = event.text.text;
                 size_t len = strlen(text);

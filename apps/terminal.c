@@ -7059,21 +7059,21 @@ static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
 
     if (grantpt(master_fd) < 0 || unlockpt(master_fd) < 0) {
         perror("grantpt/unlockpt");
-        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
+        close(master_fd);
         return -1;
     }
 
     char *slave_name = ptsname(master_fd);
     if (!slave_name) {
         perror("ptsname");
-        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
+        close(master_fd);
         return -1;
     }
 
     pid_t pid = fork();
     if (pid < 0) {
         perror("fork");
-        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
+        close(master_fd);
         return -1;
     }
 
@@ -7103,7 +7103,7 @@ static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
             close(slave_fd);
         }
 
-        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
+        close(master_fd);
 
         const char *term_value = getenv("TERM");
         if (!term_value || term_value[0] == '\0') {

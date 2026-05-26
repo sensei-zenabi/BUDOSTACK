@@ -1258,9 +1258,14 @@ int main(int argc, char *argv[]) {
         /* Do not print startup messages and skip login() */
     }
 
-    printf("\nSYSTEM READY");
-    printf("\nType 'help' for command list.");
-    printf("\nType 'exit' to quit.\n\n");
+    printf("\nSYSTEM READY!");
+    printf("\n");
+    printf("\n QUICK HELP:");
+    printf("\n");
+    printf("\n Switch TABs: ALT + [1-5]");
+    printf("\n Type 'help' for command list.");
+    printf("\n Type 'exit' to quit.\n\n");
+    printf("\n");
 
     /* Execute auto_command if set */
     if (auto_command != NULL) {

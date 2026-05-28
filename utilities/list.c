@@ -1,4 +1,4 @@
-#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,7 +10,9 @@
 #include <time.h>
 #include <errno.h>
 #include <fnmatch.h>
+#include <locale.h>
 #include <sys/wait.h>
+#include <wchar.h>
 
 #define NAME_DISPLAY_WIDTH 30
 #define SIZE_VALUE_WIDTH 9
@@ -110,37 +112,121 @@ static int file_is_tracked(const char *filepath) {
     return 0;
 }
 
-static void format_display_name(const char *input, char *output, size_t width) {
+static int next_display_char(const char *input, size_t remaining, mbstate_t *state, size_t *char_len) {
+    wchar_t wc;
+    size_t len = mbrtowc(&wc, input, remaining, state);
+
+    if (len == (size_t)-1 || len == (size_t)-2) {
+        memset(state, 0, sizeof(*state));
+        *char_len = 1;
+        return 1;
+    }
+    if (len == 0) {
+        *char_len = 1;
+        return 0;
+    }
+
+    *char_len = len;
+    int width = wcwidth(wc);
+    if (width < 0) {
+        width = 1;
+    }
+    return width;
+}
+
+static size_t utf8_display_width(const char *input) {
+    mbstate_t state;
+    memset(&state, 0, sizeof(state));
+
+    size_t width = 0;
+    size_t offset = 0;
+    size_t input_len = strlen(input);
+    while (offset < input_len) {
+        size_t char_len = 0;
+        int char_width = next_display_char(input + offset, input_len - offset, &state, &char_len);
+        width += (size_t)char_width;
+        offset += char_len;
+    }
+
+    return width;
+}
+
+static void append_fill(char *output, size_t output_size, size_t *offset, char fill, size_t count) {
+    while (count > 0 && *offset + 1 < output_size) {
+        output[*offset] = fill;
+        (*offset)++;
+        count--;
+    }
+}
+
+static void append_text(char *output, size_t output_size, size_t *offset, const char *text) {
+    while (*text != '\0' && *offset + 1 < output_size) {
+        output[*offset] = *text;
+        (*offset)++;
+        text++;
+    }
+}
+
+static void format_display_name(const char *input, char *output, size_t output_size, size_t width) {
+    if (output_size == 0) {
+        return;
+    }
+    output[0] = '\0';
+
     if (width == 0) {
-        if (output != NULL) {
-            output[0] = '\0';
-        }
         return;
     }
 
-    size_t len = strlen(input);
-    if (len <= width) {
-        snprintf(output, width + 1, "%s", input);
-        if (len < width) {
-            output[len] = ' ';
-            for (size_t i = len + 1; i < width; i++) {
-                output[i] = '.';
-            }
-            output[width] = '\0';
+    size_t display_width = utf8_display_width(input);
+    if (display_width <= width) {
+        int written = snprintf(output, output_size, "%s", input);
+        if (written < 0) {
+            output[0] = '\0';
+            return;
+        }
+
+        size_t offset = strlen(output);
+        if (display_width < width) {
+            append_fill(output, output_size, &offset, ' ', 1);
+            append_fill(output, output_size, &offset, '.', width - display_width - 1);
+            output[offset] = '\0';
         }
         return;
     }
 
     if (width <= 3) {
-        memset(output, '.', width);
-        output[width] = '\0';
+        size_t offset = 0;
+        append_fill(output, output_size, &offset, '.', width);
+        output[offset] = '\0';
         return;
     }
 
-    size_t copy_len = width - 3;
-    memcpy(output, input, copy_len);
-    memcpy(output + copy_len, "...", 3);
-    output[width] = '\0';
+    mbstate_t state;
+    memset(&state, 0, sizeof(state));
+
+    size_t input_len = strlen(input);
+    size_t input_offset = 0;
+    size_t output_offset = 0;
+    size_t copied_width = 0;
+    size_t max_prefix_width = width - 3;
+    while (input_offset < input_len) {
+        size_t char_len = 0;
+        int char_width = next_display_char(input + input_offset, input_len - input_offset, &state, &char_len);
+        if (copied_width + (size_t)char_width > max_prefix_width) {
+            break;
+        }
+        if (output_offset + char_len + 1 >= output_size) {
+            break;
+        }
+        memcpy(output + output_offset, input + input_offset, char_len);
+        output_offset += char_len;
+        input_offset += char_len;
+        copied_width += (size_t)char_width;
+    }
+
+    output[output_offset] = '\0';
+    append_text(output, output_size, &output_offset, "...");
+    output[output_offset] = '\0';
 }
 
 // Convert file mode to a permission string (similar to ls -l output)
@@ -305,8 +391,8 @@ void print_file_info(const char *filepath, const char *display_name) {
         snprintf(formatted_name_buffer, sizeof(formatted_name_buffer), "%s", display_name);
     }
 
-    char truncated_name[NAME_DISPLAY_WIDTH + 1];
-    format_display_name(formatted_name_buffer, truncated_name, NAME_DISPLAY_WIDTH);
+    char truncated_name[1024];
+    format_display_name(formatted_name_buffer, truncated_name, sizeof(truncated_name), NAME_DISPLAY_WIDTH);
 
     char size_value_raw[32] = "";
     char size_value[SIZE_VALUE_WIDTH + 1];
@@ -326,8 +412,7 @@ void print_file_info(const char *filepath, const char *display_name) {
     format_center_dotted_field(file_is_tracked(filepath) ? "X" : "", git_value, 3);
 
     printf(
-        "%-*s %-11s %s %s %s %-20s\n",
-        NAME_DISPLAY_WIDTH,
+        "%s %-11s %s %s %s %-20s\n",
         truncated_name,
         perms,
         size_value,
@@ -522,6 +607,8 @@ void print_help() {
 }
 
 int main(int argc, char *argv[]) {
+    setlocale(LC_CTYPE, "");
+
     if (argc == 1) {
         list_directory(".");
         return EXIT_SUCCESS;

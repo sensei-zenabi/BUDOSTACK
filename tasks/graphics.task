@@ -73,11 +73,12 @@ SET $CIRCLE_Y = { 4, 2, 1, 1, 0, 0, 0, 1, 1, 2, 4,
 FOR ($i=0; $i<LEN($CIRCLE_X); $i++):
   RUN _PIXEL -x 52+$CIRCLE_X[$i] -y 34+$CIRCLE_Y[$i] -color 13
 END
-RUN _TEXT -x 51 -y 39 -text "BUDO" -color 18
 
 RUN _TEXT -x 2 -y 47 -text "High-resolution canvas: 800x450 (about 100x56 text cells)." -color 16
 RUN _TEXT -x 2 -y 49 -text "Done: _PIXEL draws single colored cells, and _TEXT labels them." -color 16
 RUN _TEXT -x 2 -y 53 -text "Press any key (or Enter) to return to LOW resolution." -color 18
 SET $KEY = ""
 INPUT $KEY -wait off
+RUN cls
 RUN _TERM_RESOLUTION LOW
+

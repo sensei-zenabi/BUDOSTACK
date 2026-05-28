@@ -12,9 +12,6 @@
 # Required to clear all screen buffer
 RUN cls
 
-# Disable cursor blinking
-RUN _TERM_CURSOR_BLINK disable
-
 # Disable mouse for the UI
 RUN _TERM_MOUSE_SHOW disable
 
@@ -59,7 +56,10 @@ INPUT $SELECTION
 IF ($SELECTION == "y"):
   GOTO EXIT
 END
-        
+
+# Disable cursor blinking
+RUN _TERM_CURSOR_BLINK disable
+
 #-------------------------------------------------------------------------
 # BUDOSTACK LOGIN SCREEN
 @LOGIN_SCREEN

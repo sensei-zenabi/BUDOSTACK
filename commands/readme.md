@@ -4,13 +4,12 @@ Commands with prefix _TERM*:
 
 - Intended to be used only in TASK scripts that are ran inside 
   apps/terminal terminal emulator.
-- Are optimized for SDL2 using a resolution of 640x360.
+- Are built using SDL2 libraries, like ./apps/terminal itself.
   
 Commands without prefix _TERM*: 
 
-- Can be used in all TASK scripts without dependency to apps/terminal 
-  terminal emulator.
-- Are optimized for 78 columns and 42 rows.
+- Use UNICODE characters and hence work in any linux terminal.
+- Can be used in all TASK scripts without dependency to ./apps/terminal.
 
 General Guidelines for Commands:
 

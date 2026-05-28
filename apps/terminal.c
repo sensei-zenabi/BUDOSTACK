@@ -8508,8 +8508,7 @@ int main(int argc, char **argv) {
         size_t cursor_global_index = buffer->history_rows + buffer->cursor_row;
         int cursor_render_visible = (clamped_scroll_offset == 0u) &&
                                     buffer->cursor_visible &&
-                                    cursor_phase_visible &&
-                                    terminal_cursor_blink_enabled;
+                                    (!terminal_cursor_blink_enabled || cursor_phase_visible);
 
         size_t selection_start = 0u;
         size_t selection_end = 0u;

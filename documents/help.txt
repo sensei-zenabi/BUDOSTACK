@@ -260,7 +260,7 @@
                          BUDOSTACK login screen
   codedemo.task        : Coding basics: for, while, arrays, functions, etc.
   csvdemo.task         : Dynamic .csv file manipulation demo
-  demo.task            : Demonstration of _TERM* command set.
+  sprites.task         : Demonstration of input handling and sprites.
   keyboard.task        : Keyboard input reading and processing.
   mouse.task           : Mouse input reading and processing.
   release.task         : Used to generate release notes

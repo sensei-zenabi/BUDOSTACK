@@ -171,6 +171,14 @@ alphabetically.
 0–15 use the active retro palette; 16 is the default foreground, 17 is the default
 background, and 18 is the cursor highlight.
 
+### `_PIXEL`
+**Usage:** `_PIXEL -x <col> -y <row> [-color <0-18>]`
+
+**Description:** Draws one background-color cell at the specified column/row. The
+default color is 16 when `-color` is omitted. Color indices 0–15 use the active
+retro palette; 16 is the default foreground, 17 is the default background, and 18
+is the cursor highlight.
+
 ### `_RAND`
 **Usage:** `_RAND [min max]`
 

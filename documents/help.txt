@@ -219,6 +219,7 @@
   _KEYS                : Wait for key input and print mapped
                          numeric key code.
   _LIST                : List directory entries as TASK array literal.
+  _PIXEL               : Draw pixel using color index.
   _RAND                : Print random integer in range [min,max].
                          Default 0-100.
   _RECT                : Draw a filled or outlined rectangle

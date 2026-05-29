@@ -15,6 +15,12 @@
 # the task exits. The final cleanup clears every layer used by this demo before
 # returning control to the shell.
 
+RUN _TERM_ACTIVE TO $TERM_ACTIVE
+IF ($TERM_ACTIVE != 1):
+  PRINT "termgraphics.task requires apps/terminal; run it inside BUDOSTACK terminal to view _TERM graphics."
+  GOTO END
+END
+
 RUN _TERM_RESOLUTION 320 200
 RUN _TERM_MARGIN 0
 RUN _TERM_RENDER
@@ -233,3 +239,5 @@ RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $BACKGROUND_LAYER
 RUN _TERM_RENDER
 RUN _TERM_RESOLUTION LOW
 RUN _TERM_MARGIN 8
+
+@END

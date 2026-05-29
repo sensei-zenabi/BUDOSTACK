@@ -191,7 +191,6 @@ struct terminal_custom_pixel {
     uint8_t g;
     uint8_t b;
     uint8_t layer;
-    uint64_t version;
 };
 
 static struct terminal_custom_pixel *terminal_custom_pixels = NULL;
@@ -200,20 +199,6 @@ static size_t terminal_custom_pixel_capacity = 0u;
 static int terminal_custom_pixels_dirty = 0;
 static uint16_t terminal_custom_pixels_pending_layers = 0u;
 static int terminal_custom_pixels_active = 0;
-static uint64_t terminal_custom_layer_versions[17] = {0};
-
-struct terminal_custom_clear_request {
-    int x;
-    int y;
-    int w;
-    int h;
-    uint8_t layer;
-    uint64_t version;
-};
-
-static struct terminal_custom_clear_request *terminal_custom_pending_clears = NULL;
-static size_t terminal_custom_pending_clear_count = 0u;
-static size_t terminal_custom_pending_clear_capacity = 0u;
 
 struct terminal_gl_shader {
     GLuint program;
@@ -430,8 +415,6 @@ static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const 
 static int terminal_custom_pixels_draw_rect(int origin_x, int origin_y, int width, int height, uint8_t r, uint8_t g, uint8_t b, uint8_t layer);
 static uint16_t terminal_custom_layer_mask(uint8_t layer);
 static void terminal_custom_pixels_mark_pending(uint8_t layer);
-static int terminal_custom_pixels_apply_pending_clears(uint8_t layer);
-static void terminal_custom_pixels_clear_pending_requests(void);
 static void terminal_custom_pixels_shutdown(void);
 static int terminal_ensure_render_cache(size_t columns, size_t rows);
 static void terminal_reset_render_cache(void);
@@ -1846,10 +1829,6 @@ static void terminal_custom_pixels_mark_pending(uint8_t layer) {
     }
 }
 
-static void terminal_custom_pixels_clear_pending_requests(void) {
-    terminal_custom_pending_clear_count = 0u;
-}
-
 static void terminal_custom_pixels_shutdown(void) {
     free(terminal_custom_pixels);
     terminal_custom_pixels = NULL;
@@ -1858,58 +1837,13 @@ static void terminal_custom_pixels_shutdown(void) {
     terminal_custom_pixels_dirty = 0;
     terminal_custom_pixels_pending_layers = 0u;
     terminal_custom_pixels_active = 0;
-    free(terminal_custom_pending_clears);
-    terminal_custom_pending_clears = NULL;
-    terminal_custom_pending_clear_count = 0u;
-    terminal_custom_pending_clear_capacity = 0u;
-    for (size_t i = 0u; i < sizeof(terminal_custom_layer_versions) / sizeof(terminal_custom_layer_versions[0]); i++) {
-        terminal_custom_layer_versions[i] = 0u;
-    }
 }
 
 static void terminal_custom_pixels_clear(void) {
     terminal_custom_pixel_count = 0u;
     terminal_custom_pixels_pending_layers = 0u;
     terminal_custom_pixels_active = 0;
-    terminal_custom_pixels_clear_pending_requests();
-    for (size_t i = 0u; i < sizeof(terminal_custom_layer_versions) / sizeof(terminal_custom_layer_versions[0]); i++) {
-        terminal_custom_layer_versions[i] = 0u;
-    }
     terminal_mark_full_redraw();
-}
-
-static int terminal_custom_pixels_reserve_clear_requests(size_t additional) {
-    if (additional == 0u) {
-        return 0;
-    }
-
-    if (terminal_custom_pending_clear_count > SIZE_MAX - additional) {
-        return -1;
-    }
-
-    size_t required = terminal_custom_pending_clear_count + additional;
-    if (required <= terminal_custom_pending_clear_capacity) {
-        return 0;
-    }
-
-    size_t new_capacity = (terminal_custom_pending_clear_capacity == 0u) ? 4u : terminal_custom_pending_clear_capacity;
-    while (new_capacity < required) {
-        if (new_capacity > SIZE_MAX / 2u) {
-            new_capacity = required;
-            break;
-        }
-        new_capacity *= 2u;
-    }
-
-    struct terminal_custom_clear_request *new_reqs = realloc(terminal_custom_pending_clears,
-                                                             new_capacity * sizeof(*terminal_custom_pending_clears));
-    if (!new_reqs) {
-        return -1;
-    }
-
-    terminal_custom_pending_clears = new_reqs;
-    terminal_custom_pending_clear_capacity = new_capacity;
-    return 0;
 }
 
 static int terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int width, int height, uint8_t layer) {
@@ -1929,50 +1863,12 @@ static int terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int wid
         return -1;
     }
 
-    if (terminal_custom_pixels_reserve_clear_requests(1u) != 0) {
-        return -1;
-    }
-
-    uint64_t previous_version = terminal_custom_layer_versions[layer];
-    if (terminal_custom_layer_versions[layer] < UINT64_MAX) {
-        terminal_custom_layer_versions[layer]++;
-    }
-
-    struct terminal_custom_clear_request *req = &terminal_custom_pending_clears[terminal_custom_pending_clear_count++];
-    req->x = origin_x;
-    req->y = origin_y;
-    req->w = width;
-    req->h = height;
-    req->layer = layer;
-    req->version = previous_version;
-
-    terminal_custom_pixels_mark_pending(layer);
-    terminal_custom_pixels_active = 1;
-    return 0;
-}
-
-static int terminal_custom_pixels_apply_clear_request(const struct terminal_custom_clear_request *req) {
-    if (!req) {
-        return 0;
-    }
-
-    int origin_x = req->x;
-    int origin_y = req->y;
-    int width = req->w;
-    int height = req->h;
-    uint8_t layer = req->layer;
-    uint64_t version = req->version;
-
-    if (width <= 0 || height <= 0) {
-        return 0;
-    }
-
     int max_x = origin_x + width;
     int max_y = origin_y + height;
     size_t write_idx = 0u;
     for (size_t read_idx = 0u; read_idx < terminal_custom_pixel_count; read_idx++) {
         struct terminal_custom_pixel *entry = &terminal_custom_pixels[read_idx];
-        if (entry->layer == layer && entry->version <= version && entry->x >= origin_x && entry->x < max_x &&
+        if (entry->layer == layer && entry->x >= origin_x && entry->x < max_x &&
             entry->y >= origin_y && entry->y < max_y) {
             continue;
         }
@@ -1982,39 +1878,14 @@ static int terminal_custom_pixels_apply_clear_request(const struct terminal_cust
         write_idx++;
     }
 
-    if (write_idx == terminal_custom_pixel_count) {
-        return 0;
+    if (write_idx != terminal_custom_pixel_count) {
+        terminal_custom_pixel_count = write_idx;
+        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
+        terminal_custom_pixels_dirty = 1;
+        terminal_mark_full_redraw();
     }
 
-    terminal_custom_pixel_count = write_idx;
-    terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
-    return 1;
-}
-
-static int terminal_custom_pixels_apply_pending_clears(uint8_t layer) {
-    if (terminal_custom_pending_clear_count == 0u) {
-        return 0;
-    }
-
-    size_t write_idx = 0u;
-    int modified = 0;
-    for (size_t i = 0u; i < terminal_custom_pending_clear_count; i++) {
-        struct terminal_custom_clear_request *req = &terminal_custom_pending_clears[i];
-        if (layer != 0u && req->layer != layer) {
-            if (write_idx != i) {
-                terminal_custom_pending_clears[write_idx] = *req;
-            }
-            write_idx++;
-            continue;
-        }
-
-        if (terminal_custom_pixels_apply_clear_request(req) != 0) {
-            modified = 1;
-        }
-    }
-
-    terminal_custom_pending_clear_count = write_idx;
-    return modified;
+    return 0;
 }
 
 static int terminal_custom_pixels_reserve(size_t additional) {
@@ -2066,7 +1937,6 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
             entry->r = r;
             entry->g = g;
             entry->b = b;
-            entry->version = terminal_custom_layer_versions[layer];
             terminal_custom_pixels_mark_pending(layer);
             return 0;
         }
@@ -2083,7 +1953,6 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
     entry->g = g;
     entry->b = b;
     entry->layer = layer;
-    entry->version = terminal_custom_layer_versions[layer];
     terminal_custom_pixels_mark_pending(layer);
     return 0;
 }
@@ -2122,7 +1991,6 @@ static int terminal_custom_pixels_draw_rect(int origin_x, int origin_y, int widt
             entry->g = g;
             entry->b = b;
             entry->layer = layer;
-            entry->version = terminal_custom_layer_versions[layer];
         }
     }
 
@@ -2191,7 +2059,6 @@ static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const 
             entry->g = g;
             entry->b = b;
             entry->layer = layer;
-            entry->version = terminal_custom_layer_versions[layer];
         }
     }
 
@@ -6023,7 +5890,7 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                                                          (int)sprite_w,
                                                          (int)sprite_h,
                                                          (uint8_t)sprite_layer) != 0) {
-                        fprintf(stderr, "terminal: Failed to queue sprite clear.\n");
+                        fprintf(stderr, "terminal: Failed to clear sprite pixels.\n");
                     }
                 }
             }
@@ -6136,25 +6003,16 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             } else if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
                 terminal_custom_pixels_clear();
             } else if (pixel_action == TERMINAL_PIXEL_ACTION_RENDER) {
-                int modified = 0;
                 if (pixel_layer == 0) {
-                    modified = terminal_custom_pixels_apply_pending_clears(0u);
                     if (terminal_custom_pixels_pending_layers != 0u) {
                         terminal_custom_pixels_pending_layers = 0u;
                         terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
                         terminal_custom_pixels_dirty = 1;
-                    } else if (modified) {
-                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
-                        terminal_custom_pixels_dirty = 1;
                     }
                 } else if (pixel_layer >= 1 && pixel_layer <= 16) {
-                    modified = terminal_custom_pixels_apply_pending_clears((uint8_t)pixel_layer);
                     uint16_t layer_mask = terminal_custom_layer_mask((uint8_t)pixel_layer);
                     if ((terminal_custom_pixels_pending_layers & layer_mask) != 0u) {
                         terminal_custom_pixels_pending_layers &= (uint16_t)(~layer_mask);
-                        terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
-                        terminal_custom_pixels_dirty = 1;
-                    } else if (modified) {
                         terminal_custom_pixels_active = (terminal_custom_pixel_count > 0u);
                         terminal_custom_pixels_dirty = 1;
                     }

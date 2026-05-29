@@ -4,13 +4,15 @@
 # _TERM_PIXEL, _TERM_RECT, _TERM_CLEAN, and _TERM_RENDER are accelerated inside
 # the TASK runtime instead of spawning one process for every draw operation.
 #
-# The final cleanup clears the terminal pixel layers used by this demo after a
-# short result pause. Without that, the terminal framebuffer can still show the
-# last graphics frame and make it look like the TASK script is still running.
+# The demo intentionally does not toggle _TERM_SHADER. Shader enable/disable is
+# persistent terminal state, so changing it here would surprise the caller after
+# the task exits. The final cleanup clears the terminal pixel layers used by this
+# demo after a short result pause. Without that, the terminal framebuffer can
+# still show the last graphics frame and make it look like the TASK script is
+# still running.
 
 RUN _TERM_RESOLUTION HIGH
 RUN _TERM_MARGIN 0
-RUN _TERM_SHADER disable
 RUN _TERM_RENDER
 
 SET $WIDTH = 800

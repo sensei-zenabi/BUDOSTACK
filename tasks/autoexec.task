@@ -12,6 +12,13 @@
 # Required to clear all screen buffer
 RUN cls
 
+# If ./apps/terminal is not running, skip the whole autoexec.task
+SET $TMP = 0
+RUN _TERM_ACTIVE TO $TMP
+IF ($TMP==0):
+  GOTO EXIT
+END
+
 # Disable mouse for the UI
 RUN _TERM_MOUSE_SHOW disable
 

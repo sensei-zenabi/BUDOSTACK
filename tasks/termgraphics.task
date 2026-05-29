@@ -3,6 +3,10 @@
 # This demo intentionally uses _TERM* commands. When run through runtask,
 # _TERM_PIXEL, _TERM_RECT, _TERM_CLEAN, and _TERM_RENDER are accelerated inside
 # the TASK runtime instead of spawning one process for every draw operation.
+#
+# The final cleanup clears the terminal pixel layers used by this demo after a
+# short result pause. Without that, the terminal framebuffer can still show the
+# last graphics frame and make it look like the TASK script is still running.
 
 RUN _TERM_RESOLUTION HIGH
 RUN _TERM_MARGIN 0
@@ -12,6 +16,7 @@ RUN _TERM_RENDER
 SET $WIDTH = 800
 SET $HEIGHT = 450
 SET $LAYER = 6
+SET $TEXT_LAYER = 2
 SET $BACKGROUND_LAYER = 16
 SET $FRAMES = 90
 SET $FRAME = 0
@@ -119,7 +124,14 @@ END
 
 RUN _TIMER --stop
 RUN _TIMER --get TO $TIME
-RUN _TERM_TEXT -x 18 -y 18 -text "TASK _TERM graphics: accelerated rectangles + one render per frame" -color 16 -layer 2
-RUN _TERM_TEXT -x 18 -y 34 -text "Finished 90 frames. Runtime milliseconds:" -color 16 -layer 2
-RUN _TERM_TEXT -x 360 -y 34 -text $TIME -color 16 -layer 2
+RUN _TERM_TEXT -x 18 -y 18 -text "TASK _TERM graphics: accelerated rectangles + one render per frame" -color 16 -layer $TEXT_LAYER
+RUN _TERM_TEXT -x 18 -y 34 -text "Finished 90 frames. Runtime milliseconds:" -color 16 -layer $TEXT_LAYER
+RUN _TERM_TEXT -x 360 -y 34 -text $TIME -color 16 -layer $TEXT_LAYER
+RUN _TERM_TEXT -x 18 -y 50 -text "Cleaning demo framebuffer before returning to shell..." -color 16 -layer $TEXT_LAYER
 RUN _TERM_RENDER
+WAIT 2500
+RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $TEXT_LAYER
+RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $LAYER
+RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $BACKGROUND_LAYER
+RUN _TERM_RENDER
+PRINT "termgraphics.task finished; terminal graphics layers were cleaned."

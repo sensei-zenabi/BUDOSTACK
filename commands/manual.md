@@ -246,11 +246,28 @@ from the top-left corner; `LEFT`/`RIGHT` are button press counts since the last 
 **Description:** Shows (`enable`) or hides (`disable`) the mouse cursor in the
 terminal emulator.
 
+### `_TERM_PIXEL`
+**Usage:** `_TERM_PIXEL -x <pixels> -y <pixels> [-color <0-18> | -rgb <r> <g> <b>] [-layer <1-16>]`
+
+**Description:** Queues a single RGB pixel on the `apps/terminal` pixel surface.
+When called from TASK through `RUN _TERM_PIXEL`, `runtask` accelerates it in-process
+instead of spawning a command process. Use `_TERM_RENDER` to present queued pixels.
+
+### `_TERM_RECT`
+**Usage:** `_TERM_RECT -x <pixels> -y <pixels> -width <pixels> -height <pixels> [-color <0-18> | -rgb <r> <g> <b>] [-layer <1-16>]`
+
+**Description:** Queues a filled RGB rectangle on the `apps/terminal` pixel surface.
+TASK scripts get the same in-process acceleration as `_TERM_PIXEL`, making this the
+preferred primitive for fast QBASIC-style graphics loops. Use `_TERM_RENDER` once
+per frame to present queued rectangles.
+
 ### `_TERM_RENDER`
 **Usage:** `_TERM_RENDER [--render] [-layer <1-16>]`
 
 **Description:** Triggers rendering of the terminal pixel buffer. Use `-layer` to
-render only a single layer (1–16). Omitting `-layer` renders all layers.
+render only a single layer (1–16). Omitting `-layer` renders all layers. When
+called from TASK through `RUN _TERM_RENDER`, `runtask` accelerates it in-process
+instead of spawning a command process.
 
 ### `_TERM_TYPING_SOUND`
 **Usage:** `_TERM_TYPING_SOUND <enable|disable>`
@@ -298,13 +315,17 @@ _TERM_SPRITE -x <pixels> -y <pixels>
 **Description:** Draws a sprite onto the terminal’s pixel surface. Provide a PNG/BMP
 via `-file`, a literal from `_TERM_SPRITE_LOAD` via `-sprite`, or raw base64 RGBA data
 via `-data` along with `-width`/`-height`. Layer 1 is topmost; default layer is 1.
+TASK scripts get in-process acceleration for `RUN _TERM_SPRITE`, with `-sprite`
+literals being the preferred draw-loop path because the image file is loaded once.
 
 ### `_TERM_SPRITE_LOAD`
 **Usage:** `_TERM_SPRITE_LOAD -file <path>`
 
 **Description:** Loads a PNG/BMP sprite and prints a TASK array literal
 `{width,height,"<base64 RGBA data>"}`. Capture the output and reuse it with
-`_TERM_SPRITE -sprite ...` to avoid re-reading the file.
+`_TERM_SPRITE -sprite ...` to avoid re-reading the file. `RUN _TERM_SPRITE_LOAD ... TO $VAR`
+is accelerated in-process by `runtask`, so TASK setup code can preload sprites without
+spawning the external command wrapper.
 
 ### `_TERM_TEXT`
 **Usage:** `_TERM_TEXT -x <pixels> -y <pixels> -text <string> -color <1-18> [-layer <1-16>]`

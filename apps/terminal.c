@@ -427,6 +427,7 @@ static int terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int wid
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
 static int terminal_custom_pixels_reserve(size_t additional);
 static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const uint8_t *rgba, int width, int height, uint8_t layer);
+static int terminal_custom_pixels_draw_rect(int origin_x, int origin_y, int width, int height, uint8_t r, uint8_t g, uint8_t b, uint8_t layer);
 static uint16_t terminal_custom_layer_mask(uint8_t layer);
 static void terminal_custom_pixels_mark_pending(uint8_t layer);
 static int terminal_custom_pixels_apply_pending_clears(uint8_t layer);
@@ -2084,6 +2085,49 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
     entry->layer = layer;
     entry->version = terminal_custom_layer_versions[layer];
     terminal_custom_pixels_mark_pending(layer);
+    return 0;
+}
+
+static int terminal_custom_pixels_draw_rect(int origin_x, int origin_y, int width, int height, uint8_t r, uint8_t g, uint8_t b, uint8_t layer) {
+    if (width <= 0 || height <= 0) {
+        return -1;
+    }
+    if (origin_x < 0 || origin_y < 0) {
+        return -1;
+    }
+    if (layer < 1u || layer > 16u) {
+        return -1;
+    }
+    if (width > INT_MAX - origin_x || height > INT_MAX - origin_y) {
+        return -1;
+    }
+
+    size_t width_sz = (size_t)width;
+    size_t height_sz = (size_t)height;
+    if (width_sz != 0u && height_sz > SIZE_MAX / width_sz) {
+        return -1;
+    }
+
+    size_t pixel_count = width_sz * height_sz;
+    if (terminal_custom_pixels_reserve(pixel_count) != 0) {
+        return -1;
+    }
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            struct terminal_custom_pixel *entry = &terminal_custom_pixels[terminal_custom_pixel_count++];
+            entry->x = origin_x + x;
+            entry->y = origin_y + y;
+            entry->r = r;
+            entry->g = g;
+            entry->b = b;
+            entry->layer = layer;
+            entry->version = terminal_custom_layer_versions[layer];
+        }
+    }
+
+    terminal_custom_pixels_mark_pending(layer);
+    terminal_custom_pixels_active = 1;
     return 0;
 }
 
@@ -5605,7 +5649,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_PIXEL_ACTION_NONE = 0,
                 TERMINAL_PIXEL_ACTION_DRAW = 1,
                 TERMINAL_PIXEL_ACTION_CLEAR = 2,
-                TERMINAL_PIXEL_ACTION_RENDER = 3
+                TERMINAL_PIXEL_ACTION_RENDER = 3,
+                TERMINAL_PIXEL_ACTION_RECT = 4
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
             enum terminal_sprite_action {
@@ -5624,6 +5669,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long pixel_r = -1;
             long pixel_g = -1;
             long pixel_b = -1;
+            long pixel_w = -1;
+            long pixel_h = -1;
             long pixel_layer = 0;
             long sprite_x = -1;
             long sprite_y = -1;
@@ -5752,6 +5799,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
                         } else if (strcmp(value, "render") == 0) {
                             pixel_action = TERMINAL_PIXEL_ACTION_RENDER;
+                        } else if (strcmp(value, "rect") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_RECT;
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -5787,6 +5836,20 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         long parsed = strtol(value, &endptr, 10);
                         if (errno == 0 && endptr && *endptr == '\0') {
                             pixel_b = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_w") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            pixel_w = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_h") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            pixel_h = parsed;
                         }
                     } else if (strcmp(key, "pixel_layer") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -6047,11 +6110,28 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                                                    (uint8_t)pixel_r,
                                                    (uint8_t)pixel_g,
                                                    (uint8_t)pixel_b,
-                                                   1u) != 0) {
+                                                   (uint8_t)((pixel_layer >= 1 && pixel_layer <= 16) ? pixel_layer : 1)) != 0) {
                         fprintf(stderr, "terminal: Failed to draw custom pixel.\n");
                     }
                 } else {
                     fprintf(stderr, "terminal: Invalid pixel draw parameters.\n");
+                }
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_RECT) {
+                if (pixel_x >= 0 && pixel_y >= 0 && pixel_x <= INT_MAX && pixel_y <= INT_MAX &&
+                    pixel_w > 0 && pixel_h > 0 && pixel_w <= INT_MAX && pixel_h <= INT_MAX &&
+                    pixel_r >= 0 && pixel_r <= 255 && pixel_g >= 0 && pixel_g <= 255 && pixel_b >= 0 && pixel_b <= 255) {
+                    if (terminal_custom_pixels_draw_rect((int)pixel_x,
+                                                         (int)pixel_y,
+                                                         (int)pixel_w,
+                                                         (int)pixel_h,
+                                                         (uint8_t)pixel_r,
+                                                         (uint8_t)pixel_g,
+                                                         (uint8_t)pixel_b,
+                                                         (uint8_t)((pixel_layer >= 1 && pixel_layer <= 16) ? pixel_layer : 1)) != 0) {
+                        fprintf(stderr, "terminal: Failed to draw custom rectangle.\n");
+                    }
+                } else {
+                    fprintf(stderr, "terminal: Invalid pixel rectangle parameters.\n");
                 }
             } else if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
                 terminal_custom_pixels_clear();

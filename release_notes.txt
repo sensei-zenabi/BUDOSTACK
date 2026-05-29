@@ -238,6 +238,8 @@
   _TERM_MARGIN         : Set terminal pixel render margin.
   _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
   _TERM_MOUSE_SHOW     : Show or hide terminal mouse cursor.
+  _TERM_PIXEL          : Queue accelerated terminal framebuffer pixels.
+  _TERM_RECT           : Queue accelerated filled terminal framebuffer rectangles.
   _TERM_RENDER         : Trigger full render or render selected layer.
   _TERM_RESOLUTION     : Set pixel resolution (LOW/HIGH or width/height).
   _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
@@ -245,9 +247,9 @@
   _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32)
                          volume 0-100.
   _TERM_SOUND_STOP     : Stop audio playback on selected channel (1-32).
-  _TERM_SPRITE         : Draw sprite from file/literal/base64
+  _TERM_SPRITE         : Draw sprite from file/literal/base64; TASK RUN is accelerated.
                          on chosen layer.
-  _TERM_SPRITE_LOAD    : Load sprite and output reusable TASK sprite literal.
+  _TERM_SPRITE_LOAD    : Load reusable TASK sprite literal; TASK capture is accelerated.
   _TERM_TEXT           : Draw UTF-8 text in pixel space with color and layer.
   _TERM_TYPING_SOUND   : Enable or disable keyboard typing sound effects.
   _TEST                : Print terminal diagnostic grid and size info.

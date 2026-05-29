@@ -1,0 +1,125 @@
+# termgraphics.task - accelerated TASK pixel graphics for apps/terminal
+#
+# This demo intentionally uses _TERM* commands. When run through runtask,
+# _TERM_PIXEL, _TERM_RECT, _TERM_CLEAN, and _TERM_RENDER are accelerated inside
+# the TASK runtime instead of spawning one process for every draw operation.
+
+RUN _TERM_RESOLUTION HIGH
+RUN _TERM_MARGIN 0
+RUN _TERM_SHADER disable
+RUN _TERM_RENDER
+
+SET $WIDTH = 800
+SET $HEIGHT = 450
+SET $LAYER = 6
+SET $BACKGROUND_LAYER = 16
+SET $FRAMES = 90
+SET $FRAME = 0
+
+RUN _TERM_RECT -x 0 -y 0 -width $WIDTH -height $HEIGHT -rgb 4 6 16 -layer $BACKGROUND_LAYER
+RUN _TERM_RENDER -layer $BACKGROUND_LAYER
+
+RUN _TIMER --stop
+RUN _TIMER --reset
+RUN _TIMER --start
+
+WHILE ($FRAME < $FRAMES):
+  RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $LAYER
+
+  SET $X = $FRAME * 11
+  SET $Y = $FRAME * 7
+  SET $R = $FRAME * 3
+  SET $G = 80 + $FRAME * 5
+  SET $B = 255 - $FRAME * 2
+  WHILE ($X >= $WIDTH):
+    SET $X = $X - $WIDTH
+  END
+  WHILE ($Y >= $HEIGHT):
+    SET $Y = $Y - $HEIGHT
+  END
+  WHILE ($R >= 256):
+    SET $R = $R - 256
+  END
+  WHILE ($G >= 256):
+    SET $G = $G - 176
+  END
+  WHILE ($B < 75):
+    SET $B = $B + 180
+  END
+
+  SET $I = 0
+  WHILE ($I < 180):
+    RUN _TERM_RECT -x $X -y $Y -width 4 -height 4 -rgb $R $G $B -layer $LAYER
+    SET $X = $X + 37
+    SET $Y = $Y + 19
+    SET $R = $R + 5
+    SET $G = $G + 9
+    SET $B = $B - 13
+    IF ($X >= $WIDTH):
+      SET $X = $X - $WIDTH
+    END
+    IF ($Y >= $HEIGHT):
+      SET $Y = $Y - $HEIGHT
+    END
+    IF ($R >= 256):
+      SET $R = $R - 256
+    END
+    IF ($G >= 256):
+      SET $G = $G - 176
+    END
+    IF ($B < 75):
+      SET $B = $B + 180
+    END
+    SET $I = $I + 1
+  END
+
+  SET $BX = $FRAME * 6
+  WHILE ($BX >= $WIDTH):
+    SET $BX = $BX - $WIDTH
+  END
+  SET $BY = 40 + $FRAME * 4
+  WHILE ($BY >= 370):
+    SET $BY = $BY - 330
+  END
+  SET $BH = 20 + $FRAME
+  WHILE ($BH >= 100):
+    SET $BH = $BH - 80
+  END
+  SET $BR = 0
+  SET $BG = 255
+  SET $BAR = 0
+  WHILE ($BAR < 32):
+    RUN _TERM_RECT -x $BX -y $BY -width 10 -height $BH -rgb $BR $BG 220 -layer $LAYER
+    SET $BX = $BX + 25
+    SET $BY = $BY + 11
+    SET $BH = $BH + 3
+    SET $BR = $BR + 8
+    SET $BG = $BG - 6
+    IF ($BX >= $WIDTH):
+      SET $BX = $BX - $WIDTH
+    END
+    IF ($BY >= 370):
+      SET $BY = $BY - 330
+    END
+    IF ($BH >= 100):
+      SET $BH = $BH - 80
+    END
+    IF ($BR >= 256):
+      SET $BR = $BR - 256
+    END
+    IF ($BG < 55):
+      SET $BG = $BG + 200
+    END
+    SET $BAR = $BAR + 1
+  END
+
+  RUN _TERM_RENDER -layer $LAYER
+  SET $FRAME = $FRAME + 1
+END
+
+RUN _TIMER --stop
+RUN _TIMER --get TO $TIME
+RUN _TERM_TEXT -x 18 -y 18 -text "TASK _TERM graphics: accelerated rectangles + one render per frame" -color 16 -layer 2
+RUN _TERM_TEXT -x 18 -y 34 -text "Finished 90 frames. Runtime milliseconds:" -color 16 -layer 2
+RUN _TERM_TEXT -x 360 -y 34 -text $TIME -color 16 -layer 2
+RUN _TERM_RENDER

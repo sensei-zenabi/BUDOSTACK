@@ -1,15 +1,19 @@
-# termgraphics.task - accelerated TASK pixel graphics for apps/terminal
+# termgraphics.task - C64-inspired accelerated TASK pixel graphics for apps/terminal
 #
 # This demo intentionally uses _TERM* commands. When run through runtask,
-# _TERM_PIXEL, _TERM_RECT, _TERM_CLEAN, and _TERM_RENDER are accelerated inside
-# the TASK runtime instead of spawning one process for every draw operation.
+# _TERM_PIXEL, _TERM_RECT, _TERM_TEXT, _TERM_CLEAN, and _TERM_RENDER are
+# accelerated inside the TASK runtime instead of spawning one process for every
+# draw operation.
+#
+# The sequence is intentionally styled after Commodore 64 cracktro/demo-screen
+# graphics: chunky bitmap blocks, raster bars, a starfield, bouncing multiplexed
+# sprites, and a scrolling message. It uses separate pixel layers so TASK can
+# clear animated elements without redrawing the static border and logo.
 #
 # The demo intentionally does not toggle _TERM_SHADER. Shader enable/disable is
 # persistent terminal state, so changing it here would surprise the caller after
-# the task exits. The final cleanup clears the terminal pixel layers used by this
-# demo after a short result pause. Without that, the terminal framebuffer can
-# still show the last graphics frame and make it look like the TASK script is
-# still running.
+# the task exits. The final cleanup clears every layer used by this demo before
+# returning control to the shell.
 
 RUN _TERM_RESOLUTION HIGH
 RUN _TERM_MARGIN 0
@@ -17,123 +21,214 @@ RUN _TERM_RENDER
 
 SET $WIDTH = 800
 SET $HEIGHT = 450
-SET $LAYER = 6
-SET $TEXT_LAYER = 2
+SET $HUD_LAYER = 1
+SET $SPRITE_LAYER = 4
+SET $FX_LAYER = 8
+SET $LOGO_LAYER = 12
 SET $BACKGROUND_LAYER = 16
-SET $FRAMES = 90
+SET $FRAMES = 128
 SET $FRAME = 0
 
-RUN _TERM_RECT -x 0 -y 0 -width $WIDTH -height $HEIGHT -rgb 4 6 16 -layer $BACKGROUND_LAYER
-RUN _TERM_RENDER -layer $BACKGROUND_LAYER
+# Static C64-style screen: blue border, darker playfield, scanline shade, and
+# a chunky block logo made from _TERM_RECT primitives.
+RUN _TERM_RECT -x 0 -y 0 -width $WIDTH -height $HEIGHT -rgb 33 36 140 -layer $BACKGROUND_LAYER
+RUN _TERM_RECT -x 32 -y 28 -width 736 -height 394 -rgb 18 20 76 -layer $BACKGROUND_LAYER
+RUN _TERM_RECT -x 40 -y 36 -width 720 -height 378 -rgb 7 9 38 -layer $BACKGROUND_LAYER
+
+SET $Y = 44
+WHILE ($Y < 410):
+  RUN _TERM_RECT -x 44 -y $Y -width 712 -height 2 -rgb 10 13 50 -layer $BACKGROUND_LAYER
+  SET $Y = $Y + 8
+END
+
+# Pixel-grid horizon to show many small accelerated rectangles in one layer.
+SET $GX = 64
+WHILE ($GX < 744):
+  RUN _TERM_RECT -x $GX -y 264 -width 2 -height 128 -rgb 36 40 118 -layer $BACKGROUND_LAYER
+  SET $GX = $GX + 32
+END
+SET $GY = 264
+WHILE ($GY < 392):
+  RUN _TERM_RECT -x 48 -y $GY -width 704 -height 2 -rgb 36 40 118 -layer $BACKGROUND_LAYER
+  SET $GY = $GY + 16
+END
+
+# Chunky logo: BUDO STACK, built from blocks rather than terminal text.
+RUN _TERM_TEXT -x 292 -y 54 -text "TASK _TERM GRAPHICS" -color 18 -layer $HUD_LAYER
+RUN _TERM_TEXT -x 234 -y 70 -text "RASTER BARS  STARFIELD  SPRITES  SCROLLER" -color 16 -layer $HUD_LAYER
+
+SET $LX = 124
+SET $LY = 104
+RUN _TERM_RECT -x $LX -y $LY -width 18 -height 76 -rgb 255 235 87 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+18 -y $LY -width 36 -height 16 -rgb 255 235 87 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+18 -y $LY+30 -width 38 -height 16 -rgb 255 235 87 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+18 -y $LY+60 -width 36 -height 16 -rgb 255 235 87 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+52 -y $LY+14 -width 16 -height 20 -rgb 255 235 87 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+54 -y $LY+44 -width 16 -height 18 -rgb 255 235 87 -layer $LOGO_LAYER
+
+SET $LX = 204
+RUN _TERM_RECT -x $LX -y $LY -width 18 -height 62 -rgb 120 255 214 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+50 -y $LY -width 18 -height 62 -rgb 120 255 214 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+16 -y $LY+60 -width 38 -height 16 -rgb 120 255 214 -layer $LOGO_LAYER
+
+SET $LX = 288
+RUN _TERM_RECT -x $LX -y $LY -width 18 -height 76 -rgb 255 125 214 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+18 -y $LY -width 34 -height 16 -rgb 255 125 214 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+52 -y $LY+16 -width 16 -height 44 -rgb 255 125 214 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+18 -y $LY+60 -width 34 -height 16 -rgb 255 125 214 -layer $LOGO_LAYER
+
+SET $LX = 370
+RUN _TERM_RECT -x $LX+14 -y $LY -width 40 -height 16 -rgb 255 121 45 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX -y $LY+16 -width 18 -height 44 -rgb 255 121 45 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+52 -y $LY+16 -width 18 -height 44 -rgb 255 121 45 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+14 -y $LY+60 -width 40 -height 16 -rgb 255 121 45 -layer $LOGO_LAYER
+
+SET $LX = 482
+RUN _TERM_RECT -x $LX+10 -y $LY -width 58 -height 16 -rgb 173 255 47 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX -y $LY+14 -width 18 -height 18 -rgb 173 255 47 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+10 -y $LY+30 -width 48 -height 16 -rgb 173 255 47 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+50 -y $LY+44 -width 18 -height 18 -rgb 173 255 47 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX -y $LY+60 -width 58 -height 16 -rgb 173 255 47 -layer $LOGO_LAYER
+
+SET $LX = 562
+RUN _TERM_RECT -x $LX -y $LY -width 68 -height 16 -rgb 99 199 255 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+25 -y $LY+16 -width 18 -height 60 -rgb 99 199 255 -layer $LOGO_LAYER
+
+SET $LX = 642
+RUN _TERM_RECT -x $LX+24 -y $LY -width 20 -height 76 -rgb 250 250 250 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+6 -y $LY+22 -width 56 -height 18 -rgb 250 250 250 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX -y $LY+60 -width 18 -height 16 -rgb 250 250 250 -layer $LOGO_LAYER
+RUN _TERM_RECT -x $LX+50 -y $LY+60 -width 18 -height 16 -rgb 250 250 250 -layer $LOGO_LAYER
+
+RUN _TERM_RENDER
 
 RUN _TIMER --stop
 RUN _TIMER --reset
 RUN _TIMER --start
 
 WHILE ($FRAME < $FRAMES):
-  RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $LAYER
+  RUN _TERM_CLEAN -x 0 -y 190 -width $WIDTH -height 218 -layer $FX_LAYER
+  RUN _TERM_CLEAN -x 0 -y 186 -width $WIDTH -height 230 -layer $SPRITE_LAYER
+  RUN _TERM_CLEAN -x 0 -y 398 -width $WIDTH -height 24 -layer $HUD_LAYER
 
-  SET $X = $FRAME * 11
-  SET $Y = $FRAME * 7
-  SET $R = $FRAME * 3
-  SET $G = 80 + $FRAME * 5
-  SET $B = 255 - $FRAME * 2
-  WHILE ($X >= $WIDTH):
-    SET $X = $X - $WIDTH
-  END
-  WHILE ($Y >= $HEIGHT):
-    SET $Y = $Y - $HEIGHT
-  END
-  WHILE ($R >= 256):
-    SET $R = $R - 256
-  END
-  WHILE ($G >= 256):
-    SET $G = $G - 176
-  END
-  WHILE ($B < 75):
-    SET $B = $B + 180
-  END
-
-  SET $I = 0
-  WHILE ($I < 180):
-    RUN _TERM_RECT -x $X -y $Y -width 4 -height 4 -rgb $R $G $B -layer $LAYER
-    SET $X = $X + 37
-    SET $Y = $Y + 19
-    SET $R = $R + 5
-    SET $G = $G + 9
-    SET $B = $B - 13
-    IF ($X >= $WIDTH):
-      SET $X = $X - $WIDTH
-    END
-    IF ($Y >= $HEIGHT):
-      SET $Y = $Y - $HEIGHT
-    END
-    IF ($R >= 256):
-      SET $R = $R - 256
-    END
-    IF ($G >= 256):
-      SET $G = $G - 176
-    END
-    IF ($B < 75):
-      SET $B = $B + 180
-    END
-    SET $I = $I + 1
-  END
-
-  SET $BX = $FRAME * 6
-  WHILE ($BX >= $WIDTH):
-    SET $BX = $BX - $WIDTH
-  END
-  SET $BY = 40 + $FRAME * 4
-  WHILE ($BY >= 370):
-    SET $BY = $BY - 330
-  END
-  SET $BH = 20 + $FRAME
-  WHILE ($BH >= 100):
-    SET $BH = $BH - 80
-  END
-  SET $BR = 0
-  SET $BG = 255
+  # Raster bars: PAL-demo style color cycling bands.
   SET $BAR = 0
-  WHILE ($BAR < 32):
-    RUN _TERM_RECT -x $BX -y $BY -width 10 -height $BH -rgb $BR $BG 220 -layer $LAYER
-    SET $BX = $BX + 25
-    SET $BY = $BY + 11
-    SET $BH = $BH + 3
-    SET $BR = $BR + 8
-    SET $BG = $BG - 6
-    IF ($BX >= $WIDTH):
-      SET $BX = $BX - $WIDTH
+  SET $BAR_Y = 202 + $FRAME * 3
+  WHILE ($BAR_Y >= 322):
+    SET $BAR_Y = $BAR_Y - 120
+  END
+  WHILE ($BAR < 14):
+    SET $R = 64 + $BAR * 13 + $FRAME * 2
+    SET $G = 32 + $BAR * 17
+    SET $B = 230 - $BAR * 9
+    WHILE ($R >= 256):
+      SET $R = $R - 192
     END
-    IF ($BY >= 370):
-      SET $BY = $BY - 330
+    WHILE ($G >= 256):
+      SET $G = $G - 208
     END
-    IF ($BH >= 100):
-      SET $BH = $BH - 80
+    WHILE ($B < 72):
+      SET $B = $B + 144
     END
-    IF ($BR >= 256):
-      SET $BR = $BR - 256
-    END
-    IF ($BG < 55):
-      SET $BG = $BG + 200
+    RUN _TERM_RECT -x 48 -y $BAR_Y -width 704 -height 5 -rgb $R $G $B -layer $FX_LAYER
+    SET $BAR_Y = $BAR_Y + 9
+    IF ($BAR_Y >= 322):
+      SET $BAR_Y = $BAR_Y - 120
     END
     SET $BAR = $BAR + 1
   END
 
-  RUN _TERM_RENDER -layer $LAYER
+  # Three-speed starfield using only integer math and _TERM_PIXEL/_TERM_RECT.
+  SET $STAR = 0
+  WHILE ($STAR < 84):
+    SET $STAR_X = $STAR * 73 + 760 - $FRAME * 5
+    WHILE ($STAR_X >= 736):
+      SET $STAR_X = $STAR_X - 704
+    END
+    WHILE ($STAR_X < 48):
+      SET $STAR_X = $STAR_X + 704
+    END
+    SET $STAR_Y = 196 + $STAR * 47
+    WHILE ($STAR_Y >= 258):
+      SET $STAR_Y = $STAR_Y - 62
+    END
+    RUN _TERM_PIXEL -x $STAR_X -y $STAR_Y -rgb 170 180 255 -layer $FX_LAYER
+    SET $STAR = $STAR + 1
+  END
+
+  SET $STAR = 0
+  WHILE ($STAR < 44):
+    SET $STAR_X = $STAR * 109 + 720 - $FRAME * 9
+    WHILE ($STAR_X >= 736):
+      SET $STAR_X = $STAR_X - 704
+    END
+    WHILE ($STAR_X < 48):
+      SET $STAR_X = $STAR_X + 704
+    END
+    SET $STAR_Y = 198 + $STAR * 31
+    WHILE ($STAR_Y >= 260):
+      SET $STAR_Y = $STAR_Y - 62
+    END
+    RUN _TERM_RECT -x $STAR_X -y $STAR_Y -width 2 -height 2 -rgb 245 245 255 -layer $FX_LAYER
+    SET $STAR = $STAR + 1
+  END
+
+  # Bouncing block sprites. They are deliberately rect-built so the demo shows
+  # what TASK can do without loading external image assets.
+  SET $SX = 68 + $FRAME * 5
+  WHILE ($SX >= 680):
+    SET $SX = $SX - 612
+  END
+  SET $SY = 284 + $FRAME * 3
+  WHILE ($SY >= 356):
+    SET $SY = $SY - 72
+  END
+  RUN _TERM_RECT -x $SX+16 -y $SY -width 32 -height 8 -rgb 255 235 87 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX+8 -y $SY+8 -width 48 -height 8 -rgb 255 121 45 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX -y $SY+16 -width 64 -height 12 -rgb 255 235 87 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX+8 -y $SY+28 -width 16 -height 8 -rgb 120 255 214 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX+40 -y $SY+28 -width 16 -height 8 -rgb 120 255 214 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX+4 -y $SY+20 -width 8 -height 4 -rgb 255 255 255 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX+52 -y $SY+20 -width 8 -height 4 -rgb 255 255 255 -layer $SPRITE_LAYER
+
+  SET $SX = 662 - $FRAME * 4
+  WHILE ($SX < 72):
+    SET $SX = $SX + 590
+  END
+  SET $SY = 348 - $FRAME * 2
+  WHILE ($SY < 276):
+    SET $SY = $SY + 72
+  END
+  RUN _TERM_RECT -x $SX+12 -y $SY -width 40 -height 8 -rgb 99 199 255 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX+4 -y $SY+8 -width 56 -height 12 -rgb 120 255 214 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX -y $SY+20 -width 64 -height 8 -rgb 99 199 255 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX+12 -y $SY+28 -width 12 -height 10 -rgb 255 125 214 -layer $SPRITE_LAYER
+  RUN _TERM_RECT -x $SX+40 -y $SY+28 -width 12 -height 10 -rgb 255 125 214 -layer $SPRITE_LAYER
+
+  # Scroller: a nod to classic demo messages, moved as a terminal-pixel text
+  # layer and rendered with the rest of the frame.
+  SET $TEXT_X = 760 - $FRAME * 6
+  WHILE ($TEXT_X < 48):
+    SET $TEXT_X = $TEXT_X + 636
+  END
+  RUN _TERM_TEXT -x $TEXT_X -y 400 -text "*** BUDOSTACK TASK DEMO: _TERM_RECT + _TERM_PIXEL + _TERM_TEXT + LAYERS + ONE RENDER PER FRAME ***" -color 18 -layer $HUD_LAYER
+
+  RUN _TERM_RENDER
   SET $FRAME = $FRAME + 1
 END
 
 RUN _TIMER --stop
 RUN _TIMER --get TO $TIME
-RUN _TERM_TEXT -x 18 -y 18 -text "TASK _TERM graphics: accelerated rectangles + one render per frame" -color 16 -layer $TEXT_LAYER
-RUN _TERM_TEXT -x 18 -y 34 -text "Finished 90 frames. Runtime milliseconds:" -color 16 -layer $TEXT_LAYER
-RUN _TERM_TEXT -x 360 -y 34 -text $TIME -color 16 -layer $TEXT_LAYER
-RUN _TERM_TEXT -x 18 -y 50 -text "Cleaning demo framebuffer before returning to shell..." -color 16 -layer $TEXT_LAYER
+RUN _TERM_CLEAN -x 0 -y 398 -width $WIDTH -height 24 -layer $HUD_LAYER
+RUN _TERM_TEXT -x 184 -y 400 -text "Rendered 128 C64-style frames with accelerated TASK _TERM graphics in ms:" -color 16 -layer $HUD_LAYER
+RUN _TERM_TEXT -x 690 -y 400 -text $TIME -color 18 -layer $HUD_LAYER
 RUN _TERM_RENDER
 WAIT 5000
-RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $TEXT_LAYER
-RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $LAYER
+
+RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $HUD_LAYER
+RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $SPRITE_LAYER
+RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $FX_LAYER
+RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $LOGO_LAYER
 RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $BACKGROUND_LAYER
 RUN _TERM_RENDER
 RUN _TERM_RESOLUTION LOW

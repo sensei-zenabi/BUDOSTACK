@@ -131,9 +131,10 @@ RUN _TERM_TEXT -x 18 -y 34 -text "Finished 90 frames. Runtime milliseconds:" -co
 RUN _TERM_TEXT -x 360 -y 34 -text $TIME -color 16 -layer $TEXT_LAYER
 RUN _TERM_TEXT -x 18 -y 50 -text "Cleaning demo framebuffer before returning to shell..." -color 16 -layer $TEXT_LAYER
 RUN _TERM_RENDER
-WAIT 2500
+WAIT 5000
 RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $TEXT_LAYER
 RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $LAYER
 RUN _TERM_CLEAN -x 0 -y 0 -width $WIDTH -height $HEIGHT -layer $BACKGROUND_LAYER
 RUN _TERM_RENDER
-PRINT "termgraphics.task finished; terminal graphics layers were cleaned."
+RUN _TERM_RESOLUTION LOW
+RUN _TERM_MARGIN 8

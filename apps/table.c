@@ -29,7 +29,7 @@
 
 #include "../lib/terminal_layout.h"
 #define CTRL_KEY(k) ((k) & 0x1F)
-#define MAX_INPUT 256
+#define TABLE_MAX_INPUT 256
 #define BRACKETED_END "\x1b[201~"
 #define HELP_LINE_COUNT 7
 
@@ -69,7 +69,7 @@ static char clipboard[1024] = {0};
 static int clipboard_from_system = 0;
 
 // Track the currently loaded/saved filename so save prompts can provide a default.
-static char current_filename[MAX_INPUT] = {0};
+static char current_filename[TABLE_MAX_INPUT] = {0};
 
 // Global flag: if set, display raw formulas instead of evaluated results.
 int show_formulas = 0;
@@ -140,7 +140,7 @@ static void ensure_table_capacity(int target_row, int target_col) {
     }
     while (table_get_cols(g_table) <= target_col) {
         int new_col_number = table_get_cols(g_table);
-        char default_header[MAX_INPUT];
+        char default_header[TABLE_MAX_INPUT];
         snprintf(default_header, sizeof(default_header), "Column %d", new_col_number);
         table_add_col(g_table, default_header);
     }
@@ -354,7 +354,7 @@ static void print_help_bar(void) {
  * Save the table as a CSV file.
  */
 void save_table(void) {
-    char filename[MAX_INPUT];
+    char filename[TABLE_MAX_INPUT];
     const int has_default = current_filename[0] != '\0';
 
     move_cursor(24, 1);
@@ -366,7 +366,7 @@ void save_table(void) {
     fflush(stdout);
 
     disable_raw_mode();
-    if (!fgets(filename, MAX_INPUT, stdin)) {
+    if (!fgets(filename, TABLE_MAX_INPUT, stdin)) {
         enable_raw_mode();
         return;
     }
@@ -397,7 +397,7 @@ void save_table(void) {
 }
 
 static void export_evaluated_table(void) {
-    char export_name[MAX_INPUT];
+    char export_name[TABLE_MAX_INPUT];
     if (current_filename[0] != '\0') {
         strncpy(export_name, current_filename, sizeof(export_name) - 1);
         export_name[sizeof(export_name) - 1] = '\0';
@@ -647,7 +647,7 @@ int main(int argc, char *argv[]) {
             }
         } else if (c == CTRL_KEY('N')) {  // Add column (with default header)
             int new_col_number = table_get_cols(g_table);  // includes index column
-            char default_header[MAX_INPUT];
+            char default_header[TABLE_MAX_INPUT];
             snprintf(default_header, sizeof(default_header), "Column %d", new_col_number);
             int insert_at = cur_col + 1;
             if (insert_at < 1)

@@ -715,7 +715,12 @@ static int load_bmp(const char *path){
             if (b==EOF || g==EOF || r==EOF) { fclose(f); return -1; }
             pixels[y*w + x] = nearest_custom_or_create((uint8_t)r, (uint8_t)g, (uint8_t)b);
         }
-        for (int p=0;p<padding;p++) fgetc(f);
+        for (int p = 0; p < padding; p++) {
+            if (fgetc(f) == EOF) {
+                fclose(f);
+                return -1;
+            }
+        }
     }
     fclose(f);
     img_w = w; img_h = h;

@@ -10,7 +10,7 @@
 
 #include "../lib/terminal_layout.h"
 
-#define MAX_INPUT 100
+#define INET_MAX_INPUT 100
 #define MAX_INTERFACES 32
 #define MAX_BAR_LEN 28  // Base characters for histogram bars within 80 columns
 
@@ -482,7 +482,7 @@ cleanup:
 }
  
 int main(void) {
-    char input[MAX_INPUT];
+    char input[INET_MAX_INPUT];
     int choice;
 
     while (1) {
@@ -512,8 +512,8 @@ int main(void) {
                 break;
             case 2: {
                 // Connect to a wireless network.
-                char ssid[MAX_INPUT];
-                char password[MAX_INPUT];
+                char ssid[INET_MAX_INPUT];
+                char password[INET_MAX_INPUT];
                 char command[256];
 
                 printf("Enter SSID: ");
@@ -549,7 +549,7 @@ int main(void) {
                 break;
             case 5: {
                 // Prompt the user for a refresh interval (in seconds) before entering monitoring mode.
-                char interval_str[MAX_INPUT];
+                char interval_str[INET_MAX_INPUT];
                 int interval;
                 printf("Enter refresh interval in seconds (default 1): ");
                 if (fgets(interval_str, sizeof(interval_str), stdin) != NULL) {

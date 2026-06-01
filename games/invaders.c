@@ -54,14 +54,14 @@ void sleep_ms(int milliseconds) {
 static struct termios orig_termios;
 
 /* Restore original terminal settings on exit and show the cursor */
-void reset_terminal_mode() {
+void reset_terminal_mode(void) {
     tcsetattr(0, TCSANOW, &orig_termios);
     // Show the cursor when exiting
     printf("\033[?25h");
 }
 
 /* Set terminal to raw mode for nonblocking input and hide the cursor */
-void set_conio_terminal_mode() {
+void set_conio_terminal_mode(void) {
     struct termios new_termios;
     tcgetattr(0, &orig_termios);
     memcpy(&new_termios, &orig_termios, sizeof(new_termios));
@@ -75,7 +75,7 @@ void set_conio_terminal_mode() {
 }
 
 /* Check if a key has been pressed (nonblocking) */
-int kbhit() {
+int kbhit(void) {
     struct timeval tv = {0, 0};
     fd_set readfds;
     FD_ZERO(&readfds);
@@ -84,7 +84,7 @@ int kbhit() {
 }
 
 /* Get one character from input */
-int getch() {
+int getch(void) {
     int r;
     unsigned char c;
     if ((r = read(0, &c, sizeof(c))) < 0)
@@ -111,7 +111,7 @@ int game_win = 0;
 int score = 0;  // Global score variable
 
 /* Initialize game state */
-void init_game() {
+void init_game(void) {
     int i, j;
     player_x = BOARD_WIDTH / 2;
     bullet.active = 0;
@@ -134,7 +134,7 @@ void init_game() {
 /* Process input: arrow keys, space, Q to quit, and R to restart.
  * When game over or win, only R and Q are processed.
  */
-void process_input() {
+void process_input(void) {
     while (kbhit()) {
         int c = getch();
         // When game over or win, restrict input to 'r' (restart) and 'q' (quit)
@@ -179,7 +179,7 @@ void process_input() {
 /* Update bullet position and check for collision with invaders.
  * Collision is checked at the bullet's current position before moving it.
  */
-void update_bullet() {
+void update_bullet(void) {
     if (bullet.active) {
         // Check collision at the bullet's current position
         for (int i = 0; i < INV_ROWS; i++) {
@@ -205,7 +205,7 @@ void update_bullet() {
 }
 
 /* Update invader positions every few frames */
-void update_invaders() {
+void update_invaders(void) {
     // Update invaders every 5 frames
     if (frame_count % 5 != 0)
         return;
@@ -254,7 +254,7 @@ void update_invaders() {
 /* Update game state: bullet and invaders.
  * No movement is performed if game is over or won.
  */
-void update_game() {
+void update_game(void) {
     if (game_over || game_win)
         return;
     update_bullet();
@@ -262,7 +262,7 @@ void update_game() {
 }
 
 /* Render the game board with borders and a SCORE field */
-void draw_game() {
+void draw_game(void) {
     char board[BOARD_HEIGHT][BOARD_WIDTH + 1];
     // Initialize board with spaces
     for (int i = 0; i < BOARD_HEIGHT; i++) {

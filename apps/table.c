@@ -392,7 +392,8 @@ void save_table(void) {
     }
     printf("\rPress any key to continue...");
     fflush(stdout);
-    getchar();
+    int ch = getchar();
+    (void)ch;
 }
 
 static void export_evaluated_table(void) {
@@ -409,7 +410,8 @@ static void export_evaluated_table(void) {
             printf("\rExport filename too long. Export canceled.");
             printf("\rPress any key to continue...");
             fflush(stdout);
-            getchar();
+            int ch = getchar();
+            (void)ch;
             return;
         }
         snprintf(export_name + len, sizeof(export_name) - len, ".csv");
@@ -425,7 +427,8 @@ static void export_evaluated_table(void) {
     }
     printf("\rPress any key to continue...");
     fflush(stdout);
-    getchar();
+    int ch = getchar();
+    (void)ch;
 }
 
 static void clear_autofill_state(void) {

@@ -24,8 +24,8 @@
 #include "commandparser.h"
 #include "input.h"      // Include the input handling header
 
-extern void printlogo();
-extern void login();
+extern void printlogo(void);
+extern void login(void);
 
 /* Global variable to control paging.
  * 1: paging enabled (default)
@@ -343,7 +343,8 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
     if (match_count == 0) {
         free(matches);
         printf("No matches found. Press any key to continue...");
-        getchar();
+        int ch = getchar();
+        (void)ch;
         return -1;
     }
     int active = 0;
@@ -1319,14 +1320,18 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "make clean failed, not restarting.\n");
                     printf("Press ENTER to continue...");
                     fflush(stdout);
-                    while(getchar() != '\n');
+                    int ch;
+                    while ((ch = getchar()) != '\n' && ch != EOF) {
+                    }
                     continue;
                 }
             }
             int ret = system("make");
             printf("Press ENTER to continue...");
             fflush(stdout);
-            while(getchar() != '\n');
+            int ch;
+            while ((ch = getchar()) != '\n' && ch != EOF) {
+            }
             if (ret != 0) {
                 fprintf(stderr, "Make failed, not restarting.\n");
                 continue;

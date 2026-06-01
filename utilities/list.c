@@ -593,7 +593,7 @@ void list_recursive_search(const char *pattern) {
 
 // Help message
 // Help message
-void print_help() {
+void print_help(void) {
     printf("Usage examples for the 'list' command:\n");
     printf("  list                 List contents of the current directory\n");
     printf("  list -a              List all files, including excluded extensions\n");

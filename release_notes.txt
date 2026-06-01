@@ -26,9 +26,12 @@
 
  How to Install & Run?
 
-  1. Run ./setup.sh to install all dependencies required to run BUDOSTACK.
+  1. Run ./setup_debian.sh on Debian/Ubuntu or ./setup_termux.sh on Termux
+     to install dependencies required to run BUDOSTACK.
 
-  2. Run ./start.sh to start the built-in terminal with CRT simulation.
+  2. Run ./start.sh. Debian/Ubuntu starts the built-in terminal with CRT
+     simulation when available; Termux starts './budostack' directly because
+     apps/terminal is not built there.
 
   3. Modify the BUDOSTACK.desktop to create a desktop shortcut.
 
@@ -39,19 +42,27 @@
 
                            - SYSTEM REQUIREMENTS -
 
- Operating System: Debian Linux
+ Operating System: Debian Linux or Termux on Android
 
  Hardware Requirements:
 
   - Minimum CPU Intel CORE i5
   - GPU with OpenGL support
 
- Tested distributions:
+ Tested distributions/environments:
 
   - Ubuntu
   - Kubuntu
+  - Termux
 
- Note! BUDOSTACK is intended to be ran with the apps/terminal application.
+ Build targets:
+
+  - make all     : Auto-detect Debian/Termux profile.
+  - make debian  : Build Debian profile.
+  - make termux  : Build Termux profile without apps/terminal.
+
+ Note! On Debian, BUDOSTACK is intended to be ran with the apps/terminal
+ application. On Termux, use './budostack' directly or './start.sh'.
 
 -----------------------------------------------------------------------------
 

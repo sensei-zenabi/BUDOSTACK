@@ -5,6 +5,9 @@ Commands with prefix _TERM*:
 - Intended to be used only in TASK scripts that are ran inside 
   apps/terminal terminal emulator.
 - Are built using SDL2 libraries, like ./apps/terminal itself.
+- In Termux builds, ./apps/terminal is excluded; _TERM* commands still emit
+  their control sequences, but scripts should not require the terminal emulator
+  to be present.
   
 Commands without prefix _TERM*: 
 

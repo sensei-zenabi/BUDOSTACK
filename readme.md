@@ -20,13 +20,22 @@ Screenshots from BUDOSTACK built-in retro terminal emulator (apps/terminal).
 
 
 ## How to Install and Run?
-1. Checkout the repo
-2. Run ./setup.sh 
-3. Run ./start.sh
-4. Then type "help"
+1. Checkout the repo.
+2. Install dependencies for your environment:
+   * Debian/Ubuntu: run `./setup_debian.sh`
+   * Termux: run `./setup_termux.sh`
+3. Run `./start.sh`.
+4. Then type `help`.
+
+### Build targets
+* `make all` auto-detects the environment. In Termux it builds the Termux profile; otherwise it builds the Debian profile.
+* `make debian` builds BUDOSTACK for Debian/Ubuntu and includes `apps/terminal` when SDL2 and OpenGL development files are available.
+* `make termux` builds BUDOSTACK for Termux and intentionally excludes `apps/terminal`.
+* You can force auto-build behavior with `make BUDOSTACK_PLATFORM=debian all` or `make BUDOSTACK_PLATFORM=termux all`.
 
 ### Running outside the built-in terminal
-* `./start.sh` still launches BUDOSTACK inside the retro-styled `apps/terminal` emulator with the CRT shader stack enabled by default.
+* On Debian/Ubuntu, `./start.sh` launches BUDOSTACK inside the retro-styled `apps/terminal` emulator with the CRT shader stack enabled by default when that binary is available.
+* On Termux, `apps/terminal` is not built, so `./start.sh` falls back to running `./budostack` in the current terminal.
 * If you prefer to stay in your own GUI terminal emulator, you can run `./budostack` directly. The shell detects VTE/Konsole-style terminals and skips the resize escape sequence that used to displace the cursor, so the prompt and block cursor stay aligned.
 
 ### apps/terminal runtime controls

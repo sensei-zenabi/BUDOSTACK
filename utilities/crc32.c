@@ -56,7 +56,7 @@ static int compute_crc(FILE *f, uint32_t *out_crc) {
 }
 
 /* Print usage information to stderr. */
-static void print_usage() {
+static void print_usage(void) {
     fprintf(stderr,
         "Usage:\n"
         "  crc32 [file]                 calculate and print CRC-32 of file\n"
@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
     if (argc == 2) {
         /* Help request */
         if (strcmp(argv[1], "-help") == 0) {
-            print_usage(argv[0]);
+            print_usage();
             return 0;
         }
         /* Calculate checksum */
@@ -123,6 +123,6 @@ int main(int argc, char **argv) {
     }
 
     /* More than two arguments: display help */
-    print_usage(argv[0]);
+    print_usage();
     return 1;
 }

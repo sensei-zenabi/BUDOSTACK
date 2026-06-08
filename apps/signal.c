@@ -52,7 +52,7 @@ typedef struct {
     size_t cap;
 } NoteSequence;
 
-static void usage() {
+static void usage(void) {
     fprintf(stderr,
         "\n"
         "Usage:\n"
@@ -1033,12 +1033,12 @@ static int run_playback(enum output_mode mode, int loop_mode, long loop_count,
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        usage(argv[0]);
+        usage();
     }
 
     const char *cmd = strip_dash(argv[1]);
     if (!cmd) {
-        usage(argv[0]);
+        usage();
     }
 
     if (!strcmp(cmd, "play") || !strcmp(cmd, "loop")) {
@@ -1048,15 +1048,15 @@ int main(int argc, char *argv[]) {
         if (loop_mode) {
             if (argc < 3) {
                 fprintf(stderr, "signal: loop requires a count.\n");
-                usage(argv[0]);
+                usage();
             }
             if (parse_long(argv[2], &loop_count, 1, 1000000) != 0) {
                 fprintf(stderr, "signal: loop count must be a positive integer.\n");
-                usage(argv[0]);
+                usage();
             }
             if (argc > 3) {
                 fprintf(stderr, "signal: loop only accepts a count argument.\n");
-                usage(argv[0]);
+                usage();
             }
         }
         if (!loop_mode && argc >= 3) {
@@ -1069,7 +1069,7 @@ int main(int argc, char *argv[]) {
                 mode = F_WAV;
             } else {
                 fprintf(stderr, "Unknown format: %s\n", fmt);
-                usage(argv[0]);
+                usage();
             }
         } else if (!loop_mode && !isatty(STDOUT_FILENO)) {
             mode = F_STREAM;
@@ -1080,7 +1080,7 @@ int main(int argc, char *argv[]) {
 
     if (!strcmp(cmd, "render")) {
         if (argc != 3) {
-            usage(argv[0]);
+            usage();
         }
         if (!isatty(STDIN_FILENO)) {
             if (render_stream_to_file(argv[2]) != 0) {
@@ -1107,32 +1107,32 @@ int main(int argc, char *argv[]) {
 
     if (!strcmp(cmd, "enter")) {
         if (argc < 6) {
-            usage(argv[0]);
+            usage();
         }
 
         enum waveform_type wave;
         if (parse_waveform(argv[2], &wave) != 0) {
             fprintf(stderr, "Unknown waveform: %s\n", argv[2]);
-            usage(argv[0]);
+            usage();
         }
 
         const char *note = argv[3];
         double freq = 0.0;
         if (note_to_frequency(note, &freq) != 0) {
             fprintf(stderr, "Invalid note: %s\n", note);
-            usage(argv[0]);
+            usage();
         }
 
         long duration_ms = 0;
         if (parse_long(argv[4], &duration_ms, 1, 600000) != 0) {
             fprintf(stderr, "Duration must be a positive number of milliseconds.\n");
-            usage(argv[0]);
+            usage();
         }
 
         long volume = 0;
         if (parse_long(argv[5], &volume, 0, 100) != 0) {
             fprintf(stderr, "Volume must be an integer between 0 and 100.\n");
-            usage(argv[0]);
+            usage();
         }
 
         long channel = 1;
@@ -1177,13 +1177,13 @@ int main(int argc, char *argv[]) {
             sustain_value = sustain_pct;
             if (attack_value + decay_value + sustain_value + release_value != 100) {
                 fprintf(stderr, "ADSR percentages must total 100.\n");
-                usage(argv[0]);
+                usage();
             }
         } else {
             long sum = attack_value + decay_value + release_value;
             if (sum > 100) {
                 fprintf(stderr, "ADSR percentages must total 100.\n");
-                usage(argv[0]);
+                usage();
             }
             sustain_value = 100 - sum;
         }
@@ -1206,7 +1206,7 @@ int main(int argc, char *argv[]) {
                 release_value, 0, &entry.attack_pct, &entry.decay_pct,
                 &entry.sustain_pct, &entry.release_pct) != 0) {
             fprintf(stderr, "ADSR percentages must total 100.\n");
-            usage(argv[0]);
+            usage();
         }
         entry.lowpass_hz = lowpass_hz;
         entry.highpass_hz = highpass_hz;
@@ -1240,5 +1240,5 @@ int main(int argc, char *argv[]) {
     }
 
     fprintf(stderr, "Unknown command: %s\n", cmd);
-    usage(argv[0]);
+    usage();
 }

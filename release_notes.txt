@@ -1,13 +1,11 @@
-
-
 =============================== RELEASE NOTES ===============================
 
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.8
-  Release commit number:   1465
-  Baseline release:        v0.9.66
+  Release tag:             v0.9.84
+  Release commit number:   1534
+  Baseline release:        v0.9.83
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -28,9 +26,12 @@
 
  How to Install & Run?
 
-  1. Run ./setup.sh to install all dependencies required to run BUDOSTACK.
+  1. Run ./setup_debian.sh on Debian/Ubuntu or ./setup_termux.sh on Termux
+     to install dependencies required to run BUDOSTACK.
 
-  2. Run ./start.sh to start the built-in terminal with CRT simulation.
+  2. Run ./start.sh. Debian/Ubuntu starts the built-in terminal with CRT
+     simulation when available; Termux starts './budostack' directly because
+     apps/terminal is not built there.
 
   3. Modify the BUDOSTACK.desktop to create a desktop shortcut.
 
@@ -41,19 +42,27 @@
 
                            - SYSTEM REQUIREMENTS -
 
- Operating System: Debian Linux
+ Operating System: Debian Linux or Termux on Android
 
  Hardware Requirements:
 
   - Minimum CPU Intel CORE i5
   - GPU with OpenGL support
 
- Tested distributions:
+ Tested distributions/environments:
 
   - Ubuntu
   - Kubuntu
+  - Termux
 
- Note! BUDOSTACK is intended to be ran with the apps/terminal application.
+ Build targets:
+
+  - make all     : Auto-detect Debian/Termux profile.
+  - make debian  : Build Debian profile.
+  - make termux  : Build Termux profile without apps/terminal.
+
+ Note! On Debian, BUDOSTACK is intended to be ran with the apps/terminal
+ application. On Termux, use './budostack' directly or './start.sh'.
 
 -----------------------------------------------------------------------------
 
@@ -78,8 +87,8 @@
 
  /* User Directories */
 
-  Folders reserved for user content, excluded from the build process triggered
-  by 'restart' and makefile.
+  Folders reserved for user content. They are excluded from the build process
+  triggered by 'restart' and makefile.
 
   ./budo/        - Folder containing budo* libraries for SDL based content
                    creation from applications to games. Examples included.
@@ -98,7 +107,8 @@
   ./documents/    - Documents provided by BUDOSTACK.
   ./fonts/        - Built-in .ttf and .psf system fonts
   ./games/        - Built-in games. Think of the as our 'minesweepers'.
-  ./lib/          - Shared system libraries used by applications and utilities.
+  ./lib/          - Shared system libraries used by applications
+                   and utilities.
   ./screenshots/  - Contains the advertisement screenshots.
   ./budo/shaders/ - Shaders used for CRT simulation used in apps/terminal.
   ./sounds/       - Collection of system sounds.
@@ -121,6 +131,8 @@
   do       : Copy, move, or delete files and folders with prompts.
   drives   : Lists all found drives.
   find     : Find anything.
+  floppy-  : 'floppycheck ./file or ./folder/' estimates how many
+   check     standard floppy disks the given content will take.
   gitter   : Professional git helper for your daily development activities.
   help     : Display this help message.
   hw       : Learn your hardware specs just by typing 'hw'.
@@ -197,24 +209,21 @@
  folder and all the commands contain help when executed without arguments.
 
  Example TASK applications are located in ./tasks/ -folder.
-
-
- /* BUDOSTACK Developer Tools */
-
-  compile              : Build a standalone binary from a TASK script.
-                         Type 'compile -help'.
-  floppycheck          : 'floppycheck ./file or ./folder/' estimates how many
-                         standard floppy disks the given content will take.
+ 
 
  /* TASK Commands from ./commands/ */
 
-  _BAR                 : Draw a titled progress bar (0-100%) at cursor or -x/-y.
+  _BAR                 : Draw a titled progress bar (0-100%) at cursor
+                         or -x/-y.
   _BEEP                : Play a tone with note and duration in milliseconds.
   _CALC                : Evaluate a math expression and print the result.
-  _CLEAR               : Clear the terminal screen using ANSI escape sequences.
+  _CLEAR               : Clear the terminal screen using ANSI
+                         escape sequences.
   _CONFIG              : Read or write key-value settings in config.ini.
-  _CSVFILTER           : Filter semicolon-separated CSV rows with comparisons.
-  _CSVSTATS            : Compute count/sum/mean/min/max/variance/stddev from CSV.
+  _CSVFILTER           : Filter semicolon-separated CSV rows
+                         with comparisons.
+  _CSVSTATS            : Compute count/sum/mean/min/max/variance/stddev
+                         from CSV.
   _DICE                : Roll D&D dice notation like 2d20 and print total.
   _DISPLAY             : Draw PNG/BMP image at text grid position -x/-y.
   _EXE                 : Run app/utility and render output at -x/-y offset.
@@ -224,24 +233,34 @@
   _GETWIDTH            : Print terminal width in columns.
   _HELLO               : Print hello world test line.
   _IMAGE               : Draw PNG/BMP image at text grid position -x/-y.
-  _KEYS                : Wait for key input and print mapped numeric key code.
+  _KEYS                : Wait for key input and print mapped
+                         numeric key code.
   _LIST                : List directory entries as TASK array literal.
-  _RECT                : Draw a filled or outlined rectangle using color index.
+  _RAND                : Print random integer in range [min,max].
+                         Default 0-100.
+  _RECT                : Draw a filled or outlined rectangle
+                         using color index.
   _RETROPROFILE        : List/show/apply/reset retro color profiles.
-  _TERM_CLEAN          : Clear pixel rectangle area from terminal render layer.
+  _TERM_CLEAN          : Clear pixel rectangle area from terminal
+                         render layer.
   _TERM_CURSOR_BLINK   : Enable or disable blinking cursor in terminal.
+  _TERM_ACTIVE         : Print 1 in apps/terminal, else 0.
   _TERM_KEYBOARD       : Read buffered key events as TASK array literal.
   _TERM_MARGIN         : Set terminal pixel render margin.
   _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
   _TERM_MOUSE_SHOW     : Show or hide terminal mouse cursor.
+  _TERM_PIXEL          : Queue accelerated terminal framebuffer pixels.
+  _TERM_RECT           : Queue accelerated filled terminal framebuffer rectangles.
   _TERM_RENDER         : Trigger full render or render selected layer.
   _TERM_RESOLUTION     : Set pixel resolution (LOW/HIGH or width/height).
   _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
   _TERM_SHADER         : Enable or disable terminal shader.
-  _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32) volume 0-100.
+  _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32)
+                         volume 0-100.
   _TERM_SOUND_STOP     : Stop audio playback on selected channel (1-32).
-  _TERM_SPRITE         : Draw sprite from file/literal/base64 on chosen layer.
-  _TERM_SPRITE_LOAD    : Load sprite and output reusable TASK sprite literal.
+  _TERM_SPRITE         : Draw sprite from file/literal/base64; TASK RUN is accelerated.
+                         on chosen layer.
+  _TERM_SPRITE_LOAD    : Load reusable TASK sprite literal; TASK capture is accelerated.
   _TERM_TEXT           : Draw UTF-8 text in pixel space with color and layer.
   _TERM_TYPING_SOUND   : Enable or disable keyboard typing sound effects.
   _TEST                : Print terminal diagnostic grid and size info.
@@ -255,7 +274,8 @@
  /* BUDOSTACK Example TASK Programs */
 
   audiodemo.task       : Collection of in-built sound capabilities
-  autoexec.task        : Determines what happens before BUDOSTACK login screen
+  autoexec.task        : Determines what happens before
+                         BUDOSTACK login screen
   codedemo.task        : Coding basics: for, while, arrays, functions, etc.
   csvdemo.task         : Dynamic .csv file manipulation demo
   demo.task            : Demonstration of _TERM* command set.
@@ -272,54 +292,166 @@
 
 ================================= CHANGE LOG ================================
 
-commit 8c29592b41372b8c72c1c703e4610d4d795dc265
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 22:22:25 2026 +0300
+commit 0fe384c66c5c706f30a847f6d9358a0e8bf98dd0
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 22:45:27 2026 +0300
 
-    new default setting
+    changed to correct folder
 
-users/.retroprofile
+documents/dict_linux.txt
 
-commit 1999e39bcafa4e84e6bb0d5a75b3d6f011c49b88
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 22:21:59 2026 +0300
+commit 637c9d1d7f6a3e80272f6a884bcdf5f60d68e219
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 22:44:47 2026 +0300
 
-    removed unnecessary stuff
+    update floppycheck
 
 documents/help.txt
 
-commit c73d372c9f97d944f6cfc580c6db9a2136645723
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 22:19:45 2026 +0300
-
-    new default settings
-
-config.ini
-
-commit 2efb7b80a62a64b8801dc68e3d4e2821f28d0287
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 21:59:59 2026 +0300
-
-    added help.txt instructions
-
-commands/readme.md
-
-commit ba00da296a36c1f7fc9142459cc19a3de6b084e3
+commit 9c7e80d300c001abcefe7164c988ec3f2db549d2
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 21:56:23 2026 +0300
+Date:   Mon May 25 22:40:57 2026 +0300
 
-    docs(help): expand TASK LANGUAGE command reference
+    Remove compile utility and clean help documentation
 
 documents/help.txt
+utilities/compile.c
 
-commit 3d48d7dddb69e799277645819356991ef34144c7
+commit 4637b4ef9e3a921281603e675ab05260056770b1
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Thu May 14 21:48:27 2026 +0300
+Date:   Mon May 25 22:34:25 2026 +0300
 
-    Remove espeak voice-assist integration
+    Fix compiled TASK runtime path and demo script typo
+
+tasks/demo.task
+utilities/compile.c
+
+commit 7058ae8c73e552a7d9847abec7008343d0e72022
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 21:49:23 2026 +0300
+
+    Revert "Add _SCRAPE command for raw HTTP GET scraping"
+    
+    This reverts commit f9838751764996760f4b203c68324b2a401c3a04.
+
+commands/_SCRAPE.c
+
+commit e6bdfa6ce0ef24f6c695bfe9a6cc6b1921013909
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 21:49:05 2026 +0300
+
+    Revert "Add HTTPS support to _SCRAPE via optional OpenSSL"
+    
+    This reverts commit 7cfbe3895d6bf7fc6eb3c4ed08b507e74a65bd91.
+
+commands/_SCRAPE.c
+makefile
+
+commit 7cfbe3895d6bf7fc6eb3c4ed08b507e74a65bd91
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 21:34:30 2026 +0300
+
+    Add HTTPS support to _SCRAPE via optional OpenSSL
+
+commands/_SCRAPE.c
+makefile
+
+commit f9838751764996760f4b203c68324b2a401c3a04
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 18:09:47 2026 +0300
+
+    Add _SCRAPE command for raw HTTP GET scraping
+
+commands/_SCRAPE.c
+
+commit a242c14c6addfc69f9cfa98f2ba9dfeef5d93740
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 18:01:45 2026 +0300
+
+    docs: wrap help text to 77 chars and add _RAND command
 
 documents/help.txt
-lib/libconsole.c
-main.c
-release_notes.txt
-setup.sh
+
+commit 54888aee4d19d6f85d4cfffc17b90dd21e19e72a
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 17:56:11 2026 +0300
+
+    removed to noise section
+
+tasks/autoexec.task
+
+commit e752df2b2273512a0a84bf0b3228474fa657c32b
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 17:49:55 2026 +0300
+
+    Add _RAND command and C64 loading noise intro effect
+
+commands/_RAND.c
+commands/manual.md
+tasks/autoexec.task
+
+commit e11804435d852a180cf3e5dbba9e33d45a9a5caf
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 17:44:28 2026 +0300
+
+    updated
+
+tasks/autoexec.task
+
+commit 2bea38ee7cea111998b8eb44f999d46637c61d9f
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Mon May 25 17:35:08 2026 +0300
+
+    intro applies only to in-built terminal
+
+tasks/autoexec.task
+
+commit c1489fed225ff3a68ffb5164ef44c1ca04a12737
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 17:23:50 2026 +0300
+
+    Fix TERM empty-check literal in terminal spawn
+
+apps/terminal.c
+
+commit a2de1cef171fb68c9cfba21cd3991ac1775635ce
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 14:47:48 2026 +0300
+
+    Change _TERM_ACTIVE to numeric output
+
+apps/terminal.c
+commands/_TERM_ACTIVE.c
+commands/manual.md
+documents/help.txt
+tasks/autoexec.task
+
+commit 7a900ae5a3201a5eb2619c86efbcc0fad942df41
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 23:25:22 2026 +0300
+
+    new intro
+
+icon_logo.png
+tasks/autoexec.task
+
+commit e511e1bfea8ffde361ddd191a76c110151061b54
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 22:52:43 2026 +0300
+
+    newlogin
+
+sounds/561996__neopolitansixth__chipsound-logo-jingle.wav
+sounds/564237__breviceps__retro-audio-logo.wav
+sounds/credits.txt
+sounds/static_orchard.mp3
+tasks/assets/login_logo.png
+tasks/autoexec.task
+
+commit ae80147f0db8640eefc3f0de707adfeb2fea4f54
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Sun May 24 21:34:15 2026 +0300
+
+    improved
+
+tasks/assets/login_logo.png

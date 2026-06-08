@@ -11,6 +11,22 @@ LDFLAGS = -lm -pthread
 # line, e.g. `make BUILD_DIRS="commands utilities"`, to limit the build.
 BUILD_DIRS ?= commands apps games utilities
 
+# Platform selection. Use `make debian` or `make termux` to force a target
+# platform, or leave BUDOSTACK_PLATFORM=auto to detect Termux from the
+# environment. Termux does not build apps/terminal because SDL/OpenGL terminal
+# support is not available there in the same form as a Debian desktop.
+BUDOSTACK_PLATFORM ?= auto
+DETECTED_TERMUX = $(shell if [ -n "$$TERMUX_VERSION" ] || [ "$$PREFIX" = "/data/data/com.termux/files/usr" ] || printf '%s' "$$PREFIX" | grep -q '/com.termux/'; then printf '1'; else printf '0'; fi)
+ifeq ($(BUDOSTACK_PLATFORM),auto)
+ifeq ($(DETECTED_TERMUX),1)
+EFFECTIVE_PLATFORM = termux
+else
+EFFECTIVE_PLATFORM = debian
+endif
+else
+EFFECTIVE_PLATFORM = $(BUDOSTACK_PLATFORM)
+endif
+
 # --------------------------------------------------------------------
 # Optional dependency detection
 # --------------------------------------------------------------------
@@ -39,6 +55,10 @@ SDL2_CFLAGS = $(shell pkg-config --cflags sdl2 2>/dev/null)
 SDL2_LIBS = $(shell pkg-config --libs sdl2 2>/dev/null)
 SDL2_ENABLED = 1
 
+ifeq ($(EFFECTIVE_PLATFORM),termux)
+SDL2_ENABLED = 0
+endif
+
 ifeq ($(strip $(SDL2_LIBS)),)
 SDL2_CFLAGS = $(shell sdl2-config --cflags 2>/dev/null)
 SDL2_LIBS = $(shell sdl2-config --libs 2>/dev/null)
@@ -63,12 +83,14 @@ SDL2_GL_LIBS = -lGL
 endif
 endif
 
+ifneq ($(EFFECTIVE_PLATFORM),termux)
 ifeq ($(strip $(SDL2_LIBS)),)
 SDL2_ENABLED = 0
 endif
 
 ifeq ($(strip $(SDL2_GL_LIBS)),)
 SDL2_ENABLED = 0
+endif
 endif
 
 ifeq ($(SDL2_ENABLED),1)
@@ -127,15 +149,24 @@ ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_
 BUDO_SRCS = $(shell find ./budo -type f \( -name '*.c' -o -name '*.h' \))
 BUDO_BUILD_STAMP = ./budo/.budo_build_stamp
 
-.PHONY: all clean budo_build
+.PHONY: all clean budo_build debian termux print-platform
 
 all: budo_build $(ALL_TARGETS)
+
+debian:
+	$(MAKE) BUDOSTACK_PLATFORM=debian all
+
+termux:
+	$(MAKE) BUDOSTACK_PLATFORM=termux all
+
+print-platform:
+	@echo $(EFFECTIVE_PLATFORM)
 
 budo_build: $(BUDO_BUILD_STAMP)
 
 $(BUDO_BUILD_STAMP): $(BUDO_SRCS) ./budo/build.sh
 	@echo "Running ./budo/build.sh..."
-	@./budo/build.sh || echo "Warning: ./budo/build.sh failed."
+	@./budo/build.sh
 	@touch $(BUDO_BUILD_STAMP)
 
 # Build the main executable from non-command sources and link with lib objects
@@ -156,6 +187,7 @@ $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS
 # Clean: remove all executables and all .o files recursively.
 clean:
 	rm -f $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
+	rm -f ./apps/terminal
 	rm -f ./budo/example ./budo/rocket $(BUDO_BUILD_STAMP)
 	@echo "Removing all .o files..."
 	$(shell find . -type f -name '*.o' -delete)

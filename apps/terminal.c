@@ -71,6 +71,7 @@
 #define TERMINAL_SHADER_TARGET_FPS 60u
 #endif
 #define TERMINAL_MAX_TARGET_FPS 1000u
+#define TERMINAL_TAB_COUNT 5u
 
 #define TERMINAL_CURSOR_SPRITE_PATH "./tasks/assets/cursor.png"
 
@@ -426,6 +427,7 @@ static int terminal_custom_pixels_clear_rect(int origin_x, int origin_y, int wid
 static void terminal_custom_pixels_apply(uint8_t *framebuffer, int width, int height);
 static int terminal_custom_pixels_reserve(size_t additional);
 static int terminal_custom_pixels_draw_sprite(int origin_x, int origin_y, const uint8_t *rgba, int width, int height, uint8_t layer);
+static int terminal_custom_pixels_draw_rect(int origin_x, int origin_y, int width, int height, uint8_t r, uint8_t g, uint8_t b, uint8_t layer);
 static uint16_t terminal_custom_layer_mask(uint8_t layer);
 static void terminal_custom_pixels_mark_pending(uint8_t layer);
 static int terminal_custom_pixels_apply_pending_clears(uint8_t layer);
@@ -2083,6 +2085,49 @@ static int terminal_custom_pixels_set(int x, int y, uint8_t r, uint8_t g, uint8_
     entry->layer = layer;
     entry->version = terminal_custom_layer_versions[layer];
     terminal_custom_pixels_mark_pending(layer);
+    return 0;
+}
+
+static int terminal_custom_pixels_draw_rect(int origin_x, int origin_y, int width, int height, uint8_t r, uint8_t g, uint8_t b, uint8_t layer) {
+    if (width <= 0 || height <= 0) {
+        return -1;
+    }
+    if (origin_x < 0 || origin_y < 0) {
+        return -1;
+    }
+    if (layer < 1u || layer > 16u) {
+        return -1;
+    }
+    if (width > INT_MAX - origin_x || height > INT_MAX - origin_y) {
+        return -1;
+    }
+
+    size_t width_sz = (size_t)width;
+    size_t height_sz = (size_t)height;
+    if (width_sz != 0u && height_sz > SIZE_MAX / width_sz) {
+        return -1;
+    }
+
+    size_t pixel_count = width_sz * height_sz;
+    if (terminal_custom_pixels_reserve(pixel_count) != 0) {
+        return -1;
+    }
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            struct terminal_custom_pixel *entry = &terminal_custom_pixels[terminal_custom_pixel_count++];
+            entry->x = origin_x + x;
+            entry->y = origin_y + y;
+            entry->r = r;
+            entry->g = g;
+            entry->b = b;
+            entry->layer = layer;
+            entry->version = terminal_custom_layer_versions[layer];
+        }
+    }
+
+    terminal_custom_pixels_mark_pending(layer);
+    terminal_custom_pixels_active = 1;
     return 0;
 }
 
@@ -5604,7 +5649,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 TERMINAL_PIXEL_ACTION_NONE = 0,
                 TERMINAL_PIXEL_ACTION_DRAW = 1,
                 TERMINAL_PIXEL_ACTION_CLEAR = 2,
-                TERMINAL_PIXEL_ACTION_RENDER = 3
+                TERMINAL_PIXEL_ACTION_RENDER = 3,
+                TERMINAL_PIXEL_ACTION_RECT = 4
             };
             enum terminal_pixel_action pixel_action = TERMINAL_PIXEL_ACTION_NONE;
             enum terminal_sprite_action {
@@ -5623,6 +5669,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
             long pixel_r = -1;
             long pixel_g = -1;
             long pixel_b = -1;
+            long pixel_w = -1;
+            long pixel_h = -1;
             long pixel_layer = 0;
             long sprite_x = -1;
             long sprite_y = -1;
@@ -5751,6 +5799,8 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             pixel_action = TERMINAL_PIXEL_ACTION_CLEAR;
                         } else if (strcmp(value, "render") == 0) {
                             pixel_action = TERMINAL_PIXEL_ACTION_RENDER;
+                        } else if (strcmp(value, "rect") == 0) {
+                            pixel_action = TERMINAL_PIXEL_ACTION_RECT;
                         }
                     } else if (strcmp(key, "pixel_x") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -5786,6 +5836,20 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         long parsed = strtol(value, &endptr, 10);
                         if (errno == 0 && endptr && *endptr == '\0') {
                             pixel_b = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_w") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            pixel_w = parsed;
+                        }
+                    } else if (strcmp(key, "pixel_h") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0') {
+                            pixel_h = parsed;
                         }
                     } else if (strcmp(key, "pixel_layer") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
@@ -6046,11 +6110,28 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                                                    (uint8_t)pixel_r,
                                                    (uint8_t)pixel_g,
                                                    (uint8_t)pixel_b,
-                                                   1u) != 0) {
+                                                   (uint8_t)((pixel_layer >= 1 && pixel_layer <= 16) ? pixel_layer : 1)) != 0) {
                         fprintf(stderr, "terminal: Failed to draw custom pixel.\n");
                     }
                 } else {
                     fprintf(stderr, "terminal: Invalid pixel draw parameters.\n");
+                }
+            } else if (pixel_action == TERMINAL_PIXEL_ACTION_RECT) {
+                if (pixel_x >= 0 && pixel_y >= 0 && pixel_x <= INT_MAX && pixel_y <= INT_MAX &&
+                    pixel_w > 0 && pixel_h > 0 && pixel_w <= INT_MAX && pixel_h <= INT_MAX &&
+                    pixel_r >= 0 && pixel_r <= 255 && pixel_g >= 0 && pixel_g <= 255 && pixel_b >= 0 && pixel_b <= 255) {
+                    if (terminal_custom_pixels_draw_rect((int)pixel_x,
+                                                         (int)pixel_y,
+                                                         (int)pixel_w,
+                                                         (int)pixel_h,
+                                                         (uint8_t)pixel_r,
+                                                         (uint8_t)pixel_g,
+                                                         (uint8_t)pixel_b,
+                                                         (uint8_t)((pixel_layer >= 1 && pixel_layer <= 16) ? pixel_layer : 1)) != 0) {
+                        fprintf(stderr, "terminal: Failed to draw custom rectangle.\n");
+                    }
+                } else {
+                    fprintf(stderr, "terminal: Invalid pixel rectangle parameters.\n");
                 }
             } else if (pixel_action == TERMINAL_PIXEL_ACTION_CLEAR) {
                 terminal_custom_pixels_clear();
@@ -7109,6 +7190,8 @@ static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
             setenv("TERM", "xterm-256color", 1);
         }
 
+        setenv("BUDOSTACK_TERM_ACTIVE", "TRUE", 1);
+
         execl(exe_path, exe_path, (char *)NULL);
         perror("execl");
         _exit(EXIT_FAILURE);
@@ -7413,30 +7496,57 @@ int main(int argc, char **argv) {
     int drawable_width = 0;
     int drawable_height = 0;
 
-    int master_fd = -1;
-    pid_t child_pid = spawn_budostack(budostack_path, &master_fd);
-    if (child_pid < 0) {
-        free_font(&terminal_font);
-        free(shader_paths);
-        terminal_free_requested_shaders();
-        return EXIT_FAILURE;
+    int master_fds[TERMINAL_TAB_COUNT];
+    pid_t child_pids[TERMINAL_TAB_COUNT];
+    struct terminal_buffer tab_buffers[TERMINAL_TAB_COUNT];
+    struct terminal_buffer tab_alternate_buffers[TERMINAL_TAB_COUNT];
+    struct ansi_parser tab_parsers[TERMINAL_TAB_COUNT];
+    int tab_using_alternate[TERMINAL_TAB_COUNT];
+    int tab_alternate_initialized[TERMINAL_TAB_COUNT];
+    size_t active_tab_index = 0u;
+    for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) {
+        master_fds[tab_i] = -1;
+        child_pids[tab_i] = -1;
+        tab_using_alternate[tab_i] = 0;
+        tab_alternate_initialized[tab_i] = 0;
+        memset(&tab_buffers[tab_i], 0, sizeof(tab_buffers[tab_i]));
+        memset(&tab_alternate_buffers[tab_i], 0, sizeof(tab_alternate_buffers[tab_i]));
     }
 
-    if (fcntl(master_fd, F_SETFL, O_NONBLOCK) < 0) {
-        perror("fcntl");
-        kill(child_pid, SIGKILL);
-        free_font(&terminal_font);
-        close(master_fd);
-        free(shader_paths);
-        terminal_free_requested_shaders();
-        return EXIT_FAILURE;
+    for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) {
+        child_pids[tab_i] = spawn_budostack(budostack_path, &master_fds[tab_i]);
+        if (child_pids[tab_i] < 0) {
+            for (size_t cleanup_i = 0u; cleanup_i < tab_i; cleanup_i++) {
+                kill(child_pids[cleanup_i], SIGKILL);
+                close(master_fds[cleanup_i]);
+            }
+            free_font(&terminal_font);
+            free(shader_paths);
+            terminal_free_requested_shaders();
+            return EXIT_FAILURE;
+        }
+        if (fcntl(master_fds[tab_i], F_SETFL, O_NONBLOCK) < 0) {
+            perror("fcntl");
+            kill(child_pids[tab_i], SIGKILL);
+            close(master_fds[tab_i]);
+            for (size_t cleanup_i = 0u; cleanup_i < tab_i; cleanup_i++) {
+                kill(child_pids[cleanup_i], SIGKILL);
+                close(master_fds[cleanup_i]);
+            }
+            free_font(&terminal_font);
+            free(shader_paths);
+            terminal_free_requested_shaders();
+            return EXIT_FAILURE;
+        }
     }
+    int master_fd = master_fds[active_tab_index];
+    pid_t child_pid = child_pids[active_tab_index];
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) != 0) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-        kill(child_pid, SIGKILL);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (child_pids[tab_i] > 0) { kill(child_pids[tab_i], SIGKILL); } }
         free_font(&terminal_font);
-        close(master_fd);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
         free(shader_paths);
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
@@ -7472,9 +7582,9 @@ int main(int argc, char **argv) {
         terminal_shutdown_audio();
 #endif
         SDL_Quit();
-        kill(child_pid, SIGKILL);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (child_pids[tab_i] > 0) { kill(child_pids[tab_i], SIGKILL); } }
         free_font(&terminal_font);
-        close(master_fd);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
         free(shader_paths);
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
@@ -7487,9 +7597,9 @@ int main(int argc, char **argv) {
         terminal_shutdown_audio();
 #endif
         SDL_Quit();
-        kill(child_pid, SIGKILL);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (child_pids[tab_i] > 0) { kill(child_pids[tab_i], SIGKILL); } }
         free_font(&terminal_font);
-        close(master_fd);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
         free(shader_paths);
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
@@ -7503,9 +7613,9 @@ int main(int argc, char **argv) {
         terminal_shutdown_audio();
 #endif
         SDL_Quit();
-        kill(child_pid, SIGKILL);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (child_pids[tab_i] > 0) { kill(child_pids[tab_i], SIGKILL); } }
         free_font(&terminal_font);
-        close(master_fd);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
         free(shader_paths);
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
@@ -7519,9 +7629,9 @@ int main(int argc, char **argv) {
         terminal_shutdown_audio();
 #endif
         SDL_Quit();
-        kill(child_pid, SIGKILL);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (child_pids[tab_i] > 0) { kill(child_pids[tab_i], SIGKILL); } }
         free_font(&terminal_font);
-        close(master_fd);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
         free(shader_paths);
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
@@ -7536,9 +7646,9 @@ int main(int argc, char **argv) {
         terminal_shutdown_audio();
 #endif
         SDL_Quit();
-        kill(child_pid, SIGKILL);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (child_pids[tab_i] > 0) { kill(child_pids[tab_i], SIGKILL); } }
         free_font(&terminal_font);
-        close(master_fd);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
         free(shader_paths);
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
@@ -7558,10 +7668,10 @@ int main(int argc, char **argv) {
             terminal_shutdown_audio();
 #endif
             SDL_Quit();
-            kill(child_pid, SIGKILL);
+            for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (child_pids[tab_i] > 0) { kill(child_pids[tab_i], SIGKILL); } }
             free_font(&terminal_font);
             free(shader_paths);
-            close(master_fd);
+            for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
             terminal_free_requested_shaders();
             return EXIT_FAILURE;
         }
@@ -7594,9 +7704,9 @@ int main(int argc, char **argv) {
         terminal_shutdown_audio();
 #endif
         SDL_Quit();
-        kill(child_pid, SIGKILL);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (child_pids[tab_i] > 0) { kill(child_pids[tab_i], SIGKILL); } }
         free_font(&terminal_font);
-        close(master_fd);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
@@ -7615,39 +7725,39 @@ int main(int argc, char **argv) {
         terminal_shutdown_audio();
 #endif
         SDL_Quit();
-        kill(child_pid, SIGKILL);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (child_pids[tab_i] > 0) { kill(child_pids[tab_i], SIGKILL); } }
         free_font(&terminal_font);
-        close(master_fd);
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
         terminal_free_requested_shaders();
         return EXIT_FAILURE;
     }
 
-    struct terminal_buffer buffer = {0};
-    terminal_buffer_initialize_palette(&buffer);
-    if (terminal_buffer_init(&buffer, columns, rows) != 0) {
-        fprintf(stderr, "Failed to allocate terminal buffer.\n");
-        terminal_release_gl_resources();
-        SDL_GL_DeleteContext(gl_context);
-        SDL_DestroyWindow(window);
+    for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) {
+        terminal_buffer_initialize_palette(&tab_buffers[tab_i]);
+        if (terminal_buffer_init(&tab_buffers[tab_i], columns, rows) != 0) {
+            fprintf(stderr, "Failed to allocate terminal buffer.\n");
+            terminal_release_gl_resources();
+            SDL_GL_DeleteContext(gl_context);
+            SDL_DestroyWindow(window);
 #if BUDOSTACK_HAVE_SDL2
-        terminal_shutdown_audio();
+            terminal_shutdown_audio();
 #endif
-        SDL_Quit();
-        kill(child_pid, SIGKILL);
-        free_font(&terminal_font);
-        close(master_fd);
-        terminal_free_requested_shaders();
-        return EXIT_FAILURE;
+            SDL_Quit();
+            for (size_t kill_i = 0u; kill_i < TERMINAL_TAB_COUNT; kill_i++) { if (child_pids[kill_i] > 0) { kill(child_pids[kill_i], SIGKILL); } }
+            free_font(&terminal_font);
+            for (size_t close_i = 0u; close_i < TERMINAL_TAB_COUNT; close_i++) { if (master_fds[close_i] >= 0) { close(master_fds[close_i]); } }
+            terminal_free_requested_shaders();
+            return EXIT_FAILURE;
+        }
+        terminal_buffer_initialize_palette(&tab_alternate_buffers[tab_i]);
+        ansi_parser_init(&tab_parsers[tab_i]);
+        update_pty_size(master_fds[tab_i], columns, rows);
     }
-    struct terminal_buffer alternate_buffer = {0};
-    terminal_alternate_buffer_handle = &alternate_buffer;
-    terminal_alternate_initialized = 0;
-    terminal_using_alternate = 0;
-
-    update_pty_size(master_fd, columns, rows);
-
-    struct ansi_parser parser;
-    ansi_parser_init(&parser);
+    struct terminal_buffer *buffer = &tab_buffers[active_tab_index];
+    struct ansi_parser *parser = &tab_parsers[active_tab_index];
+    terminal_alternate_buffer_handle = &tab_alternate_buffers[active_tab_index];
+    terminal_alternate_initialized = tab_alternate_initialized[active_tab_index];
+    terminal_using_alternate = tab_using_alternate[active_tab_index];
 
     SDL_StartTextInput();
 
@@ -7690,9 +7800,10 @@ int main(int argc, char **argv) {
     const Uint32 cursor_blink_interval = TERMINAL_CURSOR_BLINK_INTERVAL;
     Uint32 cursor_last_toggle = SDL_GetTicks();
     int cursor_phase_visible = 1;
+    int suppress_textinput_once = 0;
 
     while (running) {
-        terminal_selection_validate(&buffer);
+        terminal_selection_validate(buffer);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_QUIT) {
@@ -7737,11 +7848,11 @@ int main(int argc, char **argv) {
                     wheel_y = -wheel_y;
                 }
 #endif
-                if (terminal_mouse_reporting_enabled(&buffer)) {
+                if (terminal_mouse_reporting_enabled(buffer)) {
                     int button_code = (wheel_y > 0) ? 64 : 65;
                     size_t top_index = 0u;
-                    terminal_visible_row_range(&buffer, &top_index, NULL);
-                    size_t total_rows = terminal_total_rows(&buffer);
+                    terminal_visible_row_range(buffer, &top_index, NULL);
+                    size_t total_rows = terminal_total_rows(buffer);
                     size_t global_row = 0u;
                     size_t column = 0u;
                     int logical_x = 0;
@@ -7752,21 +7863,21 @@ int main(int argc, char **argv) {
                     if (terminal_window_point_to_framebuffer(mouse_x, mouse_y, &logical_x, &logical_y) == 0 &&
                         terminal_screen_point_to_cell(logical_x,
                                                       logical_y,
-                                                      buffer.columns,
-                                                      buffer.rows,
+                                                      buffer->columns,
+                                                      buffer->rows,
                                                       top_index,
                                                       total_rows,
                                                       &global_row,
                                                       &column,
                                                       1) == 0) {
                         size_t row_in_view = global_row >= top_index ? global_row - top_index : 0u;
-                        if (row_in_view >= buffer.rows && buffer.rows > 0u) {
-                            row_in_view = buffer.rows - 1u;
+                        if (row_in_view >= buffer->rows && buffer->rows > 0u) {
+                            row_in_view = buffer->rows - 1u;
                         }
-                        if (column >= buffer.columns && buffer.columns > 0u) {
-                            column = buffer.columns - 1u;
+                        if (column >= buffer->columns && buffer->columns > 0u) {
+                            column = buffer->columns - 1u;
                         }
-                        terminal_send_mouse_report(&buffer,
+                        terminal_send_mouse_report(buffer,
                                                    button_code,
                                                    0,
                                                    0,
@@ -7776,25 +7887,25 @@ int main(int argc, char **argv) {
                     }
                 } else if (wheel_y > 0) {
                     size_t delta = (size_t)wheel_y;
-                    buffer.scroll_offset += delta;
-                    terminal_buffer_clamp_scroll(&buffer);
+                    buffer->scroll_offset += delta;
+                    terminal_buffer_clamp_scroll(buffer);
                 } else if (wheel_y < 0) {
                     size_t delta = (size_t)(-wheel_y);
-                    if (delta >= buffer.scroll_offset) {
-                        buffer.scroll_offset = 0u;
+                    if (delta >= buffer->scroll_offset) {
+                        buffer->scroll_offset = 0u;
                     } else {
-                        buffer.scroll_offset -= delta;
+                        buffer->scroll_offset -= delta;
                     }
                 }
 #endif
             } else if (event.type == SDL_MOUSEBUTTONDOWN) {
                 terminal_input_draw_requested = 1;
                 terminal_cursor_update_position(event.button.x, event.button.y);
-                int mouse_reporting = terminal_mouse_reporting_enabled(&buffer);
+                int mouse_reporting = terminal_mouse_reporting_enabled(buffer);
                 if (mouse_reporting) {
                     size_t top_index = 0u;
-                    terminal_visible_row_range(&buffer, &top_index, NULL);
-                    size_t total_rows = terminal_total_rows(&buffer);
+                    terminal_visible_row_range(buffer, &top_index, NULL);
+                    size_t total_rows = terminal_total_rows(buffer);
                     size_t global_row = 0u;
                     size_t column = 0u;
                     int logical_x = 0;
@@ -7802,19 +7913,19 @@ int main(int argc, char **argv) {
                     if (terminal_window_point_to_framebuffer(event.button.x, event.button.y, &logical_x, &logical_y) == 0 &&
                         terminal_screen_point_to_cell(logical_x,
                                                       logical_y,
-                                                      buffer.columns,
-                                                      buffer.rows,
+                                                      buffer->columns,
+                                                      buffer->rows,
                                                       top_index,
                                                       total_rows,
                                                       &global_row,
                                                       &column,
                                                       1) == 0) {
                         size_t row_in_view = global_row >= top_index ? global_row - top_index : 0u;
-                        if (row_in_view >= buffer.rows && buffer.rows > 0u) {
-                            row_in_view = buffer.rows - 1u;
+                        if (row_in_view >= buffer->rows && buffer->rows > 0u) {
+                            row_in_view = buffer->rows - 1u;
                         }
-                        if (column >= buffer.columns && buffer.columns > 0u) {
-                            column = buffer.columns - 1u;
+                        if (column >= buffer->columns && buffer->columns > 0u) {
+                            column = buffer->columns - 1u;
                         }
                         int button_code = -1;
                         if (event.button.button == SDL_BUTTON_LEFT) {
@@ -7825,7 +7936,7 @@ int main(int argc, char **argv) {
                             button_code = 2;
                         }
                         if (button_code >= 0) {
-                            terminal_send_mouse_report(&buffer,
+                            terminal_send_mouse_report(buffer,
                                                        button_code,
                                                        0,
                                                        0,
@@ -7837,8 +7948,8 @@ int main(int argc, char **argv) {
                     terminal_selection_clear();
                 } else if (event.button.button == SDL_BUTTON_LEFT) {
                     size_t top_index = 0u;
-                    terminal_visible_row_range(&buffer, &top_index, NULL);
-                    size_t total_rows = terminal_total_rows(&buffer);
+                    terminal_visible_row_range(buffer, &top_index, NULL);
+                    size_t total_rows = terminal_total_rows(buffer);
                     size_t global_row = 0u;
                     size_t column = 0u;
                     int logical_x = 0;
@@ -7846,8 +7957,8 @@ int main(int argc, char **argv) {
                     if (terminal_window_point_to_framebuffer(event.button.x, event.button.y, &logical_x, &logical_y) == 0 &&
                         terminal_screen_point_to_cell(logical_x,
                                                       logical_y,
-                                                      buffer.columns,
-                                                      buffer.rows,
+                                                      buffer->columns,
+                                                      buffer->rows,
                                                       top_index,
                                                       total_rows,
                                                       &global_row,
@@ -7867,10 +7978,10 @@ int main(int argc, char **argv) {
                 }
             } else if (event.type == SDL_MOUSEBUTTONUP) {
                 terminal_input_draw_requested = 1;
-                if (terminal_mouse_reporting_enabled(&buffer)) {
+                if (terminal_mouse_reporting_enabled(buffer)) {
                     size_t top_index = 0u;
-                    terminal_visible_row_range(&buffer, &top_index, NULL);
-                    size_t total_rows = terminal_total_rows(&buffer);
+                    terminal_visible_row_range(buffer, &top_index, NULL);
+                    size_t total_rows = terminal_total_rows(buffer);
                     size_t global_row = 0u;
                     size_t column = 0u;
                     int logical_x = 0;
@@ -7878,19 +7989,19 @@ int main(int argc, char **argv) {
                     if (terminal_window_point_to_framebuffer(event.button.x, event.button.y, &logical_x, &logical_y) == 0 &&
                         terminal_screen_point_to_cell(logical_x,
                                                       logical_y,
-                                                      buffer.columns,
-                                                      buffer.rows,
+                                                      buffer->columns,
+                                                      buffer->rows,
                                                       top_index,
                                                       total_rows,
                                                       &global_row,
                                                       &column,
                                                       1) == 0) {
                         size_t row_in_view = global_row >= top_index ? global_row - top_index : 0u;
-                        if (row_in_view >= buffer.rows && buffer.rows > 0u) {
-                            row_in_view = buffer.rows - 1u;
+                        if (row_in_view >= buffer->rows && buffer->rows > 0u) {
+                            row_in_view = buffer->rows - 1u;
                         }
-                        if (column >= buffer.columns && buffer.columns > 0u) {
-                            column = buffer.columns - 1u;
+                        if (column >= buffer->columns && buffer->columns > 0u) {
+                            column = buffer->columns - 1u;
                         }
                         int button_code = -1;
                         if (event.button.button == SDL_BUTTON_LEFT) {
@@ -7901,7 +8012,7 @@ int main(int argc, char **argv) {
                             button_code = 2;
                         }
                         if (button_code >= 0) {
-                            terminal_send_mouse_report(&buffer,
+                            terminal_send_mouse_report(buffer,
                                                        button_code,
                                                        1,
                                                        0,
@@ -7916,8 +8027,8 @@ int main(int argc, char **argv) {
                 }
             } else if (event.type == SDL_MOUSEMOTION) {
                 terminal_cursor_update_position(event.motion.x, event.motion.y);
-                if (terminal_mouse_reporting_enabled(&buffer) &&
-                    (buffer.mouse_motion_tracking || buffer.mouse_drag_tracking)) {
+                if (terminal_mouse_reporting_enabled(buffer) &&
+                    (buffer->mouse_motion_tracking || buffer->mouse_drag_tracking)) {
                     int send_motion = 0;
                     int button_code = 0;
                     if ((event.motion.state & SDL_BUTTON_LMASK) != 0) {
@@ -7929,14 +8040,14 @@ int main(int argc, char **argv) {
                     } else if ((event.motion.state & SDL_BUTTON_RMASK) != 0) {
                         button_code = 2;
                         send_motion = 1;
-                    } else if (buffer.mouse_motion_tracking) {
+                    } else if (buffer->mouse_motion_tracking) {
                         button_code = 0;
                         send_motion = 1;
                     }
                     if (send_motion) {
                         size_t top_index = 0u;
-                        terminal_visible_row_range(&buffer, &top_index, NULL);
-                        size_t total_rows = terminal_total_rows(&buffer);
+                        terminal_visible_row_range(buffer, &top_index, NULL);
+                        size_t total_rows = terminal_total_rows(buffer);
                         size_t global_row = 0u;
                         size_t column = 0u;
                         int logical_x = 0;
@@ -7944,21 +8055,21 @@ int main(int argc, char **argv) {
                         if (terminal_window_point_to_framebuffer(event.motion.x, event.motion.y, &logical_x, &logical_y) == 0 &&
                             terminal_screen_point_to_cell(logical_x,
                                                           logical_y,
-                                                          buffer.columns,
-                                                          buffer.rows,
+                                                          buffer->columns,
+                                                          buffer->rows,
                                                           top_index,
                                                           total_rows,
                                                           &global_row,
                                                           &column,
                                                           1) == 0) {
                             size_t row_in_view = global_row >= top_index ? global_row - top_index : 0u;
-                            if (row_in_view >= buffer.rows && buffer.rows > 0u) {
-                                row_in_view = buffer.rows - 1u;
+                            if (row_in_view >= buffer->rows && buffer->rows > 0u) {
+                                row_in_view = buffer->rows - 1u;
                             }
-                            if (column >= buffer.columns && buffer.columns > 0u) {
-                                column = buffer.columns - 1u;
+                            if (column >= buffer->columns && buffer->columns > 0u) {
+                                column = buffer->columns - 1u;
                             }
-                            terminal_send_mouse_report(&buffer,
+                            terminal_send_mouse_report(buffer,
                                                        button_code,
                                                        0,
                                                        1,
@@ -7972,8 +8083,8 @@ int main(int argc, char **argv) {
                         terminal_selection_dragging = 0;
                     } else {
                         size_t top_index = 0u;
-                        terminal_visible_row_range(&buffer, &top_index, NULL);
-                        size_t total_rows = terminal_total_rows(&buffer);
+                        terminal_visible_row_range(buffer, &top_index, NULL);
+                        size_t total_rows = terminal_total_rows(buffer);
                         size_t global_row = 0u;
                         size_t column = 0u;
                         int logical_x = 0;
@@ -7981,8 +8092,8 @@ int main(int argc, char **argv) {
                         if (terminal_window_point_to_framebuffer(event.motion.x, event.motion.y, &logical_x, &logical_y) == 0 &&
                             terminal_screen_point_to_cell(logical_x,
                                                           logical_y,
-                                                          buffer.columns,
-                                                          buffer.rows,
+                                                          buffer->columns,
+                                                          buffer->rows,
                                                           top_index,
                                                           total_rows,
                                                           &global_row,
@@ -8004,21 +8115,44 @@ int main(int argc, char **argv) {
                 int handled = 0;
                 unsigned char ch = 0u;
 
+                if ((mod & KMOD_ALT) != 0 && (mod & KMOD_CTRL) == 0 &&
+                    (mod & KMOD_GUI) == 0 && sym >= SDLK_1 && sym <= SDLK_5) {
+                    size_t next_tab_index = (size_t)(sym - SDLK_1);
+                    if (next_tab_index < TERMINAL_TAB_COUNT && next_tab_index != active_tab_index) {
+                        tab_alternate_initialized[active_tab_index] = terminal_alternate_initialized;
+                        tab_using_alternate[active_tab_index] = terminal_using_alternate;
+                        active_tab_index = next_tab_index;
+                        master_fd = master_fds[active_tab_index];
+                        child_pid = child_pids[active_tab_index];
+                        buffer = &tab_buffers[active_tab_index];
+                        parser = &tab_parsers[active_tab_index];
+                        terminal_master_fd_handle = master_fd;
+                        terminal_alternate_buffer_handle = &tab_alternate_buffers[active_tab_index];
+                        terminal_alternate_initialized = tab_alternate_initialized[active_tab_index];
+                        terminal_using_alternate = tab_using_alternate[active_tab_index];
+                        terminal_selection_clear();
+                        terminal_force_full_redraw = 1;
+                        terminal_background_dirty = 1;
+                    }
+                    suppress_textinput_once = 1;
+                    continue;
+                }
+
                 int clipboard_handled = 0;
                 if ((mod & KMOD_CTRL) != 0 && (mod & KMOD_ALT) == 0 && (mod & KMOD_GUI) == 0) {
                     if (sym == SDLK_c) {
-                        if (terminal_copy_selection_to_clipboard(&buffer)) {
+                        if (terminal_copy_selection_to_clipboard(buffer)) {
                             clipboard_handled = 1;
                         }
                     }
                     if ((mod & KMOD_SHIFT) != 0 && sym == SDLK_v) {
-                        if (terminal_paste_from_clipboard(&buffer, master_fd) == 0) {
+                        if (terminal_paste_from_clipboard(buffer, master_fd) == 0) {
                             clipboard_handled = 1;
                         }
                     }
                 }
                 if ((mod & KMOD_SHIFT) != 0 && sym == SDLK_INSERT) {
-                    if (terminal_paste_from_clipboard(&buffer, master_fd) == 0) {
+                    if (terminal_paste_from_clipboard(buffer, master_fd) == 0) {
                         clipboard_handled = 1;
                     }
                 }
@@ -8064,7 +8198,7 @@ int main(int argc, char **argv) {
                 case SDLK_RETURN:
                 case SDLK_KP_ENTER: {
                     unsigned int modifier = terminal_modifier_param(mod);
-                    if (sym == SDLK_KP_ENTER && buffer.app_keypad && modifier == 1u) {
+                    if (sym == SDLK_KP_ENTER && buffer->app_keypad && modifier == 1u) {
                         if (terminal_send_ss3_final(master_fd, mod, 'M') < 0) {
                             running = 0;
                         }
@@ -8121,7 +8255,7 @@ int main(int argc, char **argv) {
                     handled = 1;
                     break;
                 case SDLK_UP:
-                    if ((buffer.app_cursor != 0) ?
+                    if ((buffer->app_cursor != 0) ?
                         (terminal_send_ss3_final(master_fd, mod, 'A') < 0) :
                         (terminal_send_csi_final(master_fd, mod, 'A') < 0)) {
                         running = 0;
@@ -8129,7 +8263,7 @@ int main(int argc, char **argv) {
                     handled = 1;
                     break;
                 case SDLK_DOWN:
-                    if ((buffer.app_cursor != 0) ?
+                    if ((buffer->app_cursor != 0) ?
                         (terminal_send_ss3_final(master_fd, mod, 'B') < 0) :
                         (terminal_send_csi_final(master_fd, mod, 'B') < 0)) {
                         running = 0;
@@ -8137,7 +8271,7 @@ int main(int argc, char **argv) {
                     handled = 1;
                     break;
                 case SDLK_RIGHT:
-                    if ((buffer.app_cursor != 0) ?
+                    if ((buffer->app_cursor != 0) ?
                         (terminal_send_ss3_final(master_fd, mod, 'C') < 0) :
                         (terminal_send_csi_final(master_fd, mod, 'C') < 0)) {
                         running = 0;
@@ -8145,7 +8279,7 @@ int main(int argc, char **argv) {
                     handled = 1;
                     break;
                 case SDLK_LEFT:
-                    if ((buffer.app_cursor != 0) ?
+                    if ((buffer->app_cursor != 0) ?
                         (terminal_send_ss3_final(master_fd, mod, 'D') < 0) :
                         (terminal_send_csi_final(master_fd, mod, 'D') < 0)) {
                         running = 0;
@@ -8347,7 +8481,7 @@ int main(int argc, char **argv) {
                 case SDLK_KP_MINUS:
                 case SDLK_KP_MULTIPLY:
                 case SDLK_KP_DIVIDE:
-                    if (buffer.app_keypad) {
+                    if (buffer->app_keypad) {
                         char final_char = 0;
                         switch (sym) {
                         case SDLK_KP_0: final_char = 'p'; break;
@@ -8386,6 +8520,10 @@ int main(int argc, char **argv) {
                     continue;
                 }
             } else if (event.type == SDL_TEXTINPUT) {
+                if (suppress_textinput_once) {
+                    suppress_textinput_once = 0;
+                    continue;
+                }
                 terminal_input_draw_requested = 1;
                 const char *text = event.text.text;
                 size_t len = strlen(text);
@@ -8411,10 +8549,10 @@ int main(int argc, char **argv) {
 
         ssize_t bytes_read;
         do {
-            bytes_read = read(master_fd, input_buffer, sizeof(input_buffer));
+            bytes_read = read(master_fds[active_tab_index], input_buffer, sizeof(input_buffer));
             if (bytes_read > 0) {
                 for (ssize_t i = 0; i < bytes_read; i++) {
-                    ansi_parser_feed(&parser, &buffer, input_buffer[i]);
+                    ansi_parser_feed(parser, buffer, input_buffer[i]);
                 }
                 cursor_phase_visible = 1;
                 cursor_last_toggle = SDL_GetTicks();
@@ -8424,7 +8562,7 @@ int main(int argc, char **argv) {
             }
         } while (bytes_read > 0);
 
-        pid_t wait_result = waitpid(child_pid, &status, WNOHANG);
+        pid_t wait_result = waitpid(child_pids[active_tab_index], &status, WNOHANG);
         if (wait_result == child_pid) {
             child_exited = 1;
         }
@@ -8442,20 +8580,20 @@ int main(int argc, char **argv) {
             cursor_last_toggle = now;
             cursor_phase_visible = cursor_phase_visible ? 0 : 1;
         }
-        size_t clamped_scroll_offset = terminal_clamped_scroll_offset(&buffer);
+        size_t clamped_scroll_offset = terminal_clamped_scroll_offset(buffer);
         size_t top_index = 0u;
         size_t bottom_index = 0u;
-        terminal_visible_row_range(&buffer, &top_index, &bottom_index);
+        terminal_visible_row_range(buffer, &top_index, &bottom_index);
 
-        size_t cursor_global_index = buffer.history_rows + buffer.cursor_row;
+        size_t cursor_global_index = buffer->history_rows + buffer->cursor_row;
         int cursor_render_visible = (clamped_scroll_offset == 0u) &&
-                                    buffer.cursor_visible &&
+                                    buffer->cursor_visible &&
                                     cursor_phase_visible &&
                                     terminal_cursor_blink_enabled;
 
         size_t selection_start = 0u;
         size_t selection_end = 0u;
-        int selection_has_range = terminal_selection_linear_range(&buffer, &selection_start, &selection_end);
+        int selection_has_range = terminal_selection_linear_range(buffer, &selection_start, &selection_end);
 
         uint8_t *framebuffer = terminal_framebuffer_pixels;
         int frame_width = terminal_framebuffer_width;
@@ -8467,7 +8605,7 @@ int main(int argc, char **argv) {
             break;
         }
 
-        if (terminal_ensure_render_cache(buffer.columns, buffer.rows) != 0) {
+        if (terminal_ensure_render_cache(buffer->columns, buffer->rows) != 0) {
             fprintf(stderr, "Failed to prepare terminal render cache.\n");
             running = 0;
             break;
@@ -8491,7 +8629,7 @@ int main(int argc, char **argv) {
         }
 
         if (terminal_background_dirty) {
-            uint32_t margin_color_value = buffer.default_bg;
+            uint32_t margin_color_value = buffer->default_bg;
             uint32_t margin_pixel = terminal_rgba_from_color(margin_color_value);
             for (int py = 0; py < frame_height; py++) {
                 uint32_t *row_ptr = (uint32_t *)(framebuffer + (size_t)py * (size_t)frame_pitch);
@@ -8503,13 +8641,13 @@ int main(int argc, char **argv) {
             frame_dirty = 1;
         }
 
-        for (size_t row = 0u; row < buffer.rows; row++) {
+        for (size_t row = 0u; row < buffer->rows; row++) {
             size_t global_index = top_index + row;
-            const struct terminal_cell *row_cells = terminal_buffer_row_at(&buffer, global_index);
+            const struct terminal_cell *row_cells = terminal_buffer_row_at(buffer, global_index);
             if (!row_cells) {
                 continue;
             }
-            for (size_t col = 0u; col < buffer.columns; col++) {
+            for (size_t col = 0u; col < buffer->columns; col++) {
                 const struct terminal_cell *cell = &row_cells[col];
                 uint32_t ch = cell->ch;
                 uint32_t fg = cell->fg;
@@ -8525,19 +8663,19 @@ int main(int argc, char **argv) {
                 }
 
                 int cell_selected = selection_has_range &&
-                    terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer.columns);
+                    terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer->columns);
                 if (cell_selected) {
-                    fg = buffer.default_bg;
-                    bg = buffer.default_fg;
+                    fg = buffer->default_bg;
+                    bg = buffer->default_fg;
                 }
 
                 int is_cursor_cell = cursor_render_visible &&
                                      global_index == cursor_global_index &&
-                                     col == buffer.cursor_column;
+                                     col == buffer->cursor_column;
                 uint32_t fill_color = bg;
                 uint32_t glyph_color = fg;
                 if (is_cursor_cell) {
-                    fill_color = buffer.cursor_color;
+                    fill_color = buffer->cursor_color;
                     glyph_color = bg;
                 }
 
@@ -8561,7 +8699,7 @@ int main(int argc, char **argv) {
                     continue;
                 }
 
-                size_t cache_index = row * buffer.columns + col;
+                size_t cache_index = row * buffer->columns + col;
                 if (cache_index >= terminal_render_cache_count) {
                     continue;
                 }
@@ -9012,8 +9150,8 @@ int main(int argc, char **argv) {
         waitpid(child_pid, &status, 0);
     }
 
-    terminal_buffer_free(&buffer);
-    terminal_buffer_free(&alternate_buffer);
+    terminal_buffer_free(buffer);
+    /* per-tab alternate buffers are freed below */
     terminal_release_gl_resources();
     if (terminal_gl_context_handle) {
         SDL_GL_DeleteContext(terminal_gl_context_handle);
@@ -9028,7 +9166,7 @@ int main(int argc, char **argv) {
 
     terminal_free_requested_shaders();
     free_font(&terminal_font);
-    close(master_fd);
+    for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
 
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
         return EXIT_SUCCESS;

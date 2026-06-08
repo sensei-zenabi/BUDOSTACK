@@ -1,0 +1,27 @@
+# colors.task
+# Print all active RETROPROFILE colors (0-18) and exit.
+
+RUN clear
+PRINT "\n- COLOR PROFILE PREVIEW -\n\n"
+
+RUN _TEXT -x 2 -y 3  -text "COLOR 0"  -color 0
+RUN _TEXT -x 2 -y 4  -text "COLOR 1"  -color 1
+RUN _TEXT -x 2 -y 5  -text "COLOR 2"  -color 2
+RUN _TEXT -x 2 -y 6  -text "COLOR 3"  -color 3
+RUN _TEXT -x 2 -y 7  -text "COLOR 4"  -color 4
+RUN _TEXT -x 2 -y 8  -text "COLOR 5"  -color 5
+RUN _TEXT -x 2 -y 9  -text "COLOR 6"  -color 6
+RUN _TEXT -x 2 -y 10 -text "COLOR 7"  -color 7
+RUN _TEXT -x 2 -y 11 -text "COLOR 8"  -color 8
+RUN _TEXT -x 2 -y 12 -text "COLOR 9"  -color 9
+RUN _TEXT -x 2 -y 13 -text "COLOR 10" -color 10
+RUN _TEXT -x 2 -y 14 -text "COLOR 11" -color 11
+RUN _TEXT -x 2 -y 15 -text "COLOR 12" -color 12
+RUN _TEXT -x 2 -y 16 -text "COLOR 13" -color 13
+RUN _TEXT -x 2 -y 17 -text "COLOR 14" -color 14
+RUN _TEXT -x 2 -y 18 -text "COLOR 15" -color 15
+RUN _TEXT -x 2 -y 19 -text "COLOR 16" -color 16
+RUN _TEXT -x 2 -y 20 -text "COLOR 17" -color 17
+RUN _TEXT -x 2 -y 21 -text "COLOR 18" -color 18
+
+PRINT "\n\nDone.\n"

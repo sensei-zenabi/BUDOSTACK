@@ -80,7 +80,7 @@ void printlogo(void) {
 // to the current working directory: "<current_dir>/users/<username>".
 //
 // This version does not rely on any external global variables.
-void login() {
+void login(void) {
     char cwd[PATH_MAX];
     if (getcwd(cwd, sizeof(cwd)) == NULL) {
         perror("getcwd");

@@ -7,7 +7,7 @@
 
 #define TEXT_BAR_ROWS 2
 
-int main() {
+int main(void) {
     struct winsize w;
     int target_cols = budostack_get_target_cols();
     int target_rows = budostack_get_target_rows();

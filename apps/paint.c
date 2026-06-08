@@ -55,6 +55,10 @@
 #define PALETTE_VARIANTS 5
 #define PALETTE_COLORS 26
 #define TOTAL_COLORS (PALETTE_VARIANTS * PALETTE_COLORS)
+#define TEMP_PALETTE_BASE TOTAL_COLORS
+#define TEMP_TOTAL_COLORS (TOTAL_COLORS + PALETTE_COLORS)
+#define CUSTOM_COLOR_BASE TEMP_TOTAL_COLORS
+#define MAX_CUSTOM_COLORS (EMPTY - CUSTOM_COLOR_BASE)
 
 static struct termios orig_termios;
 
@@ -124,6 +128,13 @@ static int view_x = 0, view_y = 0;
 static int dirty = 0; // unsaved changes
 static int fill_color_pending = 0;
 static char current_file_path[512];
+static int select_tool_active = 0;
+static int selection_has_anchor = 0;
+static int selection_start_x = 0;
+static int selection_start_y = 0;
+static int clipboard_w = 0;
+static int clipboard_h = 0;
+static uint8_t clipboard_pixels[MAX_W * MAX_H];
 
 static void set_current_file_path(const char *path) {
     if (!path || !*path) {
@@ -148,6 +159,10 @@ static int redo_action(void);
 static void prompt(const char *msg, char *out, size_t cap);
 static int refresh_cursor_cell_partial(void);
 static int update_cursor_partial(int old_x, int old_y);
+static int selection_is_active(void);
+static int point_on_selection_border(int x, int y);
+static int copy_selection_to_clipboard(int cut);
+static int paste_clipboard_at_cursor(void);
 
 /* Palette: 26 entries mapped to letters A..Z (RGB 0..255) */
 typedef struct { uint8_t r,g,b; char letter; const char *name; int term256; } Color;
@@ -182,6 +197,12 @@ static const Color base_palette[PALETTE_COLORS] = {
 
 static Color palettes[PALETTE_VARIANTS][PALETTE_COLORS];
 static int current_palette_variant = 2; /* 0-based; palette 3 is default */
+static Color temp_palette[PALETTE_COLORS];
+static int temp_palette_active = 0;
+static Color custom_colors[MAX_CUSTOM_COLORS];
+static int custom_color_count = 0;
+static int palette_step_offset = 0;
+static int palette_position_fifths = 10; /* 0..20 maps palette 1.0 .. 5.0 */
 
 static uint8_t clamp_u8(int v) {
     if (v < 0) return 0;
@@ -234,7 +255,7 @@ static uint8_t apply_brightness(uint8_t value, float factor) {
 static void init_palettes(void) {
     static int initialized = 0;
     if (initialized) return;
-    const float factors[PALETTE_VARIANTS] = {0.15f, 0.3f, 0.45f, 0.8f, 1.25};
+    const float factors[PALETTE_VARIANTS] = {0.03f, 0.12f, 0.4135f, 1.0f, 5.00f};
     for (int variant = 0; variant < PALETTE_VARIANTS; variant++) {
         for (int i = 0; i < PALETTE_COLORS; i++) {
             Color c = base_palette[i];
@@ -259,7 +280,15 @@ static inline const Color *color_from_variant(int variant, int color_index) {
 
 static inline const Color *color_from_index(uint8_t idx) {
     init_palettes();
-    if (idx >= TOTAL_COLORS) return NULL;
+    if (idx >= EMPTY) return NULL;
+    if (idx >= TEMP_PALETTE_BASE) {
+        if (idx < TEMP_TOTAL_COLORS) {
+            return &temp_palette[idx - TEMP_PALETTE_BASE];
+        }
+        int custom = idx - CUSTOM_COLOR_BASE;
+        if (custom >= 0 && custom < custom_color_count) return &custom_colors[custom];
+        return NULL;
+    }
     int variant = idx / PALETTE_COLORS;
     int color_index = idx % PALETTE_COLORS;
     return color_from_variant(variant, color_index);
@@ -285,11 +314,116 @@ static uint8_t nearest_palette_index(uint8_t r, uint8_t g, uint8_t b) {
     return (uint8_t)best_index;
 }
 
+static uint8_t nearest_custom_or_create(uint8_t r, uint8_t g, uint8_t b) {
+    int best = -1;
+    int best_dist = INT_MAX;
+    for (int i = 0; i < custom_color_count; i++) {
+        int dr = (int)r - (int)custom_colors[i].r;
+        int dg = (int)g - (int)custom_colors[i].g;
+        int db = (int)b - (int)custom_colors[i].b;
+        int dist = dr*dr + dg*dg + db*db;
+        if (dist < best_dist) {
+            best_dist = dist;
+            best = i;
+            if (dist == 0) break;
+        }
+    }
+    if (best_dist <= 4 && best >= 0) return (uint8_t)(CUSTOM_COLOR_BASE + best);
+    if (custom_color_count < MAX_CUSTOM_COLORS) {
+        Color c = {r, g, b, '?', "Custom", rgb_to_ansi256(r, g, b)};
+        custom_colors[custom_color_count] = c;
+        custom_color_count++;
+        return (uint8_t)(CUSTOM_COLOR_BASE + custom_color_count - 1);
+    }
+    return nearest_palette_index(r, g, b);
+}
+
 static void set_current_palette_variant(int variant) {
     init_palettes();
     if (variant < 0) variant = 0;
     if (variant >= PALETTE_VARIANTS) variant = PALETTE_VARIANTS - 1;
     current_palette_variant = variant;
+    temp_palette_active = 0;
+    palette_step_offset = 0;
+    palette_position_fifths = variant * 5;
+}
+
+static int is_palette4_saturated_color(const Color *palette4) {
+    if (!palette4) return 0;
+    return (palette4->r == 255 || palette4->g == 255 || palette4->b == 255);
+}
+
+static Color apply_palette45_highlight_boost(const Color *base, int step) {
+    Color out = *base;
+    float white_mix = 0.05f * (float)step; /* 5% per step: 0..25% */
+    if (white_mix > 0.25f) white_mix = 0.25f;
+    out.r = clamp_u8((int)(out.r + (255.0f - out.r) * white_mix + 0.5f));
+    out.g = clamp_u8((int)(out.g + (255.0f - out.g) * white_mix + 0.5f));
+    out.b = clamp_u8((int)(out.b + (255.0f - out.b) * white_mix + 0.5f));
+    return out;
+}
+
+static void set_palette_position_fifths(int pos) {
+    if (pos < 0) pos = 0;
+    if (pos > (PALETTE_VARIANTS - 1) * 5) pos = (PALETTE_VARIANTS - 1) * 5;
+    palette_position_fifths = pos;
+    current_palette_variant = pos / 5;
+    palette_step_offset = pos - (current_palette_variant * 5);
+    if (palette_step_offset == 0) {
+        if (current_palette_variant == 4) {
+            for (int i = 0; i < PALETTE_COLORS; i++) {
+                const Color *c = color_from_variant(4, i);
+                const Color *p4 = color_from_variant(3, i);
+                if (!c || !p4) continue;
+                temp_palette[i] = *c;
+                if (is_palette4_saturated_color(p4)) {
+                    temp_palette[i] = apply_palette45_highlight_boost(c, 5);
+                }
+                temp_palette[i].term256 = rgb_to_ansi256(temp_palette[i].r,
+                                                         temp_palette[i].g,
+                                                         temp_palette[i].b);
+            }
+            temp_palette_active = 1;
+            return;
+        }
+        temp_palette_active = 0;
+        return;
+    }
+
+    int lower = current_palette_variant;
+    int upper = lower + 1;
+    if (upper >= PALETTE_VARIANTS) upper = PALETTE_VARIANTS - 1;
+    float t = (float)palette_step_offset / 5.0f;
+    for (int i = 0; i < PALETTE_COLORS; i++) {
+        const Color *c0 = color_from_variant(lower, i);
+        const Color *c1 = color_from_variant(upper, i);
+        if (!c0 || !c1) continue;
+        Color out = *c0;
+        out.r = clamp_u8((int)((1.0f - t) * c0->r + t * c1->r + 0.5f));
+        out.g = clamp_u8((int)((1.0f - t) * c0->g + t * c1->g + 0.5f));
+        out.b = clamp_u8((int)((1.0f - t) * c0->b + t * c1->b + 0.5f));
+        if (lower == 3 && upper == 4 && is_palette4_saturated_color(c0)) {
+            out = apply_palette45_highlight_boost(&out, palette_step_offset);
+        }
+        out.term256 = rgb_to_ansi256(out.r, out.g, out.b);
+        temp_palette[i] = out;
+    }
+    temp_palette_active = 1;
+}
+
+static const Color *color_from_active_palette(int color_index) {
+    if (color_index < 0 || color_index >= PALETTE_COLORS) return NULL;
+    if (temp_palette_active) return &temp_palette[color_index];
+    return color_from_variant(current_palette_variant, color_index);
+}
+
+static uint8_t active_palette_color_index(int color_index) {
+    if (temp_palette_active) {
+        const Color *c = color_from_active_palette(color_index);
+        if (!c) return (uint8_t)(current_palette_variant * PALETTE_COLORS + color_index);
+        return nearest_custom_or_create(c->r, c->g, c->b);
+    }
+    return (uint8_t)(current_palette_variant * PALETTE_COLORS + color_index);
 }
 
 /* -------- Undo/Redo -------- */
@@ -572,15 +706,21 @@ static int load_bmp(const char *path){
     int row_bytes = w * 3;
     int padding = (4 - (row_bytes % 4)) & 3;
 
+    custom_color_count = 0;
     memset(pixels, EMPTY, sizeof(pixels));
     // Read bottom-up
     for (int y = h-1; y >= 0; y--) {
         for (int x = 0; x < w; x++) {
             int b = fgetc(f), g = fgetc(f), r = fgetc(f);
             if (b==EOF || g==EOF || r==EOF) { fclose(f); return -1; }
-            pixels[y*w + x] = nearest_palette_index((uint8_t)r, (uint8_t)g, (uint8_t)b);
+            pixels[y*w + x] = nearest_custom_or_create((uint8_t)r, (uint8_t)g, (uint8_t)b);
         }
-        for (int p=0;p<padding;p++) fgetc(f);
+        for (int p = 0; p < padding; p++) {
+            if (fgetc(f) == EOF) {
+                fclose(f);
+                return -1;
+            }
+        }
     }
     fclose(f);
     img_w = w; img_h = h;
@@ -599,6 +739,7 @@ static int load_png(const char *path){
         stbi_image_free(data);
         return -1;
     }
+    custom_color_count = 0;
     memset(pixels, EMPTY, sizeof(pixels));
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
@@ -617,7 +758,7 @@ static int load_png(const char *path){
                 g = (uint8_t)((((uint32_t)g) * (uint32_t)a + 127U) / 255U);
                 b = (uint8_t)((((uint32_t)b) * (uint32_t)a + 127U) / 255U);
             }
-            pixels[y*w + x] = nearest_palette_index(r, g, b);
+            pixels[y*w + x] = nearest_custom_or_create(r, g, b);
         }
     }
     stbi_image_free(data);
@@ -761,7 +902,7 @@ static int handle_key_event(int key, int *running) {
             char up = (char)toupper(key);
             int idx = up - 'A';
             if (idx >= 0 && idx < PALETTE_COLORS) {
-                uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
+                uint8_t color_idx = active_palette_color_index(idx);
                 flood_fill_at_cursor(color_idx);
                 require_full = 1;
             }
@@ -782,7 +923,7 @@ static int handle_key_event(int key, int *running) {
                 int old_x = cursor_x;
                 int old_y = cursor_y;
                 cursor_y--;
-                if (!update_cursor_partial(old_x, old_y)) {
+                if (selection_is_active() || !update_cursor_partial(old_x, old_y)) {
                     need_render = 1;
                 }
             }
@@ -792,7 +933,7 @@ static int handle_key_event(int key, int *running) {
                 int old_x = cursor_x;
                 int old_y = cursor_y;
                 cursor_y++;
-                if (!update_cursor_partial(old_x, old_y)) {
+                if (selection_is_active() || !update_cursor_partial(old_x, old_y)) {
                     need_render = 1;
                 }
             }
@@ -802,7 +943,7 @@ static int handle_key_event(int key, int *running) {
                 int old_x = cursor_x;
                 int old_y = cursor_y;
                 cursor_x--;
-                if (!update_cursor_partial(old_x, old_y)) {
+                if (selection_is_active() || !update_cursor_partial(old_x, old_y)) {
                     need_render = 1;
                 }
             }
@@ -812,7 +953,7 @@ static int handle_key_event(int key, int *running) {
                 int old_x = cursor_x;
                 int old_y = cursor_y;
                 cursor_x++;
-                if (!update_cursor_partial(old_x, old_y)) {
+                if (selection_is_active() || !update_cursor_partial(old_x, old_y)) {
                     need_render = 1;
                 }
             }
@@ -828,23 +969,31 @@ static int handle_key_event(int key, int *running) {
             break;
 
         case '1':
-            set_current_palette_variant(0);
+            set_palette_position_fifths(0);
             need_render = 1;
             break;
         case '2':
-            set_current_palette_variant(1);
+            set_palette_position_fifths(5);
             need_render = 1;
             break;
         case '3':
-            set_current_palette_variant(2);
+            set_palette_position_fifths(10);
             need_render = 1;
             break;
         case '4':
-            set_current_palette_variant(3);
+            set_palette_position_fifths(15);
             need_render = 1;
             break;
         case '5':
-            set_current_palette_variant(4);
+            set_palette_position_fifths(20);
+            need_render = 1;
+            break;
+        case '+':
+            set_palette_position_fifths(palette_position_fifths + 1);
+            need_render = 1;
+            break;
+        case '-':
+            set_palette_position_fifths(palette_position_fifths - 1);
             need_render = 1;
             break;
 
@@ -878,6 +1027,32 @@ static int handle_key_event(int key, int *running) {
                 need_render = 1;
             }
             break;
+        case 20: /* Ctrl+T */
+            select_tool_active = !select_tool_active;
+            if (select_tool_active) {
+                selection_has_anchor = 1;
+                selection_start_x = cursor_x;
+                selection_start_y = cursor_y;
+            } else {
+                selection_has_anchor = 0;
+            }
+            need_render = 1;
+            break;
+        case 3:  /* Ctrl+C */
+            if (copy_selection_to_clipboard(0)) {
+                need_render = 1;
+            }
+            break;
+        case 24: /* Ctrl+X */
+            if (copy_selection_to_clipboard(1)) {
+                need_render = 1;
+            }
+            break;
+        case 22: /* Ctrl+V */
+            if (paste_clipboard_at_cursor()) {
+                need_render = 1;
+            }
+            break;
         case 17: /* Ctrl+Q */
             if (dirty) {
                 char ans[8];
@@ -894,7 +1069,7 @@ static int handle_key_event(int key, int *running) {
                 char up = (char)toupper(key);
                 int idx = up - 'A';
                 if (idx >= 0 && idx < PALETTE_COLORS) {
-                    uint8_t color_idx = (uint8_t)(current_palette_variant * PALETTE_COLORS + idx);
+                    uint8_t color_idx = active_palette_color_index(idx);
                     if (paint_at_cursor(color_idx)) {
                         if (!refresh_cursor_cell_partial()) {
                             need_render = 1;
@@ -933,11 +1108,17 @@ static int build_status_lines(int cols, char lines[][256], int max_lines) {
         return 0;
     }
     char line1[256];
+    char palette_label[16];
     const char *fill_msg = fill_color_pending ? "  Fill:Pick color" : "";
+    const char *select_msg = select_tool_active ? "  Select:ON" : "";
+    int whole = 1 + (palette_position_fifths / 5);
+    int frac = (palette_position_fifths % 5) * 2;
+    snprintf(palette_label, sizeof(palette_label), "%d.%d", whole, frac);
+    palette_label[sizeof(palette_label) - 1] = '\0';
     snprintf(line1, sizeof(line1),
-        " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%d  %s%s",
+        " %dx%d  Cursor:%d,%d  View:%d,%d  Palette:^1-^5:%s  %s%s%s",
         img_w, img_h, cursor_x, cursor_y, view_x, view_y,
-        current_palette_variant + 1, dirty ? "Dirty" : "Saved", fill_msg);
+        palette_label, dirty ? "Dirty" : "Saved", fill_msg, select_msg);
     line1[sizeof(line1) - 1] = '\0';
     strncpy(lines[0], line1, sizeof(lines[0]) - 1);
     lines[0][sizeof(lines[0]) - 1] = '\0';
@@ -949,8 +1130,13 @@ static int build_status_lines(int cols, char lines[][256], int max_lines) {
         "Draw:A-Z",
         "Fill:^F+Color",
         "Brightness:^1-^5",
+        "+/- bright.",
         "Erase:Backspace/Delete",
         "Resize:^R",
+        "Select:^T",
+        "Copy:^C",
+        "Cut:^X",
+        "Paste:^V",
         "Undo:^Z",
         "Redo:^Y",
         "Save:^S",
@@ -1082,7 +1268,7 @@ static void draw_cell(uint8_t idx, int highlight){
 #if USE_ANSI_COLOR
         write(STDOUT_FILENO, "\x1b[39m", 5);
 #endif
-    } else if (idx < TOTAL_COLORS) {
+    } else if (idx < EMPTY) {
         cell_color = color_from_index(idx);
 #if USE_ANSI_COLOR
         ch = ' ';
@@ -1128,6 +1314,85 @@ static void draw_cell(uint8_t idx, int highlight){
     }
 #endif
     reset_ansi_colors();
+}
+
+static int selection_is_active(void) {
+    return select_tool_active && selection_has_anchor;
+}
+
+static int point_on_selection_border(int x, int y) {
+    if (!selection_is_active()) return 0;
+    int x0 = selection_start_x < cursor_x ? selection_start_x : cursor_x;
+    int y0 = selection_start_y < cursor_y ? selection_start_y : cursor_y;
+    int x1 = selection_start_x > cursor_x ? selection_start_x : cursor_x;
+    int y1 = selection_start_y > cursor_y ? selection_start_y : cursor_y;
+    if (x < x0 || x > x1 || y < y0 || y > y1) return 0;
+    return x == x0 || x == x1 || y == y0 || y == y1;
+}
+
+static int color_luma(const Color *c) {
+    if (!c) return 0;
+    return ((int)c->r * 299 + (int)c->g * 587 + (int)c->b * 114) / 1000;
+}
+
+static Color border_variant_from_base(const Color *base, int brighten) {
+    Color out = *base;
+    if (brighten) {
+        out.r = apply_brightness(base->r, 1.5f);
+        out.g = apply_brightness(base->g, 1.5f);
+        out.b = apply_brightness(base->b, 1.5f);
+        if (color_luma(&out) < 96) {
+            out.r = clamp_u8((int)out.r + 96);
+            out.g = clamp_u8((int)out.g + 96);
+            out.b = clamp_u8((int)out.b + 96);
+        }
+    } else {
+        out.r = apply_brightness(base->r, 0.5f);
+        out.g = apply_brightness(base->g, 0.5f);
+        out.b = apply_brightness(base->b, 0.5f);
+        if (color_luma(&out) > 160) {
+            out.r = clamp_u8((int)out.r - 96);
+            out.g = clamp_u8((int)out.g - 96);
+            out.b = clamp_u8((int)out.b - 96);
+        }
+    }
+    return out;
+}
+
+static void draw_selection_border_cell(uint8_t idx, int x, int y) {
+#if USE_ANSI_COLOR
+    int brighten = ((x + y) & 1) == 0;
+    if (idx != EMPTY && idx < EMPTY) {
+        const Color *base = color_from_index(idx);
+        if (base) {
+            Color adjusted = border_variant_from_base(base, brighten);
+            set_bg_color_ansi(&adjusted);
+            write(STDOUT_FILENO, "\x1b[39m", 5);
+            write(STDOUT_FILENO, " ", 1);
+            reset_ansi_colors();
+            return;
+        }
+    }
+    Color empty_border_color = {
+        brighten ? 235 : 35,
+        brighten ? 235 : 35,
+        brighten ? 235 : 35,
+        'A',
+        "SelectionBorderEmpty",
+        0
+    };
+    set_bg_color_ansi(&empty_border_color);
+    write(STDOUT_FILENO, "\x1b[39m", 5);
+    write(STDOUT_FILENO, " ", 1);
+    reset_ansi_colors();
+#else
+    (void)idx;
+    (void)x;
+    (void)y;
+    write(STDOUT_FILENO, "\x1b[7m", 4);
+    write(STDOUT_FILENO, "#", 1);
+    write(STDOUT_FILENO, "\x1b[0m", 4);
+#endif
 }
 
 typedef struct {
@@ -1232,7 +1497,7 @@ static void render(void){
     // Palette line
     write(STDOUT_FILENO, " Palette: ", 10);
     for (int i=0;i<PALETTE_COLORS;i++){
-        const Color *c = color_from_variant(current_palette_variant, i);
+        const Color *c = color_from_active_palette(i);
         set_color_ansi(c);
         char ch = c ? c->letter : '?';
         write(STDOUT_FILENO, &ch, 1);
@@ -1259,7 +1524,15 @@ static void render(void){
             }
 
             uint8_t idx = pixels[y * img_w + x];
-            draw_cell(idx, x == cursor_x && y == cursor_y);
+            int cursor_here = (x == cursor_x && y == cursor_y);
+            int selection_border = point_on_selection_border(x, y);
+            if (cursor_here) {
+                draw_cell(idx, 1);
+            } else if (selection_border) {
+                draw_selection_border_cell(idx, x, y);
+            } else {
+                draw_cell(idx, 0);
+            }
         }
     }
 
@@ -1394,7 +1667,7 @@ static void load_dialog(void){
 
 static int paint_at_cursor(uint8_t color_idx){
     if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return 0;
-    if (color_idx != EMPTY && color_idx >= TOTAL_COLORS) return 0;
+    if (color_idx != EMPTY && color_idx >= EMPTY) return 0;
     uint8_t *p = &pixels[cursor_y*img_w + cursor_x];
     if (*p == color_idx) return 0; // no-op
     push_change(cursor_x, cursor_y, *p, color_idx);
@@ -1403,9 +1676,77 @@ static int paint_at_cursor(uint8_t color_idx){
     return 1;
 }
 
+static int copy_selection_to_clipboard(int cut) {
+    if (!selection_is_active()) return 0;
+    int x0 = selection_start_x < cursor_x ? selection_start_x : cursor_x;
+    int y0 = selection_start_y < cursor_y ? selection_start_y : cursor_y;
+    int x1 = selection_start_x > cursor_x ? selection_start_x : cursor_x;
+    int y1 = selection_start_y > cursor_y ? selection_start_y : cursor_y;
+    int w = x1 - x0 + 1;
+    int h = y1 - y0 + 1;
+    if (w <= 0 || h <= 0 || w > MAX_W || h > MAX_H) return 0;
+
+    clipboard_w = w;
+    clipboard_h = h;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            clipboard_pixels[y * w + x] = pixels[(y0 + y) * img_w + (x0 + x)];
+        }
+    }
+
+    if (cut) {
+        size_t changed_count = 0;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int px = x0 + x;
+                int py = y0 + y;
+                uint8_t *p = &pixels[py * img_w + px];
+                if (*p != EMPTY) {
+                    push_change((uint16_t)px, (uint16_t)py, *p, EMPTY);
+                    *p = EMPTY;
+                    changed_count++;
+                }
+            }
+        }
+        if (changed_count > 0) {
+            push_change_marker(changed_count);
+            dirty = 1;
+        }
+    }
+
+    select_tool_active = 0;
+    selection_has_anchor = 0;
+    return 1;
+}
+
+static int paste_clipboard_at_cursor(void) {
+    if (clipboard_w <= 0 || clipboard_h <= 0) return 0;
+    size_t changed_count = 0;
+    for (int y = 0; y < clipboard_h; y++) {
+        int py = cursor_y + y;
+        if (py < 0 || py >= img_h) continue;
+        for (int x = 0; x < clipboard_w; x++) {
+            int px = cursor_x + x;
+            if (px < 0 || px >= img_w) continue;
+            uint8_t src = clipboard_pixels[y * clipboard_w + x];
+            uint8_t *dst = &pixels[py * img_w + px];
+            if (*dst == src) continue;
+            push_change((uint16_t)px, (uint16_t)py, *dst, src);
+            *dst = src;
+            changed_count++;
+        }
+    }
+    if (changed_count > 0) {
+        push_change_marker(changed_count);
+        dirty = 1;
+        return 1;
+    }
+    return 0;
+}
+
 static void flood_fill_at_cursor(uint8_t color_idx){
     if (cursor_x<0||cursor_x>=img_w||cursor_y<0||cursor_y>=img_h) return;
-    if (color_idx != EMPTY && color_idx >= TOTAL_COLORS) return;
+    if (color_idx != EMPTY && color_idx >= EMPTY) return;
 
     uint8_t target = pixels[cursor_y*img_w + cursor_x];
     if (target == color_idx) return;

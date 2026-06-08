@@ -25,8 +25,8 @@ else
 fi
 
 if [[ -z "$SDL_LIBS" ]]; then
-    echo "SDL2 development files not found." >&2
-    exit 1
+    echo "Skipping BUDO SDL demos: SDL2 development files not found."
+    exit 0
 fi
 
 cd "$BUILD_DIR"

@@ -43,6 +43,8 @@
 #include <math.h>
 #include <sys/stat.h>
 
+#include "../lib/termgfx.h"
+
 #define MAX_VARIABLES 128
 #define MAX_LABELS 256
 #define MAX_FUNCTIONS 64
@@ -2631,6 +2633,341 @@ static void print_help(void) {
     printf("  gcc -std=c11 -Wall -Wextra -Werror -Wpedantic -O2 -o runtask apps/runtask.c\n\n");
 }
 
+
+typedef enum {
+    TASK_TERM_BUILTIN_ERROR = -1,
+    TASK_TERM_BUILTIN_NOT_HANDLED = 0,
+    TASK_TERM_BUILTIN_HANDLED = 1
+} TaskTermBuiltinResult;
+
+static bool task_parse_long_arg(const char *arg, const char *name, long min_value, long max_value, long *out_value,
+                                int line) {
+    if (!arg || !out_value) {
+        return false;
+    }
+
+    char *endptr = NULL;
+    errno = 0;
+    long value = strtol(arg, &endptr, 10);
+    if (errno != 0 || endptr == arg || *endptr != '\0') {
+        fprintf(stderr, "RUN: invalid integer for %s at line %d: '%s'\n", name, line, arg);
+        return false;
+    }
+    if (value < min_value || value > max_value) {
+        fprintf(stderr, "RUN: %s must be between %ld and %ld at line %d.\n", name, min_value, max_value, line);
+        return false;
+    }
+
+    *out_value = value;
+    return true;
+}
+
+static bool task_term_resolve_color(long color, long r, long g, long b, uint8_t *r_out, uint8_t *g_out,
+                                    uint8_t *b_out, int line) {
+    if (!r_out || !g_out || !b_out) {
+        return false;
+    }
+
+    if (r >= 0 && g >= 0 && b >= 0) {
+        *r_out = (uint8_t)r;
+        *g_out = (uint8_t)g;
+        *b_out = (uint8_t)b;
+        return true;
+    }
+
+    if (termgfx_color_from_index((int)color, r_out, g_out, b_out) != 0) {
+        fprintf(stderr, "RUN: failed to resolve _TERM color at line %d.\n", line);
+        return false;
+    }
+    return true;
+}
+
+static TaskTermBuiltinResult try_run_builtin_term_command(char **argv_heap, int argcnt, int line, int debug,
+                                                          bool capture_output, Variable *capture_var,
+                                                          const VariableRef *capture_ref) {
+    if (!argv_heap || argcnt <= 0 || !argv_heap[0]) {
+        return TASK_TERM_BUILTIN_NOT_HANDLED;
+    }
+
+    if (equals_ignore_case(argv_heap[0], "_TERM_SPRITE_LOAD")) {
+        const char *file = NULL;
+        for (int i = 1; i < argcnt; i++) {
+            if (strcmp(argv_heap[i], "-file") == 0) {
+                if (++i >= argcnt) {
+                    fprintf(stderr, "RUN: _TERM_SPRITE_LOAD missing value for -file at line %d.\n", line);
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+                file = argv_heap[i];
+            } else {
+                return TASK_TERM_BUILTIN_NOT_HANDLED;
+            }
+        }
+        if (!file) {
+            fprintf(stderr, "RUN: _TERM_SPRITE_LOAD missing -file at line %d.\n", line);
+            return TASK_TERM_BUILTIN_ERROR;
+        }
+
+        char *literal = NULL;
+        if (termgfx_sprite_load_literal(file, &literal) != 0) {
+            return TASK_TERM_BUILTIN_ERROR;
+        }
+
+        if (capture_output) {
+            if (!capture_var || !capture_ref) {
+                free(literal);
+                return TASK_TERM_BUILTIN_ERROR;
+            }
+            Value value;
+            memset(&value, 0, sizeof(value));
+            if (!parse_value_from_string(literal, &value, line, debug)) {
+                value.type = VALUE_STRING;
+                value.str_val = literal;
+                value.owns_string = true;
+                literal = NULL;
+            }
+            bool ok = set_variable_from_ref(capture_var, capture_ref, &value);
+            free_value(&value);
+            free(literal);
+            if (!ok) {
+                return TASK_TERM_BUILTIN_ERROR;
+            }
+        } else {
+            if (printf("%s\n", literal) < 0) {
+                perror("RUN: _TERM_SPRITE_LOAD printf");
+                free(literal);
+                return TASK_TERM_BUILTIN_ERROR;
+            }
+            free(literal);
+        }
+        if (debug) {
+            fprintf(stderr, "RUN: accelerated _TERM_SPRITE_LOAD\n");
+        }
+        return TASK_TERM_BUILTIN_HANDLED;
+    }
+
+    if (capture_output) {
+        return TASK_TERM_BUILTIN_NOT_HANDLED;
+    }
+
+    if (equals_ignore_case(argv_heap[0], "_TERM_SPRITE")) {
+        long origin_x = -1;
+        long origin_y = -1;
+        long layer = 1;
+        long width = -1;
+        long height = -1;
+        const char *file = NULL;
+        const char *sprite_literal = NULL;
+        const char *data = NULL;
+
+        for (int i = 1; i < argcnt; i++) {
+            if (strcmp(argv_heap[i], "-x") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-x", 0, INT_MAX, &origin_x, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-y") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-y", 0, INT_MAX, &origin_y, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-layer") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-layer", 1, 16, &layer, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-file") == 0) {
+                if (++i >= argcnt) {
+                    fprintf(stderr, "RUN: _TERM_SPRITE missing value for -file at line %d.\n", line);
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+                file = argv_heap[i];
+            } else if (strcmp(argv_heap[i], "-sprite") == 0) {
+                if (++i >= argcnt) {
+                    fprintf(stderr, "RUN: _TERM_SPRITE missing value for -sprite at line %d.\n", line);
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+                sprite_literal = argv_heap[i];
+            } else if (strcmp(argv_heap[i], "-data") == 0) {
+                if (++i >= argcnt) {
+                    fprintf(stderr, "RUN: _TERM_SPRITE missing value for -data at line %d.\n", line);
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+                data = argv_heap[i];
+            } else if (strcmp(argv_heap[i], "-width") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-width", 1, INT_MAX, &width, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-height") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-height", 1, INT_MAX, &height, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else {
+                return TASK_TERM_BUILTIN_NOT_HANDLED;
+            }
+        }
+
+        if (origin_x < 0 || origin_y < 0 || (file == NULL && sprite_literal == NULL && data == NULL)) {
+            fprintf(stderr, "RUN: _TERM_SPRITE missing required arguments at line %d.\n", line);
+            return TASK_TERM_BUILTIN_ERROR;
+        }
+        if ((file != NULL) + (sprite_literal != NULL) + (data != NULL) > 1) {
+            fprintf(stderr, "RUN: _TERM_SPRITE accepts only one of -file, -sprite, or -data at line %d.\n", line);
+            return TASK_TERM_BUILTIN_ERROR;
+        }
+
+        int rc;
+        if (sprite_literal) {
+            rc = termgfx_sprite_literal(origin_x, origin_y, sprite_literal, layer);
+        } else if (data) {
+            if (width <= 0 || height <= 0) {
+                fprintf(stderr, "RUN: _TERM_SPRITE -data requires -width and -height at line %d.\n", line);
+                return TASK_TERM_BUILTIN_ERROR;
+            }
+            rc = termgfx_sprite_data(origin_x, origin_y, width, height, data, layer);
+        } else {
+            rc = termgfx_sprite_file(origin_x, origin_y, file, layer);
+        }
+        if (debug) {
+            fprintf(stderr, "RUN: accelerated _TERM_SPRITE\n");
+        }
+        return rc == 0 ? TASK_TERM_BUILTIN_HANDLED : TASK_TERM_BUILTIN_ERROR;
+    }
+
+    if (equals_ignore_case(argv_heap[0], "_TERM_RENDER")) {
+        long layer = 0;
+        for (int i = 1; i < argcnt; i++) {
+            if (strcmp(argv_heap[i], "--render") == 0) {
+                continue;
+            }
+            if (strcmp(argv_heap[i], "-layer") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-layer", 1, 16, &layer, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+                continue;
+            }
+            return TASK_TERM_BUILTIN_NOT_HANDLED;
+        }
+        if (debug) {
+            fprintf(stderr, "RUN: accelerated _TERM_RENDER\n");
+        }
+        return termgfx_render(layer) == 0 ? TASK_TERM_BUILTIN_HANDLED : TASK_TERM_BUILTIN_ERROR;
+    }
+
+    if (equals_ignore_case(argv_heap[0], "_TERM_CLEAN")) {
+        long x = -1;
+        long y = -1;
+        long width = -1;
+        long height = -1;
+        long layer = 1;
+        for (int i = 1; i < argcnt; i++) {
+            if (strcmp(argv_heap[i], "-x") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-x", 0, INT_MAX, &x, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-y") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-y", 0, INT_MAX, &y, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-width") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-width", 1, INT_MAX, &width, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-height") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-height", 1, INT_MAX, &height, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-layer") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-layer", 1, 16, &layer, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else {
+                return TASK_TERM_BUILTIN_NOT_HANDLED;
+            }
+        }
+        if (x < 0 || y < 0 || width <= 0 || height <= 0) {
+            fprintf(stderr, "RUN: _TERM_CLEAN missing geometry at line %d.\n", line);
+            return TASK_TERM_BUILTIN_ERROR;
+        }
+        if (debug) {
+            fprintf(stderr, "RUN: accelerated _TERM_CLEAN\n");
+        }
+        return termgfx_clear(x, y, width, height, layer) == 0 ? TASK_TERM_BUILTIN_HANDLED : TASK_TERM_BUILTIN_ERROR;
+    }
+
+    if (equals_ignore_case(argv_heap[0], "_TERM_PIXEL") || equals_ignore_case(argv_heap[0], "_TERM_RECT")) {
+        bool is_rect = equals_ignore_case(argv_heap[0], "_TERM_RECT");
+        long x = -1;
+        long y = -1;
+        long width = -1;
+        long height = -1;
+        long layer = 1;
+        long color = 16;
+        long r = -1;
+        long g = -1;
+        long b = -1;
+
+        for (int i = 1; i < argcnt; i++) {
+            if (strcmp(argv_heap[i], "-x") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-x", 0, INT_MAX, &x, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-y") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-y", 0, INT_MAX, &y, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-width") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-width", 1, INT_MAX, &width, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-height") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-height", 1, INT_MAX, &height, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-layer") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-layer", 1, 16, &layer, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+            } else if (strcmp(argv_heap[i], "-color") == 0) {
+                if (++i >= argcnt || !task_parse_long_arg(argv_heap[i], "-color", 0, 18, &color, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+                r = -1;
+                g = -1;
+                b = -1;
+            } else if (strcmp(argv_heap[i], "-rgb") == 0) {
+                if (i + 3 >= argcnt ||
+                    !task_parse_long_arg(argv_heap[i + 1], "red", 0, 255, &r, line) ||
+                    !task_parse_long_arg(argv_heap[i + 2], "green", 0, 255, &g, line) ||
+                    !task_parse_long_arg(argv_heap[i + 3], "blue", 0, 255, &b, line)) {
+                    return TASK_TERM_BUILTIN_ERROR;
+                }
+                i += 3;
+            } else {
+                return TASK_TERM_BUILTIN_NOT_HANDLED;
+            }
+        }
+
+        if (x < 0 || y < 0 || (is_rect && (width <= 0 || height <= 0))) {
+            fprintf(stderr, "RUN: %s missing required geometry at line %d.\n", is_rect ? "_TERM_RECT" : "_TERM_PIXEL", line);
+            return TASK_TERM_BUILTIN_ERROR;
+        }
+
+        uint8_t rr = 0;
+        uint8_t gg = 0;
+        uint8_t bb = 0;
+        if (!task_term_resolve_color(color, r, g, b, &rr, &gg, &bb, line)) {
+            return TASK_TERM_BUILTIN_ERROR;
+        }
+
+        if (debug) {
+            fprintf(stderr, "RUN: accelerated %s\n", is_rect ? "_TERM_RECT" : "_TERM_PIXEL");
+        }
+        if (is_rect) {
+            return termgfx_rect(x, y, width, height, rr, gg, bb, layer) == 0 ? TASK_TERM_BUILTIN_HANDLED : TASK_TERM_BUILTIN_ERROR;
+        }
+        return termgfx_pixel(x, y, rr, gg, bb, layer) == 0 ? TASK_TERM_BUILTIN_HANDLED : TASK_TERM_BUILTIN_ERROR;
+    }
+
+    return TASK_TERM_BUILTIN_NOT_HANDLED;
+}
+
 static char *trim(char *s) {
     while (isspace((unsigned char)*s)) s++;
     if (!*s) return s;
@@ -4990,6 +5327,19 @@ int main(int argc, char *argv[]) {
                     fprintf(stderr, "Usage: _TOFILE -file <path> --start | _TOFILE --stop\n");
                 }
 
+                free_argv(argv_heap);
+                note_branch_progress(if_stack, &if_sp);
+                continue;
+            }
+
+            TaskTermBuiltinResult term_builtin_result = try_run_builtin_term_command(argv_heap,
+                                                                                     argcnt,
+                                                                                     script[pc].source_line,
+                                                                                     debug,
+                                                                                     capture_output,
+                                                                                     capture_var,
+                                                                                     &capture_ref);
+            if (term_builtin_result != TASK_TERM_BUILTIN_NOT_HANDLED) {
                 free_argv(argv_heap);
                 note_branch_progress(if_stack, &if_sp);
                 continue;

@@ -1,8 +1,8 @@
 #!/bin/bash
 # =============================================================================
-# Script Name: install-apps.sh
-# Description: Template for installing applications using sudo and a package
-#              manager. This script prompts the user once at the beginning to 
+# Script Name: setup_debian.sh
+# Description: Debian installer for BUDOSTACK dependencies using sudo
+#              and apt-get. This script prompts the user once at the beginning to 
 #              confirm proceeding, and then sequentially installs the listed 
 #              programs.
 #
@@ -15,12 +15,12 @@
 #                manager; change the package manager command if needed).
 #
 # Usage: 
-#   chmod +x install-apps.sh
-#   ./install-apps.sh
+#   chmod +x setup_debian.sh
+#   ./setup_debian.sh
 #
 # Requirements:
 #   - The script must be run on a system with sudo privileges.
-#   - Modify PACKAGE_MANAGER if you use a different package manager (e.g. yum, pacman).
+#   - Debian or compatible apt-based distribution with sudo privileges.
 # =============================================================================
 
 # Set the package manager command (modify if needed, e.g., "yum install -y")
@@ -136,10 +136,9 @@ main() {
     install_font
 
     echo "All requested packages have been processed."
-        echo ""
-        echo "Building BUDOSTACK..."
-    make clean
-    make
+    echo ""
+    echo "Building BUDOSTACK for Debian..."
+    make clean debian
     echo "BUDOSTACK setup finished successfully!"
 }
 

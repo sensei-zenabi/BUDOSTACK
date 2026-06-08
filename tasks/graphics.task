@@ -1,0 +1,84 @@
+# graphics.task
+# Demonstrate text, points, lines, outlines, fills, symbols, and curves using
+# only _TEXT and _PIXEL for drawing. Switch to the HIGH terminal resolution
+# first so the same terminal-cell pixels produce a finer 100x56 canvas.
+
+RUN _TERM_RESOLUTION HIGH
+RUN _CLEAR
+
+RUN _TEXT -x 2 -y 1 -text "PIXEL GRAPHICS DEMO" -color 18
+RUN _TEXT -x 2 -y 2 -text "Palette pixels 0-18" -color 16
+
+FOR ($c=0; $c<19; $c++):
+  RUN _PIXEL -x 3+$c -y 4 -color $c
+END
+
+RUN _TEXT -x 2 -y 6 -text "Horizontal and vertical lines" -color 16
+FOR ($x=3; $x<34; $x++):
+  RUN _PIXEL -x $x -y 8 -color 14
+END
+FOR ($y=8; $y<17; $y++):
+  RUN _PIXEL -x 3 -y $y -color 14
+END
+
+RUN _TEXT -x 39 -y 6 -text "Outline rectangle" -color 16
+FOR ($x=39; $x<66; $x++):
+  RUN _PIXEL -x $x -y 8 -color 10
+  RUN _PIXEL -x $x -y 16 -color 10
+END
+FOR ($y=8; $y<17; $y++):
+  RUN _PIXEL -x 39 -y $y -color 10
+  RUN _PIXEL -x 65 -y $y -color 10
+END
+
+RUN _TEXT -x 2 -y 18 -text "Filled block" -color 16
+FOR ($y=20; $y<27; $y++):
+  FOR ($x=3; $x<20; $x++):
+    RUN _PIXEL -x $x -y $y -color 4
+  END
+END
+RUN _TEXT -x 6 -y 23 -text "TEXT" -color 18
+
+RUN _TEXT -x 27 -y 18 -text "Diagonal cross" -color 16
+FOR ($i=0; $i<17; $i++):
+  RUN _PIXEL -x 29+$i -y 20+$i -color 12
+  RUN _PIXEL -x 45-$i -y 20+$i -color 12
+END
+
+RUN _TEXT -x 55 -y 18 -text "Triangle" -color 16
+FOR ($i=0; $i<10; $i++):
+  RUN _PIXEL -x 65-$i -y 20+$i -color 9
+  RUN _PIXEL -x 65+$i -y 20+$i -color 9
+END
+FOR ($x=56; $x<75; $x++):
+  RUN _PIXEL -x $x -y 29 -color 9
+END
+
+RUN _TEXT -x 2 -y 32 -text "Pixel curve / wave" -color 16
+SET $WAVE = { 4, 3, 2, 1, 1, 2, 3, 4,
+              5, 6, 7, 7, 6, 5, 4, 3,
+              2, 1, 1, 2, 3, 4, 5, 6,
+              7, 7, 6, 5, 4, 3, 2, 1 }
+FOR ($i=0; $i<LEN($WAVE); $i++):
+  RUN _PIXEL -x 4+$i -y 34+$WAVE[$i] -color 11
+END
+
+RUN _TEXT -x 43 -y 32 -text "Circle-ish point set" -color 16
+SET $CIRCLE_X = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+                  10, 10, 9, 8, 7, 6, 5, 4, 3, 2,
+                  1, 0, 0, 0 }
+SET $CIRCLE_Y = { 4, 2, 1, 1, 0, 0, 0, 1, 1, 2, 4,
+                  5, 6, 8, 9, 9, 10, 10, 10, 9, 9,
+                  8, 6, 5, 4 }
+FOR ($i=0; $i<LEN($CIRCLE_X); $i++):
+  RUN _PIXEL -x 52+$CIRCLE_X[$i] -y 34+$CIRCLE_Y[$i] -color 13
+END
+
+RUN _TEXT -x 2 -y 47 -text "High-resolution canvas: 800x450 (about 100x56 text cells)." -color 16
+RUN _TEXT -x 2 -y 49 -text "Done: _PIXEL draws single colored cells, and _TEXT labels them." -color 16
+RUN _TEXT -x 2 -y 53 -text "Press any key (or Enter) to return to LOW resolution." -color 18
+SET $KEY = ""
+INPUT $KEY -wait off
+RUN cls
+RUN _TERM_RESOLUTION LOW
+

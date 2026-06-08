@@ -1,53 +1,64 @@
 #include <stdio.h>
-#include <string.h>
 
 /*
- * Design Principles:
- * - Written in plain C using -std=c11 and only standard libraries.
- * - No header files are created; everything is contained in a single file.
- * - The code includes comments to clarify design decisions.
- * - If the program is started with the "-a" argument (i.e. "help -a"),
- *   a reserved section is printed for future hidden features or advanced help.
+ * Beginner-first Git reference:
+ * keep only the minimum commands needed for daily work.
  */
-int main() {
-  // Print header information
-  printf("\n"
-         "================== GITTER - I remember so you don't have to!  ================\n"
-         "\n"
-         "  git log --name-only         : display commits and related files\n"
-         "\n"
-         "  git commit -m 'message'     : make a commit with message\n"
-         "\n"
-         "  git commit -m 'closes #nn'  : close issue with commit message\n"
-         "\n"
-         "  git fetch origin            : fetch available branches\n"
-         "\n"
-         "  git checkout <branch_name>  : switch into a selected branch\n"
-         "\n"
-         "  git merge <branch_name>     : merge selected branch into current branch\n"
-         "\n"
-         "  git tag --sort=-v:refname   : list tags from newest to oldest\n"
-         "\n"
-         "  git revert <commit_hash>    : reverts a bad commit, do 'git push' afterwards\n"
-         "\n"
-         "  git ls-files --others       : display non tracked files\n"
-         "\n"
-         "                              : force branch as new main HEAD\n"
-         "\n"
-         "  git checkout main\n"
-         "  git reset --hard feature/new-architecture\n"
-         "  git push --force origin main\n"
-         "\n"
-         "                              : force pull HEAD\n"
-         "\n"
-         "  git fetch origin\n"
-         "  git reset --hard origin/HEAD\n"
-         "\n"
-         "                              : restore file to specific commit\n"
-         "\n"
-         "  git restore --source <commit_hash> -- path/to/file\n"
-         "\n"
-         "\n");
-                
-  return 0;
+int main(void)
+{
+    printf(
+        "\n"
+        "=============== GITTER: GIT BASICS FOR YOUR DAILY JOB ===============\n"
+        "\n"
+        "1) First check: \"what is going on?\"\n"
+        "  git status\n"
+        "    Show changed files, staged files, and current branch.\n"
+        "\n"
+        "2) Save your work (commit)\n"
+        "  git add <file>\n"
+        "    Put file into the next commit.\n"
+        "  git commit -m \"what you changed\"\n"
+        "    Save snapshot with a clear message.\n"
+        "\n"
+        "3) Get latest team changes\n"
+        "  git pull\n"
+        "    Download and merge latest remote changes.\n"
+        "\n"
+        "4) Start a new task safely (branch)\n"
+        "  git switch -c my-task\n"
+        "    Create and switch to a new branch.\n"
+        "\n"
+        "5) Undo simple mistakes\n"
+        "  git restore <file>\n"
+        "    Throw away local edits in one file.\n"
+        "  git restore --staged <file>\n"
+        "    Unstage file, keep your edits.\n"
+        "  git reset HEAD~1\n"
+        "    Undo last local commit, keep the file changes.\n"
+        "\n"
+        "6) If you already pushed a bad commit\n"
+        "  git revert <commit-id>\n"
+        "    Make a new commit that undoes the bad one.\n"
+        "\n"
+        "7) Send your branch to remote\n"
+        "  git push -u origin my-task\n"
+        "    Push branch first time and set upstream.\n"
+        "\n"
+        "8) When Git says \"conflict\"\n"
+        "  git status\n"
+        "    Shows files you must fix.\n"
+        "  (edit files, remove conflict markers)\n"
+        "  git add <fixed-file>\n"
+        "  git commit\n"
+        "    Finish merge after conflicts are fixed.\n"
+        "\n"
+        "Simple rules\n"
+        "  - Run 'git status' often.\n"
+        "  - Do not use force push unless a senior asks you.\n"
+        "  - Write commit messages that explain the change.\n"
+        "  - Build and test before push.\n"
+        "======================================================================\n"
+        "\n");
+
+    return 0;
 }

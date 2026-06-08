@@ -43,12 +43,12 @@ int game_over = 0;
 struct termios orig_termios;
 
 // Function to restore the original terminal settings
-void disableRawMode() {
+void disableRawMode(void) {
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
 }
 
 // Function to set terminal to raw mode for non-blocking key input
-void enableRawMode() {
+void enableRawMode(void) {
     tcgetattr(STDIN_FILENO, &orig_termios);
     atexit(disableRawMode); // restore settings on exit
     struct termios raw = orig_termios;
@@ -59,7 +59,7 @@ void enableRawMode() {
 }
 
 // Initialize or restart the game: reset snake and fruit positions, direction, game_over flag, and delay
-void initGame() {
+void initGame(void) {
     // Reset snake length, direction, and delay
     snake_length = 3;
     dir = RIGHT;
@@ -81,7 +81,7 @@ void initGame() {
 }
 
 // Read a single character from input (non-blocking)
-char getInput() {
+char getInput(void) {
     char c;
     int n = read(STDIN_FILENO, &c, 1);
     if(n == 1)
@@ -91,7 +91,7 @@ char getInput() {
 
 // Update the snake's movement direction based on user input.
 // Supports arrow keys and WASD controls. 'q' quits and 'r' restarts.
-void updateDirection() {
+void updateDirection(void) {
     char c = getInput();
     if(c == 0)
         return;
@@ -132,7 +132,7 @@ void updateDirection() {
 
 // Update the snake position based on the current direction and check for collisions.
 // Instead of exiting on collision, set game_over to 1.
-void updateSnake() {
+void updateSnake(void) {
     // Calculate new head position
     Point new_head = snake[0];
     switch(dir) {
@@ -188,7 +188,7 @@ void updateSnake() {
 
 // Draw the game board using line-drawing characters for the borders,
 // and display the snake, fruit, score, and instructions.
-void drawBoard() {
+void drawBoard(void) {
     // Clear the screen and move cursor to home position
     printf("\033[2J\033[H");
     
@@ -244,7 +244,7 @@ void drawBoard() {
 }
 
 // Main game loop: if game_over is set, wait for 'r' (restart) or 'q' (quit)
-int main() {
+int main(void) {
     enableRawMode();
     initGame();
     

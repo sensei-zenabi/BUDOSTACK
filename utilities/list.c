@@ -606,6 +606,7 @@ void print_help(void) {
     printf("\n");
 }
 
+#ifndef BUDOSTACK_LIST_NO_MAIN
 int main(int argc, char *argv[]) {
     setlocale(LC_CTYPE, "");
 
@@ -707,3 +708,4 @@ int main(int argc, char *argv[]) {
 
     return EXIT_SUCCESS;
 }
+#endif

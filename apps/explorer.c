@@ -819,7 +819,7 @@ static void explorer_scroll_to_cursor(void)
 {
     size_t visible_rows;
 
-    visible_rows = (size_t)(E.rows - 5);
+    visible_rows = (size_t)(E.rows - 6);
     if (E.selected < E.scroll) {
         E.scroll = E.selected;
     }
@@ -1001,7 +1001,7 @@ static void explorer_draw_screen(void)
 
     explorer_get_window_size(&E.rows, &E.cols);
     explorer_scroll_to_cursor();
-    visible_rows = (size_t)(E.rows - 5);
+    visible_rows = (size_t)(E.rows - 6);
     marked = explorer_marked_count();
     name_width = E.cols - 45;
     if (name_width < 8) {
@@ -1033,7 +1033,7 @@ static void explorer_draw_screen(void)
     explorer_draw_repeated('-', E.cols - 2);
     printf("+");
     explorer_draw_bar_text(E.status, E.show_hidden ? " hidden:on " : " hidden:off ", E.rows - 2);
-    explorer_draw_bar_text(" ↑↓Move EnterOpen SpaceMark ^TSelect ^AAll/None cCopy mMove pPaste ", " qQuit ", E.rows);
+    explorer_draw_bar_text("nav open up mark sel all cp mv paste new del ren edit hid quit", "", E.rows);
     fflush(stdout);
 }
 
@@ -1230,7 +1230,7 @@ static void explorer_process_key(int key)
 {
     size_t visible_rows;
 
-    visible_rows = (size_t)(E.rows - 5);
+    visible_rows = (size_t)(E.rows - 6);
     switch (key) {
         case CTRL_KEY('q'):
         case 'q':

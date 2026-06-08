@@ -31,9 +31,7 @@ enum ExplorerKey {
     KEY_END,
     KEY_PAGE_UP,
     KEY_PAGE_DOWN,
-    KEY_DELETE,
-    KEY_SHIFT_UP,
-    KEY_SHIFT_DOWN
+    KEY_DELETE
 };
 
 enum ExplorerClipboardMode {
@@ -151,22 +149,6 @@ static int explorer_read_key(void)
 
         if (seq[0] == '[' && len >= 2) {
             char final = seq[len - 1];
-            int shifted = 0;
-            size_t i;
-
-            for (i = 1; i + 1 < len; i++) {
-                if (seq[i] == ';' && seq[i + 1] == '2') {
-                    shifted = 1;
-                    break;
-                }
-            }
-
-            if (shifted && final == 'A') {
-                return KEY_SHIFT_UP;
-            }
-            if (shifted && final == 'B') {
-                return KEY_SHIFT_DOWN;
-            }
 
             switch (final) {
                 case 'A':
@@ -382,7 +364,7 @@ static int explorer_load_directory(const char *dir_path)
     qsort(E.entries, E.entry_count, sizeof(*E.entries), explorer_entry_compare);
     E.selected = 0;
     E.scroll = 0;
-    explorer_set_status("%zu entries. c copies, m moves, p pastes. Space marks; Shift+Up/Down marks ranges; Ctrl+A marks all.", E.entry_count);
+    explorer_set_status("%zu entries", E.entry_count);
     return 0;
 }
 
@@ -437,15 +419,30 @@ static void explorer_toggle_mark_selected(void)
 static void explorer_mark_all(void)
 {
     size_t i;
+    size_t actionable = 0;
     size_t marked = 0;
 
     for (i = 0; i < E.entry_count; i++) {
         if (explorer_entry_is_actionable(&E.entries[i])) {
-            E.entries[i].marked = 1;
-            marked++;
+            actionable++;
+            if (E.entries[i].marked) {
+                marked++;
+            }
         }
     }
-    explorer_set_status("Marked %zu entries", marked);
+
+    if (actionable > 0 && marked == actionable) {
+        explorer_clear_marks();
+        explorer_set_status("Cleared all marks");
+        return;
+    }
+
+    for (i = 0; i < E.entry_count; i++) {
+        if (explorer_entry_is_actionable(&E.entries[i])) {
+            E.entries[i].marked = 1;
+        }
+    }
+    explorer_set_status("Marked %zu entries", actionable);
 }
 
 static void explorer_free_clipboard(void)
@@ -738,7 +735,7 @@ static void explorer_set_clipboard(int mode)
     E.clipboard_paths = paths;
     E.clipboard_count = count;
     E.clipboard_mode = mode;
-    explorer_set_status("%s %zu item%s. Navigate to a target folder and press p to paste.",
+    explorer_set_status("%s %zu item%s",
         mode == CLIPBOARD_COPY ? "Copied" : "Prepared move for",
         count,
         count == 1 ? "" : "s");
@@ -752,7 +749,7 @@ static void explorer_paste_clipboard(void)
     char first_error[EXPLORER_STATUS_SIZE] = "";
 
     if (E.clipboard_count == 0 || E.clipboard_mode == CLIPBOARD_EMPTY) {
-        explorer_set_status("Clipboard is empty. Use c to copy or m to move first.");
+        explorer_set_status("Clipboard is empty");
         return;
     }
 
@@ -880,6 +877,75 @@ static void explorer_draw_bar_text(const char *left, const char *right, int row)
     printf("\x1b[0m");
 }
 
+
+static void explorer_copy_segment(char *line, size_t line_size, int start, int width, const char *text)
+{
+    int i;
+
+    if (start < 0 || width <= 0 || (size_t)start >= line_size) {
+        return;
+    }
+    for (i = 0; i < width && text[i] != '\0' && (size_t)(start + i) + 1 < line_size; i++) {
+        line[start + i] = text[i];
+    }
+}
+
+static void explorer_draw_top_bar(const char *left, const char *right)
+{
+    char line[1024];
+    char center[32];
+    time_t now;
+    struct tm *tm_info;
+    int width;
+    int center_len;
+    int center_start;
+    int right_len;
+    int right_start;
+    int left_width;
+
+    width = E.cols;
+    if (width <= 0) {
+        return;
+    }
+    if (width >= (int)sizeof(line)) {
+        width = (int)sizeof(line) - 1;
+    }
+    memset(line, ' ', (size_t)width);
+    line[width] = '\0';
+
+    now = time(NULL);
+    tm_info = localtime(&now);
+    if (tm_info != NULL) {
+        strftime(center, sizeof(center), "%Y-%m-%d %H:%M", tm_info);
+    } else {
+        snprintf(center, sizeof(center), "date unavailable");
+    }
+
+    center_len = (int)strlen(center);
+    center_start = (width - center_len) / 2;
+    if (center_start < 0) {
+        center_start = 0;
+    }
+
+    right_len = (int)strlen(right);
+    right_start = width - right_len;
+    if (right_start < center_start + center_len + 1) {
+        right_start = width;
+    }
+
+    left_width = center_start - 1;
+    if (left_width < 0) {
+        left_width = 0;
+    }
+    explorer_copy_segment(line, sizeof(line), 0, left_width, left);
+    explorer_copy_segment(line, sizeof(line), center_start, center_len, center);
+    if (right_start < width) {
+        explorer_copy_segment(line, sizeof(line), right_start, right_len, right);
+    }
+
+    printf("\x1b[1;1H\x1b[7m%.*s\x1b[0m", width, line);
+}
+
 static void explorer_draw_entry(const ExplorerEntry *entry, int row, int selected, int name_width)
 {
     char display_name[PATH_MAX + 4];
@@ -937,15 +1003,15 @@ static void explorer_draw_screen(void)
     explorer_scroll_to_cursor();
     visible_rows = (size_t)(E.rows - 5);
     marked = explorer_marked_count();
-    name_width = E.cols - 48;
-    if (name_width < 16) {
-        name_width = 16;
+    name_width = E.cols - 45;
+    if (name_width < 8) {
+        name_width = 8;
     }
 
     printf("\x1b[?25l\x1b[2J\x1b[H");
     snprintf(title, sizeof(title), " BUDOSTACK Explorer  %s ", E.cwd);
     snprintf(right, sizeof(right), " %zu/%zu  marked:%zu  clip:%zu ", E.entry_count == 0 ? 0 : E.selected + 1, E.entry_count, marked, E.clipboard_count);
-    explorer_draw_bar_text(title, right, 1);
+    explorer_draw_top_bar(title, right);
 
     printf("\x1b[2;1H+");
     explorer_draw_repeated('-', E.cols - 2);
@@ -967,7 +1033,7 @@ static void explorer_draw_screen(void)
     explorer_draw_repeated('-', E.cols - 2);
     printf("+");
     explorer_draw_bar_text(E.status, E.show_hidden ? " hidden:on " : " hidden:off ", E.rows - 2);
-    explorer_draw_bar_text(" ↑↓ Move  Shift↑↓ Mark  Space Mark  ^A All  c Copy  m Move  p Paste ", " Enter Open  q Quit ", E.rows);
+    explorer_draw_bar_text(" ↑↓Move EnterOpen SpaceMark ^TSelect ^AAll/None cCopy mMove pPaste ", " qQuit ", E.rows);
     fflush(stdout);
 }
 
@@ -1018,7 +1084,7 @@ static void explorer_open_selected(void)
     if (entry->is_dir) {
         explorer_load_directory(entry->path);
     } else {
-        explorer_set_status("File: %s. Press e to edit, d to delete, r to rename.", entry->name);
+        explorer_set_status("File: %s", entry->name);
     }
 }
 
@@ -1178,12 +1244,6 @@ static void explorer_process_key(int key)
         case 'j':
             explorer_move_cursor(1, E.selection_mode);
             break;
-        case KEY_SHIFT_UP:
-            explorer_move_cursor(-1, 1);
-            break;
-        case KEY_SHIFT_DOWN:
-            explorer_move_cursor(1, 1);
-            break;
         case KEY_PAGE_UP:
             if (E.selected > visible_rows) {
                 E.selected -= visible_rows;
@@ -1224,7 +1284,7 @@ static void explorer_process_key(int key)
             break;
         case CTRL_KEY('t'):
             E.selection_mode = !E.selection_mode;
-            explorer_set_status("Selection mode %s. Use arrows to mark ranges, Space/Enter to toggle entries.", E.selection_mode ? "on" : "off");
+            explorer_set_status("Selection mode %s", E.selection_mode ? "on" : "off");
             break;
         case ' ':
             explorer_toggle_mark_selected();
@@ -1259,7 +1319,7 @@ static void explorer_process_key(int key)
             explorer_edit_selected();
             break;
         default:
-            explorer_set_status("Shortcuts: Space mark, Ctrl+A all, Ctrl+T selection mode, c copy, m move, p paste, e edit, q quit.");
+            explorer_set_status("Unknown key");
             break;
     }
 }

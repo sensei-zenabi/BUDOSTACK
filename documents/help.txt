@@ -169,6 +169,8 @@
 
   dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.
   editprof.: Full name 'editprofile'. App for editing color scheme presets.
+  explorer : Norton Commander-style file explorer with arrows, Space marks,
+             Ctrl+A mark/unmark all, c copy, m move, and p paste.
   paint    : ASCII paint application to edit bitmaps.
   pixart   : Turn images into pixel art and assets to your apps.
   psfedit  : Font editor for .psf fonts.

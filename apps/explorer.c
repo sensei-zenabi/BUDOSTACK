@@ -5,6 +5,7 @@
 #include "../lib/terminal_layout.h"
 
 #include <ctype.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -30,7 +31,15 @@ enum ExplorerKey {
     KEY_END,
     KEY_PAGE_UP,
     KEY_PAGE_DOWN,
-    KEY_DELETE
+    KEY_DELETE,
+    KEY_SHIFT_UP,
+    KEY_SHIFT_DOWN
+};
+
+enum ExplorerClipboardMode {
+    CLIPBOARD_EMPTY = 0,
+    CLIPBOARD_COPY,
+    CLIPBOARD_MOVE
 };
 
 typedef struct {
@@ -40,6 +49,7 @@ typedef struct {
     off_t size;
     time_t mtime;
     int is_dir;
+    int marked;
 } ExplorerEntry;
 
 typedef struct {
@@ -55,6 +65,10 @@ typedef struct {
     int show_hidden;
     int running;
     char edit_path[PATH_MAX];
+    int selection_mode;
+    char **clipboard_paths;
+    size_t clipboard_count;
+    int clipboard_mode;
 } ExplorerState;
 
 static ExplorerState E;
@@ -116,53 +130,78 @@ static int explorer_read_key(void)
     }
 
     if (c == '\x1b') {
-        char seq[3];
+        char seq[8];
+        size_t len = 0;
 
-        if (read(STDIN_FILENO, &seq[0], 1) != 1) {
+        if (read(STDIN_FILENO, &seq[len], 1) != 1) {
             return '\x1b';
         }
-        if (read(STDIN_FILENO, &seq[1], 1) != 1) {
+        len++;
+        if (seq[0] != '[' && seq[0] != 'O') {
             return '\x1b';
         }
 
-        if (seq[0] == '[') {
-            if (seq[1] >= '0' && seq[1] <= '9') {
-                if (read(STDIN_FILENO, &seq[2], 1) != 1) {
-                    return '\x1b';
-                }
-                if (seq[2] == '~') {
-                    switch (seq[1]) {
-                        case '1':
-                        case '7':
-                            return KEY_HOME;
-                        case '3':
-                            return KEY_DELETE;
-                        case '4':
-                        case '8':
-                            return KEY_END;
-                        case '5':
-                            return KEY_PAGE_UP;
-                        case '6':
-                            return KEY_PAGE_DOWN;
-                    }
-                }
-            } else {
-                switch (seq[1]) {
-                    case 'A':
-                        return KEY_ARROW_UP;
-                    case 'B':
-                        return KEY_ARROW_DOWN;
-                    case 'C':
-                        return KEY_ARROW_RIGHT;
-                    case 'D':
-                        return KEY_ARROW_LEFT;
-                    case 'H':
-                        return KEY_HOME;
-                    case 'F':
-                        return KEY_END;
+        while (len < sizeof(seq) && read(STDIN_FILENO, &seq[len], 1) == 1) {
+            if ((seq[len] >= 'A' && seq[len] <= 'Z') || seq[len] == '~') {
+                len++;
+                break;
+            }
+            len++;
+        }
+
+        if (seq[0] == '[' && len >= 2) {
+            char final = seq[len - 1];
+            int shifted = 0;
+            size_t i;
+
+            for (i = 1; i + 1 < len; i++) {
+                if (seq[i] == ';' && seq[i + 1] == '2') {
+                    shifted = 1;
+                    break;
                 }
             }
+
+            if (shifted && final == 'A') {
+                return KEY_SHIFT_UP;
+            }
+            if (shifted && final == 'B') {
+                return KEY_SHIFT_DOWN;
+            }
+
+            switch (final) {
+                case 'A':
+                    return KEY_ARROW_UP;
+                case 'B':
+                    return KEY_ARROW_DOWN;
+                case 'C':
+                    return KEY_ARROW_RIGHT;
+                case 'D':
+                    return KEY_ARROW_LEFT;
+                case 'H':
+                    return KEY_HOME;
+                case 'F':
+                    return KEY_END;
+                case '~':
+                    if (len >= 3) {
+                        switch (seq[1]) {
+                            case '1':
+                            case '7':
+                                return KEY_HOME;
+                            case '3':
+                                return KEY_DELETE;
+                            case '4':
+                            case '8':
+                                return KEY_END;
+                            case '5':
+                                return KEY_PAGE_UP;
+                            case '6':
+                                return KEY_PAGE_DOWN;
+                        }
+                    }
+                    break;
+            }
         }
+
         return '\x1b';
     }
 
@@ -343,7 +382,7 @@ static int explorer_load_directory(const char *dir_path)
     qsort(E.entries, E.entry_count, sizeof(*E.entries), explorer_entry_compare);
     E.selected = 0;
     E.scroll = 0;
-    explorer_set_status("%zu entries. Enter opens, e edits via ./apps/edit, d deletes, r renames, n creates a folder.", E.entry_count);
+    explorer_set_status("%zu entries. c copies, m moves, p pastes. Space marks; Shift+Up/Down marks ranges; Ctrl+A marks all.", E.entry_count);
     return 0;
 }
 
@@ -353,6 +392,430 @@ static ExplorerEntry *explorer_selected_entry(void)
         return NULL;
     }
     return &E.entries[E.selected];
+}
+
+
+static int explorer_entry_is_actionable(const ExplorerEntry *entry)
+{
+    return entry != NULL && strcmp(entry->name, "..") != 0;
+}
+
+static size_t explorer_marked_count(void)
+{
+    size_t count = 0;
+    size_t i;
+
+    for (i = 0; i < E.entry_count; i++) {
+        if (E.entries[i].marked && explorer_entry_is_actionable(&E.entries[i])) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static void explorer_clear_marks(void)
+{
+    size_t i;
+
+    for (i = 0; i < E.entry_count; i++) {
+        E.entries[i].marked = 0;
+    }
+}
+
+static void explorer_toggle_mark_selected(void)
+{
+    ExplorerEntry *entry = explorer_selected_entry();
+
+    if (!explorer_entry_is_actionable(entry)) {
+        explorer_set_status("Cannot mark parent directory entry");
+        return;
+    }
+    entry->marked = !entry->marked;
+    explorer_set_status("%s %s", entry->marked ? "Marked" : "Unmarked", entry->name);
+}
+
+static void explorer_mark_all(void)
+{
+    size_t i;
+    size_t marked = 0;
+
+    for (i = 0; i < E.entry_count; i++) {
+        if (explorer_entry_is_actionable(&E.entries[i])) {
+            E.entries[i].marked = 1;
+            marked++;
+        }
+    }
+    explorer_set_status("Marked %zu entries", marked);
+}
+
+static void explorer_free_clipboard(void)
+{
+    size_t i;
+
+    for (i = 0; i < E.clipboard_count; i++) {
+        free(E.clipboard_paths[i]);
+    }
+    free(E.clipboard_paths);
+    E.clipboard_paths = NULL;
+    E.clipboard_count = 0;
+    E.clipboard_mode = CLIPBOARD_EMPTY;
+}
+
+static const char *explorer_basename(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+
+    if (slash == NULL) {
+        return path;
+    }
+    return slash + 1;
+}
+
+static int explorer_join_path(char *output, size_t output_size, const char *dir_path, const char *name)
+{
+    int written;
+
+    written = snprintf(output, output_size, "%s/%s", dir_path, name);
+    if (written < 0 || (size_t)written >= output_size) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    return 0;
+}
+
+static int explorer_copy_file(const char *src, const char *dst, mode_t mode)
+{
+    int in_fd;
+    int out_fd;
+    char buffer[16384];
+    ssize_t nread;
+
+    in_fd = open(src, O_RDONLY);
+    if (in_fd == -1) {
+        return -1;
+    }
+    out_fd = open(dst, O_WRONLY | O_CREAT | O_EXCL, mode & 0777);
+    if (out_fd == -1) {
+        int saved_errno = errno;
+        close(in_fd);
+        errno = saved_errno;
+        return -1;
+    }
+
+    while ((nread = read(in_fd, buffer, sizeof(buffer))) > 0) {
+        ssize_t offset = 0;
+
+        while (offset < nread) {
+            ssize_t nwritten = write(out_fd, buffer + offset, (size_t)(nread - offset));
+            if (nwritten == -1) {
+                int saved_errno = errno;
+                close(in_fd);
+                close(out_fd);
+                unlink(dst);
+                errno = saved_errno;
+                return -1;
+            }
+            offset += nwritten;
+        }
+    }
+
+    if (nread == -1) {
+        int saved_errno = errno;
+        close(in_fd);
+        close(out_fd);
+        unlink(dst);
+        errno = saved_errno;
+        return -1;
+    }
+    if (close(in_fd) == -1) {
+        int saved_errno = errno;
+        close(out_fd);
+        errno = saved_errno;
+        return -1;
+    }
+    if (close(out_fd) == -1) {
+        return -1;
+    }
+    return 0;
+}
+
+static int explorer_copy_symlink(const char *src, const char *dst)
+{
+    char target[PATH_MAX];
+    ssize_t len;
+
+    len = readlink(src, target, sizeof(target) - 1);
+    if (len == -1) {
+        return -1;
+    }
+    target[len] = '\0';
+    return symlink(target, dst);
+}
+
+static int explorer_copy_recursive(const char *src, const char *dst)
+{
+    struct stat st;
+    struct stat dst_st;
+    DIR *dir;
+    struct dirent *entry;
+
+    if (lstat(src, &st) == -1) {
+        return -1;
+    }
+    if (lstat(dst, &dst_st) == 0) {
+        errno = EEXIST;
+        return -1;
+    }
+
+    if (S_ISLNK(st.st_mode)) {
+        return explorer_copy_symlink(src, dst);
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        return explorer_copy_file(src, dst, st.st_mode);
+    }
+
+    if (mkdir(dst, st.st_mode & 0777) == -1) {
+        return -1;
+    }
+    dir = opendir(src);
+    if (dir == NULL) {
+        int saved_errno = errno;
+        rmdir(dst);
+        errno = saved_errno;
+        return -1;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        char child_src[PATH_MAX];
+        char child_dst[PATH_MAX];
+
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (explorer_join_path(child_src, sizeof(child_src), src, entry->d_name) == -1 ||
+            explorer_join_path(child_dst, sizeof(child_dst), dst, entry->d_name) == -1 ||
+            explorer_copy_recursive(child_src, child_dst) == -1) {
+            int saved_errno = errno;
+            closedir(dir);
+            errno = saved_errno;
+            return -1;
+        }
+    }
+
+    if (closedir(dir) == -1) {
+        return -1;
+    }
+    return 0;
+}
+
+static int explorer_delete_tree(const char *path)
+{
+    struct stat st;
+    DIR *dir;
+    struct dirent *entry;
+
+    if (lstat(path, &st) == -1) {
+        return -1;
+    }
+    if (!S_ISDIR(st.st_mode) || S_ISLNK(st.st_mode)) {
+        return unlink(path);
+    }
+
+    dir = opendir(path);
+    if (dir == NULL) {
+        return -1;
+    }
+    while ((entry = readdir(dir)) != NULL) {
+        char child[PATH_MAX];
+
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        if (explorer_join_path(child, sizeof(child), path, entry->d_name) == -1 || explorer_delete_tree(child) == -1) {
+            int saved_errno = errno;
+            closedir(dir);
+            errno = saved_errno;
+            return -1;
+        }
+    }
+    if (closedir(dir) == -1) {
+        return -1;
+    }
+    return rmdir(path);
+}
+
+static int explorer_path_contains_destination(const char *src, const char *dst)
+{
+    size_t src_len = strlen(src);
+
+    return strncmp(src, dst, src_len) == 0 && (dst[src_len] == '/' || dst[src_len] == '\0');
+}
+
+static int explorer_move_path(const char *src, const char *dst)
+{
+    if (explorer_path_contains_destination(src, dst)) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (rename(src, dst) == 0) {
+        return 0;
+    }
+    if (errno != EXDEV) {
+        return -1;
+    }
+    if (explorer_copy_recursive(src, dst) == -1) {
+        return -1;
+    }
+    return explorer_delete_tree(src);
+}
+
+static int explorer_collect_marked_or_current(char ***paths, size_t *count)
+{
+    size_t marked = explorer_marked_count();
+    size_t capacity = marked > 0 ? marked : 1;
+    size_t used = 0;
+    char **items;
+    size_t i;
+
+    *paths = NULL;
+    *count = 0;
+    items = calloc(capacity, sizeof(*items));
+    if (items == NULL) {
+        return -1;
+    }
+
+    if (marked > 0) {
+        for (i = 0; i < E.entry_count; i++) {
+            if (E.entries[i].marked && explorer_entry_is_actionable(&E.entries[i])) {
+                items[used] = strdup(E.entries[i].path);
+                if (items[used] == NULL) {
+                    size_t j;
+                    for (j = 0; j < used; j++) {
+                        free(items[j]);
+                    }
+                    free(items);
+                    return -1;
+                }
+                used++;
+            }
+        }
+    } else {
+        ExplorerEntry *entry = explorer_selected_entry();
+
+        if (!explorer_entry_is_actionable(entry)) {
+            free(items);
+            return 0;
+        }
+        items[0] = strdup(entry->path);
+        if (items[0] == NULL) {
+            free(items);
+            return -1;
+        }
+        used = 1;
+    }
+
+    *paths = items;
+    *count = used;
+    return 0;
+}
+
+static void explorer_set_clipboard(int mode)
+{
+    char **paths;
+    size_t count;
+
+    if (explorer_collect_marked_or_current(&paths, &count) == -1) {
+        explorer_set_status("Out of memory while preparing clipboard");
+        return;
+    }
+    if (count == 0) {
+        free(paths);
+        explorer_set_status("Select a file or folder before copy/move");
+        return;
+    }
+
+    explorer_free_clipboard();
+    E.clipboard_paths = paths;
+    E.clipboard_count = count;
+    E.clipboard_mode = mode;
+    explorer_set_status("%s %zu item%s. Navigate to a target folder and press p to paste.",
+        mode == CLIPBOARD_COPY ? "Copied" : "Prepared move for",
+        count,
+        count == 1 ? "" : "s");
+}
+
+static void explorer_paste_clipboard(void)
+{
+    size_t i;
+    size_t pasted = 0;
+    size_t failed = 0;
+    char first_error[EXPLORER_STATUS_SIZE] = "";
+
+    if (E.clipboard_count == 0 || E.clipboard_mode == CLIPBOARD_EMPTY) {
+        explorer_set_status("Clipboard is empty. Use c to copy or m to move first.");
+        return;
+    }
+
+    for (i = 0; i < E.clipboard_count; i++) {
+        char destination[PATH_MAX];
+        const char *name = explorer_basename(E.clipboard_paths[i]);
+
+        if (explorer_join_path(destination, sizeof(destination), E.cwd, name) == -1) {
+            failed++;
+            if (first_error[0] == '\0') {
+                snprintf(first_error, sizeof(first_error), "%s: %s", name, strerror(errno));
+            }
+            continue;
+        }
+
+        if ((E.clipboard_mode == CLIPBOARD_COPY && explorer_copy_recursive(E.clipboard_paths[i], destination) == 0) ||
+            (E.clipboard_mode == CLIPBOARD_MOVE && explorer_move_path(E.clipboard_paths[i], destination) == 0)) {
+            pasted++;
+        } else {
+            failed++;
+            if (first_error[0] == '\0') {
+                snprintf(first_error, sizeof(first_error), "%s: %s", name, strerror(errno));
+            }
+        }
+    }
+
+    if (E.clipboard_mode == CLIPBOARD_MOVE && failed == 0) {
+        explorer_free_clipboard();
+    }
+    explorer_load_directory(E.cwd);
+    explorer_clear_marks();
+    if (failed == 0) {
+        explorer_set_status("Pasted %zu item%s", pasted, pasted == 1 ? "" : "s");
+    } else {
+        explorer_set_status("Pasted %zu item%s, %zu failed (%s)", pasted, pasted == 1 ? "" : "s", failed, first_error);
+    }
+}
+
+static void explorer_move_cursor(int direction, int mark)
+{
+    ExplorerEntry *entry;
+
+    if (E.entry_count == 0) {
+        return;
+    }
+    if (mark) {
+        entry = explorer_selected_entry();
+        if (explorer_entry_is_actionable(entry)) {
+            entry->marked = 1;
+        }
+    }
+    if (direction < 0 && E.selected > 0) {
+        E.selected--;
+    } else if (direction > 0 && E.selected + 1 < E.entry_count) {
+        E.selected++;
+    }
+    if (mark) {
+        entry = explorer_selected_entry();
+        if (explorer_entry_is_actionable(entry)) {
+            entry->marked = 1;
+        }
+        explorer_set_status("Marked %zu entries", explorer_marked_count());
+    }
 }
 
 static void explorer_scroll_to_cursor(void)
@@ -452,6 +915,7 @@ static void explorer_draw_entry(const ExplorerEntry *entry, int row, int selecte
     if (selected) {
         printf("\x1b[44;37m");
     }
+    printf("%c ", entry->marked ? '*' : ' ');
     explorer_draw_truncated(display_name, name_width);
     printf("  %-10s %10s  %-16s", perms, size_text, time_text);
     if (selected) {
@@ -466,25 +930,27 @@ static void explorer_draw_screen(void)
     int row;
     int name_width;
     char title[PATH_MAX + 64];
-    char right[64];
+    char right[96];
+    size_t marked;
 
     explorer_get_window_size(&E.rows, &E.cols);
     explorer_scroll_to_cursor();
     visible_rows = (size_t)(E.rows - 5);
-    name_width = E.cols - 46;
+    marked = explorer_marked_count();
+    name_width = E.cols - 48;
     if (name_width < 16) {
         name_width = 16;
     }
 
     printf("\x1b[?25l\x1b[2J\x1b[H");
     snprintf(title, sizeof(title), " BUDOSTACK Explorer  %s ", E.cwd);
-    snprintf(right, sizeof(right), " %zu/%zu ", E.entry_count == 0 ? 0 : E.selected + 1, E.entry_count);
+    snprintf(right, sizeof(right), " %zu/%zu  marked:%zu  clip:%zu ", E.entry_count == 0 ? 0 : E.selected + 1, E.entry_count, marked, E.clipboard_count);
     explorer_draw_bar_text(title, right, 1);
 
     printf("\x1b[2;1H+");
     explorer_draw_repeated('-', E.cols - 2);
     printf("+");
-    printf("\x1b[3;2H%-*s  %-10s %10s  %-16s", name_width, "Name", "Mode", "Size", "Modified");
+    printf("\x1b[3;2H  %-*s  %-10s %10s  %-16s", name_width, "Name", "Mode", "Size", "Modified");
 
     for (i = 0; i < visible_rows; i++) {
         row = (int)i + 4;
@@ -501,7 +967,7 @@ static void explorer_draw_screen(void)
     explorer_draw_repeated('-', E.cols - 2);
     printf("+");
     explorer_draw_bar_text(E.status, E.show_hidden ? " hidden:on " : " hidden:off ", E.rows - 2);
-    explorer_draw_bar_text(" ↑↓ Move  Enter/Open  ← Parent  e Edit  r Rename  d Delete  n Mkdir ", " h Hidden  q Quit ", E.rows);
+    explorer_draw_bar_text(" ↑↓ Move  Shift↑↓ Mark  Space Mark  ^A All  c Copy  m Move  p Paste ", " Enter Open  q Quit ", E.rows);
     fflush(stdout);
 }
 
@@ -706,15 +1172,17 @@ static void explorer_process_key(int key)
             break;
         case KEY_ARROW_UP:
         case 'k':
-            if (E.selected > 0) {
-                E.selected--;
-            }
+            explorer_move_cursor(-1, E.selection_mode);
             break;
         case KEY_ARROW_DOWN:
         case 'j':
-            if (E.selected + 1 < E.entry_count) {
-                E.selected++;
-            }
+            explorer_move_cursor(1, E.selection_mode);
+            break;
+        case KEY_SHIFT_UP:
+            explorer_move_cursor(-1, 1);
+            break;
+        case KEY_SHIFT_DOWN:
+            explorer_move_cursor(1, 1);
             break;
         case KEY_PAGE_UP:
             if (E.selected > visible_rows) {
@@ -742,10 +1210,36 @@ static void explorer_process_key(int key)
         case KEY_ARROW_RIGHT:
         case '\r':
         case '\n':
-            explorer_open_selected();
+            if (E.selection_mode) {
+                explorer_toggle_mark_selected();
+            } else {
+                explorer_open_selected();
+            }
             break;
         case KEY_ARROW_LEFT:
             explorer_go_parent();
+            break;
+        case CTRL_KEY('a'):
+            explorer_mark_all();
+            break;
+        case CTRL_KEY('t'):
+            E.selection_mode = !E.selection_mode;
+            explorer_set_status("Selection mode %s. Use arrows to mark ranges, Space/Enter to toggle entries.", E.selection_mode ? "on" : "off");
+            break;
+        case ' ':
+            explorer_toggle_mark_selected();
+            break;
+        case 'c':
+        case 'C':
+            explorer_set_clipboard(CLIPBOARD_COPY);
+            break;
+        case 'm':
+        case 'M':
+            explorer_set_clipboard(CLIPBOARD_MOVE);
+            break;
+        case 'p':
+        case 'P':
+            explorer_paste_clipboard();
             break;
         case 'h':
             E.show_hidden = !E.show_hidden;
@@ -765,7 +1259,7 @@ static void explorer_process_key(int key)
             explorer_edit_selected();
             break;
         default:
-            explorer_set_status("Shortcut: arrows move, Enter opens, e edits, r renames, d deletes, n creates, h toggles hidden, q quits.");
+            explorer_set_status("Shortcuts: Space mark, Ctrl+A all, Ctrl+T selection mode, c copy, m move, p paste, e edit, q quit.");
             break;
     }
 }
@@ -806,6 +1300,7 @@ int main(int argc, char **argv)
     }
 
     explorer_free_entries();
+    explorer_free_clipboard();
     printf("\x1b[2J\x1b[H\x1b[?25h");
     fflush(stdout);
     return EXIT_SUCCESS;

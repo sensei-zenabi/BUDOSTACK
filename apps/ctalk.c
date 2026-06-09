@@ -256,6 +256,24 @@ static bool is_valid_name(const char *name, size_t max_len)
     return true;
 }
 
+static bool is_chat_input_byte(unsigned char c)
+{
+    return c >= 0x20 && c != 0x7f;
+}
+
+static void delete_last_input_char(char *buf, size_t *len)
+{
+    if (*len == 0) {
+        return;
+    }
+
+    (*len)--;
+    while (*len > 0 && (((unsigned char)buf[*len]) & 0xc0U) == 0x80U) {
+        (*len)--;
+    }
+    buf[*len] = '\0';
+}
+
 static void disconnect_client(client_t *client, const char *reason);
 static void broadcast_member_list(const char *channel);
 
@@ -868,12 +886,9 @@ static void run_client(const char *username, const char *host, const char *port)
                 printf(">> ");
                 fflush(stdout);
             } else if (c == 127 || c == '\b') {
-                if (input_len > 0) {
-                    input_len--;
-                    input_buf[input_len] = '\0';
-                }
+                delete_last_input_char(input_buf, &input_len);
                 reprint_prompt(input_buf);
-            } else if (isprint((unsigned char)c)) {
+            } else if (is_chat_input_byte((unsigned char)c)) {
                 if (input_len < sizeof(input_buf) - 1) {
                     input_buf[input_len++] = c;
                     input_buf[input_len] = '\0';

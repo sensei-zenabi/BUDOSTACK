@@ -52,6 +52,13 @@ typedef struct {
 } ExplorerEntry;
 
 typedef struct {
+    char name[PATH_MAX];
+    size_t selected;
+    size_t screen_row;
+    int has_name;
+} ExplorerCursorAnchor;
+
+typedef struct {
     struct termios original_termios;
     ExplorerEntry *entries;
     size_t entry_count;
@@ -228,6 +235,10 @@ static void explorer_set_status(const char *fmt, ...)
     va_end(ap);
 }
 
+static ExplorerEntry *explorer_selected_entry(void);
+static size_t explorer_visible_rows(void);
+static void explorer_scroll_to_cursor(void);
+
 static void explorer_free_entries(void)
 {
     size_t i;
@@ -310,7 +321,74 @@ static int explorer_add_entry(const char *dir_path, const char *name)
     return 0;
 }
 
-static int explorer_load_directory(const char *dir_path)
+static void explorer_capture_cursor_anchor(ExplorerCursorAnchor *anchor)
+{
+    ExplorerEntry *entry;
+
+    if (anchor == NULL) {
+        return;
+    }
+
+    memset(anchor, 0, sizeof(*anchor));
+    anchor->selected = E.selected;
+    if (E.selected >= E.scroll) {
+        anchor->screen_row = E.selected - E.scroll;
+    }
+
+    entry = explorer_selected_entry();
+    if (entry != NULL) {
+        snprintf(anchor->name, sizeof(anchor->name), "%s", entry->name);
+        anchor->name[sizeof(anchor->name) - 1] = '\0';
+        anchor->has_name = 1;
+    }
+}
+
+static void explorer_restore_cursor_anchor(const ExplorerCursorAnchor *anchor, const char *preferred_name)
+{
+    size_t selected = 0;
+    size_t screen_row = 0;
+    size_t i;
+
+    if (E.entry_count == 0) {
+        E.selected = 0;
+        E.scroll = 0;
+        return;
+    }
+
+    if (anchor != NULL) {
+        selected = anchor->selected;
+        screen_row = anchor->screen_row;
+    }
+    if (selected >= E.entry_count) {
+        selected = E.entry_count - 1;
+    }
+
+    if (preferred_name != NULL && preferred_name[0] != '\0') {
+        for (i = 0; i < E.entry_count; i++) {
+            if (strcmp(E.entries[i].name, preferred_name) == 0) {
+                selected = i;
+                break;
+            }
+        }
+    } else if (anchor != NULL && anchor->has_name) {
+        for (i = 0; i < E.entry_count; i++) {
+            if (strcmp(E.entries[i].name, anchor->name) == 0) {
+                selected = i;
+                break;
+            }
+        }
+    }
+
+    E.selected = selected;
+    if (E.selected > screen_row) {
+        E.scroll = E.selected - screen_row;
+    } else {
+        E.scroll = 0;
+    }
+    explorer_scroll_to_cursor();
+}
+
+static int explorer_load_directory_at(const char *dir_path, const ExplorerCursorAnchor *anchor, const char *preferred_name)
 {
     DIR *dir;
     struct dirent *entry;
@@ -367,10 +445,14 @@ static int explorer_load_directory(const char *dir_path)
 
     closedir(dir);
     qsort(E.entries, E.entry_count, sizeof(*E.entries), explorer_entry_compare);
-    E.selected = 0;
-    E.scroll = 0;
+    explorer_restore_cursor_anchor(anchor, preferred_name);
     explorer_set_status("%zu entries", E.entry_count);
     return 0;
+}
+
+static int explorer_load_directory(const char *dir_path)
+{
+    return explorer_load_directory_at(dir_path, NULL, NULL);
 }
 
 static ExplorerEntry *explorer_selected_entry(void)
@@ -748,10 +830,13 @@ static void explorer_set_clipboard(int mode)
 
 static void explorer_paste_clipboard(void)
 {
+    ExplorerCursorAnchor anchor;
     size_t i;
     size_t pasted = 0;
     size_t failed = 0;
     char first_error[EXPLORER_STATUS_SIZE] = "";
+
+    explorer_capture_cursor_anchor(&anchor);
 
     if (E.clipboard_count == 0 || E.clipboard_mode == CLIPBOARD_EMPTY) {
         explorer_set_status("Clipboard is empty");
@@ -784,7 +869,7 @@ static void explorer_paste_clipboard(void)
     if (E.clipboard_mode == CLIPBOARD_MOVE && failed == 0) {
         explorer_free_clipboard();
     }
-    explorer_load_directory(E.cwd);
+    explorer_load_directory_at(E.cwd, &anchor, NULL);
     explorer_clear_marks();
     if (failed == 0) {
         explorer_set_status("Pasted %zu item%s", pasted, pasted == 1 ? "" : "s");
@@ -833,8 +918,26 @@ static size_t explorer_visible_rows(void)
 static void explorer_scroll_to_cursor(void)
 {
     size_t visible_rows;
+    size_t max_scroll;
 
     visible_rows = explorer_visible_rows();
+    if (E.entry_count == 0) {
+        E.selected = 0;
+        E.scroll = 0;
+        return;
+    }
+    if (E.selected >= E.entry_count) {
+        E.selected = E.entry_count - 1;
+    }
+
+    if (E.entry_count > visible_rows) {
+        max_scroll = E.entry_count - visible_rows;
+    } else {
+        max_scroll = 0;
+    }
+    if (E.scroll > max_scroll) {
+        E.scroll = max_scroll;
+    }
     if (E.selected < E.scroll) {
         E.scroll = E.selected;
     }
@@ -1130,6 +1233,7 @@ static int explorer_prompt(const char *prompt, char *buffer, size_t buffer_size)
 
 static void explorer_open_selected(void)
 {
+    ExplorerCursorAnchor anchor;
     ExplorerEntry *entry;
 
     entry = explorer_selected_entry();
@@ -1138,7 +1242,9 @@ static void explorer_open_selected(void)
         return;
     }
     if (entry->is_dir) {
-        explorer_load_directory(entry->path);
+        explorer_capture_cursor_anchor(&anchor);
+        anchor.has_name = 0;
+        explorer_load_directory_at(entry->path, &anchor, NULL);
     } else {
         explorer_set_status("File: %s", entry->name);
     }
@@ -1146,15 +1252,23 @@ static void explorer_open_selected(void)
 
 static void explorer_go_parent(void)
 {
+    ExplorerCursorAnchor anchor;
+    char child_name[PATH_MAX];
+
     if (strcmp(E.cwd, "/") == 0) {
         explorer_set_status("Already at filesystem root");
         return;
     }
-    explorer_load_directory("..");
+
+    snprintf(child_name, sizeof(child_name), "%s", explorer_basename(E.cwd));
+    child_name[sizeof(child_name) - 1] = '\0';
+    explorer_capture_cursor_anchor(&anchor);
+    explorer_load_directory_at("..", &anchor, child_name);
 }
 
 static void explorer_delete_selected(void)
 {
+    ExplorerCursorAnchor anchor;
     ExplorerEntry *entry;
     char prompt[PATH_MAX + 64];
     char answer[8];
@@ -1166,6 +1280,7 @@ static void explorer_delete_selected(void)
         return;
     }
 
+    explorer_capture_cursor_anchor(&anchor);
     snprintf(prompt, sizeof(prompt), "Delete %s? Type y: ", entry->name);
     answer[0] = '\0';
     if (explorer_prompt(prompt, answer, sizeof(answer)) == -1 || strcmp(answer, "y") != 0) {
@@ -1185,12 +1300,13 @@ static void explorer_delete_selected(void)
         return;
     }
 
-    explorer_load_directory(E.cwd);
+    explorer_load_directory_at(E.cwd, &anchor, NULL);
     explorer_set_status("Deleted %s", deleted_name);
 }
 
 static void explorer_rename_selected(void)
 {
+    ExplorerCursorAnchor anchor;
     ExplorerEntry *entry;
     char new_name[PATH_MAX];
     char new_path[PATH_MAX];
@@ -1202,6 +1318,7 @@ static void explorer_rename_selected(void)
         return;
     }
 
+    explorer_capture_cursor_anchor(&anchor);
     snprintf(new_name, sizeof(new_name), "%s", entry->name);
     if (explorer_prompt("Rename to: ", new_name, sizeof(new_name)) == -1) {
         explorer_set_status("Rename canceled");
@@ -1217,16 +1334,18 @@ static void explorer_rename_selected(void)
         explorer_set_status("Cannot rename %s: %s", entry->name, strerror(errno));
         return;
     }
-    explorer_load_directory(E.cwd);
+    explorer_load_directory_at(E.cwd, &anchor, new_name);
     explorer_set_status("Renamed to %s", new_name);
 }
 
 static void explorer_make_directory(void)
 {
+    ExplorerCursorAnchor anchor;
     char name[PATH_MAX];
     char path[PATH_MAX];
     int written;
 
+    explorer_capture_cursor_anchor(&anchor);
     name[0] = '\0';
     if (explorer_prompt("New directory name: ", name, sizeof(name)) == -1) {
         explorer_set_status("Mkdir canceled");
@@ -1242,17 +1361,19 @@ static void explorer_make_directory(void)
         explorer_set_status("Cannot create %s: %s", name, strerror(errno));
         return;
     }
-    explorer_load_directory(E.cwd);
+    explorer_load_directory_at(E.cwd, &anchor, NULL);
     explorer_set_status("Created directory %s", name);
 }
 
 static void explorer_edit_selected(void)
 {
+    ExplorerCursorAnchor anchor;
     ExplorerEntry *entry;
     pid_t pid;
     int status;
 
     entry = explorer_selected_entry();
+    explorer_capture_cursor_anchor(&anchor);
     if (entry == NULL || entry->is_dir) {
         explorer_set_status("Choose a file to edit");
         return;
@@ -1279,7 +1400,7 @@ static void explorer_edit_selected(void)
         explorer_set_status("Editor exited with status %d", status);
     }
     explorer_enable_raw_mode();
-    explorer_load_directory(E.cwd);
+    explorer_load_directory_at(E.cwd, &anchor, NULL);
 }
 
 static void explorer_process_key(int key)
@@ -1357,10 +1478,14 @@ static void explorer_process_key(int key)
         case 'P':
             explorer_paste_clipboard();
             break;
-        case 'h':
+        case 'h': {
+            ExplorerCursorAnchor anchor;
+
+            explorer_capture_cursor_anchor(&anchor);
             E.show_hidden = !E.show_hidden;
-            explorer_load_directory(E.cwd);
+            explorer_load_directory_at(E.cwd, &anchor, NULL);
             break;
+        }
         case 'd':
         case KEY_DELETE:
             explorer_delete_selected();

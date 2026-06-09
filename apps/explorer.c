@@ -22,6 +22,7 @@
 #define EXPLORER_MIN_COLS BUDOSTACK_TARGET_COLS
 #define EXPLORER_RESERVED_ROWS 7
 #define EXPLORER_STATUS_SIZE 256
+#define EXPLORER_SESSION_HEADER "EXPLORER_SESSION 1"
 
 enum ExplorerKey {
     KEY_ARROW_LEFT = 1000,
@@ -76,6 +77,15 @@ typedef struct {
     size_t clipboard_count;
     int clipboard_mode;
 } ExplorerState;
+
+typedef struct {
+    char cwd[PATH_MAX];
+    char selected_name[PATH_MAX];
+    size_t selected;
+    size_t scroll;
+    int show_hidden;
+    int has_selected_name;
+} ExplorerSession;
 
 static ExplorerState E;
 
@@ -238,6 +248,159 @@ static void explorer_set_status(const char *fmt, ...)
 static ExplorerEntry *explorer_selected_entry(void);
 static size_t explorer_visible_rows(void);
 static void explorer_scroll_to_cursor(void);
+
+static int explorer_session_path(char *path, size_t path_size)
+{
+    const char *home;
+    int written;
+
+    home = getenv("HOME");
+    if (home != NULL && home[0] != '\0') {
+        char dir[PATH_MAX];
+
+        written = snprintf(dir, sizeof(dir), "%s/.budostack", home);
+        if (written < 0 || (size_t)written >= sizeof(dir)) {
+            errno = ENAMETOOLONG;
+            return -1;
+        }
+        if (mkdir(dir, 0755) == -1 && errno != EEXIST) {
+            return -1;
+        }
+        written = snprintf(path, path_size, "%s/explorer_session.txt", dir);
+    } else {
+        written = snprintf(path, path_size, "./.budostack_explorer_session.txt");
+    }
+    if (written < 0 || (size_t)written >= path_size) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    return 0;
+}
+
+static void explorer_save_session(void)
+{
+    ExplorerEntry *entry;
+    char path[PATH_MAX];
+    FILE *fp;
+
+    if (explorer_session_path(path, sizeof(path)) == -1) {
+        perror("explorer session path");
+        return;
+    }
+
+    fp = fopen(path, "w");
+    if (fp == NULL) {
+        perror("explorer session");
+        return;
+    }
+
+    fprintf(fp, "%s\n", EXPLORER_SESSION_HEADER);
+    fprintf(fp, "CWD\t%s\n", E.cwd);
+    fprintf(fp, "SELECTED\t%zu\n", E.selected);
+    fprintf(fp, "SCROLL\t%zu\n", E.scroll);
+    fprintf(fp, "SHOW_HIDDEN\t%d\n", E.show_hidden);
+
+    entry = explorer_selected_entry();
+    if (entry != NULL) {
+        fprintf(fp, "ENTRY\t%s\n", entry->name);
+    }
+
+    if (fclose(fp) == EOF) {
+        perror("explorer session");
+    }
+}
+
+static int explorer_parse_size(const char *text, size_t *value)
+{
+    char *endptr;
+    unsigned long parsed;
+
+    errno = 0;
+    parsed = strtoul(text, &endptr, 10);
+    if (errno != 0 || endptr == text || *endptr != '\0') {
+        return -1;
+    }
+    *value = (size_t)parsed;
+    return 0;
+}
+
+static int explorer_load_session(ExplorerSession *session)
+{
+    char path[PATH_MAX];
+    char line[PATH_MAX * 2];
+    FILE *fp;
+
+    memset(session, 0, sizeof(*session));
+    if (explorer_session_path(path, sizeof(path)) == -1) {
+        return 0;
+    }
+
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return 0;
+    }
+
+    if (fgets(line, sizeof(line), fp) == NULL) {
+        fclose(fp);
+        return 0;
+    }
+    line[strcspn(line, "\n")] = '\0';
+    if (strcmp(line, EXPLORER_SESSION_HEADER) != 0) {
+        fclose(fp);
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        line[strcspn(line, "\n")] = '\0';
+        if (strncmp(line, "CWD\t", 4) == 0) {
+            snprintf(session->cwd, sizeof(session->cwd), "%s", line + 4);
+            session->cwd[sizeof(session->cwd) - 1] = '\0';
+        } else if (strncmp(line, "SELECTED\t", 9) == 0) {
+            if (explorer_parse_size(line + 9, &session->selected) == -1) {
+                session->selected = 0;
+            }
+        } else if (strncmp(line, "SCROLL\t", 7) == 0) {
+            if (explorer_parse_size(line + 7, &session->scroll) == -1) {
+                session->scroll = 0;
+            }
+        } else if (strncmp(line, "SHOW_HIDDEN\t", 12) == 0) {
+            session->show_hidden = atoi(line + 12) != 0;
+        } else if (strncmp(line, "ENTRY\t", 6) == 0) {
+            snprintf(session->selected_name, sizeof(session->selected_name), "%s", line + 6);
+            session->selected_name[sizeof(session->selected_name) - 1] = '\0';
+            session->has_selected_name = session->selected_name[0] != '\0';
+        }
+    }
+
+    fclose(fp);
+    return session->cwd[0] != '\0';
+}
+
+static void explorer_restore_session_cursor(const ExplorerSession *session)
+{
+    size_t i;
+
+    if (E.entry_count == 0) {
+        E.selected = 0;
+        E.scroll = 0;
+        return;
+    }
+
+    E.selected = session->selected;
+    if (session->has_selected_name) {
+        for (i = 0; i < E.entry_count; i++) {
+            if (strcmp(E.entries[i].name, session->selected_name) == 0) {
+                E.selected = i;
+                break;
+            }
+        }
+    }
+    if (E.selected >= E.entry_count) {
+        E.selected = E.entry_count - 1;
+    }
+    E.scroll = session->scroll;
+    explorer_scroll_to_cursor();
+}
 
 static void explorer_free_entries(void)
 {
@@ -1514,6 +1677,8 @@ static void explorer_handle_signal(int signo)
 int main(int argc, char **argv)
 {
     const char *start_dir;
+    ExplorerSession session;
+    int restored;
 
     setlocale(LC_CTYPE, "");
     memset(&E, 0, sizeof(E));
@@ -1531,7 +1696,16 @@ int main(int argc, char **argv)
         explorer_die("snprintf");
     }
     E.edit_path[sizeof(E.edit_path) - 1] = '\0';
-    if (explorer_load_directory(start_dir) == -1) {
+    restored = 0;
+    if (argc <= 1 && explorer_load_session(&session)) {
+        E.show_hidden = session.show_hidden;
+        if (explorer_load_directory(session.cwd) == 0) {
+            explorer_restore_session_cursor(&session);
+            explorer_set_status("Restored last session");
+            restored = 1;
+        }
+    }
+    if (!restored && explorer_load_directory(start_dir) == -1) {
         explorer_die("explorer_load_directory");
     }
 
@@ -1540,6 +1714,7 @@ int main(int argc, char **argv)
         explorer_process_key(explorer_read_key());
     }
 
+    explorer_save_session();
     explorer_free_entries();
     explorer_free_clipboard();
     printf("\x1b[2J\x1b[H\x1b[?25h");

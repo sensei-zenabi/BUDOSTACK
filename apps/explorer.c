@@ -18,8 +18,9 @@
 #endif
 
 #define CTRL_KEY(k) ((k) & 0x1f)
-#define EXPLORER_MIN_ROWS 12
-#define EXPLORER_MIN_COLS 60
+#define EXPLORER_MIN_ROWS BUDOSTACK_TARGET_ROWS
+#define EXPLORER_MIN_COLS BUDOSTACK_TARGET_COLS
+#define EXPLORER_RESERVED_ROWS 7
 #define EXPLORER_STATUS_SIZE 256
 
 enum ExplorerKey {
@@ -70,6 +71,11 @@ typedef struct {
 } ExplorerState;
 
 static ExplorerState E;
+
+int budostack_terminal_layout_enabled(void)
+{
+    return 0;
+}
 
 static void explorer_set_status(const char *fmt, ...);
 
@@ -202,7 +208,6 @@ static int explorer_get_window_size(int *rows, int *cols)
         *cols = ws.ws_col;
     }
 
-    budostack_clamp_terminal_size(rows, cols);
     if (*rows < EXPLORER_MIN_ROWS) {
         *rows = EXPLORER_MIN_ROWS;
     }
@@ -815,11 +820,21 @@ static void explorer_move_cursor(int direction, int mark)
     }
 }
 
+static size_t explorer_visible_rows(void)
+{
+    int rows = E.rows - EXPLORER_RESERVED_ROWS;
+
+    if (rows < 1) {
+        return 1;
+    }
+    return (size_t)rows;
+}
+
 static void explorer_scroll_to_cursor(void)
 {
     size_t visible_rows;
 
-    visible_rows = (size_t)(E.rows - 6);
+    visible_rows = explorer_visible_rows();
     if (E.selected < E.scroll) {
         E.scroll = E.selected;
     }
@@ -859,24 +874,48 @@ static void explorer_draw_truncated(const char *text, int width)
 
 static void explorer_draw_bar_text(const char *left, const char *right, int row)
 {
-    int left_width;
     int right_width;
+    int right_limit;
+    int left_width;
     int space;
 
-    left_width = (int)strlen(left);
+    if (E.cols <= 0) {
+        return;
+    }
+
     right_width = (int)strlen(right);
-    space = E.cols - left_width - right_width;
-    if (space < 1) {
-        space = 1;
+    right_limit = E.cols / 3;
+    if (right_limit < 12) {
+        right_limit = 12;
+    }
+    if (right_width > right_limit) {
+        right_width = right_limit;
+    }
+    if (right_width >= E.cols) {
+        right_width = E.cols - 1;
+    }
+
+    space = right_width > 0 ? 1 : 0;
+    left_width = E.cols - right_width - space;
+    if (left_width < 0) {
+        left_width = 0;
     }
 
     printf("\x1b[%d;1H\x1b[7m", row);
-    explorer_draw_truncated(left, E.cols - right_width - space);
+    explorer_draw_truncated(left, left_width);
     explorer_draw_repeated(' ', space);
-    printf("%s", right);
+    if (right_width > 0) {
+        explorer_draw_truncated(right, right_width);
+    }
     printf("\x1b[0m");
 }
 
+static void explorer_draw_plain_bar(const char *text, int row)
+{
+    printf("\x1b[%d;1H\x1b[7m", row);
+    explorer_draw_truncated(text, E.cols);
+    printf("\x1b[0m");
+}
 
 static void explorer_copy_segment(char *line, size_t line_size, int start, int width, const char *text)
 {
@@ -996,12 +1035,15 @@ static void explorer_draw_screen(void)
     int row;
     int name_width;
     char title[PATH_MAX + 64];
-    char right[96];
+    char right[128];
+    char state[128];
+    const char *nav_help;
+    const char *action_help;
     size_t marked;
 
     explorer_get_window_size(&E.rows, &E.cols);
     explorer_scroll_to_cursor();
-    visible_rows = (size_t)(E.rows - 6);
+    visible_rows = explorer_visible_rows();
     marked = explorer_marked_count();
     name_width = E.cols - 45;
     if (name_width < 8) {
@@ -1010,7 +1052,7 @@ static void explorer_draw_screen(void)
 
     printf("\x1b[?25l\x1b[2J\x1b[H");
     snprintf(title, sizeof(title), " BUDOSTACK Explorer  %s ", E.cwd);
-    snprintf(right, sizeof(right), " %zu/%zu  marked:%zu  clip:%zu ", E.entry_count == 0 ? 0 : E.selected + 1, E.entry_count, marked, E.clipboard_count);
+    snprintf(right, sizeof(right), " %zu/%zu  *%zu  clip:%zu ", E.entry_count == 0 ? 0 : E.selected + 1, E.entry_count, marked, E.clipboard_count);
     explorer_draw_top_bar(title, right);
 
     printf("\x1b[2;1H+");
@@ -1028,12 +1070,26 @@ static void explorer_draw_screen(void)
         }
     }
 
-    row = E.rows - 1;
+    row = E.rows - 3;
     printf("\x1b[%d;1H+", row);
     explorer_draw_repeated('-', E.cols - 2);
     printf("+");
-    explorer_draw_bar_text(E.status, E.show_hidden ? " hidden:on " : " hidden:off ", E.rows - 2);
-    explorer_draw_bar_text("nav open up mark sel all cp mv paste new del ren edit hid quit", "", E.rows);
+
+    snprintf(state, sizeof(state), "hidden:%s  select:%s  clipboard:%zu",
+        E.show_hidden ? "on" : "off",
+        E.selection_mode ? "on" : "off",
+        E.clipboard_count);
+    explorer_draw_bar_text(E.status, state, E.rows - 2);
+
+    if (E.cols >= 112) {
+        nav_help = "Move: Up/Down or j/k  Page: PgUp/PgDn  Ends: Home/End  Open: Enter  Parent: Left  Mark: Space  All: Ctrl+A  Select: Ctrl+T";
+        action_help = "Copy: C  Move: M  Paste: P  New dir: N  Delete: D/Del  Rename: R  Edit: E  Hidden: H  Quit: Q";
+    } else {
+        nav_help = "Up/Down Move  Enter Open  Left Parent  Space Mark  Ctrl+A All  Ctrl+T Select";
+        action_help = "C Copy  M Move  P Paste  N NewDir  D Del  R Rename  E Edit  H Hidden  Q Quit";
+    }
+    explorer_draw_plain_bar(nav_help, E.rows - 1);
+    explorer_draw_plain_bar(action_help, E.rows);
     fflush(stdout);
 }
 
@@ -1230,7 +1286,7 @@ static void explorer_process_key(int key)
 {
     size_t visible_rows;
 
-    visible_rows = (size_t)(E.rows - 6);
+    visible_rows = explorer_visible_rows();
     switch (key) {
         case CTRL_KEY('q'):
         case 'q':

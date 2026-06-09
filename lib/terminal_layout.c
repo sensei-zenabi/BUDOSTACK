@@ -217,6 +217,13 @@ int budostack_get_target_cols(void) {
     return BUDOSTACK_TARGET_COLS;
 }
 
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+int budostack_terminal_layout_enabled(void) {
+    return 1;
+}
+
 void budostack_apply_terminal_layout(void) {
     int rows = 0;
     int cols = 0;
@@ -243,5 +250,8 @@ void budostack_apply_terminal_layout(void) {
 __attribute__((constructor))
 #endif
 static void budostack_terminal_layout_constructor(void) {
+    if (!budostack_terminal_layout_enabled()) {
+        return;
+    }
     budostack_apply_terminal_layout();
 }

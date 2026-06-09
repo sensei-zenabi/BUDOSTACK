@@ -1,0 +1,399 @@
+BUDOSTACK TASK COMMANDS REFERENCE
+==================================
+
+This ASCII manual lists every command implemented in the commands folder.
+Use command names exactly as shown inside TASK scripts or from a shell.
+Coordinates are zero-based unless a command states otherwise.  CSV row and
+column arguments are one-based and CSV files use semicolon separators.
+Commands beginning with _TERM are for apps/terminal and emit OSC 777
+terminal control sequences.
+
+_BAR
+  Syntax: _BAR [-x <col> -y <row>] -title <text> -progress <0-100>
+          [-color <0-18>]
+  Use: Draw a titled percentage progress bar at the cursor or at a row and
+       column.
+  Examples:
+    _BAR -title Loading -progress 40
+    _BAR -x 2 -y 5 -title Save -progress 100 -color 10
+
+_BEEP
+  Syntax: _BEEP -<note> -<duration_ms>
+  Use: Play a musical tone for the requested duration.
+  Examples:
+    _BEEP -A4 -250
+    _BEEP -C#5 -100
+    _BEEP -Db3 -500
+
+_CALC
+  Syntax: _CALC <expression>
+  Use: Evaluate a numeric expression and print the result.
+  Examples:
+    _CALC 1+2*3
+    _CALC "sqrt(144)"
+    _CALC "round(pi, 2)"
+
+_CLEAR
+  Syntax: _CLEAR
+  Use: Clear the terminal screen and move the cursor home.
+  Examples:
+    _CLEAR
+
+_CONFIG
+  Syntax: _CONFIG -read <key>
+          _CONFIG -write <key> <value>
+  Use: Read or update keys in the root config.ini file.
+  Examples:
+    _CONFIG -read theme
+    _CONFIG -write theme amber
+
+_CSVFILTER
+  Syntax: _CSVFILTER -file <path> -column <n> [-numeric]
+          [-op <eq|ne|lt|le|gt|ge> -value <value>]...
+          [-logic <and|or>] [-skipheader] [-keepheader]
+          [-output <path>]
+  Use: Filter semicolon CSV rows by one or more column comparisons.
+  Examples:
+    _CSVFILTER -file scores.csv -column 2 -op eq -value Alice
+    _CSVFILTER -file scores.csv -column 3 -numeric -op gt -value 10
+    _CSVFILTER -file scores.csv -column 3 -numeric -op ge -value 5 \
+      -op le -value 20 -logic and -skipheader -keepheader
+    _CSVFILTER -file scores.csv -column 1 -op ne -value Bob \
+      -output filtered.csv
+
+_CSVSTATS
+  Syntax: _CSVSTATS -file <path> -column <n> -stat <type>
+          [-skipheader] [-rowstart <n>] [-rowend <n>]
+  Use: Compute a statistic for one numeric column in a semicolon CSV file.
+  Examples:
+    _CSVSTATS -file scores.csv -column 3 -stat mean
+    _CSVSTATS -file scores.csv -column 3 -stat max -skipheader
+    _CSVSTATS -file scores.csv -column 3 -stat sum -rowstart 2 -rowend 10
+
+_DICE
+  Syntax: _DICE <dice>
+  Use: Roll standard Dungeons and Dragons dice and print the total.
+  Examples:
+    _DICE 1d6
+    _DICE 2d20
+    _DICE 4d100
+
+_DISPLAY
+  Syntax: _DISPLAY -x <col> -y <row> -file <path>
+  Use: Render a PNG or BMP image at a terminal column and row.
+  Examples:
+    _DISPLAY -x 0 -y 0 -file logo.png
+    _DISPLAY -x 10 -y 4 -file portraits/hero.bmp
+
+_EXE
+  Syntax: _EXE -x <col> -y <row> [--] <command> [args...]
+  Use: Run another executable and draw its output at an offset.
+  Examples:
+    _EXE -x 0 -y 0 _VERSION
+    _EXE -x 5 -y 3 -- _LIST tasks
+    _EXE -x 2 -y 8 ./apps/terminal
+
+_FROMCSV
+  Syntax: _FROMCSV -file <path> -column <n> -row <n>
+  Use: Print one cell from a semicolon CSV file.
+  Examples:
+    _FROMCSV -file data.csv -column 1 -row 1
+    _FROMCSV -file scores.csv -column 3 -row 5
+
+_GETHEIGHT
+  Syntax: _GETHEIGHT
+  Use: Print the current terminal height in text rows.
+  Examples:
+    _GETHEIGHT
+
+_GETROW
+  Syntax: _GETROW
+  Use: Query and print the current terminal cursor row.
+  Examples:
+    _GETROW
+
+_GETWIDTH
+  Syntax: _GETWIDTH
+  Use: Print the current terminal width in text columns.
+  Examples:
+    _GETWIDTH
+
+_HELLO
+  Syntax: _HELLO
+  Use: Print a simple hello world message.
+  Examples:
+    _HELLO
+
+_IMAGE
+  Syntax: _IMAGE -x <col> -y <row> -file <path>
+  Use: Render a PNG or BMP image at a terminal column and row.
+  Examples:
+    _IMAGE -x 0 -y 0 -file splash.png
+    _IMAGE -x 12 -y 6 -file icons/key.bmp
+
+_KEYS
+  Syntax: _KEYS
+  Use: Wait for one key press and print a numeric direction or action code.
+  Examples:
+    _KEYS
+
+_LIST
+  Syntax: _LIST <directory>
+  Use: Print a sorted TASK array literal of files and folders in a
+       directory.
+  Examples:
+    _LIST .
+    _LIST tasks
+    _LIST commands
+
+_PIXEL
+  Syntax: _PIXEL -x <col> -y <row> [-color <0-18>]
+  Use: Draw one colored text-cell pixel at a terminal column and row.
+  Examples:
+    _PIXEL -x 3 -y 4
+    _PIXEL -x 3 -y 4 -color 12
+
+_RAND
+  Syntax: _RAND [min max]
+  Use: Print a random integer, using 0 to 100 when no range is given.
+  Examples:
+    _RAND
+    _RAND 1 6
+    _RAND -10 10
+
+_RECT
+  Syntax: _RECT -x <col> -y <row> -width <pixels> -height <pixels>
+          [-color <0-18>] [-fill on|off]
+  Use: Draw a filled or outline rectangle with terminal background colors.
+  Examples:
+    _RECT -x 1 -y 1 -width 10 -height 4
+    _RECT -x 5 -y 2 -width 20 -height 8 -color 4 -fill on
+    _RECT -x 5 -y 2 -width 20 -height 8 -color 14 -fill off
+
+_RETROPROFILE
+  Syntax: _RETROPROFILE <list|show|apply|reset> [profile]
+  Use: List, inspect, apply, or reset retro terminal color profiles.
+  Examples:
+    _RETROPROFILE list
+    _RETROPROFILE show amber
+    _RETROPROFILE apply amber
+    _RETROPROFILE reset
+
+_STRCMP
+  Syntax: _STRCMP <string1> <string2> [-cs] [-fw]
+  Use: Compare a string with a wildcard pattern and print 1 for match or 0.
+  Examples:
+    _STRCMP Hello "he*"
+    _STRCMP Hello "He*" -cs
+    _STRCMP Hello Hello -fw
+    _STRCMP Hello hello -cs -fw
+
+_TERM_ACTIVE
+  Syntax: _TERM_ACTIVE
+  Use: Print 1 inside apps/terminal and 0 in a plain terminal.
+  Examples:
+    _TERM_ACTIVE
+
+_TERM_CLEAN
+  Syntax: _TERM_CLEAN -x <pixels> -y <pixels> -width <pixels>
+          -height <pixels> [-layer <1-16>]
+  Use: Clear a rectangular area on the terminal pixel surface.
+  Examples:
+    _TERM_CLEAN -x 0 -y 0 -width 320 -height 200
+    _TERM_CLEAN -x 20 -y 20 -width 64 -height 64 -layer 2
+
+_TERM_CURSOR_BLINK
+  Syntax: _TERM_CURSOR_BLINK <enable|disable>
+  Use: Enable or disable blinking of the terminal text cursor.
+  Examples:
+    _TERM_CURSOR_BLINK disable
+    _TERM_CURSOR_BLINK enable
+
+_TERM_KEYBOARD
+  Syntax: _TERM_KEYBOARD
+  Use: Print a TASK array of up to 20 key events since the last query.
+  Examples:
+    _TERM_KEYBOARD
+
+_TERM_MARGIN
+  Syntax: _TERM_MARGIN <pixels>
+  Use: Set the terminal render margin in pixels.
+  Examples:
+    _TERM_MARGIN 0
+    _TERM_MARGIN 16
+
+_TERM_MOUSE
+  Syntax: _TERM_MOUSE
+  Use: Print mouse X, Y, left-click count, and right-click count as
+       an array.
+  Examples:
+    _TERM_MOUSE
+
+_TERM_MOUSE_SHOW
+  Syntax: _TERM_MOUSE_SHOW <enable|disable>
+  Use: Show or hide the mouse cursor in the terminal emulator.
+  Examples:
+    _TERM_MOUSE_SHOW enable
+    _TERM_MOUSE_SHOW disable
+
+_TERM_PIXEL
+  Syntax: _TERM_PIXEL -x <pixels> -y <pixels>
+          [-color <0-18> | -rgb <r> <g> <b>] [-layer <1-16>]
+  Use: Queue one RGB pixel on the apps/terminal pixel surface.
+  Examples:
+    _TERM_PIXEL -x 10 -y 20 -color 4
+    _TERM_PIXEL -x 10 -y 20 -rgb 255 0 0
+    _TERM_PIXEL -x 10 -y 20 -rgb 255 0 0 -layer 3
+
+_TERM_RECT
+  Syntax: _TERM_RECT -x <pixels> -y <pixels> -width <pixels>
+          -height <pixels> [-color <0-18> | -rgb <r> <g> <b>]
+          [-layer <1-16>]
+  Use: Queue a filled RGB rectangle on the terminal pixel surface.
+  Examples:
+    _TERM_RECT -x 0 -y 0 -width 100 -height 50 -color 2
+    _TERM_RECT -x 4 -y 4 -width 16 -height 16 -rgb 0 128 255
+    _TERM_RECT -x 4 -y 4 -width 16 -height 16 -color 9 -layer 2
+
+_TERM_RENDER
+  Syntax: _TERM_RENDER [--render] [-layer <1-16>]
+  Use: Present queued terminal pixel drawing commands on screen.
+  Examples:
+    _TERM_RENDER
+    _TERM_RENDER --render
+    _TERM_RENDER -layer 2
+
+_TERM_RESOLUTION
+  Syntax: _TERM_RESOLUTION <width> <height>
+          _TERM_RESOLUTION LOW
+          _TERM_RESOLUTION HIGH
+  Use: Set the apps/terminal pixel resolution or select a preset.
+  Examples:
+    _TERM_RESOLUTION 0 0
+    _TERM_RESOLUTION 320 200
+    _TERM_RESOLUTION LOW
+    _TERM_RESOLUTION HIGH
+
+_TERM_SCALE
+  Syntax: _TERM_SCALE <scale>
+  Use: Set terminal pixel scaling to original size or double size.
+  Examples:
+    _TERM_SCALE 1
+    _TERM_SCALE 2
+
+_TERM_SHADER
+  Syntax: _TERM_SHADER <enable|disable>
+  Use: Enable or disable terminal shader passes.
+  Examples:
+    _TERM_SHADER enable
+    _TERM_SHADER disable
+
+_TERM_SOUND_KEYBOARD
+  Syntax: _TERM_SOUND_KEYBOARD <enable|disable>
+  Use: Enable or disable keyboard typing sound effects in terminal apps.
+  Examples:
+    _TERM_SOUND_KEYBOARD enable
+    _TERM_SOUND_KEYBOARD disable
+
+_TERM_SOUND_PLAY
+  Syntax: _TERM_SOUND_PLAY <channel> <audiofile> <volume>
+  Use: Play an audio file on a terminal sound channel at a volume
+       from 0 to 100.
+  Examples:
+    _TERM_SOUND_PLAY 1 sounds/click.wav 70
+    _TERM_SOUND_PLAY 2 music/theme.ogg 100
+
+_TERM_SOUND_STOP
+  Syntax: _TERM_SOUND_STOP <channel>
+  Use: Stop sound playback on a terminal sound channel.
+  Examples:
+    _TERM_SOUND_STOP 1
+    _TERM_SOUND_STOP 32
+
+_TERM_SPRITE
+  Syntax: _TERM_SPRITE -x <pixels> -y <pixels> -file <path>
+          [-layer <1-16>]
+          _TERM_SPRITE -x <pixels> -y <pixels> -sprite {w,h,"data"}
+          [-layer <1-16>]
+          _TERM_SPRITE -x <pixels> -y <pixels> -data <base64>
+          -width <px> -height <px> [-layer <1-16>]
+  Use: Draw an image, loaded sprite literal, or raw RGBA sprite to a layer.
+  Examples:
+    _TERM_SPRITE -x 10 -y 20 -file hero.png
+    _TERM_SPRITE -x 10 -y 20 -file hero.png -layer 2
+    _TERM_SPRITE -x 10 -y 20 -sprite {16,16,"AAAA"}
+    _TERM_SPRITE -x 10 -y 20 -data AAAA -width 1 -height 1
+
+_TERM_SPRITE_LOAD
+  Syntax: _TERM_SPRITE_LOAD -file <path>
+  Use: Load a PNG or BMP sprite and print a reusable TASK sprite literal.
+  Examples:
+    _TERM_SPRITE_LOAD -file hero.png
+    RUN _TERM_SPRITE_LOAD -file hero.png TO $HERO
+
+_TERM_TEXT
+  Syntax: _TERM_TEXT -x <pixels> -y <pixels> -text <string>
+          -color <1-18> [-layer <1-16>]
+  Use: Render UTF-8 text onto the terminal pixel surface.
+  Examples:
+    _TERM_TEXT -x 10 -y 20 -text Hello -color 1
+    _TERM_TEXT -x 10 -y 20 -text Score:100 -color 12 -layer 2
+
+_TERM_TYPING_SOUND
+  Syntax: _TERM_TYPING_SOUND <enable|disable>
+  Use: Enable or disable terminal keyboard typing sound effects.
+  Examples:
+    _TERM_TYPING_SOUND enable
+    _TERM_TYPING_SOUND disable
+
+_TEST
+  Syntax: _TEST
+  Use: Print a diagnostic grid and terminal size information.
+  Examples:
+    _TEST
+
+_TEXT
+  Syntax: _TEXT -x <col> -y <row> -text <string> [-color <0-18>]
+  Use: Print text at a terminal column and row while preserving background.
+  Examples:
+    _TEXT -x 1 -y 1 -text Hello World
+    _TEXT -x 1 -y 1 -text Hello + World -color 10
+
+_TIMER
+  Syntax: _TIMER [--start | --stop | --get | --reset]
+  Use: Control a stopwatch stored in /tmp/budostack_timer.state.
+  Examples:
+    _TIMER --start
+    _TIMER --get
+    _TIMER --stop
+    _TIMER --reset
+
+_TOCSV
+  Syntax: _TOCSV -file <path> -column <n> -row <n> -value <text>
+  Use: Write a value to one semicolon CSV cell, creating or
+       expanding the file.
+  Examples:
+    _TOCSV -file data.csv -column 1 -row 1 -value Name
+    _TOCSV -file scores.csv -column 3 -row 5 -value 9000
+
+_TOFILE
+  Syntax: _TOFILE
+  Use: Print guidance for terminal output logging controlled by the
+       main shell.
+  Examples:
+    _TOFILE
+    _TOFILE -file session.log --start
+    _TOFILE --stop
+
+_VERSION
+  Syntax: _VERSION
+  Use: Print the current Git commit count for the repository.
+  Examples:
+    _VERSION
+
+_WAIT
+  Syntax: _WAIT <milliseconds>
+  Use: Pause execution for the requested number of milliseconds.
+  Examples:
+    _WAIT 100
+    _WAIT 1000

@@ -1212,8 +1212,10 @@ struct ansi_parser {
     char charset_g1;
     char charset_target;
     int charset_use_g1;
-    char osc_buffer[131072];
+    char *osc_buffer;
     size_t osc_length;
+    size_t osc_capacity;
+    int osc_failed;
     uint32_t utf8_codepoint;
     uint32_t utf8_min_value;
     uint8_t utf8_bytes_expected;
@@ -5322,11 +5324,72 @@ static void ansi_parser_init(struct ansi_parser *parser) {
     parser->charset_g1 = 'B';
     parser->charset_target = 0;
     parser->charset_use_g1 = 0;
+    parser->osc_buffer = NULL;
     parser->osc_length = 0u;
-    if (sizeof(parser->osc_buffer) > 0u) {
+    parser->osc_capacity = 0u;
+    parser->osc_failed = 0;
+    ansi_parser_reset_utf8(parser);
+}
+
+static void ansi_parser_free(struct ansi_parser *parser) {
+    if (!parser) {
+        return;
+    }
+
+    free(parser->osc_buffer);
+    parser->osc_buffer = NULL;
+    parser->osc_length = 0u;
+    parser->osc_capacity = 0u;
+    parser->osc_failed = 0;
+}
+
+static void ansi_parser_reset_osc(struct ansi_parser *parser) {
+    if (!parser) {
+        return;
+    }
+
+    parser->osc_length = 0u;
+    parser->osc_failed = 0;
+    if (parser->osc_buffer && parser->osc_capacity > 0u) {
         parser->osc_buffer[0] = '\0';
     }
-    ansi_parser_reset_utf8(parser);
+}
+
+static int ansi_parser_append_osc(struct ansi_parser *parser, unsigned char ch) {
+    if (!parser || parser->osc_failed) {
+        return -1;
+    }
+
+    if (parser->osc_length + 1u >= parser->osc_capacity) {
+        size_t required = parser->osc_length + 2u;
+        size_t new_capacity = parser->osc_capacity == 0u ? 4096u : parser->osc_capacity;
+        while (new_capacity < required) {
+            if (new_capacity > SIZE_MAX / 2u) {
+                new_capacity = required;
+                break;
+            }
+            new_capacity *= 2u;
+        }
+
+        char *new_buffer = realloc(parser->osc_buffer, new_capacity);
+        if (!new_buffer) {
+            parser->osc_failed = 1;
+            parser->osc_length = 0u;
+            if (parser->osc_buffer && parser->osc_capacity > 0u) {
+                parser->osc_buffer[0] = '\0';
+            }
+            return -1;
+        }
+        parser->osc_buffer = new_buffer;
+        parser->osc_capacity = new_capacity;
+        if (parser->osc_length == 0u) {
+            parser->osc_buffer[0] = '\0';
+        }
+    }
+
+    parser->osc_buffer[parser->osc_length++] = (char)ch;
+    parser->osc_buffer[parser->osc_length] = '\0';
+    return 0;
 }
 
 static int terminal_base64_value(char ch) {
@@ -5362,8 +5425,7 @@ static int terminal_base64_decode(const char *input, uint8_t **out_data, size_t 
     }
 
     size_t max_output = (len / 4u) * 3u;
-    const size_t decode_limit = 16u * 1024u * 1024u;
-    if (max_output > decode_limit) {
+    if (max_output == 0u) {
         return -1;
     }
 
@@ -6206,8 +6268,9 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
     if (!parser || !buffer) {
         return;
     }
-    if (parser->osc_length >= sizeof(parser->osc_buffer)) {
-        parser->osc_length = sizeof(parser->osc_buffer) - 1u;
+    if (parser->osc_failed || !parser->osc_buffer) {
+        ansi_parser_reset_osc(parser);
+        return;
     }
     parser->osc_buffer[parser->osc_length] = '\0';
 
@@ -6237,9 +6300,6 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
             }
             char *end_color = strchr(cursor, ';');
             size_t len = end_color ? (size_t)(end_color - cursor) : strlen(cursor);
-            if (len >= sizeof(parser->osc_buffer)) {
-                len = sizeof(parser->osc_buffer) - 1u;
-            }
             char color_spec[32];
             if (len >= sizeof(color_spec)) {
                 len = sizeof(color_spec) - 1u;
@@ -6329,10 +6389,7 @@ static void ansi_handle_osc(struct ansi_parser *parser, struct terminal_buffer *
         break;
     }
 
-    parser->osc_length = 0u;
-    if (sizeof(parser->osc_buffer) > 0u) {
-        parser->osc_buffer[0] = '\0';
-    }
+    ansi_parser_reset_osc(parser);
 }
 
 static int ansi_parser_get_param(const struct ansi_parser *parser, size_t index, int default_value) {
@@ -6717,10 +6774,7 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
             ansi_parser_reset_parameters(parser);
         } else if (ch == ']') {
             parser->state = ANSI_STATE_OSC;
-            parser->osc_length = 0u;
-            if (sizeof(parser->osc_buffer) > 0u) {
-                parser->osc_buffer[0] = '\0';
-            }
+            ansi_parser_reset_osc(parser);
         } else if (ch == '(' || ch == ')' || ch == '*' || ch == '+' || ch == '-' || ch == '.') {
             parser->charset_target = (char)ch;
             parser->state = ANSI_STATE_ESCAPE_CHARSET;
@@ -6814,10 +6868,7 @@ static void ansi_parser_feed(struct ansi_parser *parser, struct terminal_buffer 
         } else if (ch == 0x1b) {
             parser->state = ANSI_STATE_OSC_ESCAPE;
         } else {
-            if (parser->osc_length + 1u < sizeof(parser->osc_buffer)) {
-                parser->osc_buffer[parser->osc_length++] = (char)ch;
-                parser->osc_buffer[parser->osc_length] = '\0';
-            }
+            (void)ansi_parser_append_osc(parser, ch);
         }
         break;
     case ANSI_STATE_OSC_ESCAPE:
@@ -9166,6 +9217,9 @@ int main(int argc, char **argv) {
 
     terminal_free_requested_shaders();
     free_font(&terminal_font);
+    for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) {
+        ansi_parser_free(&tab_parsers[tab_i]);
+    }
     for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) { if (master_fds[tab_i] >= 0) { close(master_fds[tab_i]); } }
 
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {

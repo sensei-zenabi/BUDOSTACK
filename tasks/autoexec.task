@@ -106,13 +106,18 @@ IF ($TERM_ACTIVE == "1"):
   
   RUN _CLEAR
   RUN _WAIT 50
-  RUN _DISPLAY -x 18 -y 2 -file ../icon_logo.png
+  SET $SPRITES = {}
+  RUN _TERM_SPRITE_LOAD -file "./assets/login_logo.png" TO $SPRITES[0] 
+  RUN _TERM_SPRITE -x 200 -y 60 -sprite $SPRITES[0] -layer 15
+  RUN _TERM_RENDER -layer 15
   RUN _TERM_SOUND_PLAY 1 ../sounds/static_orchard.mp3 90
   RUN _WAIT 8300
-  RUN _TEXT -x 45 -y 10 -text "BUDOSTACK" -color 0
   RUN _TEXT -x 4 -y 42 -text "Created by: Ville Suoranta" -color 1
   RUN _TEXT -x 4 -y 43 -text "email: ville.m.suoranta(at)gmail.com"
   RUN _WAIT 4700
+  RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360 -layer 15
+  RUN _TERM_RENDER -layer 15
+  RUN _RECT -x 0 -y 0 -width 80 -height 45 -color 0 -fill on
 
 END
 

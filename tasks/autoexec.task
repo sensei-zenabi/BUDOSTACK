@@ -27,6 +27,7 @@ RUN _TERM_MOUSE_SHOW disable
 SET $LOAD = 0
 SET $TYPING_SOUND = "disable"
 SET $SHADER = "disable"
+SET $SHADER_QUALITY = "MEDIUM"
 
 RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
 RUN _TERM_TYPING_SOUND $TYPING_SOUND
@@ -51,6 +52,7 @@ SET $LOGIN_MENU = "null"
 SET $RETROPROFILE = "vt220-green"
 SET $TYPING_SOUND = "disable"
 SET $SHADER = "disable"
+SET $SHADER_QUALITY = "MEDIUM"
 
 #-------------------------------------------------------------------------
 # SKIP LAUNCHER
@@ -347,6 +349,7 @@ IF ($MENU == "CONFIGURATION"):
   RUN _CONFIG -read _RETROPROFILE TO $RETROPROFILE
   RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
   RUN _CONFIG -read _TERM_SHADER TO $SHADER
+  RUN _CONFIG -read SHADER_QUALITY TO $SHADER_QUALITY
   
   # Index retroprofile
   SET $RETROPROFILE_IDX = 0
@@ -363,6 +366,18 @@ IF ($MENU == "CONFIGURATION"):
     $RETROPROFILE_IDX = 3
   END
   
+  # Index shader quality
+  SET $SHADER_QUALITY_IDX = 1
+  IF ($SHADER_QUALITY == "LOW"):
+    $SHADER_QUALITY_IDX = 0
+  END
+  IF ($SHADER_QUALITY == "MEDIUM"):
+    $SHADER_QUALITY_IDX = 1
+  END
+  IF ($SHADER_QUALITY == "HIGH"):
+    $SHADER_QUALITY_IDX = 2
+  END
+
   # Draw
   
   RUN _TEXT -x $MENU_X-1 -y 15 -text "-- CONFIGURATION --       "
@@ -373,7 +388,8 @@ IF ($MENU == "CONFIGURATION"):
   RUN _TEXT -x $MENU_X-3 -y 25 -text "Typing Sound    = " + $TYPING_SOUND
   RUN _TEXT -x $MENU_X-3 -y 27 -text "Retro Profile   = " + $RETROPROFILE
   RUN _TEXT -x $MENU_X-3 -y 29 -text "Shader Passes   = " + $SHADER
-  RUN _TEXT -x $MENU_X-3 -y 31 -text "<-- MAIN MENU             "
+  RUN _TEXT -x $MENU_X-3 -y 31 -text "Shaders         = " + $SHADER_QUALITY
+  RUN _TEXT -x $MENU_X-3 -y 33 -text "<-- MAIN MENU             "
   
   EVAL DRAW_CURSOR($CURSOR_X-3, $CURSOR_Y)
     
@@ -403,8 +419,8 @@ IF ($MENU == "CONFIGURATION"):
   IF ($CURSOR_Y < 17):
     $CURSOR_Y = 17
   END
-  IF ($CURSOR_Y > 31):
-    $CURSOR_Y = 31
+  IF ($CURSOR_Y > 33):
+    $CURSOR_Y = 33
   END
   
   
@@ -487,6 +503,22 @@ IF ($MENU == "CONFIGURATION"):
       END
     END
     IF ($CURSOR_Y == 31):
+      # Switch shaders quality
+      $SHADER_QUALITY_IDX = $SHADER_QUALITY_IDX + 1
+      IF ($SHADER_QUALITY_IDX > 2):
+        $SHADER_QUALITY_IDX = 0
+      END
+      IF ($SHADER_QUALITY_IDX == 0):
+        RUN _CONFIG -write SHADER_QUALITY LOW
+      END
+      IF ($SHADER_QUALITY_IDX == 1):
+        RUN _CONFIG -write SHADER_QUALITY MEDIUM
+      END
+      IF ($SHADER_QUALITY_IDX == 2):
+        RUN _CONFIG -write SHADER_QUALITY HIGH
+      END
+    END
+    IF ($CURSOR_Y == 33):
       $MENU = "MAIN MENU"
     END
   

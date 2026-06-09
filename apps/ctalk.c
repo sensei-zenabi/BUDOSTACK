@@ -49,6 +49,8 @@
 #define SERVER_BACKLOG 32
 #define ROSTER_WIDTH 24
 #define MIN_ROSTER_COLUMNS 72
+#define MIN_PRIVILEGED_PORT 1024
+#define MAX_TCP_PORT 65535
 
 static const char *help_text =
     "Available commands:\n"
@@ -128,6 +130,50 @@ static void enable_socket_keepalive(int fd)
     if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt)) < 0) {
         perror("setsockopt SO_KEEPALIVE");
     }
+}
+
+static bool parse_numeric_port(const char *port, long *value)
+{
+    char *endptr;
+    long parsed;
+
+    if (port == NULL || port[0] == '\0' || isspace((unsigned char)port[0])) {
+        return false;
+    }
+
+    errno = 0;
+    parsed = strtol(port, &endptr, 10);
+    if (errno != 0 || endptr == port || *endptr != '\0') {
+        return false;
+    }
+
+    *value = parsed;
+    return true;
+}
+
+static bool validate_numeric_port(const char *port, bool server_mode)
+{
+    long numeric_port;
+
+    if (!parse_numeric_port(port, &numeric_port)) {
+        return true;
+    }
+
+    if (numeric_port <= 0 || numeric_port > MAX_TCP_PORT) {
+        fprintf(stderr, "Invalid port %ld. Use a TCP port from 1 to %d.\n",
+                numeric_port, MAX_TCP_PORT);
+        return false;
+    }
+
+    if (server_mode && numeric_port < MIN_PRIVILEGED_PORT && geteuid() != 0) {
+        fprintf(stderr,
+                "Port %ld is privileged on Unix-like systems and usually requires root.\n"
+                "Use an unprivileged ctalk port such as 5000 or 8080, then connect clients to that same port.\n",
+                numeric_port);
+        return false;
+    }
+
+    return true;
 }
 
 /* -------------------- Server implementation -------------------- */
@@ -472,6 +518,10 @@ static void handle_client_io(client_t *client)
 
 static void run_server(const char *bind_addr, const char *port)
 {
+    if (!validate_numeric_port(port, true)) {
+        exit(EXIT_FAILURE);
+    }
+
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
@@ -500,7 +550,13 @@ static void run_server(const char *bind_addr, const char *port)
             continue;
         }
         if (bind(listen_fd, p->ai_addr, p->ai_addrlen) < 0) {
-            perror("bind");
+            if (errno == EACCES) {
+                fprintf(stderr,
+                        "bind %s:%s: permission denied. Use an unprivileged port such as 5000 or 8080 unless running as root.\n",
+                        bind_addr, port);
+            } else {
+                perror("bind");
+            }
             close(listen_fd);
             listen_fd = -1;
             continue;
@@ -709,6 +765,10 @@ static void update_member_roster(const char *line)
 
 static int connect_to_server(const char *host, const char *port)
 {
+    if (!validate_numeric_port(port, false)) {
+        return -1;
+    }
+
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
@@ -877,7 +937,9 @@ static void print_usage(const char *prog)
     fprintf(stderr,
             "Usage:\n"
             "  %s server <bind-address> <port>\n"
-            "  %s client <username> <server-host> <port>\n",
+            "  %s client <username> <server-host> <port>\n"
+            "\n"
+            "Use an unprivileged server port such as 5000 or 8080 unless running as root.\n",
             prog, prog);
 }
 

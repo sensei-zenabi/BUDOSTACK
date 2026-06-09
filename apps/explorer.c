@@ -1699,14 +1699,14 @@ int main(int argc, char **argv)
     restored = 0;
     if (argc <= 1 && explorer_load_session(&session)) {
         E.show_hidden = session.show_hidden;
-        if (explorer_load_directory(session.cwd) == 0) {
-            explorer_restore_session_cursor(&session);
-            explorer_set_status("Restored last session");
-            restored = 1;
-        }
+        restored = 1;
     }
-    if (!restored && explorer_load_directory(start_dir) == -1) {
+    if (explorer_load_directory(start_dir) == -1) {
         explorer_die("explorer_load_directory");
+    }
+    if (restored && strcmp(E.cwd, session.cwd) == 0) {
+        explorer_restore_session_cursor(&session);
+        explorer_set_status("Restored last session");
     }
 
     while (E.running) {

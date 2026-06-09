@@ -308,16 +308,117 @@ void disable_paging(void) {
 /* Forward declaration for search mode. */
 int search_mode(const char **lines, size_t line_count, const char *query);
 
+static int terminal_width_columns(void) {
+    struct winsize ws;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        return 80;
+    }
+    return (int)ws.ws_col;
+}
+
+static void copy_truncated_tail(const char *path, char *dest, size_t dest_size, size_t max_width) {
+    size_t path_len;
+    size_t copy_len;
+
+    if (dest_size == 0) {
+        return;
+    }
+    if (max_width == 0) {
+        dest[0] = '\0';
+        return;
+    }
+
+    path_len = strlen(path);
+    copy_len = path_len < max_width ? path_len : max_width;
+    if (copy_len >= dest_size) {
+        copy_len = dest_size - 1;
+    }
+    memcpy(dest, path + path_len - copy_len, copy_len);
+    dest[copy_len] = '\0';
+}
+
+static void truncate_path_for_prompt(const char *path, char *dest, size_t dest_size, size_t max_width) {
+    const char *prefix = "../";
+    const char *best_suffix;
+    const char *scan;
+    size_t path_len;
+    size_t prefix_len;
+
+    if (dest_size == 0) {
+        return;
+    }
+    if (path == NULL || path[0] == '\0') {
+        dest[0] = '\0';
+        return;
+    }
+
+    path_len = strlen(path);
+    if (path_len <= max_width) {
+        snprintf(dest, dest_size, "%s", path);
+        return;
+    }
+
+    if (strncmp(path, "./", 2) == 0) {
+        prefix = "./../";
+    } else if (path[0] == '/') {
+        prefix = "/../";
+    }
+
+    prefix_len = strlen(prefix);
+    if (max_width <= prefix_len) {
+        copy_truncated_tail(path, dest, dest_size, max_width);
+        return;
+    }
+
+    best_suffix = strrchr(path, '/');
+    if (best_suffix == NULL || best_suffix[1] == '\0') {
+        copy_truncated_tail(path, dest, dest_size, max_width);
+        return;
+    }
+    best_suffix++;
+
+    scan = best_suffix - 2;
+    while (scan > path) {
+        if (*scan == '/') {
+            const char *candidate = scan + 1;
+            if (prefix_len + strlen(candidate) > max_width) {
+                break;
+            }
+            best_suffix = candidate;
+        }
+        scan--;
+    }
+
+    if (prefix_len + strlen(best_suffix) > max_width) {
+        copy_truncated_tail(best_suffix, dest, dest_size, max_width - prefix_len);
+        memmove(dest + prefix_len, dest, strlen(dest) + 1);
+        memcpy(dest, prefix, prefix_len);
+        return;
+    }
+
+    if (snprintf(dest, dest_size, "%s%s", prefix, best_suffix) >= (int)dest_size) {
+        dest[dest_size - 1] = '\0';
+    }
+}
+
 /* Formats and displays the current working directory as the prompt. */
 static void format_prompt(char *prompt, size_t prompt_size) {
     char cwd[PATH_MAX];
+    char display_path[PATH_MAX];
+    size_t max_path_width;
+
     if (!prompt || prompt_size == 0) {
         return;
     }
+
+    max_path_width = (size_t)terminal_width_columns() / 2u;
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
-        snprintf(prompt, prompt_size, "%s$ ", cwd);
+        truncate_path_for_prompt(cwd, display_path, sizeof(display_path), max_path_width);
+        snprintf(prompt, prompt_size, "%s$ ", display_path);
     } else {
-        snprintf(prompt, prompt_size, "shell$ ");
+        truncate_path_for_prompt("shell", display_path, sizeof(display_path), max_path_width);
+        snprintf(prompt, prompt_size, "%s$ ", display_path);
     }
 }
 

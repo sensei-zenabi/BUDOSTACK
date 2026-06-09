@@ -1,11 +1,13 @@
+
+
 =============================== RELEASE NOTES ===============================
 
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.84
-  Release commit number:   1534
-  Baseline release:        v0.9.83
+  Release tag:             v0.9.88
+  Release commit number:   1580
+  Baseline release:        v0.9.84
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -74,6 +76,8 @@
              Supported files: .h/.c, .py, .bat, .sh, .txt, .md, .TASK
   restart  : A command to re-compile and restart BUDOSTACK. Use with caution!
              Use 'restart -f' to clean before building.
+  terminal : In apps/terminal, switch tabs with Alt+1 ... Alt+5.
+             Each tab keeps its own shell session and screen state.
   runtask  : Run a TASK script. See below help for details.
 
   update   : Update your BUDOSTACK version automatically.
@@ -104,7 +108,7 @@
 
   ./apps/         - System applications that do not use paging.
   ./commands/     - BUDOSTACK TASK scripting commands (read manual.md).
-  ./documents/    - Documents provided by BUDOSTACK.
+  ./documents/    - Documents provided by BUDOSTACK (including help.txt).
   ./fonts/        - Built-in .ttf and .psf system fonts
   ./games/        - Built-in games. Think of the as our 'minesweepers'.
   ./lib/          - Shared system libraries used by applications
@@ -124,7 +128,7 @@
  /* System Commands */
 
   cd       : Change Directory, remember to put 'if space' in folder name.
-  cls      : Clear terminal screen.
+  cls      : Clear terminal screen with a sweeping animation.
   crc32    : Calculate and/or verify CRC32 checksum of a file.
   diff     : See the difference of two files.
   display  : Display the contents of a file or an image supported by paint.
@@ -134,7 +138,7 @@
   floppy-  : 'floppycheck ./file or ./folder/' estimates how many
    check     standard floppy disks the given content will take.
   gitter   : Professional git helper for your daily development activities.
-  help     : Display this help message.
+  help     : Display this help message from ./documents/help.txt.
   hw       : Learn your hardware specs just by typing 'hw'.
   list     : List contents of a directory (type 'list -help').
   makedir  : Create a new directory.
@@ -174,13 +178,19 @@
  /* Other */
 
   dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.
+  edit     : Basic file editor for source, script, text, and markdown files.
   editprof.: Full name 'editprofile'. App for editing color scheme presets.
+  explorer : Norton Commander-style file explorer: nav/open/up, mark/select,
+             all/none, cp, mv, paste, new, del, ren, edit, hid, quit.
   paint    : ASCII paint application to edit bitmaps.
   pixart   : Turn images into pixel art and assets to your apps.
   psfedit  : Font editor for .psf fonts.
+  setfont  : Apply built-in or custom .psf console fonts; supports -d/--double.
   signal   : Signal generator. Type 'signal' for help.
   time     : Display time with IP-based timezone lookup and NTP clocks.
              Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).
+  ttftopsf : Convert TrueType fonts to PSF2 bitmap console fonts.
+  update   : Fetch release tags, back up tracked files, and update BUDOSTACK.
 
 -----------------------------------------------------------------------------
 
@@ -236,11 +246,14 @@
   _KEYS                : Wait for key input and print mapped
                          numeric key code.
   _LIST                : List directory entries as TASK array literal.
+  _PIXEL               : Draw pixel using color index.
   _RAND                : Print random integer in range [min,max].
                          Default 0-100.
   _RECT                : Draw a filled or outlined rectangle
                          using color index.
   _RETROPROFILE        : List/show/apply/reset retro color profiles.
+  _STRCMP              : Compare strings with optional case sensitivity
+                         and full-word matching.
   _TERM_CLEAN          : Clear pixel rectangle area from terminal
                          render layer.
   _TERM_CURSOR_BLINK   : Enable or disable blinking cursor in terminal.
@@ -249,18 +262,21 @@
   _TERM_MARGIN         : Set terminal pixel render margin.
   _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
   _TERM_MOUSE_SHOW     : Show or hide terminal mouse cursor.
-  _TERM_PIXEL          : Queue accelerated terminal framebuffer pixels.
-  _TERM_RECT           : Queue accelerated filled terminal framebuffer rectangles.
+  _TERM_PIXEL          : Queue one terminal pixel using palette color or RGB.
+  _TERM_RECT           : Queue a filled terminal pixel rectangle using
+                         palette color or RGB.
   _TERM_RENDER         : Trigger full render or render selected layer.
   _TERM_RESOLUTION     : Set pixel resolution (LOW/HIGH or width/height).
   _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
   _TERM_SHADER         : Enable or disable terminal shader.
+  _TERM_SOUND_KEYBOARD : Enable or disable keyboard typing sound effects
+                         in terminal apps.
   _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32)
                          volume 0-100.
   _TERM_SOUND_STOP     : Stop audio playback on selected channel (1-32).
-  _TERM_SPRITE         : Draw sprite from file/literal/base64; TASK RUN is accelerated.
+  _TERM_SPRITE         : Draw sprite from file/literal/base64
                          on chosen layer.
-  _TERM_SPRITE_LOAD    : Load reusable TASK sprite literal; TASK capture is accelerated.
+  _TERM_SPRITE_LOAD    : Load sprite and output reusable TASK sprite literal.
   _TERM_TEXT           : Draw UTF-8 text in pixel space with color and layer.
   _TERM_TYPING_SOUND   : Enable or disable keyboard typing sound effects.
   _TEST                : Print terminal diagnostic grid and size info.
@@ -277,12 +293,16 @@
   autoexec.task        : Determines what happens before
                          BUDOSTACK login screen
   codedemo.task        : Coding basics: for, while, arrays, functions, etc.
+  colors.task          : Preview active retro profile colors 0-18.
   csvdemo.task         : Dynamic .csv file manipulation demo
-  demo.task            : Demonstration of _TERM* command set.
+  graphics.task        : Terminal-cell pixel graphics demo using _PIXEL.
+  sprites.task         : Demonstration of input handling and sprites.
+  termgraphics.task    : Accelerated apps/terminal pixel graphics demo.
   keyboard.task        : Keyboard input reading and processing.
   mouse.task           : Mouse input reading and processing.
   release.task         : Used to generate release notes
   screen.task          : Screen calibration TASK
+  utilities.task       : Example of using utilities from TASK scripts.
   waves.task           : Demonstration how to plot basic math
 
 =============================================================================
@@ -292,166 +312,400 @@
 
 ================================= CHANGE LOG ================================
 
-commit 0fe384c66c5c706f30a847f6d9358a0e8bf98dd0
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Mon May 25 22:45:27 2026 +0300
+commit f0b44597bb984e9603ad6ef0d7c06df50a69a306
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 22:00:07 2026 +0300
 
-    changed to correct folder
-
-documents/dict_linux.txt
-
-commit 637c9d1d7f6a3e80272f6a884bcdf5f60d68e219
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Mon May 25 22:44:47 2026 +0300
-
-    update floppycheck
+    Update help documentation inventory
 
 documents/help.txt
 
-commit 9c7e80d300c001abcefe7164c988ec3f2db549d2
+commit 7c0e3e9703474c5161dc6ab594b2a426eafad195
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 21:50:32 2026 +0300
+
+    changed default resolution as HIGH
+
+config.ini
+
+commit 90b1a29768270f5f10ecff3244575a418d560303
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon May 25 22:40:57 2026 +0300
+Date:   Tue Jun 9 21:43:18 2026 +0300
 
-    Remove compile utility and clean help documentation
+    Add configurable shader quality
 
-documents/help.txt
-utilities/compile.c
+config.ini
+start.sh
+tasks/autoexec.task
 
-commit 4637b4ef9e3a921281603e675ab05260056770b1
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon May 25 22:34:25 2026 +0300
+commit f81be049ca55c53ee11e0b8cac876a2cf83c0128
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 21:28:56 2026 +0300
 
-    Fix compiled TASK runtime path and demo script typo
-
-tasks/demo.task
-utilities/compile.c
-
-commit 7058ae8c73e552a7d9847abec7008343d0e72022
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Mon May 25 21:49:23 2026 +0300
-
-    Revert "Add _SCRAPE command for raw HTTP GET scraping"
+    Revert "Add GPU load reporting to stats"
     
-    This reverts commit f9838751764996760f4b203c68324b2a401c3a04.
+    This reverts commit c6b8f0c3fb2fd0212e8c1dd1192f59f4ec949a5a.
 
-commands/_SCRAPE.c
+apps/stats.c
 
-commit e6bdfa6ce0ef24f6c695bfe9a6cc6b1921013909
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Mon May 25 21:49:05 2026 +0300
-
-    Revert "Add HTTPS support to _SCRAPE via optional OpenSSL"
-    
-    This reverts commit 7cfbe3895d6bf7fc6eb3c4ed08b507e74a65bd91.
-
-commands/_SCRAPE.c
-makefile
-
-commit 7cfbe3895d6bf7fc6eb3c4ed08b507e74a65bd91
+commit c6b8f0c3fb2fd0212e8c1dd1192f59f4ec949a5a
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon May 25 21:34:30 2026 +0300
+Date:   Tue Jun 9 21:27:49 2026 +0300
 
-    Add HTTPS support to _SCRAPE via optional OpenSSL
+    Add GPU load reporting to stats
 
-commands/_SCRAPE.c
-makefile
+apps/stats.c
 
-commit f9838751764996760f4b203c68324b2a401c3a04
+commit d556f7943e36e6b998a161c872ba51c8875e7cd5
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon May 25 18:09:47 2026 +0300
+Date:   Tue Jun 9 21:23:13 2026 +0300
 
-    Add _SCRAPE command for raw HTTP GET scraping
+    Improve stats CPU measurement
 
-commands/_SCRAPE.c
+apps/stats.c
 
-commit a242c14c6addfc69f9cfa98f2ba9dfeef5d93740
+commit a473273c4498f14a0af4f414095fe4e35d6295b9
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon May 25 18:01:45 2026 +0300
+Date:   Tue Jun 9 20:55:08 2026 +0300
 
-    docs: wrap help text to 77 chars and add _RAND command
+    Start explorer from current directory
 
+apps/explorer.c
+
+commit d41f4acd15b5bc4b1b35316230a777379fa6d032
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 20:48:20 2026 +0300
+
+    Apply explorer exit directory to shell
+
+apps/explorer.c
+commandparser.c
+
+commit 360f8b3e1d4b9d79c1bb1545249d34f9dcc6321c
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 20:25:11 2026 +0300
+
+    Keep explorer cursor stable after operations
+
+apps/explorer.c
+
+commit 8949734cd2f63867ee2530883fb4d43591630421
+Merge: 515d9a7 019bc71
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 20:13:24 2026 +0300
+
+    Merge branch 'codex/review-ui-for-/apps/explorer'
+
+commit 515d9a72e81fe3d09a873fe24a97b5b34461b8b5
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 20:03:51 2026 +0300
+
+    Support UTF-8 input in ctalk
+
+apps/ctalk.c
+
+commit 06d2a73be4ba4c95f2f20ac792f59ce94d044e58
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 20:03:28 2026 +0300
+
+    Clarify ctalk privileged port handling
+
+apps/ctalk.c
+
+commit 4a924a3ccc50f531a9fb5664b64e94180a550e15
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 13:13:56 2026 +0300
+
+    Improve ctalk community roster robustness
+
+apps/ctalk.c
+
+commit 019bc712e9ec723032eaf4f34e406850606e24fd
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 13:12:58 2026 +0300
+
+    Improve explorer terminal layout
+
+apps/explorer.c
+lib/terminal_layout.c
+lib/terminal_layout.h
+
+commit 49d46f43a189def4cbeb57016bde671b5e6040a7
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 8 23:29:16 2026 +0300
+
+    Shorten explorer shortcut bar
+
+apps/explorer.c
 documents/help.txt
 
-commit 54888aee4d19d6f85d4cfffc17b90dd21e19e72a
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Mon May 25 17:56:11 2026 +0300
-
-    removed to noise section
-
-tasks/autoexec.task
-
-commit e752df2b2273512a0a84bf0b3228474fa657c32b
+commit e51b0a8428da495cb7496f6eaa3c0ec1209679cc
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon May 25 17:49:55 2026 +0300
+Date:   Mon Jun 8 23:22:57 2026 +0300
 
-    Add _RAND command and C64 loading noise intro effect
+    Refine explorer selection UI
 
-commands/_RAND.c
-commands/manual.md
-tasks/autoexec.task
-
-commit e11804435d852a180cf3e5dbba9e33d45a9a5caf
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Mon May 25 17:44:28 2026 +0300
-
-    updated
-
-tasks/autoexec.task
-
-commit 2bea38ee7cea111998b8eb44f999d46637c61d9f
-Author: sensei-zenabi <budostack@gmail.com>
-Date:   Mon May 25 17:35:08 2026 +0300
-
-    intro applies only to in-built terminal
-
-tasks/autoexec.task
-
-commit c1489fed225ff3a68ffb5164ef44c1ca04a12737
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon May 25 17:23:50 2026 +0300
-
-    Fix TERM empty-check literal in terminal spawn
-
-apps/terminal.c
-
-commit a2de1cef171fb68c9cfba21cd3991ac1775635ce
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon May 25 14:47:48 2026 +0300
-
-    Change _TERM_ACTIVE to numeric output
-
-apps/terminal.c
-commands/_TERM_ACTIVE.c
-commands/manual.md
+apps/explorer.c
 documents/help.txt
+
+commit 9e823af6502f488335d5421438463a23d7c1e837
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 8 23:14:44 2026 +0300
+
+    Add explorer copy move paste shortcuts
+
+apps/explorer.c
+
+commit e9006f88c7329adce8fa709543908794cb805902
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 8 23:02:47 2026 +0300
+
+    Add interactive file explorer app
+
+apps/explorer.c
+utilities/list.c
+
+commit c2d30ff071b92f302a4f1cfa2a801bc487d0f67d
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 8 22:19:04 2026 +0300
+
+    Limit prompt path to half terminal width
+
+main.c
+
+commit d4726fb808d3ee00d7fd1f4e9ee42023741569c4
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 1 15:26:21 2026 +0300
+
+    Avoid table MAX_INPUT macro collision
+
+apps/table.c
+
+commit b371daa16cab4a6ea985456c834acf691ba04fa3
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 1 15:20:27 2026 +0300
+
+    Handle BMP padding read errors
+
+apps/paint.c
+
+commit 92fee0c0fd4fefd907c97db1ffd128fa86f9fa05
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 1 15:16:37 2026 +0300
+
+    Avoid Termux MAX_INPUT macro collision
+
+apps/inet.c
+
+commit 94408b0cc66e05ebdaf61979eb7e7fa9e3a133ca
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 1 15:03:01 2026 +0300
+
+    Fix clang warning errors in Termux build
+
+apps/signal.c
+apps/table.c
+commands/_TEST.c
+games/invaders.c
+games/snake.c
+lib/libconsole.c
+main.c
+utilities/crc32.c
+utilities/list.c
+
+commit 71627e381dc79768c299bf1a0460eb8e5da9bc85
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 1 14:33:25 2026 +0300
+
+    Add Termux build and setup support
+
+budo/build.sh
+commands/readme.md
+documents/help.txt
+makefile
+readme.md
+release_notes.txt
+setup_debian.sh
+setup_termux.sh
+start.sh
+
+commit 127d8268c80df97b363497f3561ab38bec68927e
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Sat May 30 00:38:13 2026 +0300
+
+    skips autoexec if ./apps/terminal is not running
+
 tasks/autoexec.task
 
-commit 7a900ae5a3201a5eb2619c86efbcc0fad942df41
+commit 5cad89a17addf09dd610283a52da62d38f17b2e6
 Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 23:25:22 2026 +0300
+Date:   Fri May 29 22:01:06 2026 +0300
 
-    new intro
+    upgraded
 
-icon_logo.png
-tasks/autoexec.task
+tasks/termgraphics.task
 
-commit e511e1bfea8ffde361ddd191a76c110151061b54
+commit 6cd40f374106b1e1861ef74a472d219d90da7627
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 29 21:54:57 2026 +0300
+
+    Preserve shaders in termgraphics demo
+
+tasks/termgraphics.task
+
+commit 70203783f01124ba144d9e3a4e8ce086e70e6566
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 29 21:48:40 2026 +0300
+
+    Clean termgraphics demo framebuffer on exit
+
+tasks/termgraphics.task
+
+commit 269bffca245a24b10c34f2e2c63163c43596da62
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 29 13:27:46 2026 +0300
+
+    Accelerate TASK sprite terminal graphics
+
+apps/runtask.c
+apps/terminal.c
+commands/_TERM_PIXEL.c
+commands/_TERM_RECT.c
+commands/_TERM_SPRITE.c
+commands/_TERM_SPRITE_LOAD.c
+commands/manual.md
+lib/termgfx.c
+lib/termgfx.h
+release_notes.txt
+tasks/termgraphics.task
+
+commit d61b887d4002fc0d24f16305c18cf78714553038
 Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 22:52:43 2026 +0300
+Date:   Thu May 28 23:36:11 2026 +0300
 
-    newlogin
+    250x250px version
 
-sounds/561996__neopolitansixth__chipsound-logo-jingle.wav
-sounds/564237__breviceps__retro-audio-logo.wav
-sounds/credits.txt
-sounds/static_orchard.mp3
 tasks/assets/login_logo.png
-tasks/autoexec.task
 
-commit ae80147f0db8640eefc3f0de707adfeb2fea4f54
+commit 93a77e80b00c0b8d3a1c09c96c80eab8703e575f
 Author: sensei-zenabi <budostack@gmail.com>
-Date:   Sun May 24 21:34:15 2026 +0300
+Date:   Thu May 28 23:34:54 2026 +0300
+
+    updated the login logo
+
+tasks/assets/login_logo.png
+
+commit dfd934ffe979e946e4f6332ec036d4e9fbf284df
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Thu May 28 23:25:00 2026 +0300
+
+    update
+
+commands/readme.md
+
+commit 1b109e61cb3eb804b548134154f7d71e0b3e0a1d
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Thu May 28 23:18:31 2026 +0300
+
+    renamed demo to sprites
+
+documents/help.txt
+tasks/sprites.task
+
+commit c0a29fa8133b68bcbced785f79050378b9beb41f
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Thu May 28 23:15:50 2026 +0300
+
+    _PIXEL
+
+documents/help.txt
+
+commit cf4f0788b4423e2b38b37211e6bf19d49bb2070d
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Thu May 28 23:13:56 2026 +0300
 
     improved
 
-tasks/assets/login_logo.png
+tasks/graphics.task
+
+commit 1a61694109288e48a869c9d84d10790201752ea7
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Thu May 28 23:10:38 2026 +0300
+
+    Use high resolution in graphics task
+
+tasks/graphics.task
+
+commit f773e34e0757ddd8b2c2fec7537fde1edf2597f6
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Thu May 28 23:04:35 2026 +0300
+
+    Add _PIXEL command and graphics task
+
+commands/_PIXEL.c
+commands/manual.md
+tasks/graphics.task
+
+commit b4ed8a8f38390190518fc5e1d416d6f146af8840
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Thu May 28 22:50:59 2026 +0300
+
+    Fix list UTF-8 filename alignment
+
+utilities/list.c
+
+commit 122f012acfed3bc3f4716b0bec1b4fd2e24211d4
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Thu May 28 22:43:28 2026 +0300
+
+    fixed the non blinking cursor
+
+tasks/autoexec.task
+
+commit cc4f22fcd21691d45a8eeab8da23b52c21b779ec
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue May 26 23:22:58 2026 +0300
+
+    Fix Alt+tab-number text leak into PTY
+
+apps/terminal.c
+
+commit 37afba0941de4a23d55cd7b369e2e841f80963a5
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Tue May 26 18:13:45 2026 +0300
+
+    added quick help
+
+main.c
+
+commit 228ad4818aabc380e2a2b39aabb696d12ac840b3
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue May 26 18:09:33 2026 +0300
+
+    docs: add terminal tab switching help text
+
+documents/help.txt
+
+commit d8764d8507fa9af188fcec690a97708416afe341
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue May 26 18:01:52 2026 +0300
+
+    terminal: fix spawn_budostack cleanup compile regression
+
+apps/terminal.c
+
+commit 25eb124f9dcd1a4f4dc47a4714a61ba62f054e79
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Tue May 26 17:57:22 2026 +0300
+
+    terminal: fix tab session pointer access and buffer cleanup
+
+apps/terminal.c
+
+commit a447a0bf41bd14806e3ed697953613db54326f72
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon May 25 23:18:37 2026 +0300
+
+    apps/terminal: add five session tabs with Alt+1..Alt+5
+
+apps/terminal.c

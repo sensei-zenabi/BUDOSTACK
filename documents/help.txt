@@ -98,7 +98,7 @@
 
   ./apps/         - System applications that do not use paging.
   ./commands/     - BUDOSTACK TASK scripting commands (read manual.md).
-  ./documents/    - Documents provided by BUDOSTACK.
+  ./documents/    - Documents provided by BUDOSTACK (including help.txt).
   ./fonts/        - Built-in .ttf and .psf system fonts
   ./games/        - Built-in games. Think of the as our 'minesweepers'.
   ./lib/          - Shared system libraries used by applications
@@ -118,7 +118,7 @@
  /* System Commands */
 
   cd       : Change Directory, remember to put 'if space' in folder name.
-  cls      : Clear terminal screen.
+  cls      : Clear terminal screen with a sweeping animation.
   crc32    : Calculate and/or verify CRC32 checksum of a file.
   diff     : See the difference of two files.
   display  : Display the contents of a file or an image supported by paint.
@@ -128,7 +128,7 @@
   floppy-  : 'floppycheck ./file or ./folder/' estimates how many
    check     standard floppy disks the given content will take.
   gitter   : Professional git helper for your daily development activities.
-  help     : Display this help message.
+  help     : Display this help message from ./documents/help.txt.
   hw       : Learn your hardware specs just by typing 'hw'.
   list     : List contents of a directory (type 'list -help').
   makedir  : Create a new directory.
@@ -168,13 +168,19 @@
  /* Other */
 
   dungeon  : Role-Playing tool, type 'dungeon map.bmp' or 'dungeon map.dng'.
+  edit     : Basic file editor for source, script, text, and markdown files.
   editprof.: Full name 'editprofile'. App for editing color scheme presets.
+  explorer : Norton Commander-style file explorer: nav/open/up, mark/select,
+             all/none, cp, mv, paste, new, del, ren, edit, hid, quit.
   paint    : ASCII paint application to edit bitmaps.
   pixart   : Turn images into pixel art and assets to your apps.
   psfedit  : Font editor for .psf fonts.
+  setfont  : Apply built-in or custom .psf console fonts; supports -d/--double.
   signal   : Signal generator. Type 'signal' for help.
   time     : Display time with IP-based timezone lookup and NTP clocks.
              Uses ip-api.com plus NTP (time.google.com, time.cloudflare.com).
+  ttftopsf : Convert TrueType fonts to PSF2 bitmap console fonts.
+  update   : Fetch release tags, back up tracked files, and update BUDOSTACK.
 
 -----------------------------------------------------------------------------
 
@@ -236,6 +242,8 @@
   _RECT                : Draw a filled or outlined rectangle
                          using color index.
   _RETROPROFILE        : List/show/apply/reset retro color profiles.
+  _STRCMP              : Compare strings with optional case sensitivity
+                         and full-word matching.
   _TERM_CLEAN          : Clear pixel rectangle area from terminal
                          render layer.
   _TERM_CURSOR_BLINK   : Enable or disable blinking cursor in terminal.
@@ -244,10 +252,15 @@
   _TERM_MARGIN         : Set terminal pixel render margin.
   _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
   _TERM_MOUSE_SHOW     : Show or hide terminal mouse cursor.
+  _TERM_PIXEL          : Queue one terminal pixel using palette color or RGB.
+  _TERM_RECT           : Queue a filled terminal pixel rectangle using
+                         palette color or RGB.
   _TERM_RENDER         : Trigger full render or render selected layer.
   _TERM_RESOLUTION     : Set pixel resolution (LOW/HIGH or width/height).
   _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
   _TERM_SHADER         : Enable or disable terminal shader.
+  _TERM_SOUND_KEYBOARD : Enable or disable keyboard typing sound effects
+                         in terminal apps.
   _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32)
                          volume 0-100.
   _TERM_SOUND_STOP     : Stop audio playback on selected channel (1-32).
@@ -270,12 +283,16 @@
   autoexec.task        : Determines what happens before
                          BUDOSTACK login screen
   codedemo.task        : Coding basics: for, while, arrays, functions, etc.
+  colors.task          : Preview active retro profile colors 0-18.
   csvdemo.task         : Dynamic .csv file manipulation demo
+  graphics.task        : Terminal-cell pixel graphics demo using _PIXEL.
   sprites.task         : Demonstration of input handling and sprites.
+  termgraphics.task    : Accelerated apps/terminal pixel graphics demo.
   keyboard.task        : Keyboard input reading and processing.
   mouse.task           : Mouse input reading and processing.
   release.task         : Used to generate release notes
   screen.task          : Screen calibration TASK
+  utilities.task       : Example of using utilities from TASK scripts.
   waves.task           : Demonstration how to plot basic math
 
 =============================================================================

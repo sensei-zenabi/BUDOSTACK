@@ -30,6 +30,89 @@ static char *my_strdup(const char *s) {
 #define strdup(s) my_strdup(s)
 #endif
 
+#define EXPLORER_SESSION_HEADER "EXPLORER_SESSION 1"
+
+static int explorer_session_path(char *path, size_t path_size) {
+    const char *home = getenv("HOME");
+    int written;
+
+    if (home != NULL && home[0] != '\0') {
+        written = snprintf(path, path_size, "%s/.budostack/explorer_session.txt", home);
+    } else {
+        written = snprintf(path, path_size, "./.budostack_explorer_session.txt");
+    }
+    if (written < 0 || (size_t)written >= path_size) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    return 0;
+}
+
+static int explorer_session_read_cwd(char *cwd, size_t cwd_size) {
+    char path[PATH_MAX];
+    char line[PATH_MAX * 2];
+    FILE *fp;
+
+    if (cwd_size == 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    cwd[0] = '\0';
+
+    if (explorer_session_path(path, sizeof(path)) == -1) {
+        return -1;
+    }
+
+    fp = fopen(path, "r");
+    if (fp == NULL) {
+        return -1;
+    }
+
+    if (fgets(line, sizeof(line), fp) == NULL) {
+        fclose(fp);
+        errno = EINVAL;
+        return -1;
+    }
+    line[strcspn(line, "\n")] = '\0';
+    if (strcmp(line, EXPLORER_SESSION_HEADER) != 0) {
+        fclose(fp);
+        errno = EINVAL;
+        return -1;
+    }
+
+    while (fgets(line, sizeof(line), fp) != NULL) {
+        line[strcspn(line, "\n")] = '\0';
+        if (strncmp(line, "CWD\t", 4) == 0) {
+            int written = snprintf(cwd, cwd_size, "%s", line + 4);
+            fclose(fp);
+            if (written < 0 || (size_t)written >= cwd_size) {
+                errno = ENAMETOOLONG;
+                cwd[0] = '\0';
+                return -1;
+            }
+            return cwd[0] != '\0' ? 0 : -1;
+        }
+    }
+
+    fclose(fp);
+    errno = EINVAL;
+    return -1;
+}
+
+static void apply_explorer_exit_directory(const CommandStruct *cmd) {
+    char cwd[PATH_MAX];
+
+    if (cmd == NULL || strcmp(cmd->command, "explorer") != 0) {
+        return;
+    }
+    if (explorer_session_read_cwd(cwd, sizeof(cwd)) == -1) {
+        return;
+    }
+    if (chdir(cwd) == -1) {
+        perror("explorer cd");
+    }
+}
+
 static int ensure_capacity(char ***array, size_t *capacity, size_t required) {
     if (required <= *capacity)
         return 1;
@@ -418,6 +501,7 @@ int execute_command(const CommandStruct *cmd) {
             perror("waitpid failed");
             return -1;
         }
+        apply_explorer_exit_directory(cmd);
     }
     return 0;
 }

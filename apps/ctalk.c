@@ -16,7 +16,7 @@
  * Supported client commands:
  *   /help                 Show command summary.
  *   /join <channel>       Join (or create) a channel.
- *   /who                  List users in the current channel.
+ *   /who                  Refresh the member list in the current channel.
  *   /quit                 Disconnect from the server.
  *   Any other text is broadcast to the current channel.
  */
@@ -34,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <termios.h>
@@ -46,12 +47,16 @@
 #define MAX_CHANNEL_LEN 64
 #define DEFAULT_CHANNEL "lobby"
 #define SERVER_BACKLOG 32
+#define ROSTER_WIDTH 24
+#define MIN_ROSTER_COLUMNS 72
+#define MIN_PRIVILEGED_PORT 1024
+#define MAX_TCP_PORT 65535
 
 static const char *help_text =
     "Available commands:\n"
     "  /help                 Show this help.\n"
     "  /join <channel>       Join or create a channel.\n"
-    "  /who                  List members in the current channel.\n"
+    "  /who                  Refresh the member list in the current channel.\n"
     "  /quit                 Leave the chat.";
 
 /* -------------------- Shared helpers -------------------- */
@@ -117,6 +122,58 @@ static int send_line_with_newline(int fd, const char *line)
     buf[len++] = '\n';
     buf[len] = '\0';
     return send_all(fd, buf, len);
+}
+
+static void enable_socket_keepalive(int fd)
+{
+    int opt = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &opt, sizeof(opt)) < 0) {
+        perror("setsockopt SO_KEEPALIVE");
+    }
+}
+
+static bool parse_numeric_port(const char *port, long *value)
+{
+    char *endptr;
+    long parsed;
+
+    if (port == NULL || port[0] == '\0' || isspace((unsigned char)port[0])) {
+        return false;
+    }
+
+    errno = 0;
+    parsed = strtol(port, &endptr, 10);
+    if (errno != 0 || endptr == port || *endptr != '\0') {
+        return false;
+    }
+
+    *value = parsed;
+    return true;
+}
+
+static bool validate_numeric_port(const char *port, bool server_mode)
+{
+    long numeric_port;
+
+    if (!parse_numeric_port(port, &numeric_port)) {
+        return true;
+    }
+
+    if (numeric_port <= 0 || numeric_port > MAX_TCP_PORT) {
+        fprintf(stderr, "Invalid port %ld. Use a TCP port from 1 to %d.\n",
+                numeric_port, MAX_TCP_PORT);
+        return false;
+    }
+
+    if (server_mode && numeric_port < MIN_PRIVILEGED_PORT && geteuid() != 0) {
+        fprintf(stderr,
+                "Port %ld is privileged on Unix-like systems and usually requires root.\n"
+                "Use an unprivileged ctalk port such as 5000 or 8080, then connect clients to that same port.\n",
+                numeric_port);
+        return false;
+    }
+
+    return true;
 }
 
 /* -------------------- Server implementation -------------------- */
@@ -199,6 +256,27 @@ static bool is_valid_name(const char *name, size_t max_len)
     return true;
 }
 
+static bool is_chat_input_byte(unsigned char c)
+{
+    return c >= 0x20 && c != 0x7f;
+}
+
+static void delete_last_input_char(char *buf, size_t *len)
+{
+    if (*len == 0) {
+        return;
+    }
+
+    (*len)--;
+    while (*len > 0 && (((unsigned char)buf[*len]) & 0xc0U) == 0x80U) {
+        (*len)--;
+    }
+    buf[*len] = '\0';
+}
+
+static void disconnect_client(client_t *client, const char *reason);
+static void broadcast_member_list(const char *channel);
+
 static void disconnect_client(client_t *client, const char *reason)
 {
     if (client->fd == -1) {
@@ -207,11 +285,16 @@ static void disconnect_client(client_t *client, const char *reason)
     if (client->registered) {
         char timestamp[64];
         char msg[BUF_SIZE];
+        char channel[MAX_CHANNEL_LEN];
+        strncpy(channel, client->channel, sizeof(channel) - 1);
+        channel[sizeof(channel) - 1] = '\0';
         format_timestamp(timestamp, sizeof(timestamp));
         snprintf(msg, sizeof(msg), "[%s] %s left channel %s (%s)\n",
-                 timestamp, client->username, client->channel,
+                 timestamp, client->username, channel,
                  reason != NULL ? reason : "disconnected");
-        broadcast_channel(client->channel, msg, client);
+        broadcast_channel(channel, msg, client);
+        client->registered = false;
+        broadcast_member_list(channel);
     }
     close(client->fd);
     client->fd = -1;
@@ -230,34 +313,70 @@ static void send_help(client_t *client)
     }
 }
 
-static void send_who(client_t *client)
+static int build_member_list(const char *channel, char *buf, size_t size)
 {
-    char buf[BUF_SIZE];
-    size_t offset = 0;
-    offset += (size_t)snprintf(buf + offset, sizeof(buf) - offset,
-                               "Users in %s: ", client->channel);
+    int written = snprintf(buf, size, "Members in %s: ", channel);
+    if (written < 0 || (size_t)written >= size) {
+        return -1;
+    }
+
+    size_t offset = (size_t)written;
     bool first = true;
     for (int i = 0; i < MAX_CLIENTS; i++) {
         if (clients[i].fd == -1 || !clients[i].registered) {
             continue;
         }
-        if (strcmp(clients[i].channel, client->channel) != 0) {
+        if (strcmp(clients[i].channel, channel) != 0) {
             continue;
         }
-        if (!first) {
-            offset += (size_t)snprintf(buf + offset, sizeof(buf) - offset, ", ");
+        written = snprintf(buf + offset, size - offset, "%s%s",
+                           first ? "" : ", ", clients[i].username);
+        if (written < 0) {
+            return -1;
         }
-        first = false;
-        offset += (size_t)snprintf(buf + offset, sizeof(buf) - offset, "%s",
-                                   clients[i].username);
-        if (offset >= sizeof(buf)) {
+        if ((size_t)written >= size - offset) {
+            offset = size - 1;
             break;
         }
+        offset += (size_t)written;
+        first = false;
     }
-    offset += (size_t)snprintf(buf + offset, sizeof(buf) - offset, "\n");
+
+    written = snprintf(buf + offset, size - offset, "\n");
+    if (written < 0 || (size_t)written >= size - offset) {
+        buf[size - 2] = '\n';
+        buf[size - 1] = '\0';
+    }
+    return 0;
+}
+
+static void send_member_list_to_client(client_t *client)
+{
+    char buf[BUF_SIZE];
+    if (build_member_list(client->channel, buf, sizeof(buf)) < 0) {
+        const char *err = "Unable to build member list.\n";
+        if (send_line(client->fd, err) < 0) {
+            disconnect_client(client, "write failure");
+        }
+        return;
+    }
     if (send_line(client->fd, buf) < 0) {
         disconnect_client(client, "write failure");
     }
+}
+
+static void broadcast_member_list(const char *channel)
+{
+    char buf[BUF_SIZE];
+    if (build_member_list(channel, buf, sizeof(buf)) < 0) {
+        return;
+    }
+    broadcast_channel(channel, buf, NULL);
+}
+
+static void send_who(client_t *client)
+{
+    send_member_list_to_client(client);
 }
 
 static void handle_join(client_t *client, const char *channel)
@@ -278,15 +397,20 @@ static void handle_join(client_t *client, const char *channel)
     }
     char timestamp[64];
     char buf[BUF_SIZE];
+    char old_channel[MAX_CHANNEL_LEN];
+    strncpy(old_channel, client->channel, sizeof(old_channel) - 1);
+    old_channel[sizeof(old_channel) - 1] = '\0';
     format_timestamp(timestamp, sizeof(timestamp));
     snprintf(buf, sizeof(buf), "[%s] %s left channel %s\n", timestamp,
-             client->username, client->channel);
-    broadcast_channel(client->channel, buf, client);
-    snprintf(buf, sizeof(buf), "[%s] %s joined channel %s\n", timestamp,
-             client->username, channel);
+             client->username, old_channel);
+    broadcast_channel(old_channel, buf, client);
     strncpy(client->channel, channel, sizeof(client->channel) - 1);
     client->channel[sizeof(client->channel) - 1] = '\0';
+    broadcast_member_list(old_channel);
+    snprintf(buf, sizeof(buf), "[%s] %s joined channel %s\n", timestamp,
+             client->username, channel);
     broadcast_channel(client->channel, buf, NULL);
+    broadcast_member_list(client->channel);
 }
 
 static void process_client_line(client_t *client, char *line)
@@ -357,6 +481,7 @@ static void process_client_line(client_t *client, char *line)
         snprintf(msg, sizeof(msg), "[%s] %s joined channel %s\n", timestamp,
                  client->username, client->channel);
         broadcast_channel(client->channel, msg, NULL);
+        broadcast_member_list(client->channel);
     }
 }
 
@@ -411,9 +536,13 @@ static void handle_client_io(client_t *client)
 
 static void run_server(const char *bind_addr, const char *port)
 {
+    if (!validate_numeric_port(port, true)) {
+        exit(EXIT_FAILURE);
+    }
+
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
 
@@ -430,6 +559,7 @@ static void run_server(const char *bind_addr, const char *port)
         if (listen_fd < 0) {
             continue;
         }
+        enable_socket_keepalive(listen_fd);
         int opt = 1;
         if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
             perror("setsockopt");
@@ -438,7 +568,13 @@ static void run_server(const char *bind_addr, const char *port)
             continue;
         }
         if (bind(listen_fd, p->ai_addr, p->ai_addrlen) < 0) {
-            perror("bind");
+            if (errno == EACCES) {
+                fprintf(stderr,
+                        "bind %s:%s: permission denied. Use an unprivileged port such as 5000 or 8080 unless running as root.\n",
+                        bind_addr, port);
+            } else {
+                perror("bind");
+            }
             close(listen_fd);
             listen_fd = -1;
             continue;
@@ -483,7 +619,7 @@ static void run_server(const char *bind_addr, const char *port)
             break;
         }
         if (FD_ISSET(listen_fd, &read_fds)) {
-            struct sockaddr_in cli_addr;
+            struct sockaddr_storage cli_addr;
             socklen_t cli_len = sizeof(cli_addr);
             int fd = accept(listen_fd, (struct sockaddr *)&cli_addr, &cli_len);
             if (fd < 0) {
@@ -491,6 +627,7 @@ static void run_server(const char *bind_addr, const char *port)
                     perror("accept");
                 }
             } else {
+                enable_socket_keepalive(fd);
                 client_t *slot = find_client_slot();
                 if (slot == NULL) {
                     const char *msg = "Server full. Try again later.\n";
@@ -523,6 +660,7 @@ static void run_server(const char *bind_addr, const char *port)
 /* -------------------- Client implementation -------------------- */
 
 static struct termios orig_termios;
+static char member_roster[BUF_SIZE] = "Members: waiting";
 
 static void disable_raw_mode(void)
 {
@@ -546,17 +684,112 @@ static void enable_raw_mode(void)
     }
 }
 
+static int terminal_width(void)
+{
+    struct winsize ws;
+    const char *columns;
+    char *endptr;
+    long parsed;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0) {
+        return ws.ws_col;
+    }
+
+    columns = getenv("COLUMNS");
+    if (columns != NULL) {
+        errno = 0;
+        parsed = strtol(columns, &endptr, 10);
+        if (errno == 0 && endptr != columns && parsed > 0 && parsed <= 1000) {
+            return (int)parsed;
+        }
+    }
+
+    return 80;
+}
+
+static bool supports_roster_panel(void)
+{
+    return terminal_width() >= MIN_ROSTER_COLUMNS;
+}
+
 static void reprint_prompt(const char *buf)
 {
     printf("\r\33[2K>> %s", buf);
     fflush(stdout);
 }
 
+static bool is_member_roster_line(const char *line)
+{
+    return strncmp(line, "Members in ", 11) == 0;
+}
+
+static void print_roster_line(const char *text)
+{
+    int width = terminal_width();
+    int left_pad = width - ROSTER_WIDTH;
+    char item[ROSTER_WIDTH + 1];
+
+    if (left_pad < 0) {
+        left_pad = 0;
+    }
+    snprintf(item, sizeof(item), "%-*.*s", ROSTER_WIDTH, ROSTER_WIDTH, text);
+    printf("\r\33[2K%*s%s\n", left_pad, "", item);
+}
+
+static void update_member_roster(const char *line)
+{
+    char roster_copy[BUF_SIZE];
+    char *members;
+    char *saveptr = NULL;
+    char *member;
+    char header[ROSTER_WIDTH + 1];
+
+    strncpy(member_roster, line, sizeof(member_roster) - 1);
+    member_roster[sizeof(member_roster) - 1] = '\0';
+
+    if (!supports_roster_panel()) {
+        printf("\r\33[2K%s\n", member_roster);
+        return;
+    }
+
+    strncpy(roster_copy, member_roster, sizeof(roster_copy) - 1);
+    roster_copy[sizeof(roster_copy) - 1] = '\0';
+    members = strchr(roster_copy, ':');
+    if (members == NULL) {
+        print_roster_line(member_roster);
+        return;
+    }
+
+    *members = '\0';
+    members++;
+    while (*members != '\0' && isspace((unsigned char)*members)) {
+        members++;
+    }
+
+    snprintf(header, sizeof(header), "[%.*s]", ROSTER_WIDTH - 2, roster_copy);
+    print_roster_line(header);
+    member = strtok_r(members, ",", &saveptr);
+    while (member != NULL) {
+        while (*member != '\0' && isspace((unsigned char)*member)) {
+            member++;
+        }
+        trim_trailing_whitespace(member);
+        if (member[0] != '\0') {
+            print_roster_line(member);
+        }
+        member = strtok_r(NULL, ",", &saveptr);
+    }
+}
+
 static int connect_to_server(const char *host, const char *port)
 {
+    if (!validate_numeric_port(port, false)) {
+        return -1;
+    }
+
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
     struct addrinfo *res = NULL;
@@ -573,6 +806,7 @@ static int connect_to_server(const char *host, const char *port)
             continue;
         }
         if (connect(sock, p->ai_addr, p->ai_addrlen) == 0) {
+            enable_socket_keepalive(sock);
             break;
         }
         close(sock);
@@ -652,12 +886,9 @@ static void run_client(const char *username, const char *host, const char *port)
                 printf(">> ");
                 fflush(stdout);
             } else if (c == 127 || c == '\b') {
-                if (input_len > 0) {
-                    input_len--;
-                    input_buf[input_len] = '\0';
-                }
+                delete_last_input_char(input_buf, &input_len);
                 reprint_prompt(input_buf);
-            } else if (isprint((unsigned char)c)) {
+            } else if (is_chat_input_byte((unsigned char)c)) {
                 if (input_len < sizeof(input_buf) - 1) {
                     input_buf[input_len++] = c;
                     input_buf[input_len] = '\0';
@@ -691,7 +922,11 @@ static void run_client(const char *username, const char *host, const char *port)
                 char *newline = strchr(pending, '\n');
                 while (newline != NULL) {
                     *newline = '\0';
-                    printf("\r\33[2K%s\n", pending);
+                    if (is_member_roster_line(pending)) {
+                        update_member_roster(pending);
+                    } else {
+                        printf("\r\33[2K%s\n", pending);
+                    }
                     pending_len -= (size_t)(newline - pending + 1);
                     memmove(pending, newline + 1, pending_len);
                     pending[pending_len] = '\0';
@@ -717,7 +952,9 @@ static void print_usage(const char *prog)
     fprintf(stderr,
             "Usage:\n"
             "  %s server <bind-address> <port>\n"
-            "  %s client <username> <server-host> <port>\n",
+            "  %s client <username> <server-host> <port>\n"
+            "\n"
+            "Use an unprivileged server port such as 5000 or 8080 unless running as root.\n",
             prog, prog);
 }
 

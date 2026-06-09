@@ -6,11 +6,12 @@
 #include <sys/statvfs.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <errno.h>
 #include <string.h>
 
 // Function to get battery charge (if available)
 // Returns battery capacity (0–100) if found, or -1 if no battery is found.
-int get_battery_charge(void) {
+static int get_battery_charge(void) {
     DIR *dir = opendir("/sys/class/power_supply");
     if (!dir) {
         return -1;
@@ -52,17 +53,121 @@ int get_battery_charge(void) {
     return battery;
 }
 
-static int read_cpu_stats(unsigned long long *user, unsigned long long *nice,
-                          unsigned long long *system, unsigned long long *idle,
-                          unsigned long long *iowait, unsigned long long *irq,
-                          unsigned long long *softirq, unsigned long long *steal) {
+struct CpuTimes {
+    unsigned long long user;
+    unsigned long long nice;
+    unsigned long long system;
+    unsigned long long idle;
+    unsigned long long iowait;
+    unsigned long long irq;
+    unsigned long long softirq;
+    unsigned long long steal;
+};
+
+struct CpuMeasurement {
+    double mean;
+    double min;
+    double max;
+    int samples;
+};
+
+static int read_cpu_stats(struct CpuTimes *stats) {
     FILE *fp = fopen("/proc/stat", "r");
-    if (!fp)
+    if (!fp) {
         return -1;
+    }
+
     int ret = fscanf(fp, "cpu  %llu %llu %llu %llu %llu %llu %llu %llu",
-                     user, nice, system, idle, iowait, irq, softirq, steal);
+                     &stats->user, &stats->nice, &stats->system, &stats->idle,
+                     &stats->iowait, &stats->irq, &stats->softirq, &stats->steal);
     fclose(fp);
     return (ret == 8) ? 0 : -1;
+}
+
+static void sleep_interval(long nanoseconds) {
+    struct timespec remaining;
+    struct timespec request;
+
+    request.tv_sec = nanoseconds / 1000000000L;
+    request.tv_nsec = nanoseconds % 1000000000L;
+
+    while (nanosleep(&request, &remaining) == -1) {
+        if (errno != EINTR) {
+            return;
+        }
+        request = remaining;
+    }
+}
+
+static int cpu_usage_between(const struct CpuTimes *before,
+                             const struct CpuTimes *after,
+                             double *usage) {
+    unsigned long long total_before = before->user + before->nice + before->system +
+                                      before->idle + before->iowait + before->irq +
+                                      before->softirq + before->steal;
+    unsigned long long total_after = after->user + after->nice + after->system +
+                                     after->idle + after->iowait + after->irq +
+                                     after->softirq + after->steal;
+    unsigned long long idle_before = before->idle + before->iowait;
+    unsigned long long idle_after = after->idle + after->iowait;
+    unsigned long long delta_total = total_after - total_before;
+    unsigned long long delta_idle = idle_after - idle_before;
+
+    if (delta_total == 0 || delta_total < delta_idle) {
+        return -1;
+    }
+
+    *usage = (double)(delta_total - delta_idle) * 100.0 / (double)delta_total;
+    return 0;
+}
+
+static int measure_cpu_usage(struct CpuMeasurement *measurement) {
+    enum {
+        sample_count = 10
+    };
+    const long sample_interval_ns = 500000000L;
+    struct CpuTimes before;
+    double sum = 0.0;
+
+    measurement->mean = 0.0;
+    measurement->min = 0.0;
+    measurement->max = 0.0;
+    measurement->samples = 0;
+
+    if (read_cpu_stats(&before) != 0) {
+        return -1;
+    }
+
+    printf("Measuring CPU utilization for 5 seconds...\n");
+    for (int sample = 1; sample <= sample_count; sample++) {
+        struct CpuTimes after;
+        double usage;
+
+        sleep_interval(sample_interval_ns);
+        if (read_cpu_stats(&after) != 0) {
+            return -1;
+        }
+        if (cpu_usage_between(&before, &after, &usage) == 0) {
+            if (measurement->samples == 0 || usage < measurement->min) {
+                measurement->min = usage;
+            }
+            if (measurement->samples == 0 || usage > measurement->max) {
+                measurement->max = usage;
+            }
+            sum += usage;
+            measurement->samples++;
+        }
+        before = after;
+        printf("Measurement progress: %d%%\n", sample * 10);
+        fflush(stdout);
+    }
+
+    if (measurement->samples == 0) {
+        return -1;
+    }
+
+    measurement->mean = sum / (double)measurement->samples;
+    return 0;
 }
 
 int main(void) {
@@ -91,27 +196,12 @@ int main(void) {
         fclose(fp);
     }
 
-    unsigned long long user1, nice1, system1, idle1, iowait1, irq1, softirq1, steal1;
-    unsigned long long user2, nice2, system2, idle2, iowait2, irq2, softirq2, steal2;
-    double cpu_usage = -1.0;
-    if (read_cpu_stats(&user1, &nice1, &system1, &idle1, &iowait1, &irq1, &softirq1, &steal1) == 0) {
-        struct timespec req = { .tv_sec = 0, .tv_nsec = 100000000 };
-        nanosleep(&req, NULL);
-        if (read_cpu_stats(&user2, &nice2, &system2, &idle2, &iowait2, &irq2, &softirq2, &steal2) == 0) {
-            unsigned long long total1 = user1 + nice1 + system1 + idle1 + iowait1 + irq1 + softirq1 + steal1;
-            unsigned long long total2 = user2 + nice2 + system2 + idle2 + iowait2 + irq2 + softirq2 + steal2;
-            unsigned long long delta_total = total2 - total1;
-            unsigned long long delta_idle = (idle2 + iowait2) - (idle1 + iowait1);
-            if (delta_total != 0 && delta_total >= delta_idle) {
-                cpu_usage = (double)(delta_total - delta_idle) * 100.0 / delta_total;
-            }
-        }
-    }
-
-    if (cpu_usage >= 0.0) {
-        printf("CPU Average Utilization: %.1f%%\n", cpu_usage);
+    struct CpuMeasurement cpu_measurement;
+    if (measure_cpu_usage(&cpu_measurement) == 0) {
+        printf("CPU Utilization (5 sec): mean %.1f%% / min %.1f%% / max %.1f%%\n",
+               cpu_measurement.mean, cpu_measurement.min, cpu_measurement.max);
     } else {
-        printf("CPU Average Utilization: N/A\n");
+        printf("CPU Utilization (5 sec): N/A\n");
     }
 
     now = time(NULL);

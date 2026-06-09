@@ -64,11 +64,16 @@ struct CpuTimes {
     unsigned long long steal;
 };
 
-struct CpuMeasurement {
+struct LoadMeasurement {
     double mean;
     double min;
     double max;
     int samples;
+};
+
+struct GpuSource {
+    char busy_path[512];
+    int available;
 };
 
 static int read_cpu_stats(struct CpuTimes *stats) {
@@ -121,52 +126,146 @@ static int cpu_usage_between(const struct CpuTimes *before,
     return 0;
 }
 
-static int measure_cpu_usage(struct CpuMeasurement *measurement) {
+static void add_load_sample(struct LoadMeasurement *measurement,
+                            double value,
+                            double *sum) {
+    if (measurement->samples == 0 || value < measurement->min) {
+        measurement->min = value;
+    }
+    if (measurement->samples == 0 || value > measurement->max) {
+        measurement->max = value;
+    }
+    *sum += value;
+    measurement->samples++;
+}
+
+static void reset_load_measurement(struct LoadMeasurement *measurement) {
+    measurement->mean = 0.0;
+    measurement->min = 0.0;
+    measurement->max = 0.0;
+    measurement->samples = 0;
+}
+
+static int is_drm_card_name(const char *name) {
+    if (strncmp(name, "card", 4) != 0) {
+        return 0;
+    }
+    return name[4] >= '0' && name[4] <= '9';
+}
+
+static int read_gpu_busy_percent(const char *path, double *usage) {
+    FILE *fp = fopen(path, "r");
+    int percent;
+
+    if (!fp) {
+        return -1;
+    }
+
+    if (fscanf(fp, "%d", &percent) != 1) {
+        fclose(fp);
+        return -1;
+    }
+    fclose(fp);
+
+    if (percent < 0 || percent > 100) {
+        return -1;
+    }
+
+    *usage = (double)percent;
+    return 0;
+}
+
+static void find_gpu_source(struct GpuSource *source) {
+    DIR *dir = opendir("/sys/class/drm");
+    struct dirent *entry;
+
+    source->busy_path[0] = '\0';
+    source->available = 0;
+
+    if (!dir) {
+        return;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        char candidate[512];
+        double usage;
+        int written;
+
+        if (!is_drm_card_name(entry->d_name)) {
+            continue;
+        }
+
+        written = snprintf(candidate, sizeof(candidate),
+                           "/sys/class/drm/%s/device/gpu_busy_percent",
+                           entry->d_name);
+        if (written < 0 || (size_t)written >= sizeof(candidate)) {
+            continue;
+        }
+
+        if (read_gpu_busy_percent(candidate, &usage) == 0) {
+            snprintf(source->busy_path, sizeof(source->busy_path), "%s", candidate);
+            source->available = 1;
+            break;
+        }
+    }
+
+    closedir(dir);
+}
+
+static int measure_load(struct LoadMeasurement *cpu_measurement,
+                        struct LoadMeasurement *gpu_measurement,
+                        int *gpu_available) {
     enum {
         sample_count = 10
     };
     const long sample_interval_ns = 500000000L;
     struct CpuTimes before;
-    double sum = 0.0;
+    struct GpuSource gpu_source;
+    double cpu_sum = 0.0;
+    double gpu_sum = 0.0;
 
-    measurement->mean = 0.0;
-    measurement->min = 0.0;
-    measurement->max = 0.0;
-    measurement->samples = 0;
+    reset_load_measurement(cpu_measurement);
+    reset_load_measurement(gpu_measurement);
+    *gpu_available = 0;
 
     if (read_cpu_stats(&before) != 0) {
         return -1;
     }
 
-    printf("Measuring CPU utilization for 5 seconds...\n");
+    find_gpu_source(&gpu_source);
+    printf("Measuring CPU/GPU utilization for 5 seconds...\n");
     for (int sample = 1; sample <= sample_count; sample++) {
         struct CpuTimes after;
-        double usage;
+        double cpu_usage;
+        double gpu_usage;
 
         sleep_interval(sample_interval_ns);
         if (read_cpu_stats(&after) != 0) {
             return -1;
         }
-        if (cpu_usage_between(&before, &after, &usage) == 0) {
-            if (measurement->samples == 0 || usage < measurement->min) {
-                measurement->min = usage;
-            }
-            if (measurement->samples == 0 || usage > measurement->max) {
-                measurement->max = usage;
-            }
-            sum += usage;
-            measurement->samples++;
+        if (cpu_usage_between(&before, &after, &cpu_usage) == 0) {
+            add_load_sample(cpu_measurement, cpu_usage, &cpu_sum);
         }
         before = after;
+
+        if (gpu_source.available &&
+            read_gpu_busy_percent(gpu_source.busy_path, &gpu_usage) == 0) {
+            add_load_sample(gpu_measurement, gpu_usage, &gpu_sum);
+        }
+
         printf("Measurement progress: %d%%\n", sample * 10);
         fflush(stdout);
     }
 
-    if (measurement->samples == 0) {
+    if (cpu_measurement->samples == 0) {
         return -1;
     }
 
-    measurement->mean = sum / (double)measurement->samples;
+    cpu_measurement->mean = cpu_sum / (double)cpu_measurement->samples;
+    if (gpu_measurement->samples > 0) {
+        gpu_measurement->mean = gpu_sum / (double)gpu_measurement->samples;
+        *gpu_available = 1;
+    }
     return 0;
 }
 
@@ -196,12 +295,22 @@ int main(void) {
         fclose(fp);
     }
 
-    struct CpuMeasurement cpu_measurement;
-    if (measure_cpu_usage(&cpu_measurement) == 0) {
+    struct LoadMeasurement cpu_measurement;
+    struct LoadMeasurement gpu_measurement;
+    int gpu_available;
+
+    if (measure_load(&cpu_measurement, &gpu_measurement, &gpu_available) == 0) {
         printf("CPU Utilization (5 sec): mean %.1f%% / min %.1f%% / max %.1f%%\n",
                cpu_measurement.mean, cpu_measurement.min, cpu_measurement.max);
+        if (gpu_available) {
+            printf("GPU Utilization (5 sec): mean %.1f%% / min %.1f%% / max %.1f%%\n",
+                   gpu_measurement.mean, gpu_measurement.min, gpu_measurement.max);
+        } else {
+            printf("GPU Utilization (5 sec): N/A\n");
+        }
     } else {
         printf("CPU Utilization (5 sec): N/A\n");
+        printf("GPU Utilization (5 sec): N/A\n");
     }
 
     now = time(NULL);

@@ -13,6 +13,7 @@
 #define BUDOSTACK_TARGET_ROWS 45
 #endif
 
+int budostack_terminal_layout_enabled(void);
 void budostack_apply_terminal_layout(void);
 void budostack_clamp_terminal_size(int *rows, int *cols);
 int budostack_get_target_cols(void);

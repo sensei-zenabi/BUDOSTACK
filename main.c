@@ -24,6 +24,11 @@
 #include "commandparser.h"
 #include "input.h"      // Include the input handling header
 
+
+#define CONFIG_FILENAME "config.ini"
+#define HOME_DIR_CONFIG_KEY "HOME_DIR"
+#define CONFIG_LINE_BUFFER_SIZE 1024
+
 extern void printlogo(void);
 extern void login(void);
 
@@ -51,6 +56,157 @@ static char **g_argv;
 
 static FILE *log_file = NULL;
 static char log_file_path[PATH_MAX] = {0};
+
+static const char *skip_config_space(const char *s) {
+    while (*s != '\0' && isspace((unsigned char)*s))
+        s++;
+    return s;
+}
+
+static const char *trim_config_trailing_space(const char *start, const char *end) {
+    while (end > start && isspace((unsigned char)end[-1]))
+        end--;
+    return end;
+}
+
+static int config_line_matches_key(const char *line, const char *key, const char **value_start, const char **value_end) {
+    const char *cursor = skip_config_space(line);
+    const char *equals;
+    const char *key_end;
+    size_t key_len;
+
+    if (*cursor == '\0' || *cursor == '\n' || *cursor == '\r' || *cursor == '#' || *cursor == ';' || *cursor == '[') {
+        return 0;
+    }
+
+    equals = strchr(cursor, '=');
+    if (equals == NULL) {
+        return 0;
+    }
+
+    key_end = trim_config_trailing_space(cursor, equals);
+    key_len = strlen(key);
+    if ((size_t)(key_end - cursor) != key_len || strncmp(cursor, key, key_len) != 0) {
+        return 0;
+    }
+
+    cursor = skip_config_space(equals + 1);
+    if (value_start != NULL) {
+        *value_start = cursor;
+    }
+    if (value_end != NULL) {
+        const char *line_end = line + strlen(line);
+        *value_end = trim_config_trailing_space(cursor, line_end);
+    }
+
+    return 1;
+}
+
+static int read_config_value(const char *key, char *value, size_t value_size) {
+    char config_path[PATH_MAX];
+    FILE *file;
+    char line[CONFIG_LINE_BUFFER_SIZE];
+
+    if (key == NULL || value == NULL || value_size == 0 || base_directory[0] == '\0') {
+        return 0;
+    }
+    value[0] = '\0';
+
+    if (snprintf(config_path, sizeof(config_path), "%s/%s", base_directory, CONFIG_FILENAME) >= (int)sizeof(config_path)) {
+        fprintf(stderr, "Warning: config path is too long; using BUDOSTACK root as start directory.\n");
+        return 0;
+    }
+
+    file = fopen(config_path, "r");
+    if (file == NULL) {
+        perror("config.ini");
+        return 0;
+    }
+
+    while (fgets(line, sizeof(line), file) != NULL) {
+        const char *value_start = NULL;
+        const char *value_end = NULL;
+
+        if (config_line_matches_key(line, key, &value_start, &value_end)) {
+            size_t len = (size_t)(value_end - value_start);
+            if (len >= value_size) {
+                fprintf(stderr, "Warning: %s value is too long; using BUDOSTACK root as start directory.\n", key);
+                fclose(file);
+                return 0;
+            }
+            memcpy(value, value_start, len);
+            value[len] = '\0';
+            fclose(file);
+            return value[0] != '\0';
+        }
+    }
+
+    if (ferror(file)) {
+        perror("config.ini");
+    }
+    if (fclose(file) != 0) {
+        perror("config.ini");
+    }
+
+    return 0;
+}
+
+static int build_home_dir_candidate(const char *home_dir, char *candidate, size_t candidate_size) {
+    if (home_dir == NULL || home_dir[0] == '\0' || candidate == NULL || candidate_size == 0) {
+        return -1;
+    }
+
+    if (home_dir[0] == '/') {
+        if (snprintf(candidate, candidate_size, "%s", home_dir) >= (int)candidate_size) {
+            return -1;
+        }
+    } else {
+        if (base_directory[0] == '\0' || snprintf(candidate, candidate_size, "%s/%s", base_directory, home_dir) >= (int)candidate_size) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int change_to_valid_directory(const char *path) {
+    char resolved[PATH_MAX];
+    struct stat sb;
+
+    if (path == NULL || path[0] == '\0') {
+        return -1;
+    }
+    if (realpath(path, resolved) == NULL) {
+        return -1;
+    }
+    if (stat(resolved, &sb) != 0 || !S_ISDIR(sb.st_mode)) {
+        return -1;
+    }
+    if (chdir(resolved) != 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+static void change_to_start_directory(void) {
+    char configured_home[PATH_MAX];
+    char candidate[PATH_MAX];
+
+    if (read_config_value(HOME_DIR_CONFIG_KEY, configured_home, sizeof(configured_home))) {
+        if (build_home_dir_candidate(configured_home, candidate, sizeof(candidate)) == 0 &&
+            change_to_valid_directory(candidate) == 0) {
+            return;
+        }
+        fprintf(stderr, "Warning: %s '%s' is not a valid directory; using BUDOSTACK root.\n",
+                HOME_DIR_CONFIG_KEY, configured_home);
+    }
+
+    if (change_to_valid_directory(base_directory) != 0) {
+        perror("chdir to BUDOSTACK root failed");
+    }
+}
+
 
 static void stop_logging(void) {
     if (log_file != NULL) {
@@ -412,7 +568,7 @@ static void format_prompt(char *prompt, size_t prompt_size) {
         return;
     }
 
-    max_path_width = (size_t)terminal_width_columns() / 2u;
+    max_path_width = ((size_t)terminal_width_columns() * 3u) / 10u;
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
         truncate_path_for_prompt(cwd, display_path, sizeof(display_path), max_path_width);
         snprintf(prompt, prompt_size, "%s$ ", display_path);
@@ -1309,6 +1465,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Warning: unable to resolve executable path; relative commands may fail.\n");
         }
     }
+
+    change_to_start_directory();
     
     /* Load the realtime command list from the apps/ folder */
     load_realtime_commands();

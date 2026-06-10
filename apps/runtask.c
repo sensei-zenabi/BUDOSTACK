@@ -8,6 +8,8 @@
 *   default; prepend BLOCKING or NONBLOCKING to control the run mode explicitly.
 *   Arguments are passed as-is.
 * - RUN optionally supports `TO $VAR` to capture stdout into a variable (type auto-detected).
+* - SYS passes the rest of the line directly to the system shell. A plain `cd`
+*   updates runtask's working directory for following commands.
 * - If RUN's first token contains '/', it's treated as an explicit path and executed directly.
 *   The child process will switch to the executable's directory before exec.
 * - Fixed argv lifetime: arguments are now heap-allocated (no static buffers). RUN reliably
@@ -2734,6 +2736,9 @@ static void print_help(void) {
     printf("    PATH. Default is BLOCKING. If the command contains '/', it's executed as\n");
     printf("    given and run from that directory.\n");
     printf("    Append 'TO $VAR' to capture stdout into $VAR (blocking mode only).\n");
+    printf("  SYS <shell command>\n");
+    printf("    Pass everything after SYS directly to the system shell. A plain cd command\n");
+    printf("    changes runtask's working directory for following TASK commands.\n");
     printf("  CLEAR\n");
     printf("    Clear the screen.\n\n");
     printf("Usage:\n");
@@ -3711,6 +3716,152 @@ static void free_argv(char **argv) {
     if (!argv) return;
     for (char **p = argv; *p; ++p) free(*p);
     free(argv);
+}
+
+static bool sys_line_is_plain_cd(const char *cmdline) {
+    if (!cmdline) {
+        return false;
+    }
+
+    while (isspace((unsigned char)*cmdline)) {
+        cmdline++;
+    }
+
+    if (cmdline[0] != 'c' || cmdline[1] != 'd') {
+        return false;
+    }
+    if (cmdline[2] != '\0' && !isspace((unsigned char)cmdline[2])) {
+        return false;
+    }
+
+    bool in_sq = false;
+    bool in_dq = false;
+    bool escaped = false;
+    for (const char *p = cmdline + 2; *p; ++p) {
+        if (escaped) {
+            escaped = false;
+            continue;
+        }
+        if (!in_sq && *p == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (!in_dq && *p == '\'') {
+            in_sq = !in_sq;
+            continue;
+        }
+        if (!in_sq && *p == '"') {
+            in_dq = !in_dq;
+            continue;
+        }
+        if (!in_sq && !in_dq && strchr(";&|<>()`", *p)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static bool handle_sys_cd_command(const char *cmdline, int line, int debug) {
+    if (!sys_line_is_plain_cd(cmdline)) {
+        return false;
+    }
+
+    int argc = 0;
+    char **argv = split_args_heap(cmdline, &argc);
+    if (argc <= 0 || strcmp(argv[0], "cd") != 0) {
+        free_argv(argv);
+        return false;
+    }
+
+    if (argc > 2) {
+        fprintf(stderr, "SYS: cd accepts at most one path at line %d\n", line);
+        free_argv(argv);
+        return true;
+    }
+
+    char old_cwd[PATH_MAX];
+    if (!getcwd(old_cwd, sizeof(old_cwd))) {
+        old_cwd[0] = '\0';
+    }
+
+    const char *target = NULL;
+    if (argc == 1) {
+        target = getenv("HOME");
+        if (!target || !*target) {
+            target = ".";
+        }
+    } else if (strcmp(argv[1], "-") == 0) {
+        target = getenv("OLDPWD");
+        if (!target || !*target) {
+            fprintf(stderr, "SYS: OLDPWD is not set at line %d\n", line);
+            free_argv(argv);
+            return true;
+        }
+    } else {
+        target = argv[1];
+    }
+
+    if (chdir(target) != 0) {
+        fprintf(stderr, "SYS: cd failed for '%s' at line %d: %s\n", target, line, strerror(errno));
+        free_argv(argv);
+        return true;
+    }
+
+    char new_cwd[PATH_MAX];
+    if (getcwd(new_cwd, sizeof(new_cwd))) {
+        cache_task_workdir(new_cwd);
+        if (old_cwd[0] != '\0') {
+            if (setenv("OLDPWD", old_cwd, 1) != 0) {
+                perror("SYS: setenv OLDPWD");
+            }
+        }
+        if (setenv("PWD", new_cwd, 1) != 0) {
+            perror("SYS: setenv PWD");
+        }
+        if (debug) {
+            fprintf(stderr, "SYS: cwd changed to %s\n", new_cwd);
+        }
+    } else {
+        perror("SYS: getcwd");
+        cache_task_workdir(target);
+    }
+
+    free_argv(argv);
+    return true;
+}
+
+static void run_sys_command(const char *cmdline, int line, int debug) {
+    if (!cmdline || !*cmdline) {
+        if (debug) {
+            fprintf(stderr, "SYS: missing command at line %d\n", line);
+        }
+        return;
+    }
+
+    ensure_task_workdir();
+
+    if (handle_sys_cd_command(cmdline, line, debug)) {
+        return;
+    }
+
+    if (debug) {
+        fprintf(stderr, "SYS: /bin/sh -c %s\n", cmdline);
+    }
+
+    int status = system(cmdline);
+    if (status == -1) {
+        perror("SYS: system");
+        return;
+    }
+
+    if (debug) {
+        if (WIFEXITED(status)) {
+            fprintf(stderr, "SYS: exited with %d\n", WEXITSTATUS(status));
+        } else if (WIFSIGNALED(status)) {
+            fprintf(stderr, "SYS: killed by signal %d\n", WTERMSIG(status));
+        }
+    }
 }
 
 typedef struct {
@@ -5324,6 +5475,12 @@ int main(int argc, char *argv[]) {
                 pc = target_index - 1; // -1 because loop will ++pc
                 pc_changed = true;
             }
+            note_branch_progress(if_stack, &if_sp);
+        }
+        else if (strncmp(command, "SYS", 3) == 0 && (command[3] == '\0' || isspace((unsigned char)command[3]))) {
+            const char *after = command + 3;
+            char *cmdline = trim((char *)after);
+            run_sys_command(cmdline, script[pc].source_line, debug);
             note_branch_progress(if_stack, &if_sp);
         }
         else if (strncmp(command, "RUN", 3) == 0) {

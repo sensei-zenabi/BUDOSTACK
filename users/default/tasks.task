@@ -1,0 +1,3 @@
+SYS echo "\nAvailable example TASK scripts:"
+RUN list ../../tasks/examples
+SYS echo "Type e.g. 'runtask graphics.task'\n"

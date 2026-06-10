@@ -22,6 +22,7 @@ Preferred folder structure:
 working directory. Examples:
 
 * `runtask myapp.task`
+* `runtask screen.task` (finds the bundled example recursively)
 * `runtask tools/backup.task`
 * `runtask examples/colors.task`
 

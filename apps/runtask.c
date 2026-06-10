@@ -42,6 +42,7 @@
 #include <limits.h>   // PATH_MAX
 #include <math.h>
 #include <sys/stat.h>
+#include <dirent.h>
 
 #include "../lib/termgfx.h"
 
@@ -52,6 +53,7 @@
 #define MAX_SCOPES 16
 #define MAX_INCLUDE_DEPTH 16
 #define MAX_INCLUDES_PER_FILE 32
+#define MAX_TASK_SEARCH_DEPTH 32
 
 typedef struct Value Value;
 
@@ -69,6 +71,8 @@ static bool set_echo_enabled(bool enabled);
 static void restore_terminal_settings(void);
 static bool parse_label_definition(const char *line, char *out_name, size_t name_size);
 static int resolve_task_path(const char *arg, const char *cwd, char *out, size_t out_size);
+static int resolve_bundled_task_candidate(const char *candidate, char *out, size_t out_size);
+static int find_task_by_basename(const char *filename, char *out, size_t out_size);
 static int task_dirname(const char *path, char *out, size_t out_size);
 
 typedef enum {
@@ -466,6 +470,105 @@ static int task_dirname(const char *path, char *out, size_t out_size) {
     return 0;
 }
 
+static int resolved_path_is_under_root(const char *resolved_path, const char *root_path) {
+    if (!resolved_path || !root_path) {
+        return 0;
+    }
+
+    size_t root_len = strlen(root_path);
+    return strcmp(resolved_path, root_path) == 0 ||
+           (strncmp(resolved_path, root_path, root_len) == 0 && resolved_path[root_len] == '/');
+}
+
+static int resolve_tasks_root(char *out, size_t out_size) {
+    char task_root[PATH_MAX];
+
+    if (!out || out_size == 0) {
+        return -1;
+    }
+    if (build_from_base("tasks", task_root, sizeof(task_root)) != 0) {
+        return -1;
+    }
+    return realpath(task_root, out) ? 0 : -1;
+}
+
+static int resolve_bundled_task_candidate(const char *candidate, char *out, size_t out_size) {
+    char built[PATH_MAX];
+    char task_root_real[PATH_MAX];
+
+    if (!candidate || !out || out_size == 0) {
+        return -1;
+    }
+    if (build_from_base(candidate, built, sizeof(built)) != 0) {
+        return -1;
+    }
+    if (!realpath(built, out)) {
+        return -1;
+    }
+    if (resolve_tasks_root(task_root_real, sizeof(task_root_real)) != 0) {
+        return -1;
+    }
+    return resolved_path_is_under_root(out, task_root_real) ? 0 : -1;
+}
+
+static int find_task_by_basename_recursive(const char *dir, const char *filename, char *out, size_t out_size,
+                                           int depth) {
+    if (!dir || !filename || !out || out_size == 0 || depth > MAX_TASK_SEARCH_DEPTH) {
+        return -1;
+    }
+
+    DIR *dp = opendir(dir);
+    if (!dp) {
+        return -1;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dp)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+
+        char path[PATH_MAX];
+        if (snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name) >= (int)sizeof(path)) {
+            continue;
+        }
+
+        struct stat sb;
+        if (stat(path, &sb) != 0) {
+            continue;
+        }
+
+        if (S_ISREG(sb.st_mode) && strcmp(entry->d_name, filename) == 0 && realpath(path, out)) {
+            closedir(dp);
+            return 0;
+        }
+
+        if (S_ISDIR(sb.st_mode) &&
+            find_task_by_basename_recursive(path, filename, out, out_size, depth + 1) == 0) {
+            closedir(dp);
+            return 0;
+        }
+    }
+
+    closedir(dp);
+    return -1;
+}
+
+static int find_task_by_basename(const char *filename, char *out, size_t out_size) {
+    char task_root_real[PATH_MAX];
+
+    if (!filename || strchr(filename, '/') || !out || out_size == 0) {
+        return -1;
+    }
+    if (resolve_tasks_root(task_root_real, sizeof(task_root_real)) != 0) {
+        return -1;
+    }
+    if (find_task_by_basename_recursive(task_root_real, filename, out, out_size, 0) != 0) {
+        return -1;
+    }
+    return resolved_path_is_under_root(out, task_root_real) ? 0 : -1;
+}
+
 static int resolve_task_path(const char *arg, const char *cwd, char *out, size_t out_size) {
     if (!arg || !cwd || !out || out_size == 0) {
         return -1;
@@ -499,23 +602,12 @@ static int resolve_task_path(const char *arg, const char *cwd, char *out, size_t
     if (snprintf(candidate, sizeof(candidate), "tasks/%s", task_relative_arg) >= (int)sizeof(candidate)) {
         return -1;
     }
+    if (resolve_bundled_task_candidate(candidate, out, out_size) == 0) {
+        return 0;
+    }
 
-    char built[PATH_MAX];
-    if (build_from_base(candidate, built, sizeof(built)) == 0 && realpath(built, out)) {
-        char task_root[PATH_MAX];
-        char task_root_real[PATH_MAX];
-        if (build_from_base("tasks", task_root, sizeof(task_root)) != 0) {
-            return -1;
-        }
-        if (!realpath(task_root, task_root_real)) {
-            return -1;
-        }
-
-        size_t root_len = strlen(task_root_real);
-        if (strcmp(out, task_root_real) == 0 ||
-            (strncmp(out, task_root_real, root_len) == 0 && out[root_len] == '/')) {
-            return 0;
-        }
+    if (!strchr(task_relative_arg, '/') && find_task_by_basename(task_relative_arg, out, out_size) == 0) {
+        return 0;
     }
 
     return -1;
@@ -2648,7 +2740,7 @@ static void print_help(void) {
     printf("  ./runtask taskfile [-d]\n\n");
     printf("Notes:\n");
     printf("- Task files are loaded from anywhere under 'tasks/' automatically\n");
-    printf("  (e.g., runtask examples/colors.task).\n");
+    printf("  (e.g., runtask screen.task or runtask examples/colors.task).\n");
     printf("- Place executables in ./apps, ./commands, or ./utilities and make them\n");
     printf("  executable.\n");
     printf("- External commands available in PATH are also accepted.\n\n");

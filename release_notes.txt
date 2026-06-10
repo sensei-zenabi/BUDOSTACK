@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.90
-  Release commit number:   1585
-  Baseline release:        v0.9.88
+  Release tag:             v0.9.91
+  Release commit number:   1603
+  Baseline release:        v0.9.90
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -202,6 +202,7 @@
 
  /* List of Games */
 
+  chess    : Classic chess for two players.
   invaders : Space invaders clone tailored to terminal.
   snake    : Snake clone, reminence from the good old Nokia days.
   tictactoe: Classic tictactoe, but with bigger game area.
@@ -317,34 +318,180 @@
 
 ================================= CHANGE LOG ================================
 
-commit 4fc035f63322ab8ceafe11cac177481655b6110d
-Merge: fe18764 0be93aa
+commit 806812f29aae15a7304b5b83b94c27553df90e00
 Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Tue Jun 9 23:01:02 2026 +0300
+Date:   Wed Jun 10 23:20:22 2026 +0300
 
-    Merge branch 'codex/rewrite-manual.md-to-manual.txt-with-formatting'
+    add
 
-commit 0be93aa1fb370f8997c9a8402aeaaa7d61b00d92
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Tue Jun 9 22:59:16 2026 +0300
+users/default/tasks.task
 
-    Rewrite commands manual as ASCII text
-
-commands/manual.md
-commands/manual.txt
-
-commit fe1876421bf33064e7ddb2b71e174b659e24e9f8
+commit fa29beff42190845760b2d0ade5a711ad45f2f08
 Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Tue Jun 9 22:49:44 2026 +0300
+Date:   Wed Jun 10 23:14:36 2026 +0300
 
-    new intro
+    new task shortcuts
 
-tasks/autoexec.task
+users/default/chess.task
+users/default/cube.task
+users/default/invaders.task
+users/default/rocket.task
+users/default/snake.task
+users/default/tictactoe.task
 
-commit 2ab04223d1b3ad84e206c5bae6e069fb90b41452
+commit a59224393a3d245877b24a514839853e39ca6766
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Tue Jun 9 22:27:19 2026 +0300
+Date:   Wed Jun 10 23:07:27 2026 +0300
 
-    Allow large terminal sprite OSC payloads
+    Add SYS shell passthrough to runtask
 
+apps/runtask.c
+
+commit afbb2b8c5361931d9280a7db36934bc602d00e72
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:56:20 2026 +0300
+
+    reworked default user dir
+
+users/default/examples/findebt.csv
+users/default/examples/findebt.tbl
+users/default/examples/findebt.txt
+users/default/examples/map.bmp
+users/default/examples/map.dng
+users/default/examples/mymath.m
+
+commit ce4a9959d7b5c962f1e9bd81f3aa97bef574bd89
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:50:37 2026 +0300
+
+    Add configurable startup directory
+
+config.ini
+main.c
+
+commit aee8e0eac8a2617cc0f1d6b35dbb5a0a982ae668
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:42:54 2026 +0300
+
+    Changed default RES back to LOW
+
+config.ini
+
+commit e587248d7e791c55a88319f8097b2289e19ea473
+Merge: a99c78d f506bee
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:41:20 2026 +0300
+
+    Merge branch 'codex/update-command-line-path-truncation-to-30%'
+
+commit f506bee8dfef47f51df62bbbc04c3413894d3bfa
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:38:05 2026 +0300
+
+    Limit prompt path to 30 percent of terminal width
+
+main.c
+
+commit a99c78d5c56effeb564e595d90171c461407de8c
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:37:23 2026 +0300
+
+    added chess
+
+documents/help.txt
+
+commit a313e5fd00af2990fbbbd601b81ae3d6d9286b59
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:35:12 2026 +0300
+
+    Center chess UI for low resolution
+
+games/chess.c
+
+commit 5a4174e3ac8d7d9898a5043c846e17da001ce195
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:28:37 2026 +0300
+
+    Simplify chess board UI
+
+games/chess.c
+
+commit 17ba1d53c2e8a047636c765cb978b31583dd0827
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:22:05 2026 +0300
+
+    Rework chess with cursor controls
+
+games/chess.c
+
+commit 10193de90298b665d32614f388f0a2ac4087bf0a
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 22:10:17 2026 +0300
+
+    Implement terminal chess game
+
+games/chess.c
+
+commit b060139895c9c646dce6572952d17b69492ba832
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 21:49:41 2026 +0300
+
+    now the format should be correct
+
+tasks/readme.md
+
+commit 463113ab265b54048e753a035175cf89d467fae0
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 21:47:49 2026 +0300
+
+    fixed format
+
+tasks/readme.md
+
+commit f72fe8dd63c25d8be869f18c9b3e5d648da2c258
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 21:40:53 2026 +0300
+
+    Find nested tasks by bare filename
+
+apps/runtask.c
+documents/help.txt
+release_notes.txt
+tasks/readme.md
+
+commit 3a84cc5046d5145641c5a3837e9aa486a3f1198a
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 21:33:09 2026 +0300
+
+    Support task examples in nested folders
+
+apps/runtask.c
 apps/terminal.c
+documents/help.txt
+release_notes.txt
+tasks/autoexec.task
+tasks/examples/assets/char_1_1.png
+tasks/examples/assets/char_1_2.png
+tasks/examples/assets/cloud.png
+tasks/examples/assets/cursor.png
+tasks/examples/assets/login_logo.png
+tasks/examples/assets/readme.md
+tasks/examples/assets/tile001.png
+tasks/examples/assets/tile002.png
+tasks/examples/assets/tile003.png
+tasks/examples/assets/tile004.png
+tasks/examples/assets/tile005.png
+tasks/examples/audiodemo.task
+tasks/examples/codedemo.task
+tasks/examples/colors.task
+tasks/examples/csvdemo.task
+tasks/examples/graphics.task
+tasks/examples/keyboard.task
+tasks/examples/mouse.task
+tasks/examples/release.task
+tasks/examples/screen.task
+tasks/examples/sprites.task
+tasks/examples/termgraphics.task
+tasks/examples/utilities.task
+tasks/examples/waves.task
+tasks/readme.md

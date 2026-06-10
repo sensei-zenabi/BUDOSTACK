@@ -5,7 +5,7 @@ or copy `.task` launchers here to start proprietary applications, launch
 existing tools, schedule operating-system work, or bundle small workflows.
 
 Preferred folder structure:
-
+```
 ./tasks/
 |
 |--autoexec.task       = Startup TASK that runs when BUDOSTACK starts
@@ -17,7 +17,7 @@ Preferred folder structure:
 |--myapp.task
 |--tools/              = Optional subfolder for user TASK launchers
 |  |--backup.task
-
+```
 `runtask` can launch any `.task` file under this directory tree from any
 working directory. Examples:
 

@@ -44,7 +44,7 @@ RUN _RETROPROFILE apply vt220-green
 
 RUN _TERM_MARGIN 8
 
-# Configurations 
+# Configurations
 SET $RESOLUTION = "null"
 SET $MOUSE = "null"
 SET $LOGIN_SCREEN = "null"
@@ -103,11 +103,11 @@ IF ($TERM_ACTIVE == "1"):
   END
 
   # Display intro logo and play starting tune
-  
+
   RUN _CLEAR
   RUN _WAIT 50
   SET $SPRITES = {}
-  RUN _TERM_SPRITE_LOAD -file "./assets/login_logo.png" TO $SPRITES[0] 
+  RUN _TERM_SPRITE_LOAD -file "./examples/assets/login_logo.png" TO $SPRITES[0]
   RUN _TERM_SPRITE -x 200 -y 60 -sprite $SPRITES[0] -layer 15
   RUN _TERM_RENDER -layer 15
   RUN _TERM_SOUND_PLAY 1 ../sounds/static_orchard.mp3 90
@@ -172,9 +172,9 @@ EVAL DRAW_FRAME()
 # USER LOGIN
 
 IF ($MENU == "USER LOGIN"):
-  
+
   # Work in progress
-  $MENU = "MAIN MENU"  
+  $MENU = "MAIN MENU"
 
 END
 
@@ -182,61 +182,61 @@ END
 # MAIN MENU
 
 IF ($MENU == "MAIN MENU"):
-  
+
   # Limit cursor movement upon returning
-  
+
   IF ($CURSOR_Y > 25):
     $CURSOR_Y = 25
   END
-  
-  
+
+
   # Draw
-  
+
   RUN _TEXT -x $MENU_X -y 15 -text "-- MAIN MENU --             "
   RUN _TEXT -x $MENU_X -y 17 -text "./APPS (to-be-done)         "
   RUN _TEXT -x $MENU_X -y 19 -text "./GAMES                     "
   RUN _TEXT -x $MENU_X -y 21 -text "Configuration               "
   RUN _TEXT -x $MENU_X -y 23 -text "Help                        "
   RUN _TEXT -x $MENU_X -y 25 -text "Command Line                "
-  
+
   EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
-    
-  
+
+
   # Process Input
-  
+
   RUN _KEYS TO $EVENT
-  
+
   IF ($EVENT == 2):
     # Up Arrow
     $CURSOR_Y = $CURSOR_Y - 2
   END
-  
+
   IF ($EVENT == -2):
     # Down Arrow
     $CURSOR_Y = $CURSOR_Y + 2
   END
-  
+
   IF ($EVENT == 10):
     # ESC Key
     GOTO EXIT
   END
 
-  
+
   # Limit Cursor Movement
-  
+
   IF ($CURSOR_Y < 17):
     $CURSOR_Y = 17
   END
   IF ($CURSOR_Y > 25):
     $CURSOR_Y = 25
   END
-  
-  
+
+
   # Act on ENTER press
-  
-  IF ($EVENT == 3):  
+
+  IF ($EVENT == 3):
     # Enter Key
-  
+
     IF ($CURSOR_Y == 19):
       # Games Menu
       $MENU = "GAMES"
@@ -253,7 +253,7 @@ IF ($MENU == "MAIN MENU"):
       # Command line
       GOTO EXIT
     END
-  
+
   END
 
 END
@@ -264,53 +264,53 @@ END
 IF ($MENU == "GAMES"):
 
   # Draw GAMES menu
-  
+
   RUN _TEXT -x $MENU_X -y 15 -text "-- GAMES --                 "
   RUN _TEXT -x $MENU_X -y 17 -text "./BUDO/example              "
   RUN _TEXT -x $MENU_X -y 19 -text "./BUDO/rocket               "
   RUN _TEXT -x $MENU_X -y 21 -text "./GAMES/invaders            "
   RUN _TEXT -x $MENU_X -y 23 -text "./GAMES/snake               "
   RUN _TEXT -x $MENU_X -y 25 -text "./GAMES/tictactoe           "
-  RUN _TEXT -x $MENU_X -y 27 -text "./TASKS/demo                "
+  RUN _TEXT -x $MENU_X -y 27 -text "./TASKS/examples/sprites.task"
   RUN _TEXT -x $MENU_X -y 29 -text "<-- MAIN MENU               "
-  
+
   EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
-  
+
   # Process Input
-  
+
   RUN _KEYS TO $EVENT
-  
+
   IF ($EVENT == 2):
     # Up Arrow
     $CURSOR_Y = $CURSOR_Y - 2
   END
-  
+
   IF ($EVENT == -2):
     # Down Arrow
     $CURSOR_Y = $CURSOR_Y + 2
   END
-  
+
   IF ($EVENT == 10):
     # ESC Key
     GOTO EXIT
   END
 
-  
+
   # Limit Cursor Movement
-  
+
   IF ($CURSOR_Y < 17):
     $CURSOR_Y = 17
   END
   IF ($CURSOR_Y > 29):
     $CURSOR_Y = 29
   END
-  
-  
+
+
   # Act on ENTER press
-  
-  IF ($EVENT == 3):  
+
+  IF ($EVENT == 3):
     # Enter Key
-    
+
     IF ($CURSOR_Y == 17):
       RUN ./budo/example
     END
@@ -331,12 +331,12 @@ IF ($MENU == "GAMES"):
     END
     IF ($CURSOR_Y == 27):
       RUN _CLEAR
-      RUN runtask demo.task
+      RUN runtask examples/sprites.task
     END
     IF ($CURSOR_Y == 29):
       $MENU = "MAIN MENU"
     END
-  
+
   END
 
 END
@@ -345,7 +345,7 @@ END
 # CONFIGURATION MENU
 
 IF ($MENU == "CONFIGURATION"):
-  
+
   # Fetch Configuration
   RUN _CONFIG -read _TERM_RESOLUTION TO $RESOLUTION
   RUN _CONFIG -read _TERM_MOUSE_SHOW TO $MOUSE
@@ -355,7 +355,7 @@ IF ($MENU == "CONFIGURATION"):
   RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
   RUN _CONFIG -read _TERM_SHADER TO $SHADER
   RUN _CONFIG -read SHADER_QUALITY TO $SHADER_QUALITY
-  
+
   # Index retroprofile
   SET $RETROPROFILE_IDX = 0
   IF ($RETROPROFILE == "c64"):
@@ -370,7 +370,7 @@ IF ($MENU == "CONFIGURATION"):
   IF ($RETROPROFILE == "vt220-green"):
     $RETROPROFILE_IDX = 3
   END
-  
+
   # Index shader quality
   SET $SHADER_QUALITY_IDX = 1
   IF ($SHADER_QUALITY == "LOW"):
@@ -384,7 +384,7 @@ IF ($MENU == "CONFIGURATION"):
   END
 
   # Draw
-  
+
   RUN _TEXT -x $MENU_X-1 -y 15 -text "-- CONFIGURATION --       "
   RUN _TEXT -x $MENU_X-3 -y 17 -text "Resolution Mode = " + $RESOLUTION
   RUN _TEXT -x $MENU_X-3 -y 19 -text "Mouse Cursor    = " + $MOUSE
@@ -395,45 +395,45 @@ IF ($MENU == "CONFIGURATION"):
   RUN _TEXT -x $MENU_X-3 -y 29 -text "Shader Passes   = " + $SHADER
   RUN _TEXT -x $MENU_X-3 -y 31 -text "Shaders         = " + $SHADER_QUALITY
   RUN _TEXT -x $MENU_X-3 -y 33 -text "<-- MAIN MENU             "
-  
+
   EVAL DRAW_CURSOR($CURSOR_X-3, $CURSOR_Y)
-    
-  
+
+
   # Process Input
-  
+
   RUN _KEYS TO $EVENT
-  
+
   IF ($EVENT == 2):
     # Up Arrow
     $CURSOR_Y = $CURSOR_Y - 2
   END
-  
+
   IF ($EVENT == -2):
     # Down Arrow
     $CURSOR_Y = $CURSOR_Y + 2
   END
-  
+
   IF ($EVENT == 10):
     # ESC Key
     GOTO EXIT
   END
 
-  
+
   # Limit Cursor Movement
-  
+
   IF ($CURSOR_Y < 17):
     $CURSOR_Y = 17
   END
   IF ($CURSOR_Y > 33):
     $CURSOR_Y = 33
   END
-  
-  
+
+
   # Act on ENTER press
-  
-  IF ($EVENT == 3):  
+
+  IF ($EVENT == 3):
     # Enter Key
-  
+
     IF ($CURSOR_Y == 17):
       # Set resolution
       IF ($RESOLUTION == "HIGH"):
@@ -526,7 +526,7 @@ IF ($MENU == "CONFIGURATION"):
     IF ($CURSOR_Y == 33):
       $MENU = "MAIN MENU"
     END
-  
+
   END
 
 END
@@ -563,4 +563,4 @@ RUN _TERM_CURSOR_BLINK enable
 
 PRINT "\n"
 
-                                                                                                                                                                                                                                
+

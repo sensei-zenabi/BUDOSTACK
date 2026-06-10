@@ -1,22 +1,29 @@
 ### WHAT IS BUDOSTACK? ###
 
-BUDOSTACK is a framework built on top of Debian Linux that allows
-users to convert their PC into a retro-machine from the Golden Era of
-Computing by providing a set of in-built capabilities and libraries
-to create your own content and share it with you fellow BUDOSTACKERS.
+Are you tired of modern computing? Endless Jira tickets, CI/CD failures,
+dependency hell, YAML debugging, cloud outages, build systems, framework
+migrations, and meetings about meetings?
+
+Step back to a time when computers booted instantly, software fit on a 
+floppy, and every pixel glowed with authentic CRT magic. No subscriptions.
+No telemetry. No containers. No cloud. Just pure computing joy, phosphor 
+glow, and the feeling that made us fall in love with technology before it
+became a quarterly business process.
+
 
 ### CAPABILITIES: ###
 
-- Terminal Emulator with CRT simulation.
+- Terminal Emulator with realistic CRT simulation.
+- Multi-session support up to 5 independent tabs.
+- Capable Code Editor to free you from modern IDEs.
 - Powerful TASK Scripting Language similar to BASIC.
-- BUDO libraries and Shader Stack to build your own SDL based apps.
-- Office tools from Text Editors to Presentations and Spreadsheets.
-- File manipulation and System Utilities.
+- Office tools from Word Processor to Presentations and Spreadsheets.
+- File system explorer and capabale set of file manipulation tools.
 - Built-In Math Capabilities that enable Scientific Calculation.
-- Connection Management and Messaging Tool.
+- Connection Management and Terminal-Based Chat Client.
 - RSS News Reader.
-- Linux command passthrough.
-- And more...
+- Corny in-built games.
+- ...and all what your linux offers...
 
 ### SYSTEM REQUIREMENTS: ###
 
@@ -34,7 +41,7 @@ Tested distributions:
 
 Note! Internet connection is required.
 
-### LATEST RELEASE: v0.9.88 ###
+### LATEST RELEASE: v0.9.90 ###
 
 PROJECT STATUS: EARLY ACCESS from v0.8.0 to v1.0.0
 

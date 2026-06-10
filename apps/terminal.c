@@ -73,7 +73,7 @@
 #define TERMINAL_MAX_TARGET_FPS 1000u
 #define TERMINAL_TAB_COUNT 5u
 
-#define TERMINAL_CURSOR_SPRITE_PATH "./tasks/assets/cursor.png"
+#define TERMINAL_CURSOR_SPRITE_PATH "./tasks/examples/assets/cursor.png"
 
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");

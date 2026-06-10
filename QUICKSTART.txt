@@ -1,0 +1,22 @@
+####################
+# Very quick start #
+####################
+
+1. Clone repo
+
+2. Run matching "setup.sh" (linux, termux)
+   - Installs required dependencies
+   - Compiles and builds BUDOSTACK
+
+3. Run ./budostack if you want to use your own terminal
+   (note, _TERM capabilities require ./apps/terminal)
+   
+4. Run ./start.sh if you want to use BUDOSTACK terminal
+   (with CRT simulation)
+   
+p.s.
+You might need sudo depending on your environment. 
+
+Cheers
+Ville!
+

@@ -192,6 +192,7 @@
 
  /* List of Games */
 
+  chess    : Classic chess for two players.
   invaders : Space invaders clone tailored to terminal.
   snake    : Snake clone, reminence from the good old Nokia days.
   tictactoe: Classic tictactoe, but with bigger game area.

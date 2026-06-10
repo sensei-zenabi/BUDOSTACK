@@ -68,35 +68,11 @@ typedef struct {
 static struct termios orig_termios;
 static int raw_mode_enabled = 0;
 
-static const char *piece_art(char piece) {
-    switch (piece) {
-        case 'P':
-            return "P^";
-        case 'N':
-            return "N>";
-        case 'B':
-            return "B/";
-        case 'R':
-            return "R#";
-        case 'Q':
-            return "Q*";
-        case 'K':
-            return "K!";
-        case 'p':
-            return "pv";
-        case 'n':
-            return "n>";
-        case 'b':
-            return "b\\";
-        case 'r':
-            return "r#";
-        case 'q':
-            return "q*";
-        case 'k':
-            return "k!";
-        default:
-            return "  ";
+static char piece_glyph(char piece) {
+    if (piece == ' ') {
+        return ' ';
     }
+    return piece;
 }
 
 static int is_white_piece(char piece) {
@@ -778,32 +754,25 @@ static const char *difficulty_name(Difficulty difficulty) {
 static void print_board_cell(const GameState *state, int row, int col, int show_cursor,
                              int cursor_row, int cursor_col, int selected_row, int selected_col,
                              Move last_move) {
-    char piece = state->board[row][col];
-    const char *art = piece_art(piece);
+    char piece = piece_glyph(state->board[row][col]);
     int cursor = show_cursor && row == cursor_row && col == cursor_col;
     int selected = row == selected_row && col == selected_col;
     int last = same_square(row, col, last_move.from_row, last_move.from_col) ||
                same_square(row, col, last_move.to_row, last_move.to_col);
 
     if (piece == ' ') {
-        art = ((row + col) % 2 == 0) ? "::" : "..";
+        piece = '.';
     }
 
     if (cursor) {
         printf("\033[7m");
     } else if (selected) {
-        printf("\033[1m");
+        printf("\033[4m");
     } else if (last) {
-        printf("\033[2m");
+        printf("\033[1m");
     }
 
-    if (selected) {
-        printf("[%s]%c%c ", art, (char)('a' + col), (char)('1' + (7 - row)));
-    } else if (cursor) {
-        printf(">%s<%c%c ", art, (char)('a' + col), (char)('1' + (7 - row)));
-    } else {
-        printf(" %s %c%c ", art, (char)('a' + col), (char)('1' + (7 - row)));
-    }
+    printf(" %c ", piece);
 
     if (cursor || selected || last) {
         printf("\033[0m");
@@ -813,36 +782,39 @@ static void print_board_cell(const GameState *state, int row, int col, int show_
 static void render_board(const GameState *state, const char *status, GameMode mode, Difficulty difficulty,
                          Move last_move, int cursor_row, int cursor_col,
                          int selected_row, int selected_col, int show_cursor) {
+    const char *mode_name = mode == MODE_PVP ? "PVP" : "PVC";
+    const char *side_name = state->white_to_move ? "White" : "Black";
+
     clear_screen();
-    printf("BUDOSTACK Chess - %s\n", mode == MODE_PVP ? "Player vs Player" : "Player vs Computer");
-    printf("Turn: %-5s  AI: %-21s Move: %d\n",
-           state->white_to_move ? "White" : "Black",
-           mode == MODE_PVC ? difficulty_name(difficulty) : "none",
-           state->fullmove_number);
-    printf("Controls: arrows/WASD move, Space/Enter select, r restart, q quit.\n");
+    printf("BUDOSTACK Chess  %s", mode_name);
+    if (mode == MODE_PVC) {
+        printf("  %s", difficulty_name(difficulty));
+    }
+    printf("\n");
+    printf("Turn: %-5s   Move: %d\n", side_name, state->fullmove_number);
+    printf("Keys: arrows/WASD move, Space select, r restart, q quit\n");
     printf("%s\n", status);
     if (selected_row >= 0 && selected_col >= 0) {
-        printf("Selected: %c%d - choose a glowing destination.\n",
-               (char)('a' + selected_col), 8 - selected_row);
+        printf("Selected: %c%d\n", (char)('a' + selected_col), 8 - selected_row);
     } else {
-        printf("Select one of your pieces, then select its destination.\n");
+        printf("Selected: --\n");
     }
-    printf("+-----+--------+--------+--------+--------+--------+--------+--------+--------+\n");
+    printf("\n");
+    printf("    a  b  c  d  e  f  g  h\n");
+    printf("  +------------------------+\n");
 
     for (int row = 0; row < 8; row++) {
-        printf("|  %d  |", 8 - row);
+        printf("%d |", 8 - row);
         for (int col = 0; col < 8; col++) {
             print_board_cell(state, row, col, show_cursor, cursor_row, cursor_col,
                              selected_row, selected_col, last_move);
-            printf("|");
         }
-        printf("\n");
-        printf("+-----+--------+--------+--------+--------+--------+--------+--------+--------+\n");
+        printf("| %d\n", 8 - row);
     }
 
-    printf("|       a        b        c        d        e        f        g        h        |\n");
-    printf("+------------------------------------------------------------------------------+\n");
-    printf("Pieces: K! Q* R# B/ N> P^  Castles: W%s%s B%s%s  Fifty:%d\n",
+    printf("  +------------------------+\n");
+    printf("    a  b  c  d  e  f  g  h\n");
+    printf("Castle: W%s%s B%s%s   Fifty: %d\n",
            state->white_castle_king ? "K" : "-", state->white_castle_queen ? "Q" : "-",
            state->black_castle_king ? "k" : "-", state->black_castle_queen ? "q" : "-",
            state->halfmove_clock);
@@ -987,7 +959,7 @@ static int human_turn(GameState *state, GameMode mode, Difficulty difficulty,
             }
             selected_row = *cursor_row;
             selected_col = *cursor_col;
-            (void)snprintf(status, sizeof(status), "Piece selected. Move to a destination and press Space.");
+            (void)snprintf(status, sizeof(status), "Piece selected. Choose a destination.");
             continue;
         }
 

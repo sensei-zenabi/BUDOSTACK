@@ -412,7 +412,7 @@ static void format_prompt(char *prompt, size_t prompt_size) {
         return;
     }
 
-    max_path_width = (size_t)terminal_width_columns() / 2u;
+    max_path_width = ((size_t)terminal_width_columns() * 3u) / 10u;
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
         truncate_path_for_prompt(cwd, display_path, sizeof(display_path), max_path_width);
         snprintf(prompt, prompt_size, "%s$ ", display_path);

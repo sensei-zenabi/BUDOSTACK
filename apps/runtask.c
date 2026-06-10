@@ -483,17 +483,39 @@ static int resolve_task_path(const char *arg, const char *cwd, char *out, size_t
         }
     }
 
-    if (strchr(arg, '/') || arg[0] == '.') {
+    if (arg[0] == '.') {
         return -1;
     }
 
-    if (snprintf(candidate, sizeof(candidate), "tasks/%s", arg) >= (int)sizeof(candidate)) {
+    const char *task_relative_arg = arg;
+    if (strncmp(arg, "tasks/", 6) == 0) {
+        task_relative_arg = arg + 6;
+    }
+
+    if (*task_relative_arg == '\0') {
+        return -1;
+    }
+
+    if (snprintf(candidate, sizeof(candidate), "tasks/%s", task_relative_arg) >= (int)sizeof(candidate)) {
         return -1;
     }
 
     char built[PATH_MAX];
     if (build_from_base(candidate, built, sizeof(built)) == 0 && realpath(built, out)) {
-        return 0;
+        char task_root[PATH_MAX];
+        char task_root_real[PATH_MAX];
+        if (build_from_base("tasks", task_root, sizeof(task_root)) != 0) {
+            return -1;
+        }
+        if (!realpath(task_root, task_root_real)) {
+            return -1;
+        }
+
+        size_t root_len = strlen(task_root_real);
+        if (strcmp(out, task_root_real) == 0 ||
+            (strncmp(out, task_root_real, root_len) == 0 && out[root_len] == '/')) {
+            return 0;
+        }
     }
 
     return -1;
@@ -2625,7 +2647,8 @@ static void print_help(void) {
     printf("Usage:\n");
     printf("  ./runtask taskfile [-d]\n\n");
     printf("Notes:\n");
-    printf("- Task files are loaded from 'tasks/' automatically (e.g., tasks/demo.task).\n");
+    printf("- Task files are loaded from anywhere under 'tasks/' automatically\n");
+    printf("  (e.g., runtask examples/colors.task).\n");
     printf("- Place executables in ./apps, ./commands, or ./utilities and make them\n");
     printf("  executable.\n");
     printf("- External commands available in PATH are also accepted.\n\n");

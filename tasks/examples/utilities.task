@@ -13,19 +13,19 @@
 PRINT "\nPRINTING THE USERS -FOLDER CONTENT:"
 PRINT" \n"
 
-RUN list ../users
+RUN list ../../users
 
 PRINT "\n"
 PRINT "\nCALCULCATING CHECKSUM OF readme.md..."
 
-RUN crc32 ../users/readme.md
+RUN crc32 ../../users/readme.md
 
 PRINT "\n"
 PRINT "List BUDOSTACK root using _LIST:"
 PRINT "\n"
 
 SET $FILES = {}
-RUN _LIST ../ TO $FILES
+RUN _LIST ../../ TO $FILES
 
 FOR ($i=0; $i<LEN($FILES); $i++):
   PRINT "\n"

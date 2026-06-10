@@ -28,7 +28,7 @@
   3. Modify the BUDOSTACK.desktop to create a desktop shortcut.
 
   4. (Opt.) Use your own terminal, start with './budostack' and match the
-     displayed columns and rows using the 'runtask screen.task'.
+     displayed columns and rows using 'runtask examples/screen.task'.
 
 -----------------------------------------------------------------------------
 
@@ -87,7 +87,8 @@
   ./budo/        - Folder containing budo* libraries for SDL based content
                    creation from applications to games. Examples included.
   ./tasks/       - Folder reserved for TASK scripts that can be launched from
-                   any location using the 'runtask mytask.task' scheme.
+                   any location using 'runtask mytask.task' or subfolder paths
+                   such as 'runtask examples/colors.task'.
   ./users/       - User folders for those who like them.
 
 
@@ -278,6 +279,9 @@
   _WAIT                : Sleep for given number of milliseconds.
 
  /* BUDOSTACK Example TASK Programs */
+
+  Examples live under ./tasks/examples/ and can be launched with
+  runtask examples/<name>.task.
 
   audiodemo.task       : Collection of in-built sound capabilities
   autoexec.task        : Determines what happens before

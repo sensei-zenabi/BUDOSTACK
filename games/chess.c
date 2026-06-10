@@ -751,6 +751,44 @@ static const char *difficulty_name(Difficulty difficulty) {
     }
 }
 
+static void print_spaces(int count) {
+    for (int i = 0; i < count; i++) {
+        putchar(' ');
+    }
+}
+
+static void print_centered_text(const char *text) {
+    int width = (int)strlen(text);
+    int padding = (80 - width) / 2;
+
+    if (padding < 0) {
+        padding = 0;
+    }
+    print_spaces(padding);
+    printf("%s\n", text);
+}
+
+static void square_name(int row, int col, char *buffer, size_t buffer_size) {
+    if (row < 0 || col < 0) {
+        (void)snprintf(buffer, buffer_size, "--");
+        return;
+    }
+    (void)snprintf(buffer, buffer_size, "%c%d", (char)('a' + col), 8 - row);
+}
+
+static void move_name(Move move, char *buffer, size_t buffer_size) {
+    char from[4];
+    char to[4];
+
+    if (move.from_row < 0 || move.to_row < 0) {
+        (void)snprintf(buffer, buffer_size, "--");
+        return;
+    }
+    square_name(move.from_row, move.from_col, from, sizeof(from));
+    square_name(move.to_row, move.to_col, to, sizeof(to));
+    (void)snprintf(buffer, buffer_size, "%s-%s", from, to);
+}
+
 static void print_board_cell(const GameState *state, int row, int col, int show_cursor,
                              int cursor_row, int cursor_col, int selected_row, int selected_col,
                              Move last_move) {
@@ -779,31 +817,50 @@ static void print_board_cell(const GameState *state, int row, int col, int show_
     }
 }
 
+static void print_info_pair(const char *left, const char *right) {
+    print_spaces(14);
+    printf("%-24s  %-24s\n", left, right);
+}
+
 static void render_board(const GameState *state, const char *status, GameMode mode, Difficulty difficulty,
                          Move last_move, int cursor_row, int cursor_col,
                          int selected_row, int selected_col, int show_cursor) {
-    const char *mode_name = mode == MODE_PVP ? "PVP" : "PVC";
+    const char *mode_name = mode == MODE_PVP ? "Player vs Player" : "Player vs Computer";
     const char *side_name = state->white_to_move ? "White" : "Black";
+    char line[96];
+    char selected[8];
+    char last[16];
+    char castle[24];
+    char left[40];
+    char right[40];
+
+    square_name(selected_row, selected_col, selected, sizeof(selected));
+    move_name(last_move, last, sizeof(last));
+    (void)snprintf(castle, sizeof(castle), "W%s%s B%s%s",
+                   state->white_castle_king ? "K" : "-", state->white_castle_queen ? "Q" : "-",
+                   state->black_castle_king ? "k" : "-", state->black_castle_queen ? "q" : "-");
 
     clear_screen();
-    printf("BUDOSTACK Chess  %s", mode_name);
+    printf("\n\n\n\n\n\n\n\n\n\n");
+    print_centered_text("BUDOSTACK CHESS");
     if (mode == MODE_PVC) {
-        printf("  %s", difficulty_name(difficulty));
-    }
-    printf("\n");
-    printf("Turn: %-5s   Move: %d\n", side_name, state->fullmove_number);
-    printf("Keys: arrows/WASD move, Space select, r restart, q quit\n");
-    printf("%s\n", status);
-    if (selected_row >= 0 && selected_col >= 0) {
-        printf("Selected: %c%d\n", (char)('a' + selected_col), 8 - selected_row);
+        (void)snprintf(line, sizeof(line), "%s  |  %s", mode_name, difficulty_name(difficulty));
     } else {
-        printf("Selected: --\n");
+        (void)snprintf(line, sizeof(line), "%s", mode_name);
     }
+    print_centered_text(line);
+    print_centered_text("Arrows/WASD move   SPACE selects   R restarts   Q quits");
     printf("\n");
+    print_centered_text(status);
+    printf("\n");
+
+    print_spaces(25);
     printf("    a  b  c  d  e  f  g  h\n");
+    print_spaces(25);
     printf("  +------------------------+\n");
 
     for (int row = 0; row < 8; row++) {
+        print_spaces(25);
         printf("%d |", 8 - row);
         for (int col = 0; col < 8; col++) {
             print_board_cell(state, row, col, show_cursor, cursor_row, cursor_col,
@@ -812,12 +869,30 @@ static void render_board(const GameState *state, const char *status, GameMode mo
         printf("| %d\n", 8 - row);
     }
 
+    print_spaces(25);
     printf("  +------------------------+\n");
+    print_spaces(25);
     printf("    a  b  c  d  e  f  g  h\n");
-    printf("Castle: W%s%s B%s%s   Fifty: %d\n",
-           state->white_castle_king ? "K" : "-", state->white_castle_queen ? "Q" : "-",
-           state->black_castle_king ? "k" : "-", state->black_castle_queen ? "q" : "-",
-           state->halfmove_clock);
+    printf("\n");
+
+    (void)snprintf(left, sizeof(left), "Turn: %s", side_name);
+    (void)snprintf(right, sizeof(right), "Selected: %s", selected);
+    print_info_pair(left, right);
+    (void)snprintf(left, sizeof(left), "Move: %d", state->fullmove_number);
+    (void)snprintf(right, sizeof(right), "Last: %s", last);
+    print_info_pair(left, right);
+    (void)snprintf(left, sizeof(left), "Mode: %s", mode == MODE_PVP ? "PVP" : "PVC");
+    (void)snprintf(right, sizeof(right), "Castle: %s", castle);
+    print_info_pair(left, right);
+    if (mode == MODE_PVC) {
+        (void)snprintf(left, sizeof(left), "AI: %s", difficulty_name(difficulty));
+    } else {
+        (void)snprintf(left, sizeof(left), "AI: none");
+    }
+    (void)snprintf(right, sizeof(right), "Fifty: %d", state->halfmove_clock);
+    print_info_pair(left, right);
+    printf("\n");
+    print_centered_text("Uppercase pieces are White. Lowercase pieces are Black. Dots are empty squares.");
     fflush(stdout);
 }
 

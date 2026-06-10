@@ -5,7 +5,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <termios.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef enum {
     MODE_PVP,
@@ -17,6 +19,17 @@ typedef enum {
     DIFF_MEDIUM,
     DIFF_HARD
 } Difficulty;
+
+typedef enum {
+    KEY_NONE = 0,
+    KEY_UP,
+    KEY_DOWN,
+    KEY_LEFT,
+    KEY_RIGHT,
+    KEY_SELECT,
+    KEY_QUIT,
+    KEY_RESTART
+} InputKey;
 
 typedef struct {
     int from_row;
@@ -51,6 +64,9 @@ typedef struct {
 #define INF_SCORE 1000000
 #define MATE_SCORE 900000
 #define INPUT_SIZE 64
+
+static struct termios orig_termios;
+static int raw_mode_enabled = 0;
 
 static const char *piece_art(char piece) {
     switch (piece) {
@@ -665,154 +681,172 @@ static Move choose_ai_move(const GameState *state, Difficulty difficulty) {
     return best_move;
 }
 
-static void move_to_text(Move move, char *buffer, size_t buffer_size) {
-    char promo[2] = { '\0', '\0' };
-
-    if (move.promotion) {
-        promo[0] = (char)tolower((unsigned char)move.promotion);
-    }
-    (void)snprintf(buffer, buffer_size, "%c%d%c%d%s",
-                   (char)('a' + move.from_col), 8 - move.from_row,
-                   (char)('a' + move.to_col), 8 - move.to_row, promo);
-}
-
 static void clear_screen(void) {
     printf("\033[2J\033[H");
 }
 
+
+static void disable_raw_mode(void) {
+    if (!raw_mode_enabled) {
+        return;
+    }
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) {
+        perror("chess: tcsetattr");
+    }
+    raw_mode_enabled = 0;
+}
+
+static void enable_raw_mode(void) {
+    if (raw_mode_enabled || !isatty(STDIN_FILENO)) {
+        return;
+    }
+    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
+        perror("chess: tcgetattr");
+        exit(EXIT_FAILURE);
+    }
+
+    struct termios raw = orig_termios;
+    raw.c_lflag &= (tcflag_t)~(ECHO | ICANON);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+        perror("chess: tcsetattr");
+        exit(EXIT_FAILURE);
+    }
+    raw_mode_enabled = 1;
+    atexit(disable_raw_mode);
+}
+
+static int read_key(void) {
+    int ch = getchar();
+
+    if (ch == EOF) {
+        return KEY_QUIT;
+    }
+    if (ch == '\033') {
+        int first = getchar();
+        int second = getchar();
+        if (first == '[') {
+            if (second == 'A') {
+                return KEY_UP;
+            }
+            if (second == 'B') {
+                return KEY_DOWN;
+            }
+            if (second == 'C') {
+                return KEY_RIGHT;
+            }
+            if (second == 'D') {
+                return KEY_LEFT;
+            }
+        }
+        return KEY_NONE;
+    }
+    if (ch == 'w' || ch == 'W') {
+        return KEY_UP;
+    }
+    if (ch == 's' || ch == 'S') {
+        return KEY_DOWN;
+    }
+    if (ch == 'a' || ch == 'A') {
+        return KEY_LEFT;
+    }
+    if (ch == 'd' || ch == 'D') {
+        return KEY_RIGHT;
+    }
+    if (ch == ' ' || ch == '\n' || ch == '\r') {
+        return KEY_SELECT;
+    }
+    if (ch == 'r' || ch == 'R') {
+        return KEY_RESTART;
+    }
+    if (ch == 'q' || ch == 'Q') {
+        return KEY_QUIT;
+    }
+    return KEY_NONE;
+}
+
 static const char *difficulty_name(Difficulty difficulty) {
     switch (difficulty) {
-        case DIFF_EASY: return "EASY: gremlin dice";
-        case DIFF_MEDIUM: return "MEDIUM: tactician";
-        case DIFF_HARD: return "HARD: crystal oracle";
+        case DIFF_EASY: return "EASY";
+        case DIFF_MEDIUM: return "MEDIUM";
+        case DIFF_HARD: return "HARD";
         default: return "UNKNOWN";
     }
 }
 
+static void print_board_cell(const GameState *state, int row, int col, int show_cursor,
+                             int cursor_row, int cursor_col, int selected_row, int selected_col,
+                             Move last_move) {
+    char piece = state->board[row][col];
+    const char *art = piece_art(piece);
+    int cursor = show_cursor && row == cursor_row && col == cursor_col;
+    int selected = row == selected_row && col == selected_col;
+    int last = same_square(row, col, last_move.from_row, last_move.from_col) ||
+               same_square(row, col, last_move.to_row, last_move.to_col);
+
+    if (piece == ' ') {
+        art = ((row + col) % 2 == 0) ? "::" : "..";
+    }
+
+    if (cursor) {
+        printf("\033[7m");
+    } else if (selected) {
+        printf("\033[1m");
+    } else if (last) {
+        printf("\033[2m");
+    }
+
+    if (selected) {
+        printf("[%s]%c%c ", art, (char)('a' + col), (char)('1' + (7 - row)));
+    } else if (cursor) {
+        printf(">%s<%c%c ", art, (char)('a' + col), (char)('1' + (7 - row)));
+    } else {
+        printf(" %s %c%c ", art, (char)('a' + col), (char)('1' + (7 - row)));
+    }
+
+    if (cursor || selected || last) {
+        printf("\033[0m");
+    }
+}
+
 static void render_board(const GameState *state, const char *status, GameMode mode, Difficulty difficulty,
-                         const char *last_move) {
+                         Move last_move, int cursor_row, int cursor_col,
+                         int selected_row, int selected_col, int show_cursor) {
     clear_screen();
-    printf("+------------------------------------------------------------------------------+\n");
-    printf("| BUDOSTACK CHESS: THE 64-SQUARE STARGATE                         turn %3d     |\n",
+    printf("BUDOSTACK Chess - %s\n", mode == MODE_PVP ? "Player vs Player" : "Player vs Computer");
+    printf("Turn: %-5s  AI: %-21s Move: %d\n",
+           state->white_to_move ? "White" : "Black",
+           mode == MODE_PVC ? difficulty_name(difficulty) : "none",
            state->fullmove_number);
-    printf("| mode: %-10s  ai: %-20s  side: %-5s                  |\n",
-           mode == MODE_PVP ? "PVP" : "PVC", mode == MODE_PVC ? difficulty_name(difficulty) : "sleeping",
-           state->white_to_move ? "WHITE" : "BLACK");
+    printf("Controls: arrows/WASD move, Space/Enter select, r restart, q quit.\n");
+    printf("%s\n", status);
+    if (selected_row >= 0 && selected_col >= 0) {
+        printf("Selected: %c%d - choose a glowing destination.\n",
+               (char)('a' + selected_col), 8 - selected_row);
+    } else {
+        printf("Select one of your pieces, then select its destination.\n");
+    }
     printf("+-----+--------+--------+--------+--------+--------+--------+--------+--------+\n");
 
     for (int row = 0; row < 8; row++) {
         printf("|  %d  |", 8 - row);
         for (int col = 0; col < 8; col++) {
-            const char *art = piece_art(state->board[row][col]);
-            if (state->board[row][col] == ' ') {
-                art = ((row + col) % 2 == 0) ? "::" : "..";
-            }
-            printf(" %s %c%c |", art, (char)('a' + col), (char)('1' + (7 - row)));
+            print_board_cell(state, row, col, show_cursor, cursor_row, cursor_col,
+                             selected_row, selected_col, last_move);
+            printf("|");
         }
         printf("\n");
-        if (row != 7) {
-            printf("+-----+--------+--------+--------+--------+--------+--------+--------+--------+\n");
-        }
+        printf("+-----+--------+--------+--------+--------+--------+--------+--------+--------+\n");
     }
 
-    printf("+-----+--------+--------+--------+--------+--------+--------+--------+--------+\n");
     printf("|       a        b        c        d        e        f        g        h        |\n");
     printf("+------------------------------------------------------------------------------+\n");
-    printf("Status: %s\n", status);
-    printf("Last: %s  Castles: W%s%s B%s%s  Rule50:%d\n",
-           last_move[0] == '\0' ? "none" : last_move,
+    printf("Pieces: K! Q* R# B/ N> P^  Castles: W%s%s B%s%s  Fifty:%d\n",
            state->white_castle_king ? "K" : "-", state->white_castle_queen ? "Q" : "-",
            state->black_castle_king ? "k" : "-", state->black_castle_queen ? "q" : "-",
            state->halfmove_clock);
-    printf("Move: e2e4, e7e8q, O-O, O-O-O, help, restart, q\n");
-}
-
-static int parse_square(const char *text, int *row, int *col) {
-    char file = (char)tolower((unsigned char)text[0]);
-    char rank = text[1];
-
-    if (file < 'a' || file > 'h' || rank < '1' || rank > '8') {
-        return 0;
-    }
-    *col = file - 'a';
-    *row = 8 - (rank - '0');
-    return 1;
-}
-
-static void strip_spaces_lower(const char *input, char *output, size_t output_size) {
-    size_t used = 0;
-
-    for (size_t i = 0; input[i] != '\0' && used + 1 < output_size; i++) {
-        if (!isspace((unsigned char)input[i]) && input[i] != '-') {
-            output[used] = (char)tolower((unsigned char)input[i]);
-            used++;
-        }
-    }
-    output[used] = '\0';
-}
-
-static int parse_move_input(const char *input, const MoveList *legal, Move *chosen) {
-    char compact[INPUT_SIZE];
-    int from_row = -1;
-    int from_col = -1;
-    int to_row = -1;
-    int to_col = -1;
-    char promotion = 0;
-
-    strip_spaces_lower(input, compact, sizeof(compact));
-    if (strcmp(compact, "oo") == 0 || strcmp(compact, "00") == 0) {
-        for (int i = 0; i < legal->count; i++) {
-            if (legal->items[i].castle && legal->items[i].to_col == 6) {
-                *chosen = legal->items[i];
-                return 1;
-            }
-        }
-        return 0;
-    }
-    if (strcmp(compact, "ooo") == 0 || strcmp(compact, "000") == 0) {
-        for (int i = 0; i < legal->count; i++) {
-            if (legal->items[i].castle && legal->items[i].to_col == 2) {
-                *chosen = legal->items[i];
-                return 1;
-            }
-        }
-        return 0;
-    }
-
-    if (strlen(compact) < 4 || !parse_square(compact, &from_row, &from_col) ||
-        !parse_square(compact + 2, &to_row, &to_col)) {
-        return 0;
-    }
-    if (compact[4] != '\0') {
-        promotion = compact[4];
-    }
-
-    for (int i = 0; i < legal->count; i++) {
-        Move move = legal->items[i];
-        if (move.from_row == from_row && move.from_col == from_col &&
-            move.to_row == to_row && move.to_col == to_col) {
-            if (move.promotion) {
-                if (promotion == '\0' || lower_piece(move.promotion) == promotion) {
-                    *chosen = move;
-                    return 1;
-                }
-            } else if (promotion == '\0') {
-                *chosen = move;
-                return 1;
-            }
-        }
-    }
-
-    return 0;
-}
-
-static void print_help(void) {
-    printf("\nBUDOSTACK Chess accepts coordinate moves only, so it is tiny-terminal friendly.\n");
-    printf("Examples: e2e4, g1f3, e7e8q. Castle with O-O or O-O-O.\n");
-    printf("Pieces are two-glyph sigils: K! king, Q* queen, R# rook, B/ bishop, N> knight, P^ pawn.\n");
-    printf("The computer uses random moves on EASY, one-ply tactics on MEDIUM, and depth-3 alpha-beta on HARD.\n");
-    printf("Press Enter to return to the stargate.");
-    (void)getchar();
+    fflush(stdout);
 }
 
 static int read_line(char *buffer, size_t buffer_size) {
@@ -831,19 +865,22 @@ static GameMode choose_mode(void) {
 
     for (;;) {
         clear_screen();
-        printf("BUDOSTACK CHESS boots in LOW-resolution stargate mode.\n\n");
-        printf("1) Player vs Player\n");
-        printf("2) Player vs Computer\n\n");
-        printf("Choose mode [1-2]: ");
+        printf("BUDOSTACK Chess\n\n");
+        printf("1) Player vs Computer\n");
+        printf("2) Player vs Player\n\n");
+        printf("Choice: ");
         fflush(stdout);
         if (!read_line(input, sizeof(input))) {
-            return MODE_PVP;
+            return MODE_PVC;
+        }
+        if (input[0] == 'q' || input[0] == 'Q') {
+            return MODE_PVC;
         }
         if (strcmp(input, "1") == 0) {
-            return MODE_PVP;
+            return MODE_PVC;
         }
         if (strcmp(input, "2") == 0) {
-            return MODE_PVC;
+            return MODE_PVP;
         }
     }
 }
@@ -853,10 +890,10 @@ static Difficulty choose_difficulty(void) {
 
     for (;;) {
         clear_screen();
-        printf("Choose the machine spirit.\n\n");
-        printf("1) EASY   - gremlin dice, legal but chaotic\n");
-        printf("2) MEDIUM - hungry for material and center squares\n");
-        printf("3) HARD   - depth-3 alpha-beta crystal oracle\n\n");
+        printf("Choose difficulty.\n\n");
+        printf("1) EASY   - random legal moves\n");
+        printf("2) MEDIUM - quick tactical search\n");
+        printf("3) HARD   - deeper alpha-beta search\n\n");
         printf("Difficulty [1-3]: ");
         fflush(stdout);
         if (!read_line(input, sizeof(input))) {
@@ -874,6 +911,113 @@ static Difficulty choose_difficulty(void) {
     }
 }
 
+static int legal_source_has_move(const MoveList *legal, int row, int col) {
+    for (int i = 0; i < legal->count; i++) {
+        if (legal->items[i].from_row == row && legal->items[i].from_col == col) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int find_selected_move(const MoveList *legal, int from_row, int from_col,
+                              int to_row, int to_col, Move *chosen) {
+    for (int i = 0; i < legal->count; i++) {
+        Move move = legal->items[i];
+        if (move.from_row == from_row && move.from_col == from_col &&
+            move.to_row == to_row && move.to_col == to_col) {
+            *chosen = move;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void move_cursor(int key, int *cursor_row, int *cursor_col) {
+    if (key == KEY_UP && *cursor_row > 0) {
+        (*cursor_row)--;
+    } else if (key == KEY_DOWN && *cursor_row < 7) {
+        (*cursor_row)++;
+    } else if (key == KEY_LEFT && *cursor_col > 0) {
+        (*cursor_col)--;
+    } else if (key == KEY_RIGHT && *cursor_col < 7) {
+        (*cursor_col)++;
+    }
+}
+
+static int human_turn(GameState *state, GameMode mode, Difficulty difficulty,
+                      int *cursor_row, int *cursor_col, Move *last_move) {
+    int selected_row = -1;
+    int selected_col = -1;
+    char status[128];
+
+    (void)snprintf(status, sizeof(status), "%s to move.", state->white_to_move ? "White" : "Black");
+    for (;;) {
+        MoveList legal;
+        int key;
+
+        generate_legal_moves(state, &legal);
+        render_board(state, status, mode, difficulty, *last_move, *cursor_row, *cursor_col,
+                     selected_row, selected_col, 1);
+        key = read_key();
+        if (key == KEY_QUIT) {
+            return 0;
+        }
+        if (key == KEY_RESTART) {
+            return 2;
+        }
+        if (key == KEY_UP || key == KEY_DOWN || key == KEY_LEFT || key == KEY_RIGHT) {
+            move_cursor(key, cursor_row, cursor_col);
+            continue;
+        }
+        if (key != KEY_SELECT) {
+            continue;
+        }
+
+        if (selected_row < 0 || selected_col < 0) {
+            int color = state->white_to_move ? 1 : -1;
+            char piece = state->board[*cursor_row][*cursor_col];
+            if (piece_color(piece) != color) {
+                (void)snprintf(status, sizeof(status), "Select one of your own pieces first.");
+                continue;
+            }
+            if (!legal_source_has_move(&legal, *cursor_row, *cursor_col)) {
+                (void)snprintf(status, sizeof(status), "That piece has no legal moves.");
+                continue;
+            }
+            selected_row = *cursor_row;
+            selected_col = *cursor_col;
+            (void)snprintf(status, sizeof(status), "Piece selected. Move to a destination and press Space.");
+            continue;
+        }
+
+        if (*cursor_row == selected_row && *cursor_col == selected_col) {
+            selected_row = -1;
+            selected_col = -1;
+            (void)snprintf(status, sizeof(status), "Selection cleared.");
+            continue;
+        }
+
+        {
+            Move chosen;
+            int color = state->white_to_move ? 1 : -1;
+            if (find_selected_move(&legal, selected_row, selected_col, *cursor_row, *cursor_col, &chosen)) {
+                *last_move = chosen;
+                make_move(state, chosen);
+                return 1;
+            }
+            if (piece_color(state->board[*cursor_row][*cursor_col]) == color &&
+                legal_source_has_move(&legal, *cursor_row, *cursor_col)) {
+                selected_row = *cursor_row;
+                selected_col = *cursor_col;
+                (void)snprintf(status, sizeof(status), "Selection changed.");
+            } else {
+                (void)snprintf(status, sizeof(status), "Illegal destination for that piece.");
+            }
+        }
+    }
+}
+
 static void status_after_move(const GameState *state, char *status, size_t status_size) {
     MoveList replies;
 
@@ -882,7 +1026,7 @@ static void status_after_move(const GameState *state, char *status, size_t statu
         if (king_in_check(state, state->white_to_move)) {
             (void)snprintf(status, status_size, "CHECKMATE -- %s wins.", state->white_to_move ? "Black" : "White");
         } else {
-            (void)snprintf(status, status_size, "STALEMATE -- the stargate locks into symmetry.");
+            (void)snprintf(status, status_size, "STALEMATE -- no legal moves.");
         }
     } else if (king_in_check(state, state->white_to_move)) {
         (void)snprintf(status, status_size, "%s is in CHECK.", state->white_to_move ? "White" : "Black");
@@ -904,9 +1048,10 @@ int main(void) {
     GameState state;
     GameMode mode;
     Difficulty difficulty = DIFF_EASY;
-    char input[INPUT_SIZE];
     char status[128];
-    char last_move[32] = "";
+    Move last_move = { -1, -1, -1, -1, 0, 0, 0, -1, -1 };
+    int cursor_row = 6;
+    int cursor_col = 4;
 
     srand((unsigned int)time(NULL));
     mode = choose_mode();
@@ -914,67 +1059,62 @@ int main(void) {
         difficulty = choose_difficulty();
     }
     init_game(&state);
-    (void)snprintf(status, sizeof(status), "Welcome to the board beyond the terminal veil.");
+    enable_raw_mode();
 
     for (;;) {
-        MoveList legal;
-        int computer_turn = mode == MODE_PVC && !state.white_to_move;
+        int computer_turn;
 
         status_after_move(&state, status, sizeof(status));
-        render_board(&state, status, mode, difficulty, last_move);
+        computer_turn = mode == MODE_PVC && !state.white_to_move;
         if (game_over(&state)) {
-            printf("Game over. Type restart for another portal, or q to quit: ");
+            int key;
+            render_board(&state, status, mode, difficulty, last_move, cursor_row, cursor_col,
+                         -1, -1, 0);
+            printf("Game over. Press r to restart or q to quit.\n");
             fflush(stdout);
-            if (!read_line(input, sizeof(input)) || input[0] == 'q' || input[0] == 'Q') {
+            key = read_key();
+            if (key == KEY_RESTART) {
+                init_game(&state);
+                last_move = (Move){ -1, -1, -1, -1, 0, 0, 0, -1, -1 };
+                cursor_row = 6;
+                cursor_col = 4;
+                continue;
+            }
+            if (key == KEY_QUIT) {
                 break;
             }
-            if (strcmp(input, "restart") == 0 || strcmp(input, "r") == 0) {
-                init_game(&state);
-                last_move[0] = '\0';
-            }
             continue;
         }
 
-        generate_legal_moves(&state, &legal);
         if (computer_turn) {
-            Move ai_move = choose_ai_move(&state, difficulty);
-            move_to_text(ai_move, last_move, sizeof(last_move));
+            Move ai_move;
+            (void)snprintf(status, sizeof(status), "Computer is thinking...");
+            render_board(&state, status, mode, difficulty, last_move, cursor_row, cursor_col,
+                         -1, -1, 0);
+            ai_move = choose_ai_move(&state, difficulty);
+            last_move = ai_move;
             make_move(&state, ai_move);
+            cursor_row = ai_move.to_row;
+            cursor_col = ai_move.to_col;
             continue;
         }
 
-        printf("%s to move > ", state.white_to_move ? "White" : "Black");
-        fflush(stdout);
-        if (!read_line(input, sizeof(input))) {
-            break;
-        }
-        if (strcmp(input, "q") == 0 || strcmp(input, "quit") == 0) {
-            break;
-        }
-        if (strcmp(input, "help") == 0 || strcmp(input, "?") == 0) {
-            print_help();
-            continue;
-        }
-        if (strcmp(input, "restart") == 0 || strcmp(input, "r") == 0) {
-            init_game(&state);
-            last_move[0] = '\0';
-            continue;
-        }
         {
-            Move chosen;
-            if (parse_move_input(input, &legal, &chosen)) {
-                move_to_text(chosen, last_move, sizeof(last_move));
-                make_move(&state, chosen);
-            } else {
-                (void)snprintf(status, sizeof(status), "Illegal glyph path: '%s'. Try help or e2e4.", input);
-                render_board(&state, status, mode, difficulty, last_move);
-                printf("Press Enter to continue.");
-                (void)getchar();
+            int result = human_turn(&state, mode, difficulty, &cursor_row, &cursor_col, &last_move);
+            if (result == 0) {
+                break;
+            }
+            if (result == 2) {
+                init_game(&state);
+                last_move = (Move){ -1, -1, -1, -1, 0, 0, 0, -1, -1 };
+                cursor_row = 6;
+                cursor_col = 4;
             }
         }
     }
 
+    disable_raw_mode();
     clear_screen();
-    printf("The stargate folds. Thanks for playing BUDOSTACK Chess.\n");
+    printf("Thanks for playing BUDOSTACK Chess.\n");
     return EXIT_SUCCESS;
 }

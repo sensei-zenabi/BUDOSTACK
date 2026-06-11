@@ -1518,13 +1518,13 @@ int main(int argc, char *argv[]) {
         /* Do not print startup messages and skip login() */
     }
 
-    printf("\nSYSTEM READY!");
+    printf("\nGET STARTED:");
     printf("\n");
-    printf("\n QUICK HELP:");
-    printf("\n");
-    printf("\n Switch TABs: ALT + [1-5]");
-    printf("\n Type 'help' for command list.");
-    printf("\n Type 'exit' to quit.\n\n");
+    printf("\n 1) Switch TABs: ALT + [1-5]\n");
+    printf("\n 2) Type 'list' to see files.\n");
+    printf("\n 3) Run a TASK: 'runtask <file>.task'.\n");
+    printf("\n 4) Type 'help' to learn more!\n");
+    printf("\n 5) Type 'exit' to quit.\n\n");
     printf("\n");
 
     /* Execute auto_command if set */

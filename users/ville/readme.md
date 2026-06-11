@@ -12,7 +12,7 @@ became a quarterly business process.
 
 ### CAPABILITIES: ###
 
-### A Complete Retro-Inspired Computing Environment ###
+A Complete Retro-Inspired Computing Environment
 
 - Authentic terminal emulator with immersive CRT visual simulation.
 - Multi-session workspace supporting up to five independent terminal tabs.

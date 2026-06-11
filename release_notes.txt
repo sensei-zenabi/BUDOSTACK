@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.91
-  Release commit number:   1603
-  Baseline release:        v0.9.90
+  Release tag:             v0.9.92
+  Release commit number:   1615
+  Baseline release:        v0.9.91
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -318,180 +318,105 @@
 
 ================================= CHANGE LOG ================================
 
-commit 806812f29aae15a7304b5b83b94c27553df90e00
+commit 52b9292e4d930d1f64d8b03ccb4d14085b5d3fac
 Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 23:20:22 2026 +0300
+Date:   Thu Jun 11 23:14:55 2026 +0300
 
-    add
+    quite nice default user space
 
+main.c
+users/default/help.task
+
+commit 1557f1b126dec1b47b4c945a487cbcdf865166f9
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu Jun 11 23:09:05 2026 +0300
+
+    created help for default user
+
+users/default/documents/help.task
+users/default/help.task
+
+commit 500a1341e8a4b67aae1d76e851cfdc05a57adcb3
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu Jun 11 22:56:08 2026 +0300
+
+    working towards user environment
+
+users/default/documents/help.task
+users/default/documents/presentation.sld
+users/default/games/chess.task
+users/default/games/cube.task
+users/default/games/invaders.task
+users/default/games/rocket.task
+users/default/games/snake.task
+users/default/games/tictactoe.task
+
+commit 48abfaa13ae51712e59b7b1f9d5401203c9a4db0
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu Jun 11 22:36:48 2026 +0300
+
+    book example
+
+users/default/documents/article.bk
+
+commit 73d9475556e6326ba7d8f4316e0db92fc388b2e2
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu Jun 11 22:15:15 2026 +0300
+
+    made the intro menu leaner
+
+tasks/autoexec.task
+
+commit d04f775a9472a34bd336366e7b02cb8ccba313d9
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu Jun 11 21:57:45 2026 +0300
+
+    reworked get started
+
+main.c
+
+commit 6364c0a0ff91775d1591ebca12abc7d44f7cd99f
+Merge: 36373f8 a03b1ba
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu Jun 11 21:55:47 2026 +0300
+
+    Merge branch 'main' of https://github.com/sensei-zenabi/BUDOSTACK
+
+commit 36373f8ccc415641eb934ef345c95dd538128539
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Thu Jun 11 21:54:11 2026 +0300
+
+    working towards final product...
+
+main.c
+users/default/documents/findebt.csv
+users/default/documents/findebt.tbl
+users/default/documents/findebt.txt
+users/default/documents/map.bmp
+users/default/documents/map.dng
+users/default/documents/mymath.m
 users/default/tasks.task
 
-commit fa29beff42190845760b2d0ade5a711ad45f2f08
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 23:14:36 2026 +0300
-
-    new task shortcuts
-
-users/default/chess.task
-users/default/cube.task
-users/default/invaders.task
-users/default/rocket.task
-users/default/snake.task
-users/default/tictactoe.task
-
-commit a59224393a3d245877b24a514839853e39ca6766
+commit a03b1baaf1795a111d163d139701f27ccebd002c
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 23:07:27 2026 +0300
+Date:   Thu Jun 11 08:18:22 2026 +0300
 
-    Add SYS shell passthrough to runtask
+    Update readme.md
 
-apps/runtask.c
+users/ville/readme.md
 
-commit afbb2b8c5361931d9280a7db36934bc602d00e72
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:56:20 2026 +0300
-
-    reworked default user dir
-
-users/default/examples/findebt.csv
-users/default/examples/findebt.tbl
-users/default/examples/findebt.txt
-users/default/examples/map.bmp
-users/default/examples/map.dng
-users/default/examples/mymath.m
-
-commit ce4a9959d7b5c962f1e9bd81f3aa97bef574bd89
+commit 7d6bc2c9dbe5a19815a5340b2da1cb5d5d304aea
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:50:37 2026 +0300
+Date:   Thu Jun 11 08:18:09 2026 +0300
 
-    Add configurable startup directory
+    Update readme.md
 
-config.ini
-main.c
+users/ville/readme.md
 
-commit aee8e0eac8a2617cc0f1d6b35dbb5a0a982ae668
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:42:54 2026 +0300
-
-    Changed default RES back to LOW
-
-config.ini
-
-commit e587248d7e791c55a88319f8097b2289e19ea473
-Merge: a99c78d f506bee
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:41:20 2026 +0300
-
-    Merge branch 'codex/update-command-line-path-truncation-to-30%'
-
-commit f506bee8dfef47f51df62bbbc04c3413894d3bfa
+commit dd9a1bbfb17c9ddb9e250b51786fb0561caa194b
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:38:05 2026 +0300
+Date:   Thu Jun 11 08:17:52 2026 +0300
 
-    Limit prompt path to 30 percent of terminal width
+    Update readme.md
 
-main.c
-
-commit a99c78d5c56effeb564e595d90171c461407de8c
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:37:23 2026 +0300
-
-    added chess
-
-documents/help.txt
-
-commit a313e5fd00af2990fbbbd601b81ae3d6d9286b59
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:35:12 2026 +0300
-
-    Center chess UI for low resolution
-
-games/chess.c
-
-commit 5a4174e3ac8d7d9898a5043c846e17da001ce195
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:28:37 2026 +0300
-
-    Simplify chess board UI
-
-games/chess.c
-
-commit 17ba1d53c2e8a047636c765cb978b31583dd0827
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:22:05 2026 +0300
-
-    Rework chess with cursor controls
-
-games/chess.c
-
-commit 10193de90298b665d32614f388f0a2ac4087bf0a
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 22:10:17 2026 +0300
-
-    Implement terminal chess game
-
-games/chess.c
-
-commit b060139895c9c646dce6572952d17b69492ba832
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 21:49:41 2026 +0300
-
-    now the format should be correct
-
-tasks/readme.md
-
-commit 463113ab265b54048e753a035175cf89d467fae0
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 21:47:49 2026 +0300
-
-    fixed format
-
-tasks/readme.md
-
-commit f72fe8dd63c25d8be869f18c9b3e5d648da2c258
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 21:40:53 2026 +0300
-
-    Find nested tasks by bare filename
-
-apps/runtask.c
-documents/help.txt
-release_notes.txt
-tasks/readme.md
-
-commit 3a84cc5046d5145641c5a3837e9aa486a3f1198a
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 10 21:33:09 2026 +0300
-
-    Support task examples in nested folders
-
-apps/runtask.c
-apps/terminal.c
-documents/help.txt
-release_notes.txt
-tasks/autoexec.task
-tasks/examples/assets/char_1_1.png
-tasks/examples/assets/char_1_2.png
-tasks/examples/assets/cloud.png
-tasks/examples/assets/cursor.png
-tasks/examples/assets/login_logo.png
-tasks/examples/assets/readme.md
-tasks/examples/assets/tile001.png
-tasks/examples/assets/tile002.png
-tasks/examples/assets/tile003.png
-tasks/examples/assets/tile004.png
-tasks/examples/assets/tile005.png
-tasks/examples/audiodemo.task
-tasks/examples/codedemo.task
-tasks/examples/colors.task
-tasks/examples/csvdemo.task
-tasks/examples/graphics.task
-tasks/examples/keyboard.task
-tasks/examples/mouse.task
-tasks/examples/release.task
-tasks/examples/screen.task
-tasks/examples/sprites.task
-tasks/examples/termgraphics.task
-tasks/examples/utilities.task
-tasks/examples/waves.task
-tasks/readme.md
+users/ville/readme.md

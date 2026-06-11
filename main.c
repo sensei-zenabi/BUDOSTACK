@@ -1522,7 +1522,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("\n 1) Switch TABs: ALT + [1-5]\n");
     printf("\n 2) Type 'list' to see files.\n");
-    printf("\n 3) Run a TASK: 'runtask <file>.task'.\n");
+    printf("\n 3) Run a TASK: 'runtask tasks.task'.\n");
     printf("\n 4) Type 'help' to learn more!\n");
     printf("\n 5) Type 'exit' to quit.\n\n");
     printf("\n");

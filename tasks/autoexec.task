@@ -59,7 +59,7 @@ SET $SHADER_QUALITY = "MEDIUM"
 
 SET $SELECTION = "n"
 RUN cls
-PRINT "Skip Launcher? [y/n]: "
+PRINT "Skip Intro? [y/n]: "
 INPUT $SELECTION
 
 IF ($SELECTION == "y"):
@@ -139,10 +139,10 @@ END
 # VARIABLES
 
 SET $MENU = "USER LOGIN"
-SET $MENU_X = 34
+SET $MENU_X = 32
 SET $EVENT = 0
 SET $CURSOR_X = $MENU_X-2
-SET $CURSOR_Y = 19
+SET $CURSOR_Y = 21
 
 
 # FUNCTIONS
@@ -150,7 +150,7 @@ SET $CURSOR_Y = 19
 FUNCTION DRAW_FRAME():
   RUN _CLEAR
   RUN _RECT -x 1 -y 1 -width 79 -height 45 -fill off
-  RUN _TEXT -x 27 -y 3 -text "====== BUDOSTACK TASK OS ====="
+  RUN _TEXT -x 25 -y 3 -text "====== WELCOME TO BUDOSTACK ====="
   RUN _TEXT -x 56 -y 44 -text " Ville Suoranta @ 2026 " -color 1
   RUN _TEXT -x 33 -y 42 -text "<ENTER> to SELECT"
 END
@@ -174,32 +174,29 @@ EVAL DRAW_FRAME()
 IF ($MENU == "USER LOGIN"):
 
   # Work in progress
-  $MENU = "MAIN MENU"
+  $MENU = "QUICK START"
 
 END
 
 
 # MAIN MENU
 
-IF ($MENU == "MAIN MENU"):
+IF ($MENU == "QUICK START"):
 
   # Limit cursor movement upon returning
 
-  IF ($CURSOR_Y > 25):
-    $CURSOR_Y = 25
+  IF ($CURSOR_Y > 23):
+    $CURSOR_Y = 23
   END
 
 
   # Draw
 
-  RUN _TEXT -x $MENU_X -y 15 -text "-- MAIN MENU --             "
-  RUN _TEXT -x $MENU_X -y 17 -text "./APPS (to-be-done)         "
-  RUN _TEXT -x $MENU_X -y 19 -text "./GAMES                     "
-  RUN _TEXT -x $MENU_X -y 21 -text "Configuration               "
-  RUN _TEXT -x $MENU_X -y 23 -text "Help                        "
-  RUN _TEXT -x $MENU_X -y 25 -text "Command Line                "
+  RUN _TEXT -x $MENU_X -y 17 -text "-- QUICK START --             "
+  RUN _TEXT -x $MENU_X+2 -y 21 -text "Configuration               "
+  RUN _TEXT -x $MENU_X+2 -y 23 -text "Command Line                "
 
-  EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
+  EVAL DRAW_CURSOR($CURSOR_X+2, $CURSOR_Y)
 
 
   # Process Input
@@ -224,117 +221,27 @@ IF ($MENU == "MAIN MENU"):
 
   # Limit Cursor Movement
 
-  IF ($CURSOR_Y < 17):
-    $CURSOR_Y = 17
+  IF ($CURSOR_Y < 21):
+    $CURSOR_Y = 21
   END
-  IF ($CURSOR_Y > 25):
-    $CURSOR_Y = 25
+  
+  IF ($CURSOR_Y > 23):
+    $CURSOR_Y = 23
   END
 
 
   # Act on ENTER press
 
   IF ($EVENT == 3):
-    # Enter Key
-
-    IF ($CURSOR_Y == 19):
-      # Games Menu
-      $MENU = "GAMES"
-    END
+  
     IF ($CURSOR_Y == 21):
       # Configuration Menu
       $MENU = "CONFIGURATION"
     END
+    
     IF ($CURSOR_Y == 23):
-      # Help
-      RUN ./apps/edit ../documents/help.txt
-    END
-    IF ($CURSOR_Y == 25):
       # Command line
       GOTO EXIT
-    END
-
-  END
-
-END
-
-
-# GAMES MENU
-
-IF ($MENU == "GAMES"):
-
-  # Draw GAMES menu
-
-  RUN _TEXT -x $MENU_X -y 15 -text "-- GAMES --                 "
-  RUN _TEXT -x $MENU_X -y 17 -text "./BUDO/example              "
-  RUN _TEXT -x $MENU_X -y 19 -text "./BUDO/rocket               "
-  RUN _TEXT -x $MENU_X -y 21 -text "./GAMES/invaders            "
-  RUN _TEXT -x $MENU_X -y 23 -text "./GAMES/snake               "
-  RUN _TEXT -x $MENU_X -y 25 -text "./GAMES/tictactoe           "
-  RUN _TEXT -x $MENU_X -y 27 -text "./TASKS/examples/sprites.task"
-  RUN _TEXT -x $MENU_X -y 29 -text "<-- MAIN MENU               "
-
-  EVAL DRAW_CURSOR($CURSOR_X, $CURSOR_Y)
-
-  # Process Input
-
-  RUN _KEYS TO $EVENT
-
-  IF ($EVENT == 2):
-    # Up Arrow
-    $CURSOR_Y = $CURSOR_Y - 2
-  END
-
-  IF ($EVENT == -2):
-    # Down Arrow
-    $CURSOR_Y = $CURSOR_Y + 2
-  END
-
-  IF ($EVENT == 10):
-    # ESC Key
-    GOTO EXIT
-  END
-
-
-  # Limit Cursor Movement
-
-  IF ($CURSOR_Y < 17):
-    $CURSOR_Y = 17
-  END
-  IF ($CURSOR_Y > 29):
-    $CURSOR_Y = 29
-  END
-
-
-  # Act on ENTER press
-
-  IF ($EVENT == 3):
-    # Enter Key
-
-    IF ($CURSOR_Y == 17):
-      RUN ./budo/example
-    END
-    IF ($CURSOR_Y == 19):
-      RUN ./budo/rocket
-    END
-    IF ($CURSOR_Y == 21):
-      RUN _CLEAR
-      RUN ./games/invaders
-    END
-    IF ($CURSOR_Y == 23):
-      RUN _CLEAR
-      RUN ./games/snake
-    END
-    IF ($CURSOR_Y == 25):
-      RUN _CLEAR
-      RUN ./games/tictactoe
-    END
-    IF ($CURSOR_Y == 27):
-      RUN _CLEAR
-      RUN runtask examples/sprites.task
-    END
-    IF ($CURSOR_Y == 29):
-      $MENU = "MAIN MENU"
     END
 
   END
@@ -524,7 +431,7 @@ IF ($MENU == "CONFIGURATION"):
       END
     END
     IF ($CURSOR_Y == 33):
-      $MENU = "MAIN MENU"
+      $MENU = "QUICK START"
     END
 
   END
@@ -562,5 +469,4 @@ RUN _TERM_SHADER $SHADER
 RUN _TERM_CURSOR_BLINK enable
 
 PRINT "\n"
-
 

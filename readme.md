@@ -27,6 +27,9 @@ Screenshots from BUDOSTACK built-in retro terminal emulator (apps/terminal).
 3. Run `./start.sh`.
 4. Then type `help`.
 
+This is all you need to install and run BUDOSTACK in your linux PC.
+
+## Details
 ### Build targets
 * `make all` auto-detects the environment. In Termux it builds the Termux profile; otherwise it builds the Debian profile.
 * `make debian` builds BUDOSTACK for Debian/Ubuntu and includes `apps/terminal` when SDL2 and OpenGL development files are available.

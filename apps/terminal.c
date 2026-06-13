@@ -299,6 +299,7 @@ static struct psf_font terminal_font = {0};
 #define TERMINAL_KEYBOARD_SOUND_DEFAULT_VOLUME 0.50f
 #define TERMINAL_BACKGROUND_SOUND_PATH "./sounds/environment/524598__matislav__fridge-buzz-loop.wav"
 #define TERMINAL_BACKGROUND_SOUND_DEFAULT_VOLUME 0.25f
+#define TERMINAL_BACKGROUND_SOUND_CROSSFADE_MS 10u
 #define TERMINAL_KEYBOARD_SOUND_VOLUME_VARIATION_PERCENT 25
 
 struct terminal_sound_channel {
@@ -308,6 +309,7 @@ struct terminal_sound_channel {
     int active;
     int owns_samples;
     int loop;
+    size_t loop_crossfade_frames;
     float volume;
 };
 
@@ -340,7 +342,7 @@ static void terminal_shutdown_audio(void);
 static int terminal_audio_convert(const SDL_AudioSpec *source_spec, const void *data, size_t length, float **out_samples, size_t *out_frames);
 static int terminal_audio_load_file(const char *path, float **out_samples, size_t *out_frames);
 static int terminal_sound_play(int channel_index, const char *path, float volume);
-static int terminal_sound_play_samples(int channel_index, float *samples, size_t frames, int owns_samples, int loop, float volume);
+static int terminal_sound_play_samples(int channel_index, float *samples, size_t frames, int owns_samples, int loop, size_t loop_crossfade_frames, float volume);
 static void terminal_sound_stop(int channel_index);
 static void terminal_keyboard_sound_library_free(void);
 static void terminal_background_sound_free(void);
@@ -348,6 +350,7 @@ static int terminal_background_sound_load(const char *path);
 static void terminal_background_sound_set_enabled(int enabled);
 static void terminal_background_sound_set_volume(float volume);
 static void terminal_background_sound_restart_if_enabled(void);
+static size_t terminal_background_sound_crossfade_frames(void);
 static int terminal_keyboard_sound_file_is_usable(const char *path);
 static int terminal_keyboard_sound_library_load(const char *directory_path);
 static void terminal_keyboard_sound_set_enabled(int enabled);
@@ -503,6 +506,7 @@ static void terminal_audio_channel_clear(struct terminal_sound_channel *channel)
     channel->active = 0;
     channel->owns_samples = 0;
     channel->loop = 0;
+    channel->loop_crossfade_frames = 0u;
     channel->volume = 1.0f;
 }
 
@@ -548,7 +552,11 @@ static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int l
         }
         if (available_frames == 0u) {
             if (channel->loop) {
-                channel->position = 0u;
+                if (channel->loop_crossfade_frames > 0u && channel->loop_crossfade_frames < channel->frame_count) {
+                    channel->position = channel->loop_crossfade_frames;
+                } else {
+                    channel->position = 0u;
+                }
             } else {
                 terminal_audio_channel_clear(channel);
                 continue;
@@ -565,11 +573,28 @@ static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int l
 
             for (size_t frame_index = 0u; frame_index < mix_frames; frame_index++) {
                 size_t output_offset = (mixed_frames + frame_index) * (size_t)channel_count;
-                size_t input_offset = (channel->position + frame_index) * (size_t)channel_count;
+                size_t source_frame = channel->position + frame_index;
+                size_t input_offset = source_frame * (size_t)channel_count;
+                int crossfade = channel->loop &&
+                                channel->loop_crossfade_frames > 0u &&
+                                channel->loop_crossfade_frames < channel->frame_count &&
+                                source_frame >= channel->frame_count - channel->loop_crossfade_frames;
+                size_t crossfade_frame = 0u;
+                float crossfade_weight = 0.0f;
+                if (crossfade) {
+                    crossfade_frame = source_frame - (channel->frame_count - channel->loop_crossfade_frames);
+                    crossfade_weight = (float)(crossfade_frame + 1u) / (float)(channel->loop_crossfade_frames + 1u);
+                }
                 for (int sample_channel = 0; sample_channel < channel_count; sample_channel++) {
                     size_t sample_index = output_offset + (size_t)sample_channel;
                     size_t input_index = input_offset + (size_t)sample_channel;
-                    output[sample_index] += channel->samples[input_index] * channel->volume;
+                    float sample = channel->samples[input_index];
+                    if (crossfade) {
+                        size_t head_index = (crossfade_frame * (size_t)channel_count) + (size_t)sample_channel;
+                        float head_sample = channel->samples[head_index];
+                        sample = sample * (1.0f - crossfade_weight) + head_sample * crossfade_weight;
+                    }
+                    output[sample_index] += sample * channel->volume;
                 }
             }
 
@@ -577,7 +602,11 @@ static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int l
             channel->position += mix_frames;
             if (channel->position >= channel->frame_count) {
                 if (channel->loop) {
-                    channel->position = 0u;
+                    if (channel->loop_crossfade_frames > 0u && channel->loop_crossfade_frames < channel->frame_count) {
+                        channel->position = channel->loop_crossfade_frames;
+                    } else {
+                        channel->position = 0u;
+                    }
                 } else {
                     terminal_audio_channel_clear(channel);
                 }
@@ -969,7 +998,7 @@ static int terminal_sound_play(int channel_index, const char *path, float volume
         return -1;
     }
 
-    if (terminal_sound_play_samples(channel_index, samples, frames, 1, 0, volume) != 0) {
+    if (terminal_sound_play_samples(channel_index, samples, frames, 1, 0, 0u, volume) != 0) {
         free(samples);
         return -1;
     }
@@ -977,7 +1006,7 @@ static int terminal_sound_play(int channel_index, const char *path, float volume
     return 0;
 }
 
-static int terminal_sound_play_samples(int channel_index, float *samples, size_t frames, int owns_samples, int loop, float volume) {
+static int terminal_sound_play_samples(int channel_index, float *samples, size_t frames, int owns_samples, int loop, size_t loop_crossfade_frames, float volume) {
     if (channel_index < 0 || channel_index >= (int)TERMINAL_AUDIO_CHANNEL_COUNT) {
         fprintf(stderr, "terminal: Sound channel %d out of range.\n", channel_index + 1);
         return -1;
@@ -1004,6 +1033,10 @@ static int terminal_sound_play_samples(int channel_index, float *samples, size_t
     channel->active = 1;
     channel->owns_samples = owns_samples ? 1 : 0;
     channel->loop = loop ? 1 : 0;
+    if (!channel->loop || loop_crossfade_frames >= frames) {
+        loop_crossfade_frames = 0u;
+    }
+    channel->loop_crossfade_frames = loop_crossfade_frames;
     if (volume < 0.0f) {
         volume = 0.0f;
     } else if (volume > 1.0f) {
@@ -1130,10 +1163,27 @@ static void terminal_background_sound_restart_if_enabled(void) {
                                     terminal_background_sound_frame_count,
                                     0,
                                     1,
+                                    terminal_background_sound_crossfade_frames(),
                                     terminal_background_sound_volume) != 0) {
         fprintf(stderr, "terminal: Failed to play background sound.\n");
         terminal_background_sound_enabled = 0;
     }
+}
+
+static size_t terminal_background_sound_crossfade_frames(void) {
+    if (terminal_audio_spec.freq <= 0) {
+        return 0u;
+    }
+
+    size_t crossfade_frames = ((size_t)terminal_audio_spec.freq * (size_t)TERMINAL_BACKGROUND_SOUND_CROSSFADE_MS) / 1000u;
+    if (crossfade_frames == 0u) {
+        crossfade_frames = 1u;
+    }
+    if (terminal_background_sound_frame_count > 0u && crossfade_frames > terminal_background_sound_frame_count / 4u) {
+        crossfade_frames = terminal_background_sound_frame_count / 4u;
+    }
+
+    return crossfade_frames;
 }
 
 static void terminal_background_sound_set_enabled(int enabled) {
@@ -1207,7 +1257,7 @@ static void terminal_play_keyboard_sound(int is_enter_key) {
     int channel_index = TERMINAL_KEYBOARD_SOUND_FIRST_CHANNEL + (int)terminal_keyboard_sound_next_channel;
     terminal_keyboard_sound_next_channel = (terminal_keyboard_sound_next_channel + 1u) % TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT;
 
-    if (terminal_sound_play_samples(channel_index, samples, frames, 0, 0, terminal_keyboard_sound_random_volume()) != 0) {
+    if (terminal_sound_play_samples(channel_index, samples, frames, 0, 0, 0u, terminal_keyboard_sound_random_volume()) != 0) {
         fprintf(stderr, "terminal: Failed to play keyboard sound '%s'.\n", sound_path);
     }
 }

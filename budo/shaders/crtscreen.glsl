@@ -262,8 +262,8 @@ vec3 apply_phosphor_decay(vec2 uv, vec3 current_color)
     float decay = exp(-frame_ms / decay_ms);
     float start_luma = min(prev_luma, threshold);
     float decayed_luma = start_luma * decay;
-    float scale = decayed_luma / max(prev_luma, 0.0001);
-    vec3 decayed_color = prev_color * scale;
+    float decay_scale = decayed_luma / max(prev_luma, 0.0001);
+    vec3 decayed_color = prev_color * decay_scale;
 
     return max(current_color, decayed_color);
 }

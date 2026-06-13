@@ -67,12 +67,12 @@ SET $SHADER_QUALITY = "MEDIUM"
 #-------------------------------------------------------------------------
 # SKIP LAUNCHER
 
-SET $SELECTION = "n"
+SET $SELECTION = "y"
 RUN cls
-PRINT "Skip Intro? [y/n]: "
+PRINT "DIRECT LAUNCH? [y/n]: "
 INPUT $SELECTION
 
-IF ($SELECTION == "y"):
+IF ($SELECTION != "n"):
   GOTO EXIT
 END
 
@@ -122,8 +122,7 @@ IF ($TERM_ACTIVE == "1"):
   RUN _TERM_RENDER -layer 15
   RUN _TERM_SOUND_PLAY 1 ../sounds/static_orchard.mp3 90
   RUN _WAIT 8300
-  RUN _TEXT -x 4 -y 42 -text "Created by: Ville Suoranta" -color 1
-  RUN _TEXT -x 4 -y 43 -text "email: ville.m.suoranta(at)gmail.com"
+  RUN _TEXT -x 28 -y 40 -text "- BUDOSTACK CORPORATION -" -color 1 
   RUN _WAIT 4700
   RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360 -layer 15
   RUN _TERM_RENDER -layer 15
@@ -160,7 +159,7 @@ SET $CURSOR_Y = 21
 FUNCTION DRAW_FRAME():
   RUN _CLEAR
   RUN _RECT -x 1 -y 1 -width 79 -height 45 -fill off
-  RUN _TEXT -x 25 -y 3 -text "====== WELCOME TO BUDOSTACK ====="
+  RUN _TEXT -x 23 -y 3 -text "====== BUDOSTACK CORPORATION ====="
   RUN _TEXT -x 56 -y 44 -text " Ville Suoranta @ 2026 " -color 1
   RUN _TEXT -x 33 -y 42 -text "<ENTER> to SELECT"
 END
@@ -202,9 +201,9 @@ IF ($MENU == "QUICK START"):
 
   # Draw
 
-  RUN _TEXT -x $MENU_X -y 17 -text "-- QUICK START --             "
-  RUN _TEXT -x $MENU_X+2 -y 21 -text "Configuration               "
-  RUN _TEXT -x $MENU_X+2 -y 23 -text "Command Line                "
+  RUN _TEXT -x $MENU_X-6 -y 17 -text "-- SELECT PRIME DIRECTIVE --             "
+  RUN _TEXT -x $MENU_X+2 -y 21 -text "SYSTEM CONFIG      "
+  RUN _TEXT -x $MENU_X+2 -y 23 -text "TERMINAL           "
 
   EVAL DRAW_CURSOR($CURSOR_X+2, $CURSOR_Y)
 

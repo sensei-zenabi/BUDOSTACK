@@ -430,7 +430,7 @@ static void print_table_header(void) {
     printf(
         "%-*s %-11s %s %-3s %s\n",
         NAME_DISPLAY_WIDTH,
-        "RECORD",
+        "RECORD ID",
         "CLEARANCE",
         centered_size,
         "GIT",

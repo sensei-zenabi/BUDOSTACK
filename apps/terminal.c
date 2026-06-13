@@ -290,10 +290,12 @@ static struct psf_font terminal_font = {0};
 #if BUDOSTACK_HAVE_SDL2
 #define TERMINAL_SOUND_CHANNEL_COUNT 32
 #define TERMINAL_KEYBOARD_SOUND_DIR "./sounds/key_presses"
+#define TERMINAL_KEYBOARD_KEY_SOUND_PATH TERMINAL_KEYBOARD_SOUND_DIR "/key_press_sound.wav"
+#define TERMINAL_KEYBOARD_ENTER_SOUND_PATH TERMINAL_KEYBOARD_SOUND_DIR "/enter_press_sound.wav"
 #define TERMINAL_KEYBOARD_SOUND_FIRST_CHANNEL TERMINAL_SOUND_CHANNEL_COUNT
 #define TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT 4
 #define TERMINAL_AUDIO_CHANNEL_COUNT (TERMINAL_SOUND_CHANNEL_COUNT + TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT)
-#define TERMINAL_KEYBOARD_SOUND_BASE_VOLUME 0.35f
+#define TERMINAL_KEYBOARD_SOUND_DEFAULT_VOLUME 0.50f
 #define TERMINAL_KEYBOARD_SOUND_VOLUME_VARIATION_PERCENT 25
 
 struct terminal_sound_channel {
@@ -310,15 +312,15 @@ static SDL_mutex *terminal_audio_mutex = NULL;
 static struct terminal_sound_channel terminal_sound_channels[TERMINAL_AUDIO_CHANNEL_COUNT];
 
 struct terminal_keyboard_sound_library {
-    char **paths;
-    size_t count;
-    size_t capacity;
+    char *key_press_path;
+    char *enter_press_path;
 };
 
 static struct terminal_keyboard_sound_library terminal_keyboard_sound_library = {0};
 static int terminal_keyboard_sound_enabled = 0;
 static int terminal_keyboard_sound_seeded = 0;
 static size_t terminal_keyboard_sound_next_channel = 0u;
+static float terminal_keyboard_sound_volume = TERMINAL_KEYBOARD_SOUND_DEFAULT_VOLUME;
 
 static void SDLCALL terminal_audio_callback(void *userdata, Uint8 *stream, int len);
 static void terminal_audio_channel_clear(struct terminal_sound_channel *channel);
@@ -329,12 +331,12 @@ static int terminal_audio_load_file(const char *path, float **out_samples, size_
 static int terminal_sound_play(int channel_index, const char *path, float volume);
 static void terminal_sound_stop(int channel_index);
 static void terminal_keyboard_sound_library_free(void);
-static int terminal_keyboard_sound_path_has_wav_extension(const char *path);
-static int terminal_keyboard_sound_library_add(const char *path);
+static int terminal_keyboard_sound_file_is_usable(const char *path);
 static int terminal_keyboard_sound_library_load(const char *directory_path);
 static void terminal_keyboard_sound_set_enabled(int enabled);
+static void terminal_keyboard_sound_set_volume(float volume);
 static float terminal_keyboard_sound_random_volume(void);
-static void terminal_play_keyboard_sound(void);
+static void terminal_play_keyboard_sound(int is_enter_key);
 #endif
 
 struct terminal_buffer;
@@ -976,112 +978,55 @@ static void terminal_sound_stop(int channel_index) {
 }
 
 static void terminal_keyboard_sound_library_free(void) {
-    if (terminal_keyboard_sound_library.paths) {
-        for (size_t i = 0u; i < terminal_keyboard_sound_library.count; i++) {
-            free(terminal_keyboard_sound_library.paths[i]);
-        }
-        free(terminal_keyboard_sound_library.paths);
-    }
-    terminal_keyboard_sound_library.paths = NULL;
-    terminal_keyboard_sound_library.count = 0u;
-    terminal_keyboard_sound_library.capacity = 0u;
+    free(terminal_keyboard_sound_library.key_press_path);
+    free(terminal_keyboard_sound_library.enter_press_path);
+    terminal_keyboard_sound_library.key_press_path = NULL;
+    terminal_keyboard_sound_library.enter_press_path = NULL;
 }
 
-static int terminal_keyboard_sound_path_has_wav_extension(const char *path) {
-    if (!path) {
-        return 0;
-    }
-    const char *extension = strrchr(path, '.');
-    if (!extension) {
-        return 0;
-    }
-    if (strcasecmp(extension, ".wav") == 0) {
-        return 1;
-    }
-    return 0;
-}
-
-static int terminal_keyboard_sound_library_add(const char *path) {
+static int terminal_keyboard_sound_file_is_usable(const char *path) {
     if (!path || path[0] == '\0') {
-        return -1;
+        return 0;
     }
 
-    if (terminal_keyboard_sound_library.count == terminal_keyboard_sound_library.capacity) {
-        size_t next_capacity = terminal_keyboard_sound_library.capacity == 0u ? 8u : terminal_keyboard_sound_library.capacity * 2u;
-        if (next_capacity < terminal_keyboard_sound_library.capacity) {
-            fprintf(stderr, "terminal: Keyboard sound capacity overflow.\n");
-            return -1;
-        }
-        char **next_paths = realloc(terminal_keyboard_sound_library.paths, next_capacity * sizeof(*next_paths));
-        if (!next_paths) {
-            perror("terminal: realloc keyboard sound paths");
-            return -1;
-        }
-        terminal_keyboard_sound_library.paths = next_paths;
-        terminal_keyboard_sound_library.capacity = next_capacity;
+    struct stat path_stat;
+    if (stat(path, &path_stat) != 0) {
+        fprintf(stderr, "terminal: Unable to stat keyboard sound '%s': %s\n", path, strerror(errno));
+        return 0;
+    }
+    if (!S_ISREG(path_stat.st_mode)) {
+        fprintf(stderr, "terminal: Keyboard sound '%s' is not a regular file.\n", path);
+        return 0;
     }
 
-    char *copy = strdup(path);
-    if (!copy) {
-        perror("terminal: strdup keyboard sound path");
-        return -1;
-    }
-
-    terminal_keyboard_sound_library.paths[terminal_keyboard_sound_library.count] = copy;
-    terminal_keyboard_sound_library.count++;
-    return 0;
+    return 1;
 }
 
 static int terminal_keyboard_sound_library_load(const char *directory_path) {
-    if (!directory_path || directory_path[0] == '\0') {
-        return -1;
-    }
+    (void)directory_path;
 
     terminal_keyboard_sound_library_free();
 
-    DIR *directory = opendir(directory_path);
-    if (!directory) {
-        fprintf(stderr, "terminal: Unable to open keyboard sound directory '%s': %s\n", directory_path, strerror(errno));
+    if (!terminal_keyboard_sound_file_is_usable(TERMINAL_KEYBOARD_KEY_SOUND_PATH)) {
+        fprintf(stderr, "terminal: Typing key sound missing at '%s'.\n", TERMINAL_KEYBOARD_KEY_SOUND_PATH);
+        return -1;
+    }
+    if (!terminal_keyboard_sound_file_is_usable(TERMINAL_KEYBOARD_ENTER_SOUND_PATH)) {
+        fprintf(stderr, "terminal: Enter key sound missing at '%s'.\n", TERMINAL_KEYBOARD_ENTER_SOUND_PATH);
         return -1;
     }
 
-    struct dirent *entry = NULL;
-    while ((entry = readdir(directory)) != NULL) {
-        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-            continue;
-        }
-        if (!terminal_keyboard_sound_path_has_wav_extension(entry->d_name)) {
-            continue;
-        }
-
-        char full_path[PATH_MAX];
-        int written = snprintf(full_path, sizeof(full_path), "%s/%s", directory_path, entry->d_name);
-        if (written < 0 || (size_t)written >= sizeof(full_path)) {
-            fprintf(stderr, "terminal: Keyboard sound path too long for '%s'.\n", entry->d_name);
-            continue;
-        }
-
-        struct stat path_stat;
-        if (stat(full_path, &path_stat) != 0) {
-            fprintf(stderr, "terminal: Unable to stat keyboard sound '%s': %s\n", full_path, strerror(errno));
-            continue;
-        }
-        if (!S_ISREG(path_stat.st_mode)) {
-            continue;
-        }
-
-        if (terminal_keyboard_sound_library_add(full_path) != 0) {
-            closedir(directory);
-            return -1;
-        }
+    terminal_keyboard_sound_library.key_press_path = strdup(TERMINAL_KEYBOARD_KEY_SOUND_PATH);
+    if (!terminal_keyboard_sound_library.key_press_path) {
+        perror("terminal: strdup typing key sound path");
+        terminal_keyboard_sound_library_free();
+        return -1;
     }
 
-    if (closedir(directory) != 0) {
-        fprintf(stderr, "terminal: Failed to close keyboard sound directory '%s': %s\n", directory_path, strerror(errno));
-    }
-
-    if (terminal_keyboard_sound_library.count == 0u) {
-        fprintf(stderr, "terminal: No .wav keyboard sounds found in '%s'.\n", directory_path);
+    terminal_keyboard_sound_library.enter_press_path = strdup(TERMINAL_KEYBOARD_ENTER_SOUND_PATH);
+    if (!terminal_keyboard_sound_library.enter_press_path) {
+        perror("terminal: strdup enter key sound path");
+        terminal_keyboard_sound_library_free();
         return -1;
     }
 
@@ -1092,11 +1037,21 @@ static void terminal_keyboard_sound_set_enabled(int enabled) {
     terminal_keyboard_sound_enabled = enabled ? 1 : 0;
 }
 
+static void terminal_keyboard_sound_set_volume(float volume) {
+    if (volume < 0.0f) {
+        terminal_keyboard_sound_volume = 0.0f;
+    } else if (volume > 1.0f) {
+        terminal_keyboard_sound_volume = 1.0f;
+    } else {
+        terminal_keyboard_sound_volume = volume;
+    }
+}
+
 static float terminal_keyboard_sound_random_volume(void) {
     int range = TERMINAL_KEYBOARD_SOUND_VOLUME_VARIATION_PERCENT;
     int offset_percent = (rand() % (range * 2 + 1)) - range;
     float multiplier = 1.0f + ((float)offset_percent / 100.0f);
-    float volume = TERMINAL_KEYBOARD_SOUND_BASE_VOLUME * multiplier;
+    float volume = terminal_keyboard_sound_volume * multiplier;
 
     if (volume < 0.0f) {
         volume = 0.0f;
@@ -1107,11 +1062,13 @@ static float terminal_keyboard_sound_random_volume(void) {
     return volume;
 }
 
-static void terminal_play_keyboard_sound(void) {
+static void terminal_play_keyboard_sound(int is_enter_key) {
     if (!terminal_keyboard_sound_enabled) {
         return;
     }
-    if (terminal_keyboard_sound_library.count == 0u) {
+
+    const char *sound_path = is_enter_key ? terminal_keyboard_sound_library.enter_press_path : terminal_keyboard_sound_library.key_press_path;
+    if (!sound_path || sound_path[0] == '\0') {
         return;
     }
     if (!terminal_keyboard_sound_seeded) {
@@ -1119,8 +1076,6 @@ static void terminal_play_keyboard_sound(void) {
         terminal_keyboard_sound_seeded = 1;
     }
 
-    size_t index = (size_t)(rand() % (int)terminal_keyboard_sound_library.count);
-    const char *sound_path = terminal_keyboard_sound_library.paths[index];
     int channel_index = TERMINAL_KEYBOARD_SOUND_FIRST_CHANNEL + (int)terminal_keyboard_sound_next_channel;
     terminal_keyboard_sound_next_channel = (terminal_keyboard_sound_next_channel + 1u) % TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT;
 
@@ -5702,6 +5657,7 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
 #if BUDOSTACK_HAVE_SDL2
             char *sound_action = NULL;
             char *keyboard_sound_action = NULL;
+            int keyboard_volume = -1;
             char *sound_path = NULL;
             int sound_channel = -1;
             float sound_volume = 1.0f;
@@ -5836,6 +5792,13 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         sound_action = value;
                     } else if (strcmp(key, "keyboard_sound") == 0 && value && *value != '\0') {
                         keyboard_sound_action = value;
+                    } else if (strcmp(key, "keyboard_volume") == 0 && value && *value != '\0') {
+                        char *endptr = NULL;
+                        errno = 0;
+                        long parsed = strtol(value, &endptr, 10);
+                        if (errno == 0 && endptr && *endptr == '\0' && parsed >= 0 && parsed <= 100) {
+                            keyboard_volume = (int)parsed;
+                        }
                     } else if (strcmp(key, "channel") == 0 && value && *value != '\0') {
                         char *endptr = NULL;
                         errno = 0;
@@ -6040,6 +6003,10 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 } else {
                     fprintf(stderr, "terminal: keyboard_sound must be enable or disable.\n");
                 }
+            }
+
+            if (keyboard_volume >= 0) {
+                terminal_keyboard_sound_set_volume((float)keyboard_volume / 100.0f);
             }
 #endif
 
@@ -8158,7 +8125,7 @@ int main(int argc, char **argv) {
                 terminal_input_draw_requested = 1;
 #if BUDOSTACK_HAVE_SDL2
                 if (event.key.repeat == 0) {
-                    terminal_play_keyboard_sound();
+                    terminal_play_keyboard_sound(event.key.keysym.sym == SDLK_RETURN || event.key.keysym.sym == SDLK_KP_ENTER);
                 }
 #endif
                 SDL_Keycode sym = event.key.keysym.sym;

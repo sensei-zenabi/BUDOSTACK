@@ -36,6 +36,10 @@
 #pragma parameter SCANLINE_BASE_BRIGHTNESS "Scanline Base Brightness" 1.5 0.0 3.0 0.01
 #pragma parameter bsmooth "Border Smoothness" 100.0 80.0 2000.0 50.0
 #pragma parameter a_corner "Corner Roundness" 0.02 0.0 0.2 0.01
+#pragma parameter smear "Chroma Smear" 0.10 0.0 0.5 0.025
+#pragma parameter phosphor_decay_enable "Phosphor Decay" 1.0 0.0 1.0 1.0
+#pragma parameter phosphor_decay_time_ms "Phosphor Decay Time (ms)" 200.0 1.0 2000.0 1.0
+#pragma parameter phosphor_decay_threshold "Phosphor Decay Threshold (%)" 20.0 0.0 100.0 1.0
 
 // prevent stupid behavior
 #if defined ROTATE_SCANLINES && !defined SCANLINES
@@ -115,6 +119,7 @@ uniform COMPAT_PRECISION vec2 OutputSize;
 uniform COMPAT_PRECISION vec2 TextureSize;
 uniform COMPAT_PRECISION vec2 InputSize;
 uniform sampler2D Texture;
+uniform sampler2D Prev0;
 COMPAT_VARYING vec4 TEX0;
 
 // compatibility #defines
@@ -137,6 +142,10 @@ uniform COMPAT_PRECISION float crt_gamma;
 uniform COMPAT_PRECISION float monitor_gamma;
 uniform COMPAT_PRECISION float bsmooth;
 uniform COMPAT_PRECISION float a_corner;
+uniform COMPAT_PRECISION float smear;
+uniform COMPAT_PRECISION float phosphor_decay_enable;
+uniform COMPAT_PRECISION float phosphor_decay_time_ms;
+uniform COMPAT_PRECISION float phosphor_decay_threshold;
 #else
 #define SCANLINE_BASE_BRIGHTNESS 0.95
 #define SCANLINE_SINE_COMP_A 0.0
@@ -150,7 +159,114 @@ uniform COMPAT_PRECISION float a_corner;
 #define monitor_gamma 2.2
 #define bsmooth 600.0
 #define a_corner 0.03
+#define smear 0.10
+#define phosphor_decay_enable 1.0
+#define phosphor_decay_time_ms 200.0
+#define phosphor_decay_threshold 20.0
 #endif
+
+
+#define iTime mod(float(FrameCount), 7.0)
+
+vec3 rgb2yiq(vec3 c)
+{
+    return vec3(
+        (0.2989 * c.x + 0.5959 * c.y + 0.2115 * c.z),
+        (0.5870 * c.x - 0.2744 * c.y - 0.5229 * c.z),
+        (0.1140 * c.x - 0.3216 * c.y + 0.3114 * c.z)
+    );
+}
+
+vec3 yiq2rgb(vec3 c)
+{
+    return vec3(
+        (1.0 * c.x + 1.0 * c.y + 1.0 * c.z),
+        (0.956 * c.x - 0.2720 * c.y - 1.1060 * c.z),
+        (0.6210 * c.x - 0.6474 * c.y + 1.7046 * c.z)
+    );
+}
+
+vec2 Circle(float Start, float Points, float Point)
+{
+    float Rad = (3.141592 * 2.0 * (1.0 / Points)) * (Point + Start);
+    return vec2(-(.3 + Rad), cos(Rad));
+}
+
+vec3 Blur(vec2 uv, float d)
+{
+    vec2 PixelOffset = vec2(d, 0.0);
+    float Start = 2.0 / 14.0;
+    vec2 Scale = 0.66 * 4.0 * 2.0 * PixelOffset.xy;
+
+    vec3 N0 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 0.0) * Scale).rgb;
+    vec3 N1 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 1.0) * Scale).rgb;
+    vec3 N2 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 2.0) * Scale).rgb;
+    vec3 N3 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 3.0) * Scale).rgb;
+    vec3 N4 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 4.0) * Scale).rgb;
+    vec3 N5 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 5.0) * Scale).rgb;
+    vec3 N6 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 6.0) * Scale).rgb;
+    vec3 N7 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 7.0) * Scale).rgb;
+    vec3 N8 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 8.0) * Scale).rgb;
+    vec3 N9 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 9.0) * Scale).rgb;
+    vec3 N10 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 10.0) * Scale).rgb;
+    vec3 N11 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 11.0) * Scale).rgb;
+    vec3 N12 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 12.0) * Scale).rgb;
+    vec3 N13 = COMPAT_TEXTURE(Source, uv + Circle(Start, 14.0, 13.0) * Scale).rgb;
+    vec3 N14 = COMPAT_TEXTURE(Source, uv).rgb;
+    float W = 1.0 / 15.0;
+
+    return (N0 + N1 + N2 + N3 + N4 + N5 + N6 + N7 + N8 + N9 + N10 + N11 + N12 + N13 + N14) * W;
+}
+
+vec4 apply_chroma_smear(vec2 uv)
+{
+    float s = 0.0001 * sin(iTime);
+    float e = min(.30, pow(max(0.0, cos(uv.y * 4.0 + .3) - .75) * (s + 0.5), 3.0)) * 25.0;
+    float d = .051 + abs(sin(s / 4.0));
+    float c = max(0.0001, .002 * d) * smear;
+    vec3 color = Blur(uv, c + c * uv.x);
+    float y = rgb2yiq(color).r;
+
+    c *= 6.0;
+    color = Blur(uv, c);
+    float i = rgb2yiq(color).g;
+
+    c *= 2.50;
+    color = Blur(uv, c);
+    float q = rgb2yiq(color).b;
+
+    return vec4(yiq2rgb(vec3(y, i, q)) - pow(s + e * 2.0, 3.0), 1.0);
+}
+
+vec3 apply_phosphor_decay(vec2 uv, vec3 current_color)
+{
+    if (phosphor_decay_enable < 0.5) {
+        return current_color;
+    }
+
+    vec3 prev_color = COMPAT_TEXTURE(Prev0, uv).rgb;
+    float threshold = clamp(phosphor_decay_threshold / 100.0, 0.0, 1.0);
+    float current_luma = dot(current_color, vec3(0.299, 0.587, 0.114));
+
+    if (current_luma >= threshold) {
+        return current_color;
+    }
+
+    float prev_luma = dot(prev_color, vec3(0.299, 0.587, 0.114));
+    if (prev_luma <= 0.0) {
+        return current_color;
+    }
+
+    float decay_ms = max(phosphor_decay_time_ms, 1.0);
+    float frame_ms = 1000.0 / 60.0;
+    float decay = exp(-frame_ms / decay_ms);
+    float start_luma = min(prev_luma, threshold);
+    float decayed_luma = start_luma * decay;
+    float scale = decayed_luma / max(prev_luma, 0.0001);
+    vec3 decayed_color = prev_color * scale;
+
+    return max(current_color, decayed_color);
+}
 
 vec4 scanline(vec2 coord, vec4 frame)
 {
@@ -268,13 +384,14 @@ void main()
     vec2 pos = TEX0.xy;
 #endif
 
+    vec4 res = apply_chroma_smear(pos);
+    res.rgb = apply_phosphor_decay(pos, res.rgb);
+
 #if defined MASK && !defined ROTATE_SCANLINES
     // mask effects look bad unless applied in linear gamma space
     vec4 in_gamma = vec4(crt_gamma, crt_gamma, crt_gamma, 1.0);
     vec4 out_gamma = vec4(1.0 / monitor_gamma, 1.0 / monitor_gamma, 1.0 / monitor_gamma, 1.0);
-    vec4 res = pow(COMPAT_TEXTURE(Source, pos), in_gamma);
-#else
-    vec4 res = COMPAT_TEXTURE(Source, pos);
+    res = pow(res, in_gamma);
 #endif
 
 #if defined MASK && !defined ROTATE_SCANLINES

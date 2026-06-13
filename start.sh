@@ -5,8 +5,7 @@
 # Description:
 #
 #  noise.glsl     = Simulates stochastic noise of CRT screen.
-#  effects.glsl   = Simulates phosphor decay and chroma bleed.
-#  crtscreen.glsl = Simulates the CRT display curvature and phosphor mask.
+#  crtscreen.glsl = Simulates CRT curvature, phosphor mask, phosphor decay, and chroma bleed.
 #===================================================================================
 
 shader_quality=$(
@@ -37,7 +36,6 @@ if [ -x ./apps/terminal ]; then
         HIGH)
             ./apps/terminal \
                 -s ./budo/shaders/noise.glsl \
-                -s ./budo/shaders/effects.glsl \
                 -s ./budo/shaders/crtscreen.glsl
             ;;
         *)

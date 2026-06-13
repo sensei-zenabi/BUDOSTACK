@@ -1521,7 +1521,7 @@ int main(int argc, char *argv[]) {
     printf("\nGET STARTED:");
     printf("\n");
     printf("\n 1) Switch TABs: ALT + [1-5]\n");
-    printf("\n 2) Type 'list' to see files.\n");
+    printf("\n 2) Type 'list' to see records.\n");
     printf("\n 3) Press 'TAB' key for autocomplete.\n");
     printf("\n 4) Run a TASK: 'runtask help.task'.\n");
     printf("\n 5) Type 'exit' to quit.\n");

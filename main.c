@@ -1524,8 +1524,9 @@ int main(int argc, char *argv[]) {
     printf("\n 2) Type 'list' to see files.\n");
     printf("\n 3) Press 'TAB' key for autocomplete.\n");
     printf("\n 4) Run a TASK: 'runtask help.task'.\n");
-    printf("\n 5) Type 'exit' to quit.\n\n");
+    printf("\n 5) Type 'exit' to quit.\n");
     printf("\n===============================================================================\n");
+    printf("WELCOME TO BUDOSTACK OS!\n");
     printf("\n");
 
     /* Execute auto_command if set */

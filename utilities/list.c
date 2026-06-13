@@ -424,16 +424,16 @@ void print_file_info(const char *filepath, const char *display_name) {
 static void print_table_header(void) {
     char centered_size[SIZE_COLUMN_WIDTH + 1];
     char centered_last_modified[21];
-    format_center_space_field("Size", centered_size, SIZE_COLUMN_WIDTH);
-    format_center_space_field("Last Modified", centered_last_modified, 20);
+    format_center_space_field("STORAGE", centered_size, SIZE_COLUMN_WIDTH);
+    format_center_space_field("LAST ENTRY", centered_last_modified, 20);
 
     printf(
         "%-*s %-11s %s %-3s %s\n",
         NAME_DISPLAY_WIDTH,
-        "Filename",
-        "Permissions",
+        "RECORD",
+        "CLEARANCE",
         centered_size,
-        "Git",
+        "GIT",
         centered_last_modified);
 }
 

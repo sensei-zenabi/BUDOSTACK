@@ -399,15 +399,16 @@ static void format_duration(double seconds, char *buffer, size_t size)
     }
 }
 
-static void print_rule(int columns, char left, char fill, char right)
+static void print_rule(int columns, const char *left, const char *fill,
+                       const char *right)
 {
     int index;
 
-    putchar(left);
+    fputs(left, stdout);
     for (index = 0; index < columns - 2; index++) {
-        putchar(fill);
+        fputs(fill, stdout);
     }
-    putchar(right);
+    fputs(right, stdout);
     putchar('\n');
 }
 
@@ -418,7 +419,7 @@ static void print_panel_line(int columns, const char *text)
     if (content_width < 1) {
         content_width = STATS_LOW_COLUMNS - 4;
     }
-    printf("| %-*.*s |\n", content_width, content_width, text);
+    printf("║ %-*.*s ║\n", content_width, content_width, text);
 }
 
 static void print_bar(const char *label, double percent, int width, int columns)
@@ -433,19 +434,25 @@ static void print_bar(const char *label, double percent, int width, int columns)
     }
     filled = (int)((percent * (double)width) / 100.0 + 0.5);
     char line[256];
-    char bar[STATS_BAR_WIDTH + 1];
+    char bar[(STATS_BAR_WIDTH * 4) + 1];
+    size_t offset = 0U;
 
     for (index = 0; index < width; index++) {
+        const char *glyph;
+
         if (index < filled) {
-            bar[index] = index % 2 == 0 ? '#' : '=';
+            glyph = index % 2 == 0 ? "█" : "▓";
         } else if (index == filled) {
-            bar[index] = '>';
+            glyph = "▸";
         } else {
-            bar[index] = '.';
+            glyph = "░";
+        }
+        if (offset + strlen(glyph) < sizeof(bar)) {
+            offset += (size_t)snprintf(bar + offset, sizeof(bar) - offset, "%s", glyph);
         }
     }
-    bar[width] = '\0';
-    snprintf(line, sizeof(line), "%-5s [%s] %5.1f%%", label, bar, percent);
+    bar[offset] = '\0';
+    snprintf(line, sizeof(line), "%-5s ▐%s▌ %5.1f%%", label, bar, percent);
     print_panel_line(columns, line);
 }
 
@@ -482,19 +489,19 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
     }
 
     printf("\033[H");
-    print_rule(columns, '+', '=', '+');
+    print_rule(columns, "╔", "═", "╗");
     {
         char line[256];
 
-        snprintf(line, sizeof(line), "MU/TH/UR 6000 SYSTEM MONITOR        %s", time_buffer);
+        snprintf(line, sizeof(line), "MU/TH/UR 6000  ◈  NOSTROMO BIO-FUNCTION SCAN  ◈  %s", time_buffer);
         print_panel_line(columns, line);
     }
-    print_rule(columns, '+', '-', '+');
+    print_rule(columns, "╠", "═", "╣");
     print_bar("CPU", snapshot->cpu_percent, STATS_BAR_WIDTH, columns);
     print_bar("MEM", mem_percent, STATS_BAR_WIDTH, columns);
     print_bar("SWAP", swap_percent, STATS_BAR_WIDTH, columns);
     print_bar("DISK", disk_percent, STATS_BAR_WIDTH, columns);
-    print_rule(columns, '+', '-', '+');
+    print_rule(columns, "╠", "═", "╣");
     {
         char line[256];
 
@@ -525,9 +532,9 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
                  snapshot->mem_total_kb / 1024UL, snapshot->disk_free_kb / 1024UL);
         print_panel_line(columns, line);
     }
-    print_rule(columns, '+', '-', '+');
-    print_panel_line(columns, "PID    S CPU-TICKS   RSS-MB   VSZ-MB  COMMAND");
-    print_rule(columns, '+', '-', '+');
+    print_rule(columns, "╠", "═", "╣");
+    print_panel_line(columns, "▣ CREW/PROCESS TRACKING ▣   PID    S CPU-TICKS   RSS-MB   VSZ-MB  COMMAND");
+    print_rule(columns, "╠", "═", "╣");
 
     process_rows = rows - 15;
     for (index = 0; index < process_rows; index++) {
@@ -545,9 +552,9 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
             print_panel_line(columns, "");
         }
     }
-    print_rule(columns, '+', '-', '+');
-    print_panel_line(columns, "[Q] QUIT  [R] REDRAW  [1s] AUTO-REFRESH  DISPLAY: _TERM_RESOLUTION LOW");
-    print_rule(columns, '+', '=', '+');
+    print_rule(columns, "╠", "═", "╣");
+    print_panel_line(columns, "[Q] QUIT  [R] REDRAW  [1s] AUTO-REFRESH  ▰ CRT GRID: 1979/LOW-RES");
+    print_rule(columns, "╚", "═", "╝");
     fflush(stdout);
 }
 

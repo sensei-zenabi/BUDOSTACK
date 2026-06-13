@@ -235,7 +235,7 @@ vec4 apply_chroma_smear(vec2 uv)
     color = Blur(uv, c);
     float q = rgb2yiq(color).b;
 
-    return vec4(yiq2rgb(vec3(y, i, q)) - pow(s + e * 2.0, 3.0), 1.0);
+    return vec4(clamp(yiq2rgb(vec3(y, i, q)) - pow(s + e * 2.0, 3.0), 0.0, 1.0), 1.0);
 }
 
 vec3 apply_phosphor_decay(vec2 uv, vec3 current_color)
@@ -385,7 +385,7 @@ void main()
 #endif
 
     vec4 res = apply_chroma_smear(pos);
-    res.rgb = apply_phosphor_decay(pos, res.rgb);
+    res.rgb = clamp(apply_phosphor_decay(pos, res.rgb), 0.0, 1.0);
 
 #if defined MASK && !defined ROTATE_SCANLINES
     // mask effects look bad unless applied in linear gamma space

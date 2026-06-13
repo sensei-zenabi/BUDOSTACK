@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,7 +23,6 @@
 #define STATS_MAX_PROCESSES 512
 #define STATS_CMD_WIDTH 27
 #define STATS_REFRESH_SECONDS 1
-#define STATS_FIXED_FRAME_ROWS 16
 
 struct cpu_times {
     unsigned long long user;
@@ -486,7 +486,7 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
     {
         char line[256];
 
-        snprintf(line, sizeof(line), "MU/TH/UR 6000 SYSTEM MONITOR | GRID 80x45 | %s", time_buffer);
+        snprintf(line, sizeof(line), "MU/TH/UR 6000 SYSTEM MONITOR        %s", time_buffer);
         print_panel_line(columns, line);
     }
     print_rule(columns, '+', '-', '+');
@@ -498,7 +498,7 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
     {
         char line[256];
 
-        snprintf(line, sizeof(line), "LOAD  1M %5.2f  5M %5.2f 15M %5.2f | UPTIME %-12s | TASKS %4d",
+        snprintf(line, sizeof(line), "LOAD %4.2f %4.2f %4.2f | UPTIME %-12s | PROC %-4d",
                  snapshot->loadavg[0], snapshot->loadavg[1], snapshot->loadavg[2],
                  uptime_buffer, snapshot->process_count);
         print_panel_line(columns, line);
@@ -519,24 +519,24 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
         } else {
             snprintf(battery_text, sizeof(battery_text), "N/A");
         }
-        snprintf(line, sizeof(line), "TEMP %-8s | BAT %-4s | MEM %7lu/%-7lu MB | ROOT FREE %8lu MB",
+        snprintf(line, sizeof(line), "TEMP %s | BAT %s | MEM %lu/%lu MB | ROOT FREE %lu MB",
                  temp_text, battery_text,
                  (snapshot->mem_total_kb - snapshot->mem_available_kb) / 1024UL,
                  snapshot->mem_total_kb / 1024UL, snapshot->disk_free_kb / 1024UL);
         print_panel_line(columns, line);
     }
     print_rule(columns, '+', '-', '+');
-    print_panel_line(columns, "  PID S CPU-TICKS   RSS-MB   VSZ-MB  COMMAND");
+    print_panel_line(columns, "PID    S CPU-TICKS   RSS-MB   VSZ-MB  COMMAND");
     print_rule(columns, '+', '-', '+');
 
-    process_rows = rows - STATS_FIXED_FRAME_ROWS;
+    process_rows = rows - 15;
     for (index = 0; index < process_rows; index++) {
         if (index < snapshot->process_count) {
             const struct process_info *process = &snapshot->processes[index];
 
             char line[256];
 
-            snprintf(line, sizeof(line), "%5d %c %9llu %8lu %8lu  %-27.27s",
+            snprintf(line, sizeof(line), "%5d  %c %9llu %8lu %8lu  %-27.27s",
                      process->pid, process->state, process->cpu_ticks,
                      process->rss_kb / 1024UL, process->vmsize_kb / 1024UL,
                      process->command);
@@ -546,7 +546,7 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
         }
     }
     print_rule(columns, '+', '-', '+');
-    print_panel_line(columns, "[Q] QUIT  [R] REDRAW  [AUTO] 1 SECOND REFRESH  [MODE] _TERM_RESOLUTION LOW");
+    print_panel_line(columns, "[Q] QUIT  [R] REDRAW  [1s] AUTO-REFRESH  DISPLAY: _TERM_RESOLUTION LOW");
     print_rule(columns, '+', '=', '+');
     fflush(stdout);
 }

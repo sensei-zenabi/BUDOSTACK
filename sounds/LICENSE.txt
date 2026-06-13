@@ -3,6 +3,14 @@ File: 628246__asiekierka__floppy_access6.ogg
 Source: https://freesound.org/people/asiekierka/sounds/628246/
 License: Creative Commons 0
 --------------------------------------------------------------------------
+File: ./key_presses/key_press_sound.wav 
+Source: https://freesound.org/people/Eternitys/sounds/141121/ 
+License: Creative Commons 0
+--------------------------------------------------------------------------
+File: ./key_presses/enter_press_sound.wav
+Source: https://freesound.org/people/Eternitys/sounds/141257/
+License: Creative Commons 0
+--------------------------------------------------------------------------
 File: static_orchard.mp3 
 Source: Suno AI Pro
 License: Ville Suoranta (Creator of BUDOSTACK)

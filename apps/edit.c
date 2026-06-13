@@ -1601,6 +1601,12 @@ int editorReadKey(void) {
             return '\x1b';
         if (seq[0] == 'O') {
             switch (seq[1]) {
+                case 'A': return ARROW_UP;
+                case 'B': return ARROW_DOWN;
+                case 'C': return ARROW_RIGHT;
+                case 'D': return ARROW_LEFT;
+                case 'H': return HOME_KEY;
+                case 'F': return END_KEY;
                 case 'P': return F1_KEY;
                 case 'Q': return F2_KEY;
                 case 'R': return F3_KEY;
@@ -1634,6 +1640,24 @@ int editorReadKey(void) {
             char seq2;
             if (read(STDIN_FILENO, &seq2, 1) != 1)
                 return '\x1b';
+            if (seq2 == ';') {
+                char modifier;
+                char final;
+                if (read(STDIN_FILENO, &modifier, 1) != 1)
+                    return '\x1b';
+                if (read(STDIN_FILENO, &final, 1) != 1)
+                    return '\x1b';
+                (void)modifier;
+                switch (final) {
+                    case 'A': return ARROW_UP;
+                    case 'B': return ARROW_DOWN;
+                    case 'C': return ARROW_RIGHT;
+                    case 'D': return ARROW_LEFT;
+                    case 'H': return HOME_KEY;
+                    case 'F': return END_KEY;
+                    default: return '\x1b';
+                }
+            }
             if (seq2 >= '0' && seq2 <= '9') {
                 char seq3;
                 if (read(STDIN_FILENO, &seq3, 1) != 1)

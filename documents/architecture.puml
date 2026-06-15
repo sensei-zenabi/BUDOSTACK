@@ -115,5 +115,6 @@ apps --> posix
 games --> posix
 utilities --> posix
 
-makefile ..> "build outputs\nbudostack, commands/*, apps/*, games/*, utilities/*, budo/example, budo/rocket" as outputs
+component "build outputs\nbudostack, commands/*, apps/*, games/*, utilities/*, budo/example, budo/rocket" as outputs
+makefile ..> outputs
 @enduml

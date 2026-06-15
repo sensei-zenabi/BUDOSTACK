@@ -1,0 +1,119 @@
+@startuml BUDOSTACK Architecture
+' Maintainers: update this diagram in every PR that changes runtime architecture,
+' build outputs, shared libraries, assets, or cross-directory dependencies.
+
+!theme plain
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam wrapWidth 220
+skinparam maxMessageSize 160
+skinparam packageStyle rectangle
+
+title BUDOSTACK architecture and dependency map
+
+legend right
+  Solid arrows: compile/link or direct runtime dependency
+  Dashed arrows: data/assets/scripts loaded at runtime
+  Dotted arrows: generated build outputs
+  Every architecture-affecting PR should keep this file current.
+endlegend
+
+package "Build system" as build {
+  component "makefile\n- C11, -Wall/-Wextra/-Werror/-Wpedantic\n- discovers root, commands, apps, games, utilities\n- links lib/*.o into each target" as makefile
+  component "budo/build.sh\nstandalone BUDO examples" as budo_build
+}
+
+package "Launcher / shell" as launcher {
+  component "budostack\n(main.c)" as budostack
+  component "command parser\n(commandparser.c/.h)" as parser
+  component "line input + history\n(input.c/.h)" as input
+}
+
+package "Shared C library (lib/)" as lib {
+  component "console/edit/table/csv helpers\n(libconsole, libedit, libtable, lib_csv_print)" as corelib
+  component "terminal graphics IPC\n(termgfx.c/.h)" as termgfx
+  component "terminal background audio IPC\n(termbg.c/.h)" as termbg
+  component "terminal layout helpers\n(terminal_layout.c/.h)" as layout
+  component "image rendering\n(libimage.c/.h + stb_image)" as libimage
+  component "retro profiles\n(retroprofile.c/.h)" as retroprofile
+  component "vendored single-header codecs\n(stb_*, dr_mp3)" as vendored
+}
+
+package "Executable families" as bins {
+  component "commands/*\none command per .c\nterminal drawing, audio, config, CSV, shell helpers" as commands
+  component "apps/*\ninteractive tools + terminal emulator" as apps
+  component "games/*\nstandalone games" as games
+  component "utilities/*\nfile, display, CSV, archive, hardware tools" as utilities
+}
+
+package "Runtime documents, tasks, and assets" as assets {
+  folder "documents/\nhelp, dictionaries, architecture" as documents
+  folder "tasks/\nTASK scripts and assets" as tasks
+  folder "fonts/\nPSF/TTF fonts" as fonts
+  folder "sounds/\nkeyboard/background/audio assets" as sounds
+  folder "budo/\nSDL/OpenGL demo stack, shaders, ROCKET assets" as budo
+}
+
+package "Optional platform libraries" as platform {
+  component "POSIX / libc" as posix
+  component "math + pthread\n(-lm -pthread)" as mathpthread
+  component "ALSA\noptional sound support" as alsa
+  component "SDL2 + OpenGL\noptional terminal and BUDO graphics" as sdlgl
+}
+
+makefile --> budostack : builds root target
+makefile --> commands : discovers and builds
+makefile --> apps : discovers and builds
+makefile --> games : discovers and builds
+makefile --> utilities : discovers and builds
+makefile --> lib : compiles lib/*.o
+makefile --> budo_build : invokes before all targets
+budo_build --> budo : builds examples/assets
+
+budostack --> parser : dispatches commands/apps/utilities
+budostack --> input : interactive shell input
+parser --> posix : fork/exec/glob/realpath
+input --> posix : terminal/raw-mode I/O
+
+commands --> lib : link shared helpers
+apps --> lib : link shared helpers
+utilities --> lib : link shared helpers
+games --> lib : link shared helpers
+budostack --> lib : link shared helpers
+
+commands --> termgfx : _TERM_* drawing/sprite commands
+commands --> termbg : _TERM_* sound/background commands
+commands --> retroprofile : _RETROPROFILE and terminal styling
+commands --> libimage : _IMAGE display
+commands --> layout : terminal sizing helpers
+apps --> layout : terminal-aware UI layout
+apps --> termgfx : graphics-aware applications
+apps --> termbg : terminal background audio controls
+apps --> retroprofile : styling/profile support
+utilities --> libimage : display/pixart image support
+utilities --> vendored : font/image conversion tools
+libimage --> vendored : decodes image formats
+apps --> vendored : terminal media/image paths
+
+commands ..> documents : help/config/text data
+apps ..> documents : documentation and reference content
+budostack ..> tasks : runs TASK scripts via apps/runtask and shell dispatch
+apps ..> tasks : runtask and demo content
+apps ..> fonts : terminal/setfont/font editors
+apps ..> sounds : terminal audio assets
+commands ..> sounds : sound-control commands
+budo ..> fonts : bundled PSF font
+budo ..> sounds : ROCKET audio assets
+budo ..> sdlgl : SDL/OpenGL renderer
+
+lib --> posix
+lib --> mathpthread
+termbg --> alsa : when detected
+apps --> sdlgl : apps/terminal when detected
+commands --> posix
+apps --> posix
+games --> posix
+utilities --> posix
+
+makefile ..> "build outputs\nbudostack, commands/*, apps/*, games/*, utilities/*, budo/example, budo/rocket" as outputs
+@enduml

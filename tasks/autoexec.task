@@ -73,43 +73,54 @@ PRINT "- SYSTEMS INIT -\n\n"
 SET $DOTS = 0
 RUN _RAND 13 25 TO $DOTS
 FOR ($i=0; $i<$DOTS; $i=$i+1):
+  IF ($i==2):
+    RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+  END
   PRINT "."
   SET $DELAY = 0
   RUN _RAND 10 200 TO $DELAY
   RUN _WAIT $DELAY
 END
 PRINT "OK!\n\n"
+RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT "\nSTARTING SYSTEM:\n"
 RUN _WAIT 1000
-PRINT " \n BOOTSTRAP SEQUENCE ........ "
+#RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+PRINT " \n\n BOOTSTRAP SEQUENCE ........ "
 RUN _WAIT 1000
 PRINT "PASS\n\n"
 RUN _WAIT 100
+RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT " MEMORY CHECK .............. "
 RUN _WAIT 800
 PRINT "PASS\n\n"
 RUN _WAIT 10
+#RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT " SYS/COMMS/UPLINK .......... "
 RUN _WAIT 250
 PRINT "ACTIVE\n\n"
 RUN _WAIT 25
+#RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT " SYS/COMMS/UPLINK .......... "
 RUN _WAIT 370
 PRINT "ACTIVE\n\n"
 RUN _WAIT 10
+RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT " COMPANY DIRECTIVES ........ "
 RUN _WAIT 400
 PRINT "LOADED\n\n"
 RUN _WAIT 70
+#RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT " MU/TH/UR CORE ............. "
 RUN _WAIT 500
 PRINT "READY\n\n"
 RUN _WAIT 100
+#RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT " PRIMARY TERMINAL .......... "
 RUN _WAIT 250
 PRINT "ACTIVATED\n\n"
 RUN _WAIT 90
-PRINT "SYSTEM STARTED!\n\n\n"
+PRINT "\nSYSTEM STARTED!\n\n\n"
 PRINT ">> DIRECT LAUNCH? [y/n]: "
 INPUT $SELECTION
 

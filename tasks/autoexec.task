@@ -127,10 +127,10 @@ RUN _WAIT 90
 PRINT "---------------------------------------\n\n"
 PRINT "\nSYSTEM STARTED!\n\n\n"
 RUN _TERM_SOUND_PLAY 2 ../sounds/environment/computer_beep.wav 100
-PRINT "\n>> LAUNCH CONSOLE? [y/n]: "
+PRINT "\n>> ENTER MENU? [y/n]: "
 INPUT $SELECTION
 
-IF ($SELECTION != "n"):
+IF ($SELECTION != "y"):
   GOTO EXIT
 END
 

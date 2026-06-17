@@ -1517,6 +1517,7 @@ int main(int argc, char *argv[]) {
     } else {
         /* Do not print startup messages and skip login() */
     }
+    printf("\nBUDOSTACK OPERATING SYSTEM");
     printf("\n===============================================================================\n");
     printf("\nGET STARTED:");
     printf("\n");
@@ -1526,7 +1527,6 @@ int main(int argc, char *argv[]) {
     printf("\n 4) Run a TASK: 'runtask help.task'.\n");
     printf("\n 5) Type 'exit' to quit.\n");
     printf("\n===============================================================================\n");
-    printf("WELCOME TO BUDOSTACK OS!\n");
     printf("\n");
 
     /* Execute auto_command if set */

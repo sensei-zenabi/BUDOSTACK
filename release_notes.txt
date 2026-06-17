@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.93
-  Release commit number:   1649
-  Baseline release:        v0.9.92
+  Release tag:             v0.9.931
+  Release commit number:   1657
+  Baseline release:        v0.9.93
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -325,290 +325,63 @@
 
 ================================= CHANGE LOG ================================
 
-commit 4c5995f7e3cb55f1c46c010c5a21155e31e32413
+commit a1ac3c540fd976a2f7a8c1116af84617cdcc1058
 Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sun Jun 14 00:30:40 2026 +0300
+Date:   Wed Jun 17 21:43:01 2026 +0300
 
-    terminology
+    perfected budostack loader
+
+tasks/autoexec.task
+
+commit 7f2c6a82e69fced2f205d64280c5e9718b2f4b09
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 21:33:27 2026 +0300
+
+    changed syntax of start
+
+tasks/autoexec.task
+
+commit 2091f9ff999e01694741c7262b4c0a62a4bcef49
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 21:32:02 2026 +0300
+
+    further improved start
+
+tasks/autoexec.task
+
+commit 2688591f9e5e0e14f21ac634f09f84847c0cdb0c
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 21:22:41 2026 +0300
+
+    improved get started
 
 main.c
 
-commit bb77ebe5cef00631d55126dc814715d7f29880dd
+commit 7eee0e34e75907a1dae1fcbe0086c01e7b01bca9
 Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sun Jun 14 00:29:23 2026 +0300
+Date:   Wed Jun 17 21:18:37 2026 +0300
 
-    improved variability of start
+    improved start
+
+sounds/LICENSE.txt
+sounds/environment/computer_beep.wav
+tasks/autoexec.task
+
+commit 6a2b6da11bc3cd149b8ec79d37df9c850ab071a5
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 20:43:56 2026 +0300
+
+    improved loading realism
 
 tasks/autoexec.task
 
-commit e49edbcc481c4a2319173cf8f9ae94738d78781d
+commit 364567a3aef7028b121369b7b8da52337323e470
 Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sun Jun 14 00:27:49 2026 +0300
+Date:   Wed Jun 17 20:33:17 2026 +0300
 
-    fine tuning user experience
-
-main.c
-tasks/autoexec.task
-users/default/help.task
-
-commit 0eaae2e8a209e6344bb70098ce34f00b21f3a622
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sun Jun 14 00:13:11 2026 +0300
-
-    formatting improved in get started
-
-main.c
-
-commit 85b5bb6947db51e66345956873dd1d24902df829
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sun Jun 14 00:09:01 2026 +0300
-
-    fine tuning
-
-tasks/autoexec.task
-
-commit fc5c88c6cccdcdd0020babc9d9487e370397a7b3
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sun Jun 14 00:07:45 2026 +0300
-
-    added artificial boot log
-
-tasks/autoexec.task
-
-commit 6e835bc867322f621a6fc249d43f69cd2a3824f8
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 23:56:00 2026 +0300
-
-    modified the intro
-
-tasks/autoexec.task
-
-commit 2218b5ca476ef834eb399917c949e8fd40deabe8
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 23:18:38 2026 +0300
-
-    changed the login logo colors fitting to color cheme
-
-tasks/examples/assets/login_logo.png
-
-commit f51e3b58e5a57fababe5a3ddbfffe90becaa4d3d
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 22:57:19 2026 +0300
-
-    changed filename
-
-utilities/list.c
-
-commit 8441abfbe5fd4359520149cb817dc9e888f0741b
-Merge: 6882c77 136b29b
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 22:55:56 2026 +0300
-
-    Merge branch 'codex/fix-navigation-issue-in-find-mode'
-
-commit 136b29bc8f00cce34cc85484324db3cf35853e91
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 22:54:54 2026 +0300
-
-    Fix edit search result arrow navigation
-
-apps/edit.c
-
-commit 6882c77e2dd6a27bd5f48920748420c25336b0c6
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 22:54:09 2026 +0300
-
-    modified filename
-
-utilities/list.c
-
-commit 5927dd55cb7480f2b6186287251835a9f5e86903
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 22:51:30 2026 +0300
-
-    modified list command to be bit more futuristic
-
-utilities/list.c
-
-commit d5ad667e2fb80e057ad33d9837478f6ac7bb75dd
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 22:34:46 2026 +0300
-
-    Revert "Align stats dashboard for square font grid"
-    
-    This reverts commit 782594ab68ddf1d20961bdd96fe9059094d0d235.
-
-apps/stats.c
-
-commit 782594ab68ddf1d20961bdd96fe9059094d0d235
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 22:33:46 2026 +0300
-
-    Align stats dashboard for square font grid
-
-apps/stats.c
-
-commit d6eacbbda654fb8d0abd841e6c2a03e7382c7e6c
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 22:27:58 2026 +0300
-
-    Revamp stats as retro system monitor
-
-apps/stats.c
-
-commit fbcc17e87cba3ad4e40c9fab37dac904e7582a79
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 21:57:21 2026 +0300
-
-    Document all task commands
-
-commands/manual.txt
-documents/help.txt
-
-commit 55c82077e2f990b7561bca48098ad00681f09a61
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 21:49:54 2026 +0300
-
-    fixed the configuration menu alignment and adjusted default sound effect volumes
-
-config.ini
-tasks/autoexec.task
-
-commit 91928587b6ca0028936ff3546d80d3927c2eb0b7
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 21:34:54 2026 +0300
-
-    changed default sound effect volumes
-
-config.ini
-
-commit 735445f444182959c93132c002b3af449830cbe8
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 21:23:27 2026 +0300
-
-    Crossfade background hum loop
+    improved background ambient sound
 
 apps/terminal.c
-
-commit d5583249828a1b208d611dd9c737121c5a073021
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 21:16:02 2026 +0300
-
-    Add terminal background hum controls
-
-apps/terminal.c
-commands/_TERM_BACKGROUND_SOUND.c
-commands/_TERM_BACKGROUND_VOLUME.c
-config.ini
-tasks/autoexec.task
-
-commit d341f4156924092fbf8feea95e3fef66804f902b
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 21:03:23 2026 +0300
-
-    added background hum
-
 sounds/LICENSE.txt
 sounds/environment/524598__matislav__fridge-buzz-loop.wav
-
-commit e959b93c99026adf847a59e086de6728f97856aa
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 20:56:25 2026 +0300
-
-    adjusted volume levels of key press samples
-
-sounds/key_presses/enter_press_sound.wav
-
-commit 76c9a938085cf0e950dba44f47fca2dd5e2fa7b3
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 20:51:35 2026 +0300
-
-    better key press sound
-
-sounds/LICENSE.txt
-sounds/key_presses/key_press_sound.wav
-
-commit 18fecb87b8c3a29126a8204a711366980c47e16d
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 20:34:51 2026 +0300
-
-    typing sounds default enabled
-
-config.ini
-
-commit f92b4f509135265baabd1a1bb334eb12226fde12
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 20:32:40 2026 +0300
-
-    Reduce terminal typing sound latency
-
-apps/terminal.c
-
-commit 415fd45252797d59a003c1ce7913585b768bd3bd
-Merge: bd9b38c 475ae62
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 20:28:29 2026 +0300
-
-    Merge branch 'codex/update-sound-engine-for-terminal-typing'
-
-commit 475ae62286db9f70b9a4f8074c21d97b28270787
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 20:28:17 2026 +0300
-
-    missing samples
-
-sounds/key_presses/enter_press_sound.wav
-sounds/key_presses/key_press_sound.wav
-
-commit 3559ef8eb4e7e3e2e088fcc170eb1b3881937e7c
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 20:26:13 2026 +0300
-
-    now it should have correct samples
-
-sounds/LICENSE.txt
-sounds/key_presses/key_press_1.wav
-sounds/key_presses/key_press_2.wav
-sounds/key_presses/key_press_3.wav
-sounds/key_presses/key_press_4.wav
-
-commit c612b98980dac3cf51ab864edf4174ce3be80c96
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 20:15:38 2026 +0300
-
-    Add terminal typing volume control
-
-apps/terminal.c
-commands/_TERM_TYPING_VOLUME.c
-config.ini
-tasks/autoexec.task
-
-commit bd9b38ce552879bb53575ec50d3623ab8453ad25
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Sat Jun 13 19:45:37 2026 +0300
-
-    new key press sounds, and different for keys and ENTER
-
-sounds/LICENSE.txt
-sounds/key_presses/enter_press_sound.wav
-sounds/key_presses/key_press_1.wav
-sounds/key_presses/key_press_2.wav
-sounds/key_presses/key_press_3.wav
-sounds/key_presses/key_press_4.wav
-sounds/key_presses/key_press_sound.wav
-
-commit 41b200ed9ac978c2200ad21b25d91f1c30e49765
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri Jun 12 22:05:32 2026 +0300
-
-    Update readme.md
-
-readme.md
-
-commit 8b4f29c6e6d383b8d1c988ac854007e3bb6b8080
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Fri Jun 12 22:03:01 2026 +0300
-
-    renamed
-
-sounds/LICENSE.txt
+sounds/environment/background_ambient.wav

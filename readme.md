@@ -67,6 +67,6 @@ code.
 - ./shaders/
 - ./sounds/
 
-Are not distributed using the GLP-2.0 license. Instead, these folders 
+Are not distributed using the GPL-2.0 license. Instead, these folders 
 contain their own LICENSE.txt files indicating their licensing conditions.
 

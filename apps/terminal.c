@@ -74,6 +74,7 @@
 #define TERMINAL_TAB_COUNT 5u
 
 #define TERMINAL_CURSOR_SPRITE_PATH "./tasks/examples/assets/cursor.png"
+#define TERMINAL_OVERLAY_PATH "./graphics/overlay.png"
 
 _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
@@ -91,6 +92,8 @@ static int terminal_scale_factor = 1;
 static int terminal_resolution_override_active = 0;
 static int terminal_resolution_width = 0;
 static int terminal_resolution_height = 0;
+static int terminal_display_width = 0;
+static int terminal_display_height = 0;
 static int terminal_margin_pixels = 0;
 static size_t terminal_selection_anchor_row = 0u;
 static size_t terminal_selection_anchor_col = 0u;
@@ -115,6 +118,8 @@ static int terminal_gl_ready = 0;
 static GLuint terminal_bound_texture = 0;
 static int terminal_history_width = 0;
 static int terminal_history_height = 0;
+static GLuint terminal_overlay_texture = 0;
+static int terminal_overlay_available = 0;
 static GLuint terminal_cursor_texture = 0;
 static int terminal_cursor_width = 0;
 static int terminal_cursor_height = 0;
@@ -379,6 +384,9 @@ static size_t terminal_clamped_scroll_offset(const struct terminal_buffer *buffe
 static void terminal_visible_row_range(const struct terminal_buffer *buffer, size_t *out_top_index, size_t *out_bottom_index);
 static void terminal_buffer_fill_line_current(struct terminal_buffer *buffer, size_t row);
 static int terminal_window_point_to_framebuffer(int window_x, int window_y, int *out_x, int *out_y);
+static void terminal_display_rect(int drawable_width, int drawable_height, int *out_x, int *out_y, int *out_w, int *out_h);
+static void terminal_draw_textured_quad(GLuint texture, int x, int y, int width, int height, int drawable_width, int drawable_height);
+static int terminal_load_overlay(const char *path);
 static int terminal_screen_point_to_cell(int x,
                                          int y,
                                          size_t columns,
@@ -1403,6 +1411,36 @@ static void terminal_visible_row_range(const struct terminal_buffer *buffer, siz
     }
 }
 
+static void terminal_display_rect(int drawable_width, int drawable_height, int *out_x, int *out_y, int *out_w, int *out_h) {
+    int width = terminal_display_width > 0 ? terminal_display_width : drawable_width;
+    int height = terminal_display_height > 0 ? terminal_display_height : drawable_height;
+
+    if (width > drawable_width) {
+        width = drawable_width;
+    }
+    if (height > drawable_height) {
+        height = drawable_height;
+    }
+    if (width < 1) {
+        width = 1;
+    }
+    if (height < 1) {
+        height = 1;
+    }
+    if (out_x) {
+        *out_x = (drawable_width - width) / 2;
+    }
+    if (out_y) {
+        *out_y = (drawable_height - height) / 2;
+    }
+    if (out_w) {
+        *out_w = width;
+    }
+    if (out_h) {
+        *out_h = height;
+    }
+}
+
 static int terminal_window_point_to_framebuffer(int window_x, int window_y, int *out_x, int *out_y) {
     if (!out_x || !out_y) {
         return -1;
@@ -1420,12 +1458,24 @@ static int terminal_window_point_to_framebuffer(int window_x, int window_y, int 
 
     double reference_width = (window_width > 0) ? (double)window_width : (double)drawable_width;
     double reference_height = (window_height > 0) ? (double)window_height : (double)drawable_height;
-    if (reference_width <= 0.0 || reference_height <= 0.0) {
+    if (reference_width <= 0.0 || reference_height <= 0.0 || drawable_width <= 0 || drawable_height <= 0) {
         return -1;
     }
 
-    double normalized_x = (double)window_x / reference_width;
-    double normalized_y = (double)window_y / reference_height;
+    int rect_x = 0;
+    int rect_y = 0;
+    int rect_w = 0;
+    int rect_h = 0;
+    terminal_display_rect(drawable_width, drawable_height, &rect_x, &rect_y, &rect_w, &rect_h);
+    double drawable_x = ((double)window_x / reference_width) * (double)drawable_width;
+    double drawable_y = ((double)window_y / reference_height) * (double)drawable_height;
+    if (drawable_x < (double)rect_x || drawable_x >= (double)(rect_x + rect_w) ||
+        drawable_y < (double)rect_y || drawable_y >= (double)(rect_y + rect_h)) {
+        return -1;
+    }
+
+    double normalized_x = (drawable_x - (double)rect_x) / (double)rect_w;
+    double normalized_y = (drawable_y - (double)rect_y) / (double)rect_h;
     double framebuffer_x = normalized_x * (double)terminal_framebuffer_width;
     double framebuffer_y = normalized_y * (double)terminal_framebuffer_height;
 
@@ -3745,6 +3795,71 @@ static void terminal_clear_shader_history(struct terminal_gl_shader *shader) {
     }
 }
 
+static void terminal_draw_textured_quad(GLuint texture, int x, int y, int width, int height, int drawable_width, int drawable_height) {
+    if (texture == 0 || width <= 0 || height <= 0 || drawable_width <= 0 || drawable_height <= 0) {
+        return;
+    }
+    glUseProgram(0);
+    glMatrixMode(GL_PROJECTION);
+    glPushMatrix();
+    glLoadIdentity();
+    glOrtho(0.0, (GLdouble)drawable_width, (GLdouble)drawable_height, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glPushMatrix();
+    glLoadIdentity();
+    glEnable(GL_TEXTURE_2D);
+    terminal_bind_texture(texture);
+    glBegin(GL_TRIANGLE_STRIP);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex2f((GLfloat)x, (GLfloat)y);
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex2f((GLfloat)(x + width), (GLfloat)y);
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex2f((GLfloat)x, (GLfloat)(y + height));
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex2f((GLfloat)(x + width), (GLfloat)(y + height));
+    glEnd();
+    glDisable(GL_TEXTURE_2D);
+    terminal_bind_texture(0);
+    glPopMatrix();
+    glMatrixMode(GL_PROJECTION);
+    glPopMatrix();
+    glMatrixMode(GL_MODELVIEW);
+}
+
+static int terminal_load_overlay(const char *path) {
+    if (!path || !terminal_gl_ready) {
+        return -1;
+    }
+    int width = 0;
+    int height = 0;
+    int channels = 0;
+    stbi_set_flip_vertically_on_load(0);
+    unsigned char *pixels = stbi_load(path, &width, &height, &channels, 4);
+    if (!pixels || width <= 0 || height <= 0) {
+        if (pixels) {
+            stbi_image_free(pixels);
+        }
+        return -1;
+    }
+    glGenTextures(1, &terminal_overlay_texture);
+    if (terminal_overlay_texture == 0) {
+        stbi_image_free(pixels);
+        return -1;
+    }
+    terminal_bind_texture(terminal_overlay_texture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    terminal_bind_texture(0);
+    stbi_image_free(pixels);
+    terminal_overlay_available = 1;
+    return 0;
+}
+
 static int terminal_load_cursor_sprite(const char *path) {
     if (!path || !terminal_gl_ready) {
         return -1;
@@ -3945,6 +4060,11 @@ static void terminal_release_gl_resources(void) {
         glDeleteTextures(1, &terminal_gl_texture);
         terminal_gl_texture = 0;
     }
+    if (terminal_overlay_texture != 0) {
+        glDeleteTextures(1, &terminal_overlay_texture);
+        terminal_overlay_texture = 0;
+    }
+    terminal_overlay_available = 0;
     terminal_destroy_cursor_sprite();
     terminal_clear_gl_shaders();
     if (terminal_gl_intermediate_textures[0] != 0) {
@@ -5819,6 +5939,11 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int resolution_width_set = 0;
     int resolution_height_set = 0;
     int resolution_requested = 0;
+    int term_size_width = 0;
+    int term_size_height = 0;
+    int term_size_width_set = 0;
+    int term_size_height_set = 0;
+    int term_size_requested = 0;
     int mouse_query_requested = 0;
     int mouse_visibility_requested = 0;
     int mouse_visibility_show = 0;
@@ -5950,6 +6075,32 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             resolution_height = (int)parsed;
                             resolution_height_set = 1;
                             resolution_requested = 1;
+                        }
+                    } else if (strcmp(key, "term_size") == 0 && value && *value != '\0') {
+                        char *sep = strchr(value, 'x');
+                        if (!sep) {
+                            sep = strchr(value, 'X');
+                        }
+                        if (sep) {
+                            *sep = '\0';
+                            const char *height_str = sep + 1;
+                            char *endptr = NULL;
+                            errno = 0;
+                            long parsed_width = strtol(value, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0' && parsed_width >= 0 && parsed_width <= INT_MAX) {
+                                term_size_width = (int)parsed_width;
+                                term_size_width_set = 1;
+                            }
+                            errno = 0;
+                            endptr = NULL;
+                            long parsed_height = strtol(height_str, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0' && parsed_height >= 0 && parsed_height <= INT_MAX) {
+                                term_size_height = (int)parsed_height;
+                                term_size_height_set = 1;
+                            }
+                            if (term_size_width_set && term_size_height_set) {
+                                term_size_requested = 1;
+                            }
                         }
                     } else if (strcmp(key, "shader") == 0 && value && *value != '\0') {
                         if (strcmp(value, "enable") == 0) {
@@ -6428,6 +6579,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     }
     if (margin >= 0) {
         terminal_apply_margin(buffer, margin);
+    }
+    if (term_size_requested && term_size_width_set && term_size_height_set) {
+        terminal_display_width = term_size_width;
+        terminal_display_height = term_size_height;
+        terminal_mark_full_redraw();
+        terminal_input_draw_requested = 1;
     }
     if (resolution_requested && resolution_width_set && resolution_height_set) {
         terminal_apply_resolution(buffer, resolution_width, resolution_height);
@@ -7918,6 +8075,9 @@ int main(int argc, char **argv) {
     terminal_cell_pixel_height = glyph_height;
     terminal_scale_factor = 1;
     terminal_gl_ready = 1;
+    terminal_display_width = 1920;
+    terminal_display_height = 1080;
+    (void)terminal_load_overlay(TERMINAL_OVERLAY_PATH);
 
     drawable_width = 0;
     drawable_height = 0;
@@ -9105,6 +9265,20 @@ int main(int argc, char **argv) {
         }
 
         glClear(GL_COLOR_BUFFER_BIT);
+        if (terminal_overlay_available) {
+            terminal_draw_textured_quad(terminal_overlay_texture,
+                                        0,
+                                        0,
+                                        drawable_width,
+                                        drawable_height,
+                                        drawable_width,
+                                        drawable_height);
+        }
+        int display_x = 0;
+        int display_y = 0;
+        int display_w = 0;
+        int display_h = 0;
+        terminal_display_rect(drawable_width, drawable_height, &display_x, &display_y, &display_w, &display_h);
         GLuint source_texture = terminal_gl_texture;
         GLfloat source_texture_width = (GLfloat)terminal_texture_width;
         GLfloat source_texture_height = (GLfloat)terminal_texture_height;
@@ -9115,13 +9289,13 @@ int main(int argc, char **argv) {
                                            terminal_cursor_texture != 0 &&
                                            terminal_cursor_position_valid;
         if (terminal_shaders_active() && cursor_ready_for_composition) {
-            if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) == 0) {
+            if (terminal_prepare_intermediate_targets(display_w, display_h) == 0) {
                 glBindFramebuffer(GL_FRAMEBUFFER, terminal_gl_framebuffer);
                 glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                        terminal_gl_intermediate_textures[1], 0);
                 GLenum composition_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
                 if (composition_status == GL_FRAMEBUFFER_COMPLETE) {
-                    glViewport(0, 0, drawable_width, drawable_height);
+                    glViewport(0, 0, display_w, display_h);
                     glClear(GL_COLOR_BUFFER_BIT);
 
                     glUseProgram(0);
@@ -9147,7 +9321,7 @@ int main(int argc, char **argv) {
 
                     glEnable(GL_BLEND);
                     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-                    terminal_cursor_render(frame_width, frame_height, drawable_width, drawable_height);
+                    terminal_cursor_render(frame_width, frame_height, display_w, display_h);
                     glDisable(GL_BLEND);
 
                     glDisable(GL_TEXTURE_2D);
@@ -9155,22 +9329,23 @@ int main(int argc, char **argv) {
 
                     cursor_composited_into_shader = 1;
                     source_texture = terminal_gl_intermediate_textures[1];
-                    source_texture_width = (GLfloat)drawable_width;
-                    source_texture_height = (GLfloat)drawable_height;
-                    source_input_width = (GLfloat)drawable_width;
-                    source_input_height = (GLfloat)drawable_height;
+                    source_texture_width = (GLfloat)display_w;
+                    source_texture_height = (GLfloat)display_h;
+                    source_input_width = (GLfloat)display_w;
+                    source_input_height = (GLfloat)display_h;
                 }
 
                 glBindFramebuffer(GL_FRAMEBUFFER, 0);
             }
         }
+        glViewport(display_x, display_y, display_w, display_h);
         if (terminal_shaders_active()) {
             static int frame_counter = 0;
             int frame_value = frame_counter++;
             int history_resized = 0;
-            if (terminal_history_width != drawable_width || terminal_history_height != drawable_height) {
-                terminal_history_width = drawable_width;
-                terminal_history_height = drawable_height;
+            if (terminal_history_width != display_w || terminal_history_height != display_h) {
+                terminal_history_width = display_w;
+                terminal_history_height = display_h;
                 history_resized = 1;
             }
 
@@ -9187,7 +9362,7 @@ int main(int argc, char **argv) {
                 int using_intermediate = 0;
 
                 if (!last_pass) {
-                    if (terminal_prepare_intermediate_targets(drawable_width, drawable_height) != 0) {
+                    if (terminal_prepare_intermediate_targets(display_w, display_h) != 0) {
                         fprintf(stderr, "Failed to prepare intermediate render targets; skipping remaining shader passes.\n");
                         multipass_failed = 1;
                         last_pass = 1;
@@ -9203,7 +9378,7 @@ int main(int argc, char **argv) {
                             last_pass = 1;
                         } else {
                             using_intermediate = 1;
-                            glViewport(0, 0, drawable_width, drawable_height);
+                            glViewport(0, 0, display_w, display_h);
                             glClear(GL_COLOR_BUFFER_BIT);
                         }
                     }
@@ -9211,7 +9386,7 @@ int main(int argc, char **argv) {
 
                 if (last_pass && !using_intermediate) {
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-                    glViewport(0, 0, drawable_width, drawable_height);
+                    glViewport(display_x, display_y, display_w, display_h);
                 }
 
                 glUseProgram(shader->program);
@@ -9219,8 +9394,8 @@ int main(int argc, char **argv) {
                 terminal_shader_set_vec2(shader->uniform_output_size,
                                          shader->cached_output_size,
                                          &shader->has_cached_output_size,
-                                         (GLfloat)drawable_width,
-                                         (GLfloat)drawable_height);
+                                         (GLfloat)display_w,
+                                         (GLfloat)display_h);
                 if (shader->uniform_frame_count >= 0) {
                     glUniform1i(shader->uniform_frame_count, frame_value);
                 }
@@ -9237,7 +9412,7 @@ int main(int argc, char **argv) {
 
                 if (shader->uniform_prev_sampler >= 0) {
                     GLuint history_texture = 0;
-                    if (terminal_prepare_shader_history(shader, drawable_width, drawable_height, history_resized) == 0) {
+                    if (terminal_prepare_shader_history(shader, display_w, display_h, history_resized) == 0) {
                         history_texture = shader->history_texture;
                         if (source_texture == terminal_gl_texture && shader->history_texture_flipped != 0) {
                             history_texture = shader->history_texture_flipped;
@@ -9295,7 +9470,7 @@ int main(int argc, char **argv) {
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, terminal_quad_vertex_count);
 
                 if (shader->uniform_prev_sampler >= 0) {
-                    terminal_update_shader_history(shader, drawable_width, drawable_height);
+                    terminal_update_shader_history(shader, display_w, display_h);
                 }
 
                 if (using_vao) {
@@ -9312,10 +9487,10 @@ int main(int argc, char **argv) {
                 if (using_intermediate) {
                     glBindFramebuffer(GL_FRAMEBUFFER, 0);
                     source_texture = target_texture;
-                    source_texture_width = (GLfloat)drawable_width;
-                    source_texture_height = (GLfloat)drawable_height;
-                    source_input_width = (GLfloat)drawable_width;
-                    source_input_height = (GLfloat)drawable_height;
+                    source_texture_width = (GLfloat)display_w;
+                    source_texture_height = (GLfloat)display_h;
+                    source_input_width = (GLfloat)display_w;
+                    source_input_height = (GLfloat)display_h;
                 }
 
                 if (multipass_failed) {
@@ -9350,7 +9525,7 @@ int main(int argc, char **argv) {
         }
 
         if (!cursor_composited_into_shader) {
-            terminal_cursor_render(frame_width, frame_height, drawable_width, drawable_height);
+            terminal_cursor_render(frame_width, frame_height, display_w, display_h);
         }
 
         SDL_GL_SwapWindow(window);

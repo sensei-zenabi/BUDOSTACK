@@ -194,6 +194,20 @@ _TERM_ACTIVE
   Examples:
     _TERM_ACTIVE
 
+_TERM_BACKGROUND_SOUND
+  Syntax: _TERM_BACKGROUND_SOUND <enable|disable>
+  Use: Enable or disable the continuous terminal background hum.
+  Examples:
+    _TERM_BACKGROUND_SOUND enable
+    _TERM_BACKGROUND_SOUND disable
+
+_TERM_BACKGROUND_VOLUME
+  Syntax: _TERM_BACKGROUND_VOLUME <0-100>
+  Use: Set the continuous terminal background hum volume.
+  Examples:
+    _TERM_BACKGROUND_VOLUME 0
+    _TERM_BACKGROUND_VOLUME 70
+
 _TERM_CLEAN
   Syntax: _TERM_CLEAN -x <pixels> -y <pixels> -width <pixels>
           -height <pixels> [-layer <1-16>]
@@ -345,6 +359,13 @@ _TERM_TYPING_SOUND
   Examples:
     _TERM_TYPING_SOUND enable
     _TERM_TYPING_SOUND disable
+
+_TERM_TYPING_VOLUME
+  Syntax: _TERM_TYPING_VOLUME <0-100>
+  Use: Set keyboard typing sound effect volume in terminal apps.
+  Examples:
+    _TERM_TYPING_VOLUME 0
+    _TERM_TYPING_VOLUME 80
 
 _TEST
   Syntax: _TEST

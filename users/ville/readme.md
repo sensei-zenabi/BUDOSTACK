@@ -10,20 +10,23 @@ No telemetry. No containers. No cloud. Just pure computing joy, phosphor
 glow, and the feeling that made us fall in love with technology before it
 became a quarterly business process.
 
-
 ### CAPABILITIES: ###
 
-- Terminal Emulator with realistic CRT simulation.
-- Multi-session support up to 5 independent tabs.
-- Capable Code Editor to free you from modern IDEs.
-- Powerful TASK Scripting Language similar to BASIC.
-- Office tools from Word Processor to Presentations and Spreadsheets.
-- File system explorer and capabale set of file manipulation tools.
-- Built-In Math Capabilities that enable Scientific Calculation.
-- Connection Management and Terminal-Based Chat Client.
-- RSS News Reader.
-- Corny in-built games.
-- ...and all what your linux offers...
+A Complete Retro-Inspired Computing Environment
+
+- Authentic terminal emulator with immersive CRT visual simulation.
+- Multi-session workspace supporting up to five independent terminal tabs.
+- Feature-rich code editor designed for efficient development without the overhead of modern IDEs.
+- Powerful TASK scripting language, inspired by the simplicity and productivity of BASIC.
+- Integrated productivity suite including word processing, presentations, and spreadsheets.
+- Comprehensive file manager with advanced file browsing and manipulation capabilities.
+- Built-in scientific and mathematical computing tools for engineering and analytical tasks.
+- Connection management tools and integrated terminal-based messaging client.
+- RSS news reader for staying informed directly within the environment.
+- A collection of classic built-in games for entertainment and nostalgia.
+- Full access to the power and flexibility of your Linux system.
+
+All the essential tools you need—development, productivity, communication, and system management—unified in a single lightweight environment.
 
 ### SYSTEM REQUIREMENTS: ###
 
@@ -41,7 +44,7 @@ Tested distributions:
 
 Note! Internet connection is required.
 
-### LATEST RELEASE: v0.9.90 ###
+### LATEST RELEASE: v0.9.931 ###
 
 PROJECT STATUS: EARLY ACCESS from v0.8.0 to v1.0.0
 

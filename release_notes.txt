@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.90
-  Release commit number:   1585
-  Baseline release:        v0.9.88
+  Release tag:             v0.9.931
+  Release commit number:   1657
+  Baseline release:        v0.9.93
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -202,6 +202,7 @@
 
  /* List of Games */
 
+  chess    : Classic chess for two players.
   invaders : Space invaders clone tailored to terminal.
   snake    : Snake clone, reminence from the good old Nokia days.
   tictactoe: Classic tictactoe, but with bigger game area.
@@ -256,10 +257,16 @@
   _RETROPROFILE        : List/show/apply/reset retro color profiles.
   _STRCMP              : Compare strings with optional case sensitivity
                          and full-word matching.
+  _TERM_ACTIVE         : Print 1 in apps/terminal, else 0.
+  _TERM_BACKGROUND_SOUND
+                       : Enable or disable continuous terminal
+                         background hum.
+  _TERM_BACKGROUND_VOLUME
+                       : Set continuous terminal background hum volume
+                         0-100.
   _TERM_CLEAN          : Clear pixel rectangle area from terminal
                          render layer.
   _TERM_CURSOR_BLINK   : Enable or disable blinking cursor in terminal.
-  _TERM_ACTIVE         : Print 1 in apps/terminal, else 0.
   _TERM_KEYBOARD       : Read buffered key events as TASK array literal.
   _TERM_MARGIN         : Set terminal pixel render margin.
   _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
@@ -281,6 +288,7 @@
   _TERM_SPRITE_LOAD    : Load sprite and output reusable TASK sprite literal.
   _TERM_TEXT           : Draw UTF-8 text in pixel space with color and layer.
   _TERM_TYPING_SOUND   : Enable or disable keyboard typing sound effects.
+  _TERM_TYPING_VOLUME  : Set keyboard typing sound effect volume 0-100.
   _TEST                : Print terminal diagnostic grid and size info.
   _TEXT                : Print text at column/row with optional color.
   _TIMER               : Start/stop/get/reset stopwatch in milliseconds.
@@ -317,34 +325,63 @@
 
 ================================= CHANGE LOG ================================
 
-commit 4fc035f63322ab8ceafe11cac177481655b6110d
-Merge: fe18764 0be93aa
+commit a1ac3c540fd976a2f7a8c1116af84617cdcc1058
 Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Tue Jun 9 23:01:02 2026 +0300
+Date:   Wed Jun 17 21:43:01 2026 +0300
 
-    Merge branch 'codex/rewrite-manual.md-to-manual.txt-with-formatting'
-
-commit 0be93aa1fb370f8997c9a8402aeaaa7d61b00d92
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Tue Jun 9 22:59:16 2026 +0300
-
-    Rewrite commands manual as ASCII text
-
-commands/manual.md
-commands/manual.txt
-
-commit fe1876421bf33064e7ddb2b71e174b659e24e9f8
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Tue Jun 9 22:49:44 2026 +0300
-
-    new intro
+    perfected budostack loader
 
 tasks/autoexec.task
 
-commit 2ab04223d1b3ad84e206c5bae6e069fb90b41452
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Tue Jun 9 22:27:19 2026 +0300
+commit 7f2c6a82e69fced2f205d64280c5e9718b2f4b09
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 21:33:27 2026 +0300
 
-    Allow large terminal sprite OSC payloads
+    changed syntax of start
+
+tasks/autoexec.task
+
+commit 2091f9ff999e01694741c7262b4c0a62a4bcef49
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 21:32:02 2026 +0300
+
+    further improved start
+
+tasks/autoexec.task
+
+commit 2688591f9e5e0e14f21ac634f09f84847c0cdb0c
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 21:22:41 2026 +0300
+
+    improved get started
+
+main.c
+
+commit 7eee0e34e75907a1dae1fcbe0086c01e7b01bca9
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 21:18:37 2026 +0300
+
+    improved start
+
+sounds/LICENSE.txt
+sounds/environment/computer_beep.wav
+tasks/autoexec.task
+
+commit 6a2b6da11bc3cd149b8ec79d37df9c850ab071a5
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 20:43:56 2026 +0300
+
+    improved loading realism
+
+tasks/autoexec.task
+
+commit 364567a3aef7028b121369b7b8da52337323e470
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 20:33:17 2026 +0300
+
+    improved background ambient sound
 
 apps/terminal.c
+sounds/LICENSE.txt
+sounds/environment/524598__matislav__fridge-buzz-loop.wav
+sounds/environment/background_ambient.wav

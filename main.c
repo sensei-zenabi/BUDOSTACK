@@ -1517,14 +1517,16 @@ int main(int argc, char *argv[]) {
     } else {
         /* Do not print startup messages and skip login() */
     }
-
-    printf("\nSYSTEM READY!");
+    printf("\nBUDOSTACK OPERATING SYSTEM");
+    printf("\n===============================================================================\n");
+    printf("\nGET STARTED:");
     printf("\n");
-    printf("\n QUICK HELP:");
-    printf("\n");
-    printf("\n Switch TABs: ALT + [1-5]");
-    printf("\n Type 'help' for command list.");
-    printf("\n Type 'exit' to quit.\n\n");
+    printf("\n 1) Switch TABs: ALT + [1-5]\n");
+    printf("\n 2) Type 'list' to see records.\n");
+    printf("\n 3) Press 'TAB' key for autocomplete.\n");
+    printf("\n 4) Run a TASK: 'runtask help.task'.\n");
+    printf("\n 5) Type 'exit' to quit.\n");
+    printf("\n===============================================================================\n");
     printf("\n");
 
     /* Execute auto_command if set */

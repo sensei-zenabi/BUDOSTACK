@@ -3840,11 +3840,15 @@ static int terminal_load_overlay(const char *path) {
         if (pixels) {
             stbi_image_free(pixels);
         }
+        fprintf(stderr, "terminal: Unable to load overlay '%s': %s\n",
+                path,
+                stbi_failure_reason() ? stbi_failure_reason() : "unknown error");
         return -1;
     }
     glGenTextures(1, &terminal_overlay_texture);
     if (terminal_overlay_texture == 0) {
         stbi_image_free(pixels);
+        fprintf(stderr, "terminal: Failed to create overlay texture.\n");
         return -1;
     }
     terminal_bind_texture(terminal_overlay_texture);
@@ -9264,6 +9268,7 @@ int main(int argc, char **argv) {
             }
         }
 
+        glViewport(0, 0, drawable_width, drawable_height);
         glClear(GL_COLOR_BUFFER_BIT);
         if (terminal_overlay_available) {
             terminal_draw_textured_quad(terminal_overlay_texture,

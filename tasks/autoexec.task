@@ -45,6 +45,7 @@ RUN _TERM_SHADER $SHADER
 
 # Set configurations for login
 
+RUN _TERM_SIZE 1080 738
 RUN _TERM_RESOLUTION LOW
 RUN _RETROPROFILE apply vt220-green
 
@@ -87,40 +88,40 @@ RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT "\nSTARTING SYSTEM:\n"
 PRINT "---------------------------------------\n\n"
 RUN _WAIT 1000
-#------------------------------------
-PRINT " BOOTSTRAP SEQUENCE ........ "
+#---------------------------------------
+PRINT " BOOTSTRAP SEQUENCE ........... "
 RUN _WAIT 1000
 PRINT "PASS\n\n"
 RUN _WAIT 100
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-#------------------------------------
-PRINT " MEMORY CHECK .............. "
+#---------------------------------------
+PRINT " MEMORY CHECK ................. "
 RUN _WAIT 800
 PRINT "PASS\n\n"
 RUN _WAIT 10
-#------------------------------------
-PRINT " KERNEL LOAD ............... "
+#---------------------------------------
+PRINT " KERNEL LOAD .................. "
 RUN _WAIT 250
 PRINT "COMPLETE\n\n"
 RUN _WAIT 25
-#------------------------------------
-PRINT " SYS/COMMS/UPLINK .......... "
+#---------------------------------------
+PRINT " SYS/COMMS/UPLINK ............. "
 RUN _WAIT 370
 PRINT "ACTIVATED\n\n"
 RUN _WAIT 10
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-#------------------------------------
-PRINT " I/O BUS SCAN .............. "
+#---------------------------------------
+PRINT " LOADING BUDOSTACK DATABASE ... "
 RUN _WAIT 400
 PRINT "COMPLETE\n\n"
 RUN _WAIT 70
-#------------------------------------
-PRINT " MU/TH/UR CORE ............. "
+#---------------------------------------
+PRINT " MU/TH/UR CORE ................ "
 RUN _WAIT 500
 PRINT "READY\n\n"
 RUN _WAIT 100
-#------------------------------------
-PRINT " PRIMARY TERMINAL .......... "
+#---------------------------------------
+PRINT " PRIMARY TERMINAL ............. "
 RUN _WAIT 250
 PRINT "ACTIVATED\n\n"
 RUN _WAIT 90
@@ -573,8 +574,6 @@ RUN _CLEAR
 
 RUN _CONFIG -read _TERM_RESOLUTION TO $RESOLUTION
 RUN _TERM_RESOLUTION $RESOLUTION
-RUN _CONFIG -read _TERM_SIZE TO $TERM_SIZE
-RUN _TERM_SIZE $TERM_SIZE
 
 RUN _CONFIG -read _TERM_MOUSE_SHOW TO $MOUSE
 RUN _TERM_MOUSE_SHOW $MOUSE

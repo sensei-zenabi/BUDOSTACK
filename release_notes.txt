@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.931
-  Release commit number:   1657
-  Baseline release:        v0.9.93
+  Release tag:             v0.9.94
+  Release commit number:   1681
+  Baseline release:        v0.9.931
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -325,63 +325,188 @@
 
 ================================= CHANGE LOG ================================
 
-commit a1ac3c540fd976a2f7a8c1116af84617cdcc1058
+commit 57e9995a31a1890c5667c794ee81f6079093b458
 Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 17 21:43:01 2026 +0300
+Date:   Wed Jun 24 22:49:43 2026 +0300
 
-    perfected budostack loader
+    updated the screenshots
+
+screenshots/demo.png
+screenshots/help.png
+screenshots/login.png
+screenshots/paint.png
+
+commit ef8ced518a8594ea116a671c4d0d55643870fee6
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 24 22:39:24 2026 +0300
+
+    added good offset for the overlay
 
 tasks/autoexec.task
 
-commit 7f2c6a82e69fced2f205d64280c5e9718b2f4b09
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 17 21:33:27 2026 +0300
+commit 2b82eed0afc2de93419e946a802f5e3941d0ba83
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 24 22:37:06 2026 +0300
 
-    changed syntax of start
-
-tasks/autoexec.task
-
-commit 2091f9ff999e01694741c7262b4c0a62a4bcef49
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 17 21:32:02 2026 +0300
-
-    further improved start
-
-tasks/autoexec.task
-
-commit 2688591f9e5e0e14f21ac634f09f84847c0cdb0c
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 17 21:22:41 2026 +0300
-
-    improved get started
-
-main.c
-
-commit 7eee0e34e75907a1dae1fcbe0086c01e7b01bca9
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 17 21:18:37 2026 +0300
-
-    improved start
-
-sounds/LICENSE.txt
-sounds/environment/computer_beep.wav
-tasks/autoexec.task
-
-commit 6a2b6da11bc3cd149b8ec79d37df9c850ab071a5
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 17 20:43:56 2026 +0300
-
-    improved loading realism
-
-tasks/autoexec.task
-
-commit 364567a3aef7028b121369b7b8da52337323e470
-Author: suoravi <ville.m.suoranta@gmail.com>
-Date:   Wed Jun 17 20:33:17 2026 +0300
-
-    improved background ambient sound
+    Add terminal display offset command
 
 apps/terminal.c
-sounds/LICENSE.txt
-sounds/environment/524598__matislav__fridge-buzz-loop.wav
-sounds/environment/background_ambient.wav
+commands/_TERM_OFFSET.c
+
+commit d6545b148c847c294a54611b2f74127a0ec0fec3
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 24 22:18:29 2026 +0300
+
+    quite good looking overlay
+
+budo/shaders/crtscreen.glsl
+config.ini
+graphics/overlay.png
+tasks/autoexec.task
+
+commit dd3b0e088b583afa7c1a22bb604a94f95783e332
+Merge: 20c8f7b 199eb38
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 24 21:34:54 2026 +0300
+
+    Merge branch 'codex/add-terminal-resize-capability-with-overlay' into dev
+
+commit 20c8f7b0a0abe57a3582fd5437b11e0aa70ba631
+Merge: 70108d3 40c709f
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 24 21:34:35 2026 +0300
+
+    Merge branch 'main' into dev
+
+commit 199eb38c4604a884cd5024e55b27d25ee361791f
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 24 21:32:35 2026 +0300
+
+    Add terminal overlay display sizing
+
+apps/terminal.c
+
+commit 688b54b06d59208b386f1018424a82c5e157a217
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 24 21:25:50 2026 +0300
+
+    Add terminal overlay display sizing
+
+apps/terminal.c
+commands/_TERM_SIZE.c
+config.ini
+tasks/autoexec.task
+
+commit 40c709fbafded4ac3f5707b7990c777ad42b8012
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 24 21:09:59 2026 +0300
+
+    folder for system graphics used by ./apps/terminal
+
+graphics/readme.md
+
+commit 5357b13f7cb8fd374d8d5dbc700cc6c6c616ac0e
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 17 22:20:51 2026 +0300
+
+    fixed typo in license name
+
+readme.md
+
+commit 70108d328355986896237ad050636fed4ce77673
+Merge: d347eac 806812f
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 23:21:02 2026 +0300
+
+    Merge branch 'main' into dev
+
+commit d347eacf82a801ae2d14a1f95030a3b348392e9e
+Merge: 8981af8 b060139
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 21:55:54 2026 +0300
+
+    Merge branch 'main' into dev
+
+commit 8981af828a68f4163e56510ee277c10ee0e62608
+Merge: c27d942 f72fe8d
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Wed Jun 10 21:43:54 2026 +0300
+
+    Merge branch 'main' into dev
+
+commit c27d942a0c1c646215d7e8c8a60ddea8dcbed563
+Merge: 990a6ca 4fc035f
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 23:02:29 2026 +0300
+
+    Merge branch 'main' into dev
+
+commit 990a6ca00da6f4c0c3bf0f5a6e4b107d8c655cf8
+Merge: 042f4c3 927d067
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Tue Jun 9 22:02:50 2026 +0300
+
+    Merge branch 'main' into dev
+
+commit 042f4c34ee583a4a60fdca32a5f51ae8ba3bd9d8
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 8 22:18:14 2026 +0300
+
+    cherry picked from main
+
+utilities/list.c
+
+commit 56e9b7ec96333d121b29c1275dbd96c67d7c5e2a
+Merge: a924bf0 d4726fb
+Author: suoravi <ville.m.suoranta@gmail.com>
+Date:   Mon Jun 8 22:14:48 2026 +0300
+
+    main merge
+
+commit a924bf095cfe8fceb094f6923a7ea7890c875138
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 21:35:12 2026 +0300
+
+    Fix folder size placeholders and restore column alignment
+
+utilities/list.c
+
+commit f1045c1014d876008cf5e6fe5354c40030c8308b
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 21:31:32 2026 +0300
+
+    Adjust size spacing, hide directory sizes, and tighten column gap
+
+utilities/list.c
+
+commit 866622c4fe6b589463805171079546dd544b06b2
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 21:24:54 2026 +0300
+
+    Refine size column dotted alignment and fixed-width units
+
+utilities/list.c
+
+commit 31f561f29c81add2a49ee0095a05bb20aef08ef2
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 21:11:22 2026 +0300
+
+    Align list headers/columns and remove dotted title row
+
+utilities/list.c
+
+commit d23afa0c46dd752da84f2258b6f6ec4104c7413b
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 21:02:28 2026 +0300
+
+    Refine list dot padding and human-readable size units
+
+utilities/list.c
+
+commit 228537073206a29e07adc1d6b118f1f3fa4b568c
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri May 22 20:57:06 2026 +0300
+
+    Improve list output readability with dot-connected columns
+
+utilities/list.c

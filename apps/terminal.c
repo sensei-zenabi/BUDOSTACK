@@ -94,6 +94,8 @@ static int terminal_resolution_width = 0;
 static int terminal_resolution_height = 0;
 static int terminal_display_width = 0;
 static int terminal_display_height = 0;
+static int terminal_offset_x = 0;
+static int terminal_offset_y = 0;
 static int terminal_margin_pixels = 0;
 static size_t terminal_selection_anchor_row = 0u;
 static size_t terminal_selection_anchor_col = 0u;
@@ -1428,10 +1430,10 @@ static void terminal_display_rect(int drawable_width, int drawable_height, int *
         height = 1;
     }
     if (out_x) {
-        *out_x = (drawable_width - width) / 2;
+        *out_x = ((drawable_width - width) / 2) + terminal_offset_x;
     }
     if (out_y) {
-        *out_y = (drawable_height - height) / 2;
+        *out_y = ((drawable_height - height) / 2) + terminal_offset_y;
     }
     if (out_w) {
         *out_w = width;
@@ -5948,6 +5950,11 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int term_size_width_set = 0;
     int term_size_height_set = 0;
     int term_size_requested = 0;
+    int requested_offset_x = 0;
+    int requested_offset_y = 0;
+    int term_offset_x_set = 0;
+    int term_offset_y_set = 0;
+    int term_offset_requested = 0;
     int mouse_query_requested = 0;
     int mouse_visibility_requested = 0;
     int mouse_visibility_show = 0;
@@ -6104,6 +6111,35 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             }
                             if (term_size_width_set && term_size_height_set) {
                                 term_size_requested = 1;
+                            }
+                        }
+                    } else if (strcmp(key, "term_offset") == 0 && value && *value != '\0') {
+                        char *sep = strchr(value, ',');
+                        if (!sep) {
+                            sep = strchr(value, 'x');
+                        }
+                        if (!sep) {
+                            sep = strchr(value, 'X');
+                        }
+                        if (sep) {
+                            *sep = '\0';
+                            const char *y_str = sep + 1;
+                            char *endptr = NULL;
+                            errno = 0;
+                            long parsed_x = strtol(value, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0' && parsed_x >= INT_MIN && parsed_x <= INT_MAX) {
+                                requested_offset_x = (int)parsed_x;
+                                term_offset_x_set = 1;
+                            }
+                            errno = 0;
+                            endptr = NULL;
+                            long parsed_y = strtol(y_str, &endptr, 10);
+                            if (errno == 0 && endptr && *endptr == '\0' && parsed_y >= INT_MIN && parsed_y <= INT_MAX) {
+                                requested_offset_y = (int)parsed_y;
+                                term_offset_y_set = 1;
+                            }
+                            if (term_offset_x_set && term_offset_y_set) {
+                                term_offset_requested = 1;
                             }
                         }
                     } else if (strcmp(key, "shader") == 0 && value && *value != '\0') {
@@ -6587,6 +6623,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     if (term_size_requested && term_size_width_set && term_size_height_set) {
         terminal_display_width = term_size_width;
         terminal_display_height = term_size_height;
+        terminal_mark_full_redraw();
+        terminal_input_draw_requested = 1;
+    }
+    if (term_offset_requested && term_offset_x_set && term_offset_y_set) {
+        terminal_offset_x = requested_offset_x;
+        terminal_offset_y = requested_offset_y;
         terminal_mark_full_redraw();
         terminal_input_draw_requested = 1;
     }

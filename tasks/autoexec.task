@@ -56,7 +56,7 @@ RUN _TERM_MARGIN 8
 
 # Configurations
 SET $RESOLUTION = "null"
-SET $TERM_SIZE = "1920 1080"
+SET $TERM_SIZE = "1565 800"
 SET $MOUSE = "null"
 SET $LOGIN_SCREEN = "null"
 SET $LOGIN_MENU = "null"

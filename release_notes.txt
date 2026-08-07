@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.95
-  Release commit number:   1683
-  Baseline release:        v0.9.94
+  Release tag:             v0.9.951
+  Release commit number:   1686
+  Baseline release:        v0.9.95
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -325,13 +325,23 @@
 
 ================================= CHANGE LOG ================================
 
-commit 70c948a8118652746f791bae3932be89b8f2fafd
+commit 81df220cd312f71c5c0324df6bbb086f3ab590d6
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri Aug 7 16:24:24 2026 +0300
+Date:   Fri Aug 7 18:24:48 2026 +0300
 
-    v0.9.95
+    matched the resolution in the unused variable
 
-budo/shaders/crtscreen.glsl
-graphics/overlay.png
 tasks/autoexec.task
-users/ville/readme.md
+
+commit b2f4d38cd559c208b12fd357ee51fbbeef541ef7
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Fri Aug 7 18:23:32 2026 +0300
+
+    fixed the paths on these shortcuts
+
+users/default/games/chess.task
+users/default/games/cube.task
+users/default/games/invaders.task
+users/default/games/rocket.task
+users/default/games/snake.task
+users/default/games/tictactoe.task

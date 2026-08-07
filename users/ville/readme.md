@@ -44,7 +44,7 @@ Tested distributions:
 
 Note! Internet connection is required.
 
-### LATEST RELEASE: v0.9.94 ###
+### LATEST RELEASE: v0.9.95 ###
 
 PROJECT STATUS: EARLY ACCESS from v0.8.0 to v1.0.0
 

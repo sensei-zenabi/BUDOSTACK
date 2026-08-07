@@ -1,2 +1,2 @@
-SYS cd ../../games
+SYS cd ../../../games
 SYS ./invaders

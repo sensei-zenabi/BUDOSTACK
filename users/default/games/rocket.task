@@ -1,2 +1,2 @@
-SYS cd ../../budo
+SYS cd ../../../budo
 SYS ./rocket

@@ -11,15 +11,25 @@ With the help of BUDOSTACK, you can time-warp your Linux PC back to an era when 
 A Complete Retro-Inspired Computing Environment
 
 - Authentic terminal emulator with immersive CRT visual simulation.
+  
 - Multi-session workspace supporting up to five independent terminal tabs.
+  
 - Feature-rich code editor designed for efficient development without the overhead of modern IDEs.
+  
 - Powerful TASK scripting language, inspired by the simplicity and productivity of BASIC.
+  
 - Integrated productivity suite including word processing, presentations, and spreadsheets.
+  
 - Comprehensive file manager with advanced file browsing and manipulation capabilities.
+  
 - Built-in scientific and mathematical computing tools for engineering and analytical tasks.
+  
 - Connection management tools and integrated terminal-based messaging client.
+  
 - RSS news reader for staying informed directly within the environment.
+  
 - A collection of classic built-in games for entertainment and nostalgia.
+  
 - Full access to the power and flexibility of your Linux system.
 
 All the essential tools you need—development, productivity, communication, and system management—unified in a single lightweight environment.

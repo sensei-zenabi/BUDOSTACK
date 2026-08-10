@@ -30,7 +30,7 @@ SET $BACKGROUND_SOUND = "enable"
 SET $BACKGROUND_VOLUME = 25
 SET $SHADER = "disable"
 SET $SHADER_QUALITY = "MEDIUM"
-SET $OVERLAY = 0
+SET $OVERLAY = "null"
 SET $RESOLUTION = "null"
 SET $TERM_SIZE = "1565 800"
 SET $MOUSE = "null"
@@ -56,6 +56,12 @@ IF ($OVERLAY == "enable"):
   RUN _TERM_SIZE 1565 830
   RUN _TERM_OFFSET -3 27
 END
+IF ($OVERLAY == "disable"):
+  RUN _TERM_OVERLAY disable
+  RUN _TERM_SIZE 0 0
+  RUN _TERM_OFFSET 0 0
+END
+
 
 # Run or set other default configurations
 
@@ -146,7 +152,6 @@ IF ($LOGIN_SCREEN == "disable"):
   GOTO LAUNCHER
 END
 
-
 RUN _CLEAR
 
 # Following INTRO will run only in ./apps/terminal
@@ -230,6 +235,19 @@ END
 # LAUNCHER APPLICATION
 
 @LAUNCHER_MENU
+
+RUN _CONFIG -read _TERM_OVERLAY TO $OVERLAY
+IF ($OVERLAY == "enable"):
+  RUN _TERM_OVERLAY enable
+  RUN _TERM_SIZE 1565 830
+  RUN _TERM_OFFSET -3 27
+END
+IF ($OVERLAY == "disable"):
+  RUN _TERM_OVERLAY disable
+  RUN _TERM_SIZE 0 0
+  RUN _TERM_OFFSET 0 0
+END
+
 
 EVAL DRAW_FRAME()
 
@@ -330,6 +348,7 @@ IF ($MENU == "CONFIGURATION"):
   RUN _CONFIG -read _TERM_BACKGROUND_VOLUME TO $BACKGROUND_VOLUME
   RUN _CONFIG -read _TERM_SHADER TO $SHADER
   RUN _CONFIG -read SHADER_QUALITY TO $SHADER_QUALITY
+  RUN _CONFIG -read _TERM_OVERLAY TO $OVERLAY
 
   # Index retroprofile
   SET $RETROPROFILE_IDX = 0
@@ -375,7 +394,8 @@ IF ($MENU == "CONFIGURATION"):
   RUN _TEXT -x $MENU_X-3 -y 33-$YOFF -text "Retro Profile   = " + $RETROPROFILE
   RUN _TEXT -x $MENU_X-3 -y 35-$YOFF -text "Shader Passes   = " + $SHADER
   RUN _TEXT -x $MENU_X-3 -y 37-$YOFF -text "Shaders         = " + $SHADER_QUALITY
-  RUN _TEXT -x $MENU_X-3 -y 39-$YOFF -text "<-- MAIN MENU             "
+  RUN _TEXT -x $MENU_X-3 -y 39-$YOFF -text "Overlay         = " + $OVERLAY
+  RUN _TEXT -x $MENU_X-3 -y 41-$YOFF -text "<-- MAIN MENU             "
 
   EVAL DRAW_CURSOR($CURSOR_X-3, $CURSOR_Y)
 
@@ -405,8 +425,8 @@ IF ($MENU == "CONFIGURATION"):
   IF ($CURSOR_Y < 17-$YOFF):
     $CURSOR_Y = 17-$YOFF
   END
-  IF ($CURSOR_Y > 39-$YOFF):
-    $CURSOR_Y = 39-$YOFF
+  IF ($CURSOR_Y > 41-$YOFF):
+    $CURSOR_Y = 41-$YOFF
   END
 
 
@@ -550,6 +570,15 @@ IF ($MENU == "CONFIGURATION"):
       END
     END
     IF ($CURSOR_Y == 39-$YOFF):
+      # Switch overlay on/off
+      IF ($OVERLAY == "enable"):
+        RUN _CONFIG -write _TERM_OVERLAY disable
+      END
+      IF ($OVERLAY == "disable"):
+        RUN _CONFIG -write _TERM_OVERLAY enable
+      END
+    END
+    IF ($CURSOR_Y == 41-$YOFF):
       $MENU = "QUICK START"
     END
 
@@ -589,6 +618,19 @@ RUN _TERM_BACKGROUND_VOLUME $BACKGROUND_VOLUME
 
 RUN _CONFIG -read _TERM_SHADER TO $SHADER
 RUN _TERM_SHADER $SHADER
+
+RUN _CONFIG -read _TERM_OVERLAY TO $OVERLAY
+IF ($OVERLAY == "enable"):
+  RUN _TERM_OVERLAY enable
+  RUN _TERM_SIZE 1565 830
+  RUN _TERM_OFFSET -3 27
+END
+IF ($OVERLAY == "disable"):
+  RUN _TERM_OVERLAY disable
+  RUN _TERM_SIZE 0 0
+  RUN _TERM_OFFSET 0 0
+END
+
 
 # Return cursor blink
 RUN _TERM_CURSOR_BLINK enable

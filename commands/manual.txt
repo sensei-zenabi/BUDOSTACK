@@ -302,6 +302,15 @@ _TERM_SHADER
     _TERM_SHADER enable
     _TERM_SHADER disable
 
+_TERM_OVERLAY
+  Syntax: _TERM_OVERLAY [enable|disable]
+  Controls whether graphics/overlay.png is drawn in the terminal. With no
+  argument, prints 1 when the overlay is enabled or 0 when it is disabled.
+  Examples:
+    _TERM_OVERLAY
+    _TERM_OVERLAY enable
+    _TERM_OVERLAY disable
+
 _TERM_SOUND_KEYBOARD
   Syntax: _TERM_SOUND_KEYBOARD <enable|disable>
   Use: Enable or disable keyboard typing sound effects in terminal apps.

@@ -122,6 +122,7 @@ static int terminal_history_width = 0;
 static int terminal_history_height = 0;
 static GLuint terminal_overlay_texture = 0;
 static int terminal_overlay_available = 0;
+static int terminal_overlay_enabled = 1;
 static GLuint terminal_cursor_texture = 0;
 static int terminal_cursor_width = 0;
 static int terminal_cursor_height = 0;
@@ -4177,6 +4178,7 @@ static void terminal_print_usage(const char *progname) {
     fprintf(stderr, "  --shader-fps hz  Set shader animation FPS (0 disables animation pacing).\n");
     fprintf(stderr, "  Send OSC 777 'shader=enable|disable' via _TERM_SHADER to toggle shaders at runtime.\n");
     fprintf(stderr, "  Send OSC 777 'cursor_blink=enable|disable' via _TERM_CURSOR_BLINK to toggle cursor blinking.\n");
+    fprintf(stderr, "  Send OSC 777 'overlay=enable|disable|query' via _TERM_OVERLAY to control the overlay.\n");
 }
 
 static int terminal_parse_fps_value(const char *text, unsigned int *out_value) {
@@ -5962,6 +5964,9 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int shader_enable_requested = 0;
     int cursor_blink_toggle_requested = 0;
     int cursor_blink_enable_requested = 1;
+    int overlay_toggle_requested = 0;
+    int overlay_enable_requested = 1;
+    int overlay_query_requested = 0;
 
     if (args && args[0] != '\0') {
         char *copy = strdup(args);
@@ -6157,6 +6162,16 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         } else if (strcmp(value, "disable") == 0) {
                             cursor_blink_toggle_requested = 1;
                             cursor_blink_enable_requested = 0;
+                        }
+                    } else if (strcmp(key, "overlay") == 0 && value && *value != '\0') {
+                        if (strcmp(value, "enable") == 0) {
+                            overlay_toggle_requested = 1;
+                            overlay_enable_requested = 1;
+                        } else if (strcmp(value, "disable") == 0) {
+                            overlay_toggle_requested = 1;
+                            overlay_enable_requested = 0;
+                        } else if (strcmp(value, "query") == 0) {
+                            overlay_query_requested = 1;
                         }
 #if BUDOSTACK_HAVE_SDL2
                     } else if (strcmp(key, "sound") == 0 && value && *value != '\0') {
@@ -6599,6 +6614,22 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                 terminal_cursor_blink_enabled = cursor_blink_enable_requested;
                 terminal_cursor_blink_reset_requested = 1;
                 terminal_mark_full_redraw();
+            }
+
+            if (overlay_toggle_requested) {
+                terminal_overlay_enabled = overlay_enable_requested;
+                terminal_mark_full_redraw();
+            }
+
+            if (overlay_query_requested) {
+                char response[32];
+                int written = snprintf(response,
+                                       sizeof(response),
+                                       "_TERM_OVERLAY %d\n",
+                                       terminal_overlay_enabled);
+                if (written > 0 && (size_t)written < sizeof(response)) {
+                    terminal_send_response(response);
+                }
             }
 
             free(copy);
@@ -9312,7 +9343,7 @@ int main(int argc, char **argv) {
 
         glViewport(0, 0, drawable_width, drawable_height);
         glClear(GL_COLOR_BUFFER_BIT);
-        if (terminal_overlay_available) {
+        if (terminal_overlay_available && terminal_overlay_enabled) {
             terminal_draw_textured_quad(terminal_overlay_texture,
                                         0,
                                         0,

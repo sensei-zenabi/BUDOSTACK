@@ -53,8 +53,8 @@ RUN _TERM_SHADER $SHADER
 RUN _CONFIG -read _TERM_OVERLAY TO $OVERLAY
 IF ($OVERLAY == "enable"):
   RUN _TERM_OVERLAY enable
-  RUN _TERM_SIZE 1565 800
-  RUN _TERM_OFFSET -6 27
+  RUN _TERM_SIZE 1565 830
+  RUN _TERM_OFFSET -3 27
 END
 
 # Run or set other default configurations

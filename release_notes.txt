@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.951
-  Release commit number:   1686
-  Baseline release:        v0.9.95
+  Release tag:             v0.9.953
+  Release commit number:   1693
+  Baseline release:        v0.9.951
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -325,23 +325,54 @@
 
 ================================= CHANGE LOG ================================
 
-commit 81df220cd312f71c5c0324df6bbb086f3ab590d6
+commit c4af796d1ecc6e2c5582ad223d6c58619bd200c9
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri Aug 7 18:24:48 2026 +0300
+Date:   Mon Aug 10 20:39:11 2026 +0300
 
-    matched the resolution in the unused variable
+    menu setup for overlay on off
 
 tasks/autoexec.task
 
-commit b2f4d38cd559c208b12fd357ee51fbbeef541ef7
+commit fa517a3e142a31aca7a10984e7494ee532de5a06
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Fri Aug 7 18:23:32 2026 +0300
+Date:   Mon Aug 10 20:05:00 2026 +0300
 
-    fixed the paths on these shortcuts
+    improved overlay
 
-users/default/games/chess.task
-users/default/games/cube.task
-users/default/games/invaders.task
-users/default/games/rocket.task
-users/default/games/snake.task
-users/default/games/tictactoe.task
+graphics/overlay.png
+tasks/autoexec.task
+
+commit 186cfcafec21e55357ae8159422e3f04707a638d
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Aug 10 19:41:21 2026 +0300
+
+    config option for overlay
+
+config.ini
+tasks/autoexec.task
+
+commit 23472ff5ce881df9ee05bbfa6a772040faae4b11
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Mon Aug 10 19:31:55 2026 +0300
+
+    Add terminal overlay control command
+
+apps/terminal.c
+commands/_TERM_OVERLAY.c
+commands/manual.txt
+
+commit e220628cdcb78eadbd608f6a8fcc5de319ce6608
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun Aug 9 22:38:25 2026 +0300
+
+    Update readme.md
+
+users/ville/readme.md
+
+commit c809e6e56510e175f92ff34f69b5bcc818a62171
+Author: sensei-zenabi <ville.m.suoranta@gmail.com>
+Date:   Sun Aug 9 22:36:53 2026 +0300
+
+    Update readme.md
+
+users/ville/readme.md

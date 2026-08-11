@@ -43,6 +43,7 @@
 #include <stdint.h>
 #include <limits.h>   // PATH_MAX
 #include <math.h>
+#include <stdarg.h>
 #include <sys/stat.h>
 #include <dirent.h>
 
@@ -76,6 +77,7 @@ static int resolve_task_path(const char *arg, const char *cwd, char *out, size_t
 static int resolve_bundled_task_candidate(const char *candidate, char *out, size_t out_size);
 static int find_task_by_basename(const char *filename, char *out, size_t out_size);
 static int task_dirname(const char *path, char *out, size_t out_size);
+static void report_task_error(const char *path, int line, const char *format, ...);
 
 typedef enum {
     VALUE_UNSET = 0,
@@ -163,6 +165,15 @@ static struct termios saved_termios;
 static bool saved_termios_valid = false;
 static bool echo_disabled = false;
 static char task_workdir[PATH_MAX];
+
+static void report_task_error(const char *path, int line, const char *format, ...) {
+    fprintf(stderr, "%s:%d: error: ", path ? path : "<task>", line);
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+    fputc('\n', stderr);
+}
 
 static void set_initial_argv0(const char *argv0) {
     if (!argv0) {
@@ -3149,6 +3160,7 @@ typedef enum {
 
 typedef struct {
     int source_line;   // original file line number for diagnostics
+    char source_path[PATH_MAX];
     LineType type;
     int indent;        // leading whitespace count for block handling
     char text[SCRIPT_TEXT_MAX];
@@ -3323,8 +3335,8 @@ static FunctionDef *find_function_by_definition(FunctionDef *functions, int func
     return NULL;
 }
 
-static bool record_script_line(const char *line, int indent, int source_line, ScriptLine *script, int script_cap, int *count, Label *labels, int *label_count, FunctionDef *functions, int *function_count) {
-    if (!line || !script || !count || !labels || !label_count || !functions || !function_count) {
+static bool record_script_line(const char *line, const char *source_path, int indent, int source_line, ScriptLine *script, int script_cap, int *count, Label *labels, int *label_count, FunctionDef *functions, int *function_count) {
+    if (!line || !source_path || !script || !count || !labels || !label_count || !functions || !function_count) {
         return false;
     }
 
@@ -3337,6 +3349,7 @@ static bool record_script_line(const char *line, int indent, int source_line, Sc
     bool is_function = parse_function_definition(line, &def_tmp);
     if (is_function) {
         script[*count].source_line = source_line;
+        snprintf(script[*count].source_path, sizeof(script[*count].source_path), "%s", source_path);
         script[*count].type = LINE_FUNCTION;
         script[*count].indent = indent;
         strncpy(script[*count].text, line, sizeof(script[*count].text) - 1);
@@ -3368,6 +3381,7 @@ static bool record_script_line(const char *line, int indent, int source_line, Sc
             return false;
         }
         script[*count].source_line = source_line;
+        snprintf(script[*count].source_path, sizeof(script[*count].source_path), "%s", source_path);
         script[*count].type = LINE_LABEL;
         script[*count].indent = indent;
         strncpy(script[*count].text, line, sizeof(script[*count].text) - 1);
@@ -3392,6 +3406,7 @@ static bool record_script_line(const char *line, int indent, int source_line, Sc
     }
 
     script[*count].source_line = source_line;
+    snprintf(script[*count].source_path, sizeof(script[*count].source_path), "%s", source_path);
     script[*count].type = LINE_COMMAND;
     script[*count].indent = indent;
     strncpy(script[*count].text, line, sizeof(script[*count].text) - 1);
@@ -3503,16 +3518,29 @@ static bool load_task_file(const char *task_path, const char *task_dir, ScriptLi
     int include_count = 0;
     int pending_count = 0;
 
-    char linebuf[256];
+    char linebuf[SCRIPT_TEXT_MAX];
     char combined[SCRIPT_TEXT_MAX];
     int brace_balance = 0;
     bool combining = false;
     int pending_indent = 0;
     int pending_source_line = 0;
     int file_line = 0;
+    bool parse_error = false;
 
     while (fgets(linebuf, sizeof(linebuf), fp)) {
         file_line++;
+        size_t physical_len = strlen(linebuf);
+        if (physical_len > 0 && linebuf[physical_len - 1] != '\n' && !feof(fp)) {
+            int ch;
+            while ((ch = fgetc(fp)) != '\n' && ch != EOF) {
+            }
+            report_task_error(task_path, file_line, "line exceeds %d characters", SCRIPT_TEXT_MAX - 2);
+            parse_error = true;
+            combining = false;
+            brace_balance = 0;
+            pending_source_line = 0;
+            continue;
+        }
         char *line = trim(linebuf);
         int indent = (int)(line - linebuf);
         if (indent < 0) {
@@ -3535,7 +3563,11 @@ static bool load_task_file(const char *task_path, const char *task_dir, ScriptLi
             size_t cur_len = strlen(combined);
             size_t add_len = strlen(line);
             if (cur_len + 1 + add_len >= sizeof(combined)) {
-                fprintf(stderr, "Error: combined line too long near source line %d\n", pending_source_line);
+                report_task_error(task_path, pending_source_line, "multiline array literal is too long");
+                parse_error = true;
+                combining = false;
+                brace_balance = 0;
+                pending_source_line = 0;
                 continue;
             }
             combined[cur_len] = ' ';
@@ -3552,9 +3584,11 @@ static bool load_task_file(const char *task_path, const char *task_dir, ScriptLi
         int effective_line = pending_source_line ? pending_source_line : file_line;
 
         if (brace_balance < 0) {
-            fprintf(stderr, "Error: unmatched closing brace at line %d\n", file_line);
+            report_task_error(task_path, file_line, "unmatched closing brace");
+            parse_error = true;
             brace_balance = 0;
             combining = false;
+            pending_source_line = 0;
             continue;
         }
 
@@ -3566,21 +3600,24 @@ static bool load_task_file(const char *task_path, const char *task_dir, ScriptLi
             char *include_target = NULL;
             const char *cursor = after;
             if (!parse_string_literal(&cursor, &include_target)) {
-                fprintf(stderr, "Error: invalid INCLUDE path at line %d\n", effective_line);
+                report_task_error(task_path, effective_line, "INCLUDE requires a quoted path");
+                parse_error = true;
                 continue;
             }
             while (isspace((unsigned char)*cursor)) {
                 cursor++;
             }
             if (*cursor != '\0') {
-                fprintf(stderr, "Error: unexpected characters after INCLUDE path at line %d\n", effective_line);
+                report_task_error(task_path, effective_line, "unexpected characters after INCLUDE path");
+                parse_error = true;
                 free(include_target);
                 continue;
             }
 
             char resolved[PATH_MAX];
             if (resolve_task_path(include_target, base_dir, resolved, sizeof(resolved)) != 0) {
-                fprintf(stderr, "Error: could not resolve INCLUDE '%s' at line %d\n", include_target, effective_line);
+                report_task_error(task_path, effective_line, "could not resolve INCLUDE '%s'", include_target);
+                parse_error = true;
                 free(include_target);
                 continue;
             }
@@ -3588,6 +3625,7 @@ static bool load_task_file(const char *task_path, const char *task_dir, ScriptLi
 
             if (include_count >= MAX_INCLUDES_PER_FILE) {
                 fprintf(stderr, "Error: too many INCLUDE directives in '%s' (max %d)\n", task_path, MAX_INCLUDES_PER_FILE);
+                parse_error = true;
                 continue;
             }
 
@@ -3611,7 +3649,24 @@ static bool load_task_file(const char *task_path, const char *task_dir, ScriptLi
         pending_count++;
     }
 
-    fclose(fp);
+    if (ferror(fp)) {
+        fprintf(stderr, "Error: failed while reading task file '%s': %s\n", task_path, strerror(errno));
+        parse_error = true;
+    }
+    if (combining || brace_balance > 0) {
+        report_task_error(task_path, pending_source_line, "unterminated array literal");
+        parse_error = true;
+    }
+
+    if (fclose(fp) != 0) {
+        fprintf(stderr, "Error: failed to close task file '%s': %s\n", task_path, strerror(errno));
+        parse_error = true;
+    }
+
+    if (parse_error) {
+        free(pending_lines);
+        return false;
+    }
 
     for (int i = 0; i < include_count; ++i) {
         char include_dir[PATH_MAX];
@@ -3626,7 +3681,7 @@ static bool load_task_file(const char *task_path, const char *task_dir, ScriptLi
     }
 
     for (int i = 0; i < pending_count; ++i) {
-        if (!record_script_line(pending_lines[i].text, pending_lines[i].indent, pending_lines[i].source_line, script, script_cap, script_count, labels, label_count, functions, function_count)) {
+        if (!record_script_line(pending_lines[i].text, task_path, pending_lines[i].indent, pending_lines[i].source_line, script, script_cap, script_count, labels, label_count, functions, function_count)) {
             free(pending_lines);
             return false;
         }
@@ -4317,6 +4372,7 @@ int main(int argc, char *argv[]) {
     bool skip_for_true_branch = false;
     bool skip_progress_pending = false;
     bool skip_consumed_first = false;
+    bool execution_failed = false;
 
     // Run
     for (int pc = 0; pc < count && !stop; pc++) {
@@ -4427,8 +4483,9 @@ int main(int argc, char *argv[]) {
 
         const char *colon = strrchr(after_if, ':');
         if (!colon) {
-            if (debug) fprintf(stderr, "IF: expected ':' before END-delimited block at %d\n", script[pc].source_line);
-            continue;
+            report_task_error(script[pc].source_path, script[pc].source_line, "IF requires ':' before its block");
+            execution_failed = true;
+            break;
         }
 
         const char *cond_end = colon;
@@ -4437,15 +4494,18 @@ int main(int argc, char *argv[]) {
         }
 
         if (cond_end <= after_if) {
-            if (debug) fprintf(stderr, "IF: missing condition before ':' at %d\n", script[pc].source_line);
-            continue;
+            report_task_error(script[pc].source_path, script[pc].source_line, "IF is missing a condition before ':'");
+            execution_failed = true;
+            break;
         }
 
         char cond_buf[256];
         size_t cond_len = (size_t)(cond_end - after_if);
         if (cond_len >= sizeof(cond_buf)) {
-            if (debug) fprintf(stderr, "IF: condition too long at %d\n", script[pc].source_line);
-            continue;
+            report_task_error(script[pc].source_path, script[pc].source_line, "IF condition exceeds %zu characters",
+                              sizeof(cond_buf) - 1);
+            execution_failed = true;
+            break;
         }
         memcpy(cond_buf, after_if, cond_len);
         cond_buf[cond_len] = '\0';
@@ -4470,8 +4530,9 @@ int main(int argc, char *argv[]) {
         }
 
         if (start_off >= end_off) {
-            if (debug) fprintf(stderr, "IF: empty condition after trimming at %d\n", script[pc].source_line);
-            continue;
+            report_task_error(script[pc].source_path, script[pc].source_line, "IF condition is empty");
+            execution_failed = true;
+            break;
         }
 
         memmove(cond_buf, cond_buf + start_off, end_off - start_off);
@@ -4486,6 +4547,13 @@ int main(int argc, char *argv[]) {
             condition_parsed = true;
         } else if (evaluate_truthy_expression(cond_buf, script[pc].source_line, debug, &cond_result)) {
             condition_parsed = true;
+            cursor = cond_buf + strlen(cond_buf);
+        }
+
+        if (!condition_parsed) {
+            report_task_error(script[pc].source_path, script[pc].source_line, "invalid IF condition: %s", cond_buf);
+            execution_failed = true;
+            break;
         }
 
         if (condition_parsed) {
@@ -4495,6 +4563,12 @@ int main(int argc, char *argv[]) {
             if (*cursor != '\0' && debug) {
                 fprintf(stderr, "IF: unexpected characters in condition at %d\n", script[pc].source_line);
             }
+            if (*cursor != '\0') {
+                report_task_error(script[pc].source_path, script[pc].source_line,
+                                  "unexpected characters in IF condition: %s", cursor);
+                execution_failed = true;
+                break;
+            }
         }
 
         const char *after_colon = colon + 1;
@@ -4503,6 +4577,12 @@ int main(int argc, char *argv[]) {
         }
         if (*after_colon != '\0' && debug) {
             fprintf(stderr, "IF: unexpected characters after ':' at %d\n", script[pc].source_line);
+        }
+        if (*after_colon != '\0') {
+            report_task_error(script[pc].source_path, script[pc].source_line,
+                              "unexpected characters after IF block marker: %s", after_colon);
+            execution_failed = true;
+            break;
         }
             if (if_sp >= (int)(sizeof(if_stack) / sizeof(if_stack[0]))) {
                 if (debug) fprintf(stderr, "IF: nesting limit reached at line %d\n", script[pc].source_line);
@@ -4963,9 +5043,10 @@ int main(int argc, char *argv[]) {
             bool quoted = false;
             bool static_target = false;
             if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
-                if (debug) fprintf(stderr, "SET: expected variable at line %d\n", script[pc].source_line);
+                report_task_error(script[pc].source_path, script[pc].source_line, "SET requires a variable name");
                 free(var_token);
-                continue;
+                execution_failed = true;
+                break;
             }
             if (equals_ignore_case(var_token, "STATIC")) {
                 static_target = true;
@@ -4975,24 +5056,29 @@ int main(int argc, char *argv[]) {
                     cursor++;
                 }
                 if (!parse_token(&cursor, &var_token, &quoted, NULL) || quoted) {
-                    if (debug) fprintf(stderr, "SET: expected variable after STATIC at line %d\n", script[pc].source_line);
+                    report_task_error(script[pc].source_path, script[pc].source_line,
+                                      "SET STATIC requires a variable name");
                     free(var_token);
-                    continue;
+                    execution_failed = true;
+                    break;
                 }
             }
             VariableRef ref;
             if (!parse_variable_reference_token(var_token, &ref, script[pc].source_line, debug)) {
-                if (debug) fprintf(stderr, "SET: invalid variable name at line %d\n", script[pc].source_line);
+                report_task_error(script[pc].source_path, script[pc].source_line,
+                                  "invalid SET variable name: %s", var_token);
                 free(var_token);
-                continue;
+                execution_failed = true;
+                break;
             }
             free(var_token);
             while (isspace((unsigned char)*cursor)) {
                 cursor++;
             }
             if (*cursor != '=') {
-                if (debug) fprintf(stderr, "SET: expected '=' at line %d\n", script[pc].source_line);
-                continue;
+                report_task_error(script[pc].source_path, script[pc].source_line, "SET requires '=' after the variable");
+                execution_failed = true;
+                break;
             }
             cursor++;
             while (isspace((unsigned char)*cursor)) {
@@ -5000,13 +5086,19 @@ int main(int argc, char *argv[]) {
             }
             Value value;
             if (!parse_expression(&cursor, &value, NULL, script[pc].source_line, debug)) {
-                continue;
+                report_task_error(script[pc].source_path, script[pc].source_line, "invalid SET expression");
+                execution_failed = true;
+                break;
             }
             while (isspace((unsigned char)*cursor)) {
                 cursor++;
             }
-            if (*cursor != '\0' && debug) {
-                fprintf(stderr, "SET: unexpected characters at %d\n", script[pc].source_line);
+            if (*cursor != '\0') {
+                report_task_error(script[pc].source_path, script[pc].source_line,
+                                  "unexpected characters after SET expression: %s", cursor);
+                free_value(&value);
+                execution_failed = true;
+                break;
             }
             Variable *var = NULL;
             if (static_target) {
@@ -5025,7 +5117,11 @@ int main(int argc, char *argv[]) {
             note_branch_progress(if_stack, &if_sp);
         }
         else if (command[0] == '$') {
-            process_assignment_statement(command, script[pc].source_line, debug);
+            if (!process_assignment_statement(command, script[pc].source_line, debug)) {
+                report_task_error(script[pc].source_path, script[pc].source_line, "invalid assignment: %s", command);
+                execution_failed = true;
+                break;
+            }
             note_branch_progress(if_stack, &if_sp);
         }
         else if (strncmp(command, "PRINT", 5) == 0 && (command[5] == '\0' || isspace((unsigned char)command[5]))) {
@@ -5078,9 +5174,12 @@ int main(int argc, char *argv[]) {
             }
             if (*cursor != '\0') {
                 ok = false;
-                if (debug) {
-                    fprintf(stderr, "PRINT: unexpected characters at %d\n", script[pc].source_line);
-                }
+            }
+            if (!ok) {
+                report_task_error(script[pc].source_path, script[pc].source_line, "invalid PRINT expression");
+                free(out_buf);
+                execution_failed = true;
+                break;
             }
                     if (ok) {
                         out_buf[out_len] = '\0';
@@ -5939,7 +6038,9 @@ int main(int argc, char *argv[]) {
             note_branch_progress(if_stack, &if_sp);
         }
         else {
-            if (debug) fprintf(stderr, "Unrecognized command at %d: %s\n", script[pc].source_line, command);
+            report_task_error(script[pc].source_path, script[pc].source_line, "unrecognized command: %s", command);
+            execution_failed = true;
+            break;
         }
 
         if (!pc_changed && for_sp > 0) {
@@ -5983,7 +6084,5 @@ int main(int argc, char *argv[]) {
     stop_logging();
     cleanup_variables();
     free(script);
-    return 0;
+    return execution_failed ? 1 : 0;
 }
-
-

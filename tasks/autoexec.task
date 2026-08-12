@@ -390,6 +390,7 @@ IF ($MENU == "CONFIGURATION"):
 
   # Draw
 
+  RUN _TEXT -x $MENU_X-8 -y 11-$YOFF -text "For more settings see config.ini"
   RUN _TEXT -x $MENU_X-1 -y 15-$YOFF -text "-- CONFIGURATION --       "
   RUN _TEXT -x $MENU_X-3 -y 17-$YOFF -text "Resolution Mode = " + $RESOLUTION
   RUN _TEXT -x $MENU_X-3 -y 19-$YOFF -text "Mouse Cursor    = " + $MOUSE

@@ -1526,6 +1526,9 @@ int main(int argc, char *argv[]) {
     printf("\n 3) Press 'TAB' key for autocomplete.\n");
     printf("\n 4) Run a TASK: 'runtask help.task'.\n");
     printf("\n 5) Type 'exit' to quit.\n");
+    printf("\n");
+    printf("\n For fast configuration, edit config.ini from root.");
+    printf("\n");
     printf("\n===============================================================================\n");
     printf("\n");
 

@@ -238,9 +238,15 @@ static int write_value(const char *argv0, const char *key, const char *value) {
     int last_line_has_newline = 1;
 
     while (fgets(line, sizeof(line), input) != NULL) {
+        const char *value_start = NULL;
+        const char *value_end = NULL;
+
         last_line_has_newline = (strchr(line, '\n') != NULL);
-        if (match_key_line(line, key, NULL, NULL)) {
-            if (fprintf(output, "%s=%s\n", key, value) < 0) {
+        if (match_key_line(line, key, &value_start, &value_end)) {
+            size_t prefix_len = (size_t)(value_start - line);
+
+            if (fprintf(output, "%.*s%s%s", (int)prefix_len, line, value,
+                        value_end) < 0) {
                 perror("_CONFIG: fprintf");
                 fclose(input);
                 fclose(output);

@@ -5,9 +5,9 @@
  Git Repository: https://github.com/sensei-zenabi/BUDOSTACK.git
 
   Releance branch:         main
-  Release tag:             v0.9.953
-  Release commit number:   1693
-  Baseline release:        v0.9.951
+  Release tag:             v0.9.954
+  Release commit number:   1698
+  Baseline release:        v0.9.953
 ================== BUDOSTACK - The Martial Arts of Software  ================
    ______  _     _ ______   _____  _______ _______ _______ _______ _     _   
    |_____] |     | |     \ |     | |______    |    |_____| |       |___ /    
@@ -325,54 +325,36 @@
 
 ================================= CHANGE LOG ================================
 
-commit c4af796d1ecc6e2c5582ad223d6c58619bd200c9
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon Aug 10 20:39:11 2026 +0300
+commit 00e68e778ff86938cbbcd7f250d706c41de0049c
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Wed Aug 12 22:06:59 2026 +0300
 
-    menu setup for overlay on off
+    ready scaling configuration
 
+main.c
 tasks/autoexec.task
 
-commit fa517a3e142a31aca7a10984e7494ee532de5a06
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon Aug 10 20:05:00 2026 +0300
+commit a288f846f877239de2da664512f129699441229a
+Author: sensei-zenabi <budostack@gmail.com>
+Date:   Wed Aug 12 21:58:28 2026 +0300
 
-    improved overlay
-
-graphics/overlay.png
-tasks/autoexec.task
-
-commit 186cfcafec21e55357ae8159422e3f04707a638d
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon Aug 10 19:41:21 2026 +0300
-
-    config option for overlay
+    200% scaling settings
 
 config.ini
 tasks/autoexec.task
 
-commit 23472ff5ce881df9ee05bbfa6a772040faae4b11
+commit d4842d11aeabb6f7d39b087c290b2bcb4c9eda13
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Mon Aug 10 19:31:55 2026 +0300
+Date:   Wed Aug 12 21:10:21 2026 +0300
 
-    Add terminal overlay control command
+    Preserve config comments when writing values
 
-apps/terminal.c
-commands/_TERM_OVERLAY.c
-commands/manual.txt
+commands/_CONFIG.c
 
-commit e220628cdcb78eadbd608f6a8fcc5de319ce6608
+commit 366caa6bdf50254ddd6825773a6c134d78d31475
 Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun Aug 9 22:38:25 2026 +0300
+Date:   Wed Aug 12 21:07:08 2026 +0300
 
-    Update readme.md
+    Handle inline comments in config values
 
-users/ville/readme.md
-
-commit c809e6e56510e175f92ff34f69b5bcc818a62171
-Author: sensei-zenabi <ville.m.suoranta@gmail.com>
-Date:   Sun Aug 9 22:36:53 2026 +0300
-
-    Update readme.md
-
-users/ville/readme.md
+commands/_CONFIG.c

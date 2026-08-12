@@ -93,6 +93,21 @@ static const char *trim_trailing_space(const char *start, const char *end) {
     return end;
 }
 
+static const char *find_value_end(const char *start, const char *line_end) {
+    const char *cursor = start;
+
+    while (cursor < line_end) {
+        if ((*cursor == '#' || *cursor == ';') &&
+            (cursor == start || isspace((unsigned char)cursor[-1]))) {
+            line_end = cursor;
+            break;
+        }
+        ++cursor;
+    }
+
+    return trim_trailing_space(start, line_end);
+}
+
 static int match_key_line(const char *line, const char *key, const char **value_start, const char **value_end) {
     const char *cursor = skip_leading_space(line);
     const char *equals = NULL;
@@ -120,7 +135,7 @@ static int match_key_line(const char *line, const char *key, const char **value_
         *value_start = cursor;
     if (value_end) {
         const char *line_end = line + strlen(line);
-        line_end = trim_trailing_space(cursor, line_end);
+        line_end = find_value_end(cursor, line_end);
         *value_end = line_end;
     }
 

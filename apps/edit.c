@@ -198,6 +198,8 @@ static int auto_indent_enabled = 1;
    When true, auto-indent is temporarily disabled.
 */
 static int in_paste_mode = 0;
+/* When enabled, inserted text is split into real lines at the terminal edge. */
+static int auto_wrap_enabled = 0;
 
 struct EditorSessionSlot {
     char filename[PATH_MAX];
@@ -323,6 +325,8 @@ void editorDeleteSelection(void);
 void editorDelCharAtCursor(void);
 void editorSearch(void);
 void editorReplace(void);
+static int editorBufferNeedsWrap(void);
+static void editorWrapBuffer(void);
 
 static int editorCharIsEscaped(const char *line, int pos) {
     int backslash_count = 0;
@@ -1135,6 +1139,71 @@ int editorRowByteIndexToCx(EditorLine *row, int byte_index) {
     return cx;
 }
 
+static int editorTextWidth(void) {
+    int width = E.screencols - getRowNumWidth() - 1;
+
+    return width > 0 ? width : 1;
+}
+
+static void editorSplitRow(int row_index, int split_cx) {
+    EditorLine *line = &E.row[row_index];
+    int split_byte = editorRowCxToByteIndex(line, split_cx);
+    int remainder_size = line->size - split_byte;
+    char *remainder = malloc((size_t)remainder_size + 1);
+    EditorLine *new_rows;
+
+    if (!remainder)
+        die("malloc");
+    memcpy(remainder, line->chars + split_byte, (size_t)remainder_size);
+    remainder[remainder_size] = '\0';
+    line->size = split_byte;
+    line->chars[split_byte] = '\0';
+    line->modified = 1;
+
+    new_rows = realloc(E.row, sizeof(EditorLine) * (size_t)(E.numrows + 1));
+    if (!new_rows) {
+        free(remainder);
+        die("realloc");
+    }
+    E.row = new_rows;
+    for (int i = E.numrows; i > row_index + 1; i--)
+        E.row[i] = E.row[i - 1];
+    E.row[row_index + 1].size = remainder_size;
+    E.row[row_index + 1].chars = remainder;
+    E.row[row_index + 1].modified = 1;
+    E.row[row_index + 1].hl_in_comment = 0;
+    E.numrows++;
+
+    if (E.cy > row_index) {
+        E.cy++;
+    } else if (E.cy == row_index && E.cx > split_cx) {
+        E.cy++;
+        E.cx -= split_cx;
+    }
+}
+
+static void editorWrapBuffer(void) {
+    int width = editorTextWidth();
+
+    for (int row_index = 0; row_index < E.numrows; row_index++) {
+        while (editorDisplayWidth(E.row[row_index].chars) > width)
+            editorSplitRow(row_index, width);
+    }
+    E.preferred_cx = E.cx;
+    E.coloff = 0;
+    E.dirty = 1;
+}
+
+static int editorBufferNeedsWrap(void) {
+    int width = editorTextWidth();
+
+    for (int row_index = 0; row_index < E.numrows; row_index++) {
+        if (editorDisplayWidth(E.row[row_index].chars) > width)
+            return 1;
+    }
+    return 0;
+}
+
 /* Append a highlighted line to the buffer, respecting the available width and
    the current horizontal offset. Escape sequences (starting with '\x1b') do
    not consume display width. */
@@ -1893,6 +1962,21 @@ void editorProcessKeypress(void) {
             break;
         case CTRL_KEY('z'):
             pop_undo_state();
+            break;
+        case CTRL_KEY('l'):
+            auto_wrap_enabled = !auto_wrap_enabled;
+            if (auto_wrap_enabled) {
+                if (editorBufferNeedsWrap()) {
+                    push_undo_state();
+                    editorWrapBuffer();
+                }
+                snprintf(E.status_message, sizeof(E.status_message),
+                         "Automatic line wrapping enabled");
+            } else {
+                snprintf(E.status_message, sizeof(E.status_message),
+                         "Automatic line wrapping disabled");
+            }
+            last_key_was_vertical = 0;
             break;
         case CTRL_KEY('x'):
             push_undo_state();
@@ -2875,6 +2959,8 @@ void editorInsertChar(int c) {
     E.cx++;
     E.preferred_cx = E.cx;
     line->modified = 1; E.dirty = 1;
+    if (auto_wrap_enabled && editorDisplayWidth(line->chars) > editorTextWidth())
+        editorSplitRow(E.cy, editorTextWidth());
 }
 
 void editorInsertUTF8(const char *s, int len) {
@@ -2898,6 +2984,8 @@ void editorInsertUTF8(const char *s, int len) {
     E.cx += width;
     E.preferred_cx = E.cx;
     line->modified = 1; E.dirty = 1;
+    if (auto_wrap_enabled && editorDisplayWidth(line->chars) > editorTextWidth())
+        editorSplitRow(E.cy, editorTextWidth());
 }
 
 /*** Modified Main ***/
@@ -2951,6 +3039,11 @@ int main(int argc, char *argv[]) {
 
     enableRawMode();
     while (1) {
+        if (getWindowSize(&E.screenrows, &E.screencols) == -1) {
+            E.screenrows = budostack_get_target_rows();
+            E.screencols = budostack_get_target_cols();
+        }
+        E.textrows = E.screenrows - 3;
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);

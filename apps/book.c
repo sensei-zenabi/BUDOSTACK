@@ -1124,12 +1124,12 @@ static void draw_bars(const struct BookState *state) {
     printf("\x1b[0m");
 
     // Top bar line 1
-    printf("\x1b[7m");
+    printf("\x1b[1m");
     printf("%-*.*s", state->cols, state->cols, " Ctrl+N New  | ^+O Open  | ^+S Save | ^+G Save As | ^+E Export  | ^+Q Quit |");
     printf("\x1b[0m\r\n");
 
     // Top bar line 2
-    printf("\x1b[7m");
+    printf("\x1b[1m");
     char top_line[256];
     snprintf(top_line, sizeof(top_line), " Ctrl+T Select | ^+X Cut | ^+C Copy | ^+V Paste | ^+P Page %s |", PAGE_SIZES[state->page_index].name);
     printf("%-*.*s", state->cols, state->cols, top_line);
@@ -1137,7 +1137,7 @@ static void draw_bars(const struct BookState *state) {
 
     // Text area rendering handled separately
     // Prompt line (blank by default)
-    printf("\x1b[7m");
+    printf("\x1b[1m");
     if (state->prompt_active) {
         char prompt_line[BOOK_PROMPT_MAX + 32];
         snprintf(prompt_line, sizeof(prompt_line), " %s", state->status);
@@ -1189,7 +1189,7 @@ static void draw_content(const struct BookState *state) {
             size_t idx = line->start + i;
             int in_sel = (idx >= sel_start && idx < sel_end);
             if (in_sel) {
-                printf("\x1b[7m%c\x1b[0m", state->text[idx]);
+                printf("\x1b[4m%c\x1b[0m", state->text[idx]);
             } else {
                 putchar(state->text[idx]);
             }
@@ -1229,7 +1229,7 @@ static void draw_bottom_bar(const struct BookState *state) {
     char right_info[128];
     snprintf(right_info, sizeof(right_info), "Ln %d, Col %d | %d/%d", row_number, col_number, current_page, total_pages);
 
-    printf("\x1b[7m");
+    printf("\x1b[1m");
     char line1[256];
     const char *raw_name = state->filename[0] ? state->filename : "(untitled)";
     char namebuf[128];
@@ -1239,7 +1239,7 @@ static void draw_bottom_bar(const struct BookState *state) {
     printf("%-*.*s", state->cols, state->cols, line1);
     printf("\x1b[0m\r\n");
 
-    printf("\x1b[7m");
+    printf("\x1b[1m");
     char line2_left[256];
     snprintf(line2_left, sizeof(line2_left), " %s | Words: %zu | %s%s", datebuf, state->word_count,
              state->status, state->selecting ? " | SELECT" : "");

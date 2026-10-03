@@ -202,12 +202,25 @@ int main(int argc, char **argv) {
     int y;
     int w;
     int h;
-    terminal_gfx_display_rect(1920, 1080, 640, 360, &x, &y, &w, &h);
-    assert(x == 0 && y == 0 && w == 1920 && h == 1080);
-    terminal_gfx_display_rect(960, 540, 640, 360, &x, &y, &w, &h);
-    assert(x == 160 && y == 90 && w == 640 && h == 360);
-    terminal_gfx_display_rect(160, 100, 320, 200, &x, &y, &w, &h);
-    assert(w == 160 && h == 100);
+    /* Overlay disabled: ignore configured size/offsets and fill 5:4 displays. */
+    terminal_overlay_enabled = 0;
+    terminal_display_width = 800;
+    terminal_display_height = 600;
+    terminal_offset_x = -3;
+    terminal_offset_y = 27;
+    terminal_gfx_display_rect(1280, 1024, &x, &y, &w, &h);
+    assert(x == 0 && y == 0 && w == 1280 && h == 1024);
+    terminal_gfx_display_rect(960, 540, &x, &y, &w, &h);
+    assert(x == 0 && y == 0 && w == 960 && h == 540);
+    /* Overlay enabled: use the exact configured viewport without letterboxes. */
+    terminal_overlay_enabled = 1;
+    terminal_gfx_display_rect(1280, 1024, &x, &y, &w, &h);
+    assert(x == 237 && y == 239 && w == 800 && h == 600);
+    terminal_display_width = 1565;
+    terminal_display_height = 830;
+    terminal_gfx_display_rect(1920, 1080, &x, &y, &w, &h);
+    assert(x == 174 && y == 152 && w == 1565 && h == 830);
+    terminal_overlay_enabled = 0;
     test_input_state();
     test_demo(argv[2], argv[1], "example", 0);
     test_demo(argv[2], argv[1], "rocket", 0);

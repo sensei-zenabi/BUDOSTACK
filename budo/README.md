@@ -50,9 +50,12 @@ terminal never renders from a slot being written. Input is queued while the
 client waits, with bounded timeouts and queue capacity. Dimensions, protocol
 version, shared-file size and frame slots are validated by the host.
 
-The terminal owns all OpenGL resources. Screens use nearest-neighbour filtering
-and integer scaling when possible, preserving their logical aspect ratio in
-the terminal display area. Smaller windows use fractional downscaling.
+The terminal owns all OpenGL resources. Screens use nearest-neighbour filtering. With the overlay disabled they fill
+the entire native display, including 1280×1024 screens. With the overlay enabled
+they fill the configured display area and use its offsets (`OVERLAY_WIDTH`,
+`OVERLAY_HEIGHT`, `OVERLAY_OFFSET_X`, `OVERLAY_OFFSET_Y` in `config.ini`).
+Horizontal and vertical scaling are independent, so the image fills the target
+area even when its aspect ratio differs from the application framebuffer.
 
 `lib/budo_screen.h` is an SDL convenience adapter used by these demos. It
 translates transport events to SDL events and maintains held-key state.

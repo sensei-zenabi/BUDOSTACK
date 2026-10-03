@@ -7636,32 +7636,20 @@ static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {
     }
 }
 
-/* Fit a logical pixel screen into the terminal's existing display area.
- * Integer nearest-neighbour scaling when it fits; fractional downscale only
- * for windows smaller than the application. Preserve the application's aspect.
+/* Pixel applications fill the native drawable without an overlay. With an
+ * overlay they fill the configured display area, including its offsets.
+ * X and Y scale independently so neither mode introduces letterboxing.
  */
 static void terminal_gfx_display_rect(int drawable_w, int drawable_h,
-                                      int width, int height,
                                       int *x, int *y, int *w, int *h) {
-    terminal_display_rect(drawable_w, drawable_h, x, y, w, h);
-    double scale_x = (double)*w / width;
-    double scale_y = (double)*h / height;
-    double scale = scale_x < scale_y ? scale_x : scale_y;
-    if (scale >= 1.0) {
-        scale = (int)scale;
+    if (terminal_overlay_enabled) {
+        terminal_display_rect(drawable_w, drawable_h, x, y, w, h);
+    } else {
+        *x = 0;
+        *y = 0;
+        *w = drawable_w;
+        *h = drawable_h;
     }
-    int fitted_w = (int)(width * scale);
-    int fitted_h = (int)(height * scale);
-    if (fitted_w < 1) {
-        fitted_w = 1;
-    }
-    if (fitted_h < 1) {
-        fitted_h = 1;
-    }
-    *x += (*w - fitted_w) / 2;
-    *y += (*h - fitted_h) / 2;
-    *w = fitted_w;
-    *h = fitted_h;
 }
 
 static void terminal_gfx_input(struct budo_gfx_host *host, const SDL_Event *event) {
@@ -7708,7 +7696,7 @@ static void terminal_gfx_input(struct budo_gfx_host *host, const SDL_Event *even
         int y;
         int w;
         int h;
-        terminal_gfx_display_rect(drawable_w, drawable_h, width, height, &x, &y, &w, &h);
+        terminal_gfx_display_rect(drawable_w, drawable_h, &x, &y, &w, &h);
         /* OpenGL viewport Y is measured from the bottom; SDL from the top. */
         if (window_w > 0 && window_h > 0) {
             input.x = ((window_x * drawable_w / window_w) - x) * width / w;
@@ -9552,7 +9540,7 @@ int main(int argc, char **argv) {
         int display_h = 0;
         terminal_display_rect(drawable_width, drawable_height, &display_x, &display_y, &display_w, &display_h);
         if (graphics_active) {
-            terminal_gfx_display_rect(drawable_width, drawable_height, frame_width, frame_height,
+            terminal_gfx_display_rect(drawable_width, drawable_height,
                                       &display_x, &display_y, &display_w, &display_h);
         }
         GLuint source_texture = terminal_gl_texture;

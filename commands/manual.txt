@@ -5,8 +5,12 @@ This ASCII manual lists every command implemented in the commands folder.
 Use command names exactly as shown inside TASK scripts or from a shell.
 Coordinates are zero-based unless a command states otherwise.  CSV row and
 column arguments are one-based and CSV files use semicolon separators.
-Commands beginning with _TERM are for apps/terminal and emit OSC 777
-terminal control sequences.
+Commands beginning with _TERM are intended for apps/terminal. Most emit
+OSC 777 terminal control sequences; input queries and _TERM_ACTIVE return
+values. Pixel drawing uses layers 1 (top) through 16 (bottom), default 1.
+Use _TERM_RENDER to present queued pixel drawing.
+In TASK scripts, invoke commands with RUN; capture output with TO $VAR.
+Shell examples containing spaces, wildcards, or sprite literals need quotes.
 
 _BAR
   Syntax: _BAR [-x <col> -y <row>] -title <text> -progress <0-100>
@@ -64,7 +68,9 @@ _CSVFILTER
 _CSVSTATS
   Syntax: _CSVSTATS -file <path> -column <n> -stat <type>
           [-skipheader] [-rowstart <n>] [-rowend <n>]
-  Use: Compute a statistic for one numeric column in a semicolon CSV file.
+  Use: Compute count, sum, mean, min, max, variance, or stddev for one
+       numeric column in a semicolon CSV file. Row ranges are inclusive;
+       with -skipheader, row 1 is the first row after the header.
   Examples:
     _CSVSTATS -file scores.csv -column 3 -stat mean
     _CSVSTATS -file scores.csv -column 3 -stat max -skipheader
@@ -72,7 +78,8 @@ _CSVSTATS
 
 _DICE
   Syntax: _DICE <dice>
-  Use: Roll standard Dungeons and Dragons dice and print the total.
+  Use: Roll 1-100 dice and print the total. Supported sides: 4, 6, 8, 10,
+       12, 20, and 100.
   Examples:
     _DICE 1d6
     _DICE 2d20
@@ -108,7 +115,7 @@ _GETHEIGHT
 
 _GETROW
   Syntax: _GETROW
-  Use: Query and print the current terminal cursor row.
+  Use: Query and print the current terminal cursor row (one-based).
   Examples:
     _GETROW
 
@@ -133,7 +140,9 @@ _IMAGE
 
 _KEYS
   Syntax: _KEYS
-  Use: Wait for one key press and print a numeric direction or action code.
+  Use: Wait for a mapped key press and print its code: right 1, left -1,
+       up 2, down -2, Enter 3, Space 4, Tab 5, Backspace/Delete 6,
+       Escape/Ctrl+C 10. Other keys are ignored.
   Examples:
     _KEYS
 
@@ -162,9 +171,10 @@ _RAND
     _RAND -10 10
 
 _RECT
-  Syntax: _RECT -x <col> -y <row> -width <pixels> -height <pixels>
+  Syntax: _RECT -x <col> -y <row> -width <columns> -height <rows>
           [-color <0-18>] [-fill on|off]
-  Use: Draw a filled or outline rectangle with terminal background colors.
+  Use: Draw a filled or outline rectangle in text cells using terminal
+       background colors. Default fill is off (outline).
   Examples:
     _RECT -x 1 -y 1 -width 10 -height 4
     _RECT -x 5 -y 2 -width 20 -height 8 -color 4 -fill on
@@ -182,6 +192,8 @@ _RETROPROFILE
 _STRCMP
   Syntax: _STRCMP <string1> <string2> [-cs] [-fw]
   Use: Compare a string with a wildcard pattern and print 1 for match or 0.
+       Default is case-insensitive; -cs enables case sensitivity.
+       -fw compares complete literal strings without wildcard expansion.
   Examples:
     _STRCMP Hello "he*"
     _STRCMP Hello "He*" -cs
@@ -239,7 +251,8 @@ _TERM_MARGIN
 _TERM_MOUSE
   Syntax: _TERM_MOUSE
   Use: Print mouse X, Y, left-click count, and right-click count as
-       an array.
+       {X,Y,LEFT,RIGHT}. X/Y are pixels from the top-left; button counts
+       are presses since the last query.
   Examples:
     _TERM_MOUSE
 
@@ -249,6 +262,15 @@ _TERM_MOUSE_SHOW
   Examples:
     _TERM_MOUSE_SHOW enable
     _TERM_MOUSE_SHOW disable
+
+_TERM_OFFSET
+  Syntax: _TERM_OFFSET <x_percent> <y_percent>
+  Use: Offset the centered terminal display by percentages of the current
+       screen width and height. Each value is -100 to 100; decimals allowed.
+       Positive X moves right, positive Y moves down. Use 0 0 to recenter.
+  Examples:
+    _TERM_OFFSET 0 0
+    _TERM_OFFSET -2.5 3
 
 _TERM_PIXEL
   Syntax: _TERM_PIXEL -x <pixels> -y <pixels>
@@ -281,7 +303,8 @@ _TERM_RESOLUTION
   Syntax: _TERM_RESOLUTION <width> <height>
           _TERM_RESOLUTION LOW
           _TERM_RESOLUTION HIGH
-  Use: Set the apps/terminal pixel resolution or select a preset.
+  Use: Set the apps/terminal pixel resolution or select LOW (640x360)
+       or HIGH (800x450). Use 0 0 to restore the default resolution.
   Examples:
     _TERM_RESOLUTION 0 0
     _TERM_RESOLUTION 320 200
@@ -310,6 +333,33 @@ _TERM_OVERLAY
     _TERM_OVERLAY
     _TERM_OVERLAY enable
     _TERM_OVERLAY disable
+
+_TERM_OVERLAY_OFFSET
+  Syntax: _TERM_OVERLAY_OFFSET <x_percent> <y_percent>
+  Use: Offset the centered overlay image by percentages of the current
+       screen width and height. Each value is -100 to 100; decimals allowed.
+       Positive X moves right, positive Y moves down. Use 0 0 to recenter.
+  Examples:
+    _TERM_OVERLAY_OFFSET 0 0
+    _TERM_OVERLAY_OFFSET -2.5 3
+
+_TERM_OVERLAY_ZOOM
+  Syntax: _TERM_OVERLAY_ZOOM <percent>
+  Use: Set overlay width and height as percentages of the current screen.
+       Range is 1-1000; decimals allowed. 100 fills the screen, smaller
+       values zoom out, larger values zoom in. Does not enable the overlay.
+  Examples:
+    _TERM_OVERLAY_ZOOM 100
+    _TERM_OVERLAY_ZOOM 112.5
+
+_TERM_SIZE
+  Syntax: _TERM_SIZE <x_percent> <y_percent>
+  Use: Set the centered terminal display width and height as percentages
+       of the current screen. Each value is 0-100; decimals allowed.
+       Use 0 0 to fill the current display automatically.
+  Examples:
+    _TERM_SIZE 0 0
+    _TERM_SIZE 80 75.5
 
 _TERM_SOUND_KEYBOARD
   Syntax: _TERM_SOUND_KEYBOARD <enable|disable>
@@ -344,8 +394,8 @@ _TERM_SPRITE
   Examples:
     _TERM_SPRITE -x 10 -y 20 -file hero.png
     _TERM_SPRITE -x 10 -y 20 -file hero.png -layer 2
-    _TERM_SPRITE -x 10 -y 20 -sprite {16,16,"AAAA"}
-    _TERM_SPRITE -x 10 -y 20 -data AAAA -width 1 -height 1
+    _TERM_SPRITE -x 10 -y 20 -sprite '{1,1,"/wAA/w=="}'
+    _TERM_SPRITE -x 10 -y 20 -data /wAA/w== -width 1 -height 1
 
 _TERM_SPRITE_LOAD
   Syntax: _TERM_SPRITE_LOAD -file <path>
@@ -408,6 +458,8 @@ _TOCSV
 
 _TOFILE
   Syntax: _TOFILE
+          _TOFILE -file <path> --start
+          _TOFILE --stop
   Use: Print guidance for terminal output logging controlled by the
        main shell.
   Examples:

@@ -99,7 +99,7 @@
   for content creation. The content of these folders should not be modified.
 
   ./apps/         - System applications that do not use paging.
-  ./commands/     - BUDOSTACK TASK scripting commands (read manual.md).
+  ./commands/     - BUDOSTACK TASK scripting commands (read commands/manual.txt).
   ./documents/    - Documents provided by BUDOSTACK (including help.txt).
   ./fonts/        - Built-in .ttf and .psf system fonts
   ./games/        - Built-in games. Think of the as our 'minesweepers'.
@@ -209,7 +209,8 @@
 
  BUDOSTACK contains built-in TASK scripting language that can be used to
  develop various applications. The instruction set is located in ./commands/
- folder and all the commands contain help when executed without arguments.
+ folder. See commands/manual.txt for syntax and examples; commands without
+ arguments may perform an action or wait for input instead of showing help.
 
  Example TASK applications are located in ./tasks/ -folder.
  
@@ -232,7 +233,7 @@
   _EXE                 : Run app/utility and render output at -x/-y offset.
   _FROMCSV             : Read one CSV cell by 1-based row and column index.
   _GETHEIGHT           : Print terminal height in rows.
-  _GETROW              : Print current cursor row.
+  _GETROW              : Print current cursor row (one-based).
   _GETWIDTH            : Print terminal width in columns.
   _HELLO               : Print hello world test line.
   _IMAGE               : Draw PNG/BMP image at text grid position -x/-y.
@@ -242,11 +243,11 @@
   _PIXEL               : Draw pixel using color index.
   _RAND                : Print random integer in range [min,max].
                          Default 0-100.
-  _RECT                : Draw a filled or outlined rectangle
-                         using color index.
+  _RECT                : Draw a rectangle in text columns/rows using color
+                         index; outline by default, -fill on fills it.
   _RETROPROFILE        : List/show/apply/reset retro color profiles.
-  _STRCMP              : Compare strings with optional case sensitivity
-                         and full-word matching.
+  _STRCMP              : Match wildcard pattern (case-insensitive by default).
+                         -cs is case-sensitive; -fw compares literal strings.
   _TERM_ACTIVE         : Print 1 in apps/terminal, else 0.
   _TERM_BACKGROUND_SOUND
                        : Enable or disable continuous terminal
@@ -261,13 +262,23 @@
   _TERM_MARGIN         : Set terminal pixel render margin.
   _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
   _TERM_MOUSE_SHOW     : Show or hide terminal mouse cursor.
+  _TERM_OFFSET         : Offset centered terminal display by screen width/height
+                         percentages (-100 to 100 each; decimals allowed).
+  _TERM_OVERLAY        : Query overlay state (no arguments), enable or disable.
+  _TERM_OVERLAY_OFFSET : Offset centered overlay by screen width/height
+                         percentages (-100 to 100 each; decimals allowed).
+  _TERM_OVERLAY_ZOOM   : Set overlay size to 1-1000% of screen; 100 fills it.
+                         Decimals allowed; smaller zooms out, larger zooms in.
   _TERM_PIXEL          : Queue one terminal pixel using palette color or RGB.
   _TERM_RECT           : Queue a filled terminal pixel rectangle using
                          palette color or RGB.
   _TERM_RENDER         : Trigger full render or render selected layer.
-  _TERM_RESOLUTION     : Set pixel resolution (LOW/HIGH or width/height).
+  _TERM_RESOLUTION     : Set pixel resolution (LOW 640x360, HIGH 800x450,
+                         or width/height; 0 0 restores default).
   _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
   _TERM_SHADER         : Enable or disable terminal shader.
+  _TERM_SIZE           : Set centered terminal size as screen width/height
+                         percentages (0-100 each; 0 0 fills current display).
   _TERM_SOUND_KEYBOARD : Enable or disable keyboard typing sound effects
                          in terminal apps.
   _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32)
@@ -283,7 +294,8 @@
   _TEXT                : Print text at column/row with optional color.
   _TIMER               : Start/stop/get/reset stopwatch in milliseconds.
   _TOCSV               : Write value to CSV cell by 1-based row and column.
-  _TOFILE              : Show guidance for output logging via shell helper.
+  _TOFILE              : Shell output logging: -file <path> --start / --stop.
+                         Standalone helper prints usage guidance.
   _VERSION             : Print current repository commit-count version.
   _WAIT                : Sleep for given number of milliseconds.
 

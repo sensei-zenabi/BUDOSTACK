@@ -1,6 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 
+#include "../lib/budo_gfx.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -80,6 +82,15 @@ _Static_assert(TERMINAL_FONT_SCALE > 0, "TERMINAL_FONT_SCALE must be positive");
 _Static_assert(TERMINAL_COLUMNS > 0u, "TERMINAL_COLUMNS must be positive");
 _Static_assert(TERMINAL_ROWS > 0u, "TERMINAL_ROWS must be positive");
 _Static_assert(TERMINAL_TARGET_FPS > 0u, "TERMINAL_TARGET_FPS must be positive");
+
+static struct budo_gfx_host *terminal_gfx_hosts[TERMINAL_TAB_COUNT] = {0};
+
+static void terminal_gfx_cleanup(void) {
+    for (size_t i = 0u; i < TERMINAL_TAB_COUNT; i++) {
+        budo_gfx_host_close(terminal_gfx_hosts[i]);
+        terminal_gfx_hosts[i] = NULL;
+    }
+}
 
 static SDL_Window *terminal_window_handle = NULL;
 static SDL_GLContext terminal_gl_context_handle = NULL;
@@ -434,7 +445,7 @@ static void terminal_shader_set_matrix(GLint location, GLfloat *cache, int *has_
 static void terminal_shader_set_vec2(GLint location, GLfloat *cache, int *has_cache, GLfloat x, GLfloat y);
 static void terminal_bind_texture(GLuint texture);
 static int terminal_resize_render_targets(int width, int height);
-static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height);
+static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height, int pixel_graphics);
 static int terminal_prepare_intermediate_targets(int width, int height);
 static int terminal_prepare_shader_history(struct terminal_gl_shader *shader, int width, int height, int resized);
 static void terminal_update_shader_history(struct terminal_gl_shader *shader, int width, int height);
@@ -3597,13 +3608,22 @@ static int terminal_resize_render_targets(int width, int height) {
     return 0;
 }
 
-static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height) {
+static int terminal_upload_framebuffer(const uint8_t *pixels, int width, int height, int pixel_graphics) {
     if (!pixels || width <= 0 || height <= 0 || terminal_gl_texture == 0) {
         return -1;
     }
 
     terminal_bind_texture(terminal_gl_texture);
+    GLint filtering = pixel_graphics ? GL_NEAREST : GL_LINEAR;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filtering);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filtering);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    if (terminal_texture_width != width || terminal_texture_height != height) {
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        terminal_texture_width = width;
+        terminal_texture_height = height;
+    }
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     GLenum error = glGetError();
     if (error != GL_NO_ERROR) {
@@ -7616,7 +7636,91 @@ static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {
     }
 }
 
-static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
+/* Fit a logical pixel screen into the terminal's existing display area.
+ * Integer nearest-neighbour scaling when it fits; fractional downscale only
+ * for windows smaller than the application. Preserve the application's aspect.
+ */
+static void terminal_gfx_display_rect(int drawable_w, int drawable_h,
+                                      int width, int height,
+                                      int *x, int *y, int *w, int *h) {
+    terminal_display_rect(drawable_w, drawable_h, x, y, w, h);
+    double scale_x = (double)*w / width;
+    double scale_y = (double)*h / height;
+    double scale = scale_x < scale_y ? scale_x : scale_y;
+    if (scale >= 1.0) {
+        scale = (int)scale;
+    }
+    int fitted_w = (int)(width * scale);
+    int fitted_h = (int)(height * scale);
+    if (fitted_w < 1) {
+        fitted_w = 1;
+    }
+    if (fitted_h < 1) {
+        fitted_h = 1;
+    }
+    *x += (*w - fitted_w) / 2;
+    *y += (*h - fitted_h) / 2;
+    *w = fitted_w;
+    *h = fitted_h;
+}
+
+static void terminal_gfx_input(struct budo_gfx_host *host, const SDL_Event *event) {
+    struct budo_gfx_event input = {0};
+    int window_x = 0;
+    int window_y = 0;
+    int mouse_position = 0;
+    if (event->type == SDL_KEYDOWN || event->type == SDL_KEYUP) {
+        input.type = event->type == SDL_KEYDOWN ? BUDO_GFX_KEY_DOWN : BUDO_GFX_KEY_UP;
+        input.key = event->key.keysym.sym;
+        input.scancode = event->key.keysym.scancode;
+        input.repeat = event->key.repeat;
+    } else if (event->type == SDL_MOUSEMOTION) {
+        input.type = BUDO_GFX_MOUSE_MOVE;
+        window_x = event->motion.x;
+        window_y = event->motion.y;
+        mouse_position = 1;
+    } else if (event->type == SDL_MOUSEBUTTONDOWN || event->type == SDL_MOUSEBUTTONUP) {
+        input.type = event->type == SDL_MOUSEBUTTONDOWN ? BUDO_GFX_MOUSE_DOWN : BUDO_GFX_MOUSE_UP;
+        input.button = event->button.button;
+        window_x = event->button.x;
+        window_y = event->button.y;
+        mouse_position = 1;
+    } else if (event->type == SDL_MOUSEWHEEL) {
+        input.type = BUDO_GFX_WHEEL;
+        input.x = event->wheel.x;
+        input.y = event->wheel.y;
+    } else if (event->type == SDL_WINDOWEVENT && event->window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+        input.type = BUDO_GFX_RESET;
+    } else if (event->type == SDL_QUIT) {
+        input.type = BUDO_GFX_QUIT;
+    }
+    if (mouse_position) {
+        int width;
+        int height;
+        (void)budo_gfx_host_pixels(host, &width, &height, NULL);
+        int window_w;
+        int window_h;
+        int drawable_w;
+        int drawable_h;
+        SDL_GetWindowSize(terminal_window_handle, &window_w, &window_h);
+        SDL_GL_GetDrawableSize(terminal_window_handle, &drawable_w, &drawable_h);
+        int x;
+        int y;
+        int w;
+        int h;
+        terminal_gfx_display_rect(drawable_w, drawable_h, width, height, &x, &y, &w, &h);
+        /* OpenGL viewport Y is measured from the bottom; SDL from the top. */
+        if (window_w > 0 && window_h > 0) {
+            input.x = ((window_x * drawable_w / window_w) - x) * width / w;
+            input.y = ((window_y * drawable_h / window_h) - (drawable_h - y - h)) * height / h;
+        }
+    }
+    if (input.type != 0u) {
+        budo_gfx_host_event(host, &input);
+    }
+}
+
+static pid_t spawn_budostack(const char *exe_path, int *out_master_fd, const char *gfx_path) {
     if (!exe_path || !out_master_fd) {
         return -1;
     }
@@ -7681,6 +7785,10 @@ static pid_t spawn_budostack(const char *exe_path, int *out_master_fd) {
         }
 
         setenv("BUDOSTACK_TERM_ACTIVE", "TRUE", 1);
+        if (setenv("BUDOSTACK_GFX_SOCKET", gfx_path, 1) < 0) {
+            perror("graphics environment");
+            _exit(EXIT_FAILURE);
+        }
 
         execl(exe_path, exe_path, (char *)NULL);
         perror("execl");
@@ -8003,8 +8111,24 @@ int main(int argc, char **argv) {
         memset(&tab_alternate_buffers[tab_i], 0, sizeof(tab_alternate_buffers[tab_i]));
     }
 
+    if (atexit(terminal_gfx_cleanup) != 0) {
+        fprintf(stderr, "Failed to register graphics cleanup.\n");
+        return EXIT_FAILURE;
+    }
     for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) {
-        child_pids[tab_i] = spawn_budostack(budostack_path, &master_fds[tab_i]);
+        if (budo_gfx_host_open(&terminal_gfx_hosts[tab_i]) < 0) {
+            perror("graphics endpoint");
+            for (size_t cleanup_i = 0u; cleanup_i < tab_i; cleanup_i++) {
+                kill(child_pids[cleanup_i], SIGKILL);
+                close(master_fds[cleanup_i]);
+            }
+            free_font(&terminal_font);
+            free(shader_paths);
+            terminal_free_requested_shaders();
+            return EXIT_FAILURE;
+        }
+        child_pids[tab_i] = spawn_budostack(budostack_path, &master_fds[tab_i],
+                                           budo_gfx_host_path(terminal_gfx_hosts[tab_i]));
         if (child_pids[tab_i] < 0) {
             for (size_t cleanup_i = 0u; cleanup_i < tab_i; cleanup_i++) {
                 kill(child_pids[cleanup_i], SIGKILL);
@@ -8300,11 +8424,30 @@ int main(int argc, char **argv) {
     Uint32 cursor_last_toggle = SDL_GetTicks();
     int cursor_phase_visible = 1;
     int suppress_textinput_once = 0;
+    int graphics_was_active = 0;
+    size_t graphics_last_tab = active_tab_index;
 
     while (running) {
+        for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) {
+            budo_gfx_host_poll(terminal_gfx_hosts[tab_i]);
+        }
         terminal_selection_validate(buffer);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            int graphics_input = budo_gfx_host_active(terminal_gfx_hosts[active_tab_index]);
+            int tab_shortcut = event.type == SDL_KEYDOWN &&
+                (event.key.keysym.mod & KMOD_ALT) != 0 &&
+                (event.key.keysym.mod & (KMOD_CTRL | KMOD_GUI)) == 0 &&
+                event.key.keysym.sym >= SDLK_1 && event.key.keysym.sym <= SDLK_5;
+            if (graphics_input && !tab_shortcut) {
+                terminal_gfx_input(terminal_gfx_hosts[active_tab_index], &event);
+                if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP ||
+                    event.type == SDL_TEXTINPUT || event.type == SDL_MOUSEMOTION ||
+                    event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP ||
+                    event.type == SDL_MOUSEWHEEL) {
+                    continue;
+                }
+            }
             if (event.type == SDL_QUIT) {
                 running = 0;
             } else if (event.type == SDL_WINDOWEVENT &&
@@ -8620,6 +8763,9 @@ int main(int argc, char **argv) {
                     if (next_tab_index < TERMINAL_TAB_COUNT && next_tab_index != active_tab_index) {
                         tab_alternate_initialized[active_tab_index] = terminal_alternate_initialized;
                         tab_using_alternate[active_tab_index] = terminal_using_alternate;
+                        struct budo_gfx_event reset = {0};
+                        reset.type = BUDO_GFX_RESET;
+                        budo_gfx_host_event(terminal_gfx_hosts[active_tab_index], &reset);
                         active_tab_index = next_tab_index;
                         master_fd = master_fds[active_tab_index];
                         child_pid = child_pids[active_tab_index];
@@ -9104,206 +9250,219 @@ int main(int argc, char **argv) {
             break;
         }
 
-        if (terminal_ensure_render_cache(buffer->columns, buffer->rows) != 0) {
+        int graphics_active = budo_gfx_host_active(terminal_gfx_hosts[active_tab_index]);
+        if (graphics_active != graphics_was_active || active_tab_index != graphics_last_tab) {
+            terminal_force_full_redraw = 1;
+            terminal_background_dirty = 1;
+        }
+        graphics_was_active = graphics_active;
+        graphics_last_tab = active_tab_index;
+        if (!graphics_active && terminal_ensure_render_cache(buffer->columns, buffer->rows) != 0) {
             fprintf(stderr, "Failed to prepare terminal render cache.\n");
             running = 0;
             break;
         }
-
         int full_redraw = terminal_force_full_redraw;
         terminal_force_full_redraw = 0;
         int frame_dirty = 0;
         int shader_timing_enabled = 0;
         int shader_requires_frame = 0;
-
-        int margin_pixels = terminal_margin_pixels;
-        if (margin_pixels < 0) {
-            margin_pixels = 0;
-        }
-        if (margin_pixels * 2 > frame_width) {
-            margin_pixels = frame_width / 2;
-        }
-        if (margin_pixels * 2 > frame_height) {
-            margin_pixels = frame_height / 2;
-        }
-
-        if (terminal_background_dirty) {
-            uint32_t margin_color_value = buffer->default_bg;
-            uint32_t margin_pixel = terminal_rgba_from_color(margin_color_value);
-            for (int py = 0; py < frame_height; py++) {
-                uint32_t *row_ptr = (uint32_t *)(framebuffer + (size_t)py * (size_t)frame_pitch);
-                for (int px = 0; px < frame_width; px++) {
-                    row_ptr[px] = margin_pixel;
-                }
+        if (graphics_active) {
+            int graphics_dirty = 0;
+            framebuffer = (uint8_t *)budo_gfx_host_pixels(terminal_gfx_hosts[active_tab_index],
+                                                         &frame_width, &frame_height, &graphics_dirty);
+            frame_dirty = graphics_dirty || full_redraw;
+        } else {
+            int margin_pixels = terminal_margin_pixels;
+            if (margin_pixels < 0) {
+                margin_pixels = 0;
             }
-            terminal_background_dirty = 0;
-            frame_dirty = 1;
-        }
-
-        for (size_t row = 0u; row < buffer->rows; row++) {
-            size_t global_index = top_index + row;
-            const struct terminal_cell *row_cells = terminal_buffer_row_at(buffer, global_index);
-            if (!row_cells) {
-                continue;
+            if (margin_pixels * 2 > frame_width) {
+                margin_pixels = frame_width / 2;
             }
-            for (size_t col = 0u; col < buffer->columns; col++) {
-                const struct terminal_cell *cell = &row_cells[col];
-                uint32_t ch = cell->ch;
-                uint32_t fg = cell->fg;
-                uint32_t bg = cell->bg;
-                uint8_t style = cell->style;
-                if ((style & TERMINAL_STYLE_REVERSE) != 0u) {
-                    uint32_t tmp = fg;
-                    fg = bg;
-                    bg = tmp;
-                }
-                if ((style & TERMINAL_STYLE_BOLD) != 0u) {
-                    fg = terminal_bold_variant(fg);
-                }
+            if (margin_pixels * 2 > frame_height) {
+                margin_pixels = frame_height / 2;
+            }
 
-                int cell_selected = selection_has_range &&
-                    terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer->columns);
-                if (cell_selected) {
-                    fg = buffer->default_bg;
-                    bg = buffer->default_fg;
-                }
-
-                int is_cursor_cell = cursor_render_visible &&
-                                     global_index == cursor_global_index &&
-                                     col == buffer->cursor_column;
-                uint32_t fill_color = bg;
-                uint32_t glyph_color = fg;
-                if (is_cursor_cell) {
-                    fill_color = buffer->cursor_color;
-                    glyph_color = bg;
-                }
-
-                int dest_x = margin_pixels + (int)(col * (size_t)glyph_width);
-                int dest_y = margin_pixels + (int)(row * (size_t)glyph_height);
-                int end_x = dest_x + glyph_width;
-                int end_y = dest_y + glyph_height;
-                if (dest_x < 0) {
-                    dest_x = 0;
-                }
-                if (dest_y < 0) {
-                    dest_y = 0;
-                }
-                if (end_x > frame_width) {
-                    end_x = frame_width;
-                }
-                if (end_y > frame_height) {
-                    end_y = frame_height;
-                }
-                if (dest_x >= end_x || dest_y >= end_y) {
-                    continue;
-                }
-
-                size_t cache_index = row * buffer->columns + col;
-                if (cache_index >= terminal_render_cache_count) {
-                    continue;
-                }
-                struct terminal_render_cache_entry *cache_entry = &terminal_render_cache[cache_index];
-                int needs_redraw = full_redraw;
-                if (!needs_redraw) {
-                    if (cache_entry->ch != ch ||
-                        cache_entry->fg != glyph_color ||
-                        cache_entry->bg != fill_color ||
-                        cache_entry->style != style ||
-                        cache_entry->cursor != (uint8_t)is_cursor_cell ||
-                        cache_entry->selected != (uint8_t)cell_selected) {
-                        needs_redraw = 1;
+            if (terminal_background_dirty) {
+                uint32_t margin_color_value = buffer->default_bg;
+                uint32_t margin_pixel = terminal_rgba_from_color(margin_color_value);
+                for (int py = 0; py < frame_height; py++) {
+                    uint32_t *row_ptr = (uint32_t *)(framebuffer + (size_t)py * (size_t)frame_pitch);
+                    for (int px = 0; px < frame_width; px++) {
+                        row_ptr[px] = margin_pixel;
                     }
                 }
-                if (!needs_redraw) {
-                    continue;
-                }
-
-                cache_entry->ch = ch;
-                cache_entry->fg = glyph_color;
-                cache_entry->bg = fill_color;
-                cache_entry->style = style;
-                cache_entry->cursor = (uint8_t)is_cursor_cell;
-                cache_entry->selected = (uint8_t)cell_selected;
+                terminal_background_dirty = 0;
                 frame_dirty = 1;
+            }
 
-                int cell_width = end_x - dest_x;
-                int cell_height = end_y - dest_y;
-                uint32_t fill_pixel = terminal_rgba_from_color(fill_color);
-                for (int py = 0; py < cell_height; py++) {
-                    uint32_t *dst32 = (uint32_t *)(framebuffer +
-                                                    (size_t)(dest_y + py) * (size_t)frame_pitch +
-                                                    (size_t)dest_x * 4u);
-                    for (int px = 0; px < cell_width; px++) {
-                        dst32[px] = fill_pixel;
-                    }
+            for (size_t row = 0u; row < buffer->rows; row++) {
+                size_t global_index = top_index + row;
+                const struct terminal_cell *row_cells = terminal_buffer_row_at(buffer, global_index);
+                if (!row_cells) {
+                    continue;
                 }
+                for (size_t col = 0u; col < buffer->columns; col++) {
+                    const struct terminal_cell *cell = &row_cells[col];
+                    uint32_t ch = cell->ch;
+                    uint32_t fg = cell->fg;
+                    uint32_t bg = cell->bg;
+                    uint8_t style = cell->style;
+                    if ((style & TERMINAL_STYLE_REVERSE) != 0u) {
+                        uint32_t tmp = fg;
+                        fg = bg;
+                        bg = tmp;
+                    }
+                    if ((style & TERMINAL_STYLE_BOLD) != 0u) {
+                        fg = terminal_bold_variant(fg);
+                    }
 
-                if (ch != 0u) {
-                    uint32_t glyph_index = psf_font_resolve_glyph(&terminal_font, ch);
-                    if (glyph_index >= terminal_font.glyph_count) {
-                        glyph_index = 0u;
+                    int cell_selected = selection_has_range &&
+                        terminal_selection_contains_cell(global_index, col, selection_start, selection_end, buffer->columns);
+                    if (cell_selected) {
+                        fg = buffer->default_bg;
+                        bg = buffer->default_fg;
                     }
-                    const uint8_t *glyph_bitmap = terminal_font.glyphs + glyph_index * terminal_font.glyph_size;
-                    uint32_t glyph_pixel_value = terminal_rgba_from_color(glyph_color);
-                    int glyph_scale = TERMINAL_FONT_SCALE;
-                    if (glyph_scale <= 0) {
-                        glyph_scale = 1;
+
+                    int is_cursor_cell = cursor_render_visible &&
+                                         global_index == cursor_global_index &&
+                                         col == buffer->cursor_column;
+                    uint32_t fill_color = bg;
+                    uint32_t glyph_color = fg;
+                    if (is_cursor_cell) {
+                        fill_color = buffer->cursor_color;
+                        glyph_color = bg;
                     }
-                    for (int py = 0; py < cell_height; py++) {
-                        uint32_t src_y = (uint32_t)(py / glyph_scale);
-                        if (src_y >= terminal_font.height) {
-                            break;
+
+                    int dest_x = margin_pixels + (int)(col * (size_t)glyph_width);
+                    int dest_y = margin_pixels + (int)(row * (size_t)glyph_height);
+                    int end_x = dest_x + glyph_width;
+                    int end_y = dest_y + glyph_height;
+                    if (dest_x < 0) {
+                        dest_x = 0;
+                    }
+                    if (dest_y < 0) {
+                        dest_y = 0;
+                    }
+                    if (end_x > frame_width) {
+                        end_x = frame_width;
+                    }
+                    if (end_y > frame_height) {
+                        end_y = frame_height;
+                    }
+                    if (dest_x >= end_x || dest_y >= end_y) {
+                        continue;
+                    }
+
+                    size_t cache_index = row * buffer->columns + col;
+                    if (cache_index >= terminal_render_cache_count) {
+                        continue;
+                    }
+                    struct terminal_render_cache_entry *cache_entry = &terminal_render_cache[cache_index];
+                    int needs_redraw = full_redraw;
+                    if (!needs_redraw) {
+                        if (cache_entry->ch != ch ||
+                            cache_entry->fg != glyph_color ||
+                            cache_entry->bg != fill_color ||
+                            cache_entry->style != style ||
+                            cache_entry->cursor != (uint8_t)is_cursor_cell ||
+                            cache_entry->selected != (uint8_t)cell_selected) {
+                            needs_redraw = 1;
                         }
-                        const uint8_t *glyph_row = glyph_bitmap + (size_t)src_y * terminal_font.stride;
+                    }
+                    if (!needs_redraw) {
+                        continue;
+                    }
+
+                    cache_entry->ch = ch;
+                    cache_entry->fg = glyph_color;
+                    cache_entry->bg = fill_color;
+                    cache_entry->style = style;
+                    cache_entry->cursor = (uint8_t)is_cursor_cell;
+                    cache_entry->selected = (uint8_t)cell_selected;
+                    frame_dirty = 1;
+
+                    int cell_width = end_x - dest_x;
+                    int cell_height = end_y - dest_y;
+                    uint32_t fill_pixel = terminal_rgba_from_color(fill_color);
+                    for (int py = 0; py < cell_height; py++) {
                         uint32_t *dst32 = (uint32_t *)(framebuffer +
                                                         (size_t)(dest_y + py) * (size_t)frame_pitch +
                                                         (size_t)dest_x * 4u);
-                        for (uint32_t src_x = 0; src_x < terminal_font.width; src_x++) {
-                            uint8_t mask = (uint8_t)(0x80u >> (src_x & 7u));
-                            if ((glyph_row[src_x / 8u] & mask) == 0u) {
-                                continue;
-                            }
-                            int start_px = (int)(src_x * (uint32_t)glyph_scale);
-                            int end_px = start_px + glyph_scale;
-                            if (start_px >= cell_width) {
-                                break;
-                            }
-                            if (end_px > cell_width) {
-                                end_px = cell_width;
-                            }
-                            for (int px = start_px; px < end_px; px++) {
-                                dst32[px] = glyph_pixel_value;
-                            }
+                        for (int px = 0; px < cell_width; px++) {
+                            dst32[px] = fill_pixel;
                         }
                     }
 
-                    if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
-                        int underline_y = end_y - 1;
-                        if (underline_y >= dest_y) {
+                    if (ch != 0u) {
+                        uint32_t glyph_index = psf_font_resolve_glyph(&terminal_font, ch);
+                        if (glyph_index >= terminal_font.glyph_count) {
+                            glyph_index = 0u;
+                        }
+                        const uint8_t *glyph_bitmap = terminal_font.glyphs + glyph_index * terminal_font.glyph_size;
+                        uint32_t glyph_pixel_value = terminal_rgba_from_color(glyph_color);
+                        int glyph_scale = TERMINAL_FONT_SCALE;
+                        if (glyph_scale <= 0) {
+                            glyph_scale = 1;
+                        }
+                        for (int py = 0; py < cell_height; py++) {
+                            uint32_t src_y = (uint32_t)(py / glyph_scale);
+                            if (src_y >= terminal_font.height) {
+                                break;
+                            }
+                            const uint8_t *glyph_row = glyph_bitmap + (size_t)src_y * terminal_font.stride;
                             uint32_t *dst32 = (uint32_t *)(framebuffer +
-                                                            (size_t)underline_y * (size_t)frame_pitch +
+                                                            (size_t)(dest_y + py) * (size_t)frame_pitch +
                                                             (size_t)dest_x * 4u);
-                            for (int px = 0; px < cell_width; px++) {
-                                dst32[px] = glyph_pixel_value;
+                            for (uint32_t src_x = 0; src_x < terminal_font.width; src_x++) {
+                                uint8_t mask = (uint8_t)(0x80u >> (src_x & 7u));
+                                if ((glyph_row[src_x / 8u] & mask) == 0u) {
+                                    continue;
+                                }
+                                int start_px = (int)(src_x * (uint32_t)glyph_scale);
+                                int end_px = start_px + glyph_scale;
+                                if (start_px >= cell_width) {
+                                    break;
+                                }
+                                if (end_px > cell_width) {
+                                    end_px = cell_width;
+                                }
+                                for (int px = start_px; px < end_px; px++) {
+                                    dst32[px] = glyph_pixel_value;
+                                }
+                            }
+                        }
+
+                        if ((style & TERMINAL_STYLE_UNDERLINE) != 0u) {
+                            int underline_y = end_y - 1;
+                            if (underline_y >= dest_y) {
+                                uint32_t *dst32 = (uint32_t *)(framebuffer +
+                                                                (size_t)underline_y * (size_t)frame_pitch +
+                                                                (size_t)dest_x * 4u);
+                                for (int px = 0; px < cell_width; px++) {
+                                    dst32[px] = glyph_pixel_value;
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        if (terminal_custom_pixel_count > 0u &&
-            (terminal_custom_pixels_dirty ||
-             (terminal_custom_pixels_active && frame_dirty))) {
-            terminal_custom_pixels_apply(framebuffer, frame_width, frame_height);
-            frame_dirty = 1;
-            terminal_custom_pixels_dirty = 0;
-            terminal_custom_pixels_active = 1;
-        } else if (terminal_custom_pixels_dirty) {
-            frame_dirty = 1;
-            terminal_custom_pixels_dirty = 0;
-            terminal_custom_pixels_pending_layers = 0u;
-            terminal_custom_pixels_active = 0;
+            if (terminal_custom_pixel_count > 0u &&
+                (terminal_custom_pixels_dirty ||
+                 (terminal_custom_pixels_active && frame_dirty))) {
+                terminal_custom_pixels_apply(framebuffer, frame_width, frame_height);
+                frame_dirty = 1;
+                terminal_custom_pixels_dirty = 0;
+                terminal_custom_pixels_active = 1;
+            } else if (terminal_custom_pixels_dirty) {
+                frame_dirty = 1;
+                terminal_custom_pixels_dirty = 0;
+                terminal_custom_pixels_pending_layers = 0u;
+                terminal_custom_pixels_active = 0;
+            }
+
         }
 
         shader_timing_enabled = (terminal_shaders_active() &&
@@ -9316,7 +9475,7 @@ int main(int argc, char **argv) {
             }
         }
 
-        int cursor_requires_draw = terminal_cursor_enabled && terminal_cursor_dirty;
+        int cursor_requires_draw = !graphics_active && terminal_cursor_enabled && terminal_cursor_dirty;
         int need_input_draw = terminal_input_draw_requested && !terminal_shaders_active();
         int need_gpu_draw = frame_dirty || shader_requires_frame || cursor_requires_draw || need_input_draw;
         if (need_gpu_draw && terminal_render_frame_interval_ms > 0u) {
@@ -9369,7 +9528,7 @@ int main(int argc, char **argv) {
         }
 
         if (frame_dirty) {
-            if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height) != 0) {
+            if (terminal_upload_framebuffer(framebuffer, frame_width, frame_height, graphics_active) != 0) {
                 fprintf(stderr, "Failed to upload framebuffer to GPU.\n");
                 running = 0;
                 break;
@@ -9392,13 +9551,17 @@ int main(int argc, char **argv) {
         int display_w = 0;
         int display_h = 0;
         terminal_display_rect(drawable_width, drawable_height, &display_x, &display_y, &display_w, &display_h);
+        if (graphics_active) {
+            terminal_gfx_display_rect(drawable_width, drawable_height, frame_width, frame_height,
+                                      &display_x, &display_y, &display_w, &display_h);
+        }
         GLuint source_texture = terminal_gl_texture;
         GLfloat source_texture_width = (GLfloat)terminal_texture_width;
         GLfloat source_texture_height = (GLfloat)terminal_texture_height;
         GLfloat source_input_width = (GLfloat)frame_width;
         GLfloat source_input_height = (GLfloat)frame_height;
         int cursor_composited_into_shader = 0;
-        int cursor_ready_for_composition = terminal_cursor_enabled &&
+        int cursor_ready_for_composition = !graphics_active && terminal_cursor_enabled &&
                                            terminal_cursor_texture != 0 &&
                                            terminal_cursor_position_valid;
         if (terminal_shaders_active() && cursor_ready_for_composition) {
@@ -9637,7 +9800,7 @@ int main(int argc, char **argv) {
             terminal_bind_texture(0);
         }
 
-        if (!cursor_composited_into_shader) {
+        if (!graphics_active && !cursor_composited_into_shader) {
             terminal_cursor_render(frame_width, frame_height, display_w, display_h);
         }
 

@@ -94,6 +94,7 @@ static int terminal_resolution_width = 0;
 static int terminal_resolution_height = 0;
 static int terminal_display_width = 0;
 static int terminal_display_height = 0;
+static int terminal_display_auto_size = 0;
 static int terminal_offset_x = 0;
 static int terminal_offset_y = 0;
 static int terminal_margin_pixels = 0;
@@ -1412,6 +1413,36 @@ static void terminal_visible_row_range(const struct terminal_buffer *buffer, siz
     if (out_bottom_index) {
         *out_bottom_index = bottom_index;
     }
+}
+
+/* Display bounds use window coordinates, not high-DPI drawable pixels. */
+static int terminal_size_to_active_display(void) {
+    if (!terminal_window_handle) {
+        fprintf(stderr, "terminal: Cannot size display before window creation.\n");
+        return -1;
+    }
+
+    int display = SDL_GetWindowDisplayIndex(terminal_window_handle);
+    if (display < 0) {
+        fprintf(stderr, "terminal: Unable to find active display: %s\n", SDL_GetError());
+        return -1;
+    }
+
+    SDL_Rect bounds;
+    if (SDL_GetDisplayBounds(display, &bounds) != 0) {
+        fprintf(stderr, "terminal: Unable to query active display bounds: %s\n", SDL_GetError());
+        return -1;
+    }
+    if (bounds.w <= 0 || bounds.h <= 0) {
+        fprintf(stderr, "terminal: Active display has invalid dimensions.\n");
+        return -1;
+    }
+
+    SDL_SetWindowSize(terminal_window_handle, bounds.w, bounds.h);
+    if ((SDL_GetWindowFlags(terminal_window_handle) & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+        SDL_SetWindowPosition(terminal_window_handle, bounds.x, bounds.y);
+    }
+    return 0;
 }
 
 static void terminal_display_rect(int drawable_width, int drawable_height, int *out_x, int *out_y, int *out_w, int *out_h) {
@@ -6652,8 +6683,12 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
         terminal_apply_margin(buffer, margin);
     }
     if (term_size_requested && term_size_width_set && term_size_height_set) {
-        terminal_display_width = term_size_width;
-        terminal_display_height = term_size_height;
+        int automatic = term_size_width == 0 && term_size_height == 0;
+        if (!automatic || terminal_size_to_active_display() == 0) {
+            terminal_display_auto_size = automatic;
+            terminal_display_width = term_size_width;
+            terminal_display_height = term_size_height;
+        }
         terminal_mark_full_redraw();
         terminal_input_draw_requested = 1;
     }
@@ -7450,7 +7485,7 @@ static int terminal_resize_buffer(struct terminal_buffer *buffer, size_t columns
 
     if (terminal_window_handle && terminal_logical_width > 0 && terminal_logical_height > 0) {
         Uint32 flags = SDL_GetWindowFlags(terminal_window_handle);
-        if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+        if (!terminal_display_auto_size && (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
             SDL_SetWindowSize(terminal_window_handle, terminal_logical_width, terminal_logical_height);
         }
     }
@@ -7575,7 +7610,7 @@ static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {
 
     if (terminal_window_handle && terminal_logical_width > 0 && terminal_logical_height > 0) {
         Uint32 flags = SDL_GetWindowFlags(terminal_window_handle);
-        if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+        if (!terminal_display_auto_size && (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
             SDL_SetWindowSize(terminal_window_handle, terminal_logical_width, terminal_logical_height);
         }
     }
@@ -8276,7 +8311,7 @@ int main(int argc, char **argv) {
                        (event.window.event == SDL_WINDOWEVENT_RESIZED ||
                         event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)) {
                 Uint32 flags = SDL_GetWindowFlags(window);
-                if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
+                if (!terminal_display_auto_size && (flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0u) {
                     if (terminal_logical_width > 0 && terminal_logical_height > 0) {
                         SDL_SetWindowSize(window, terminal_logical_width, terminal_logical_height);
                     }

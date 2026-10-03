@@ -45,10 +45,32 @@ int g_content_offset_x, g_content_offset_y;
 */
 int g_help_mode = 0;
 
+#define UNDO_MAX_STEPS 10000
+#define UNDO_MAX_BYTES (16u * 1024u * 1024u)
+
+typedef struct {
+    int row;
+    int col;
+    char value;
+} UndoCell;
+
+typedef struct UndoEntry {
+    struct UndoEntry *older;
+    struct UndoEntry *newer;
+    int cursor_row;
+    int cursor_col;
+    size_t count;
+    size_t bytes;
+    UndoCell cells[];
+} UndoEntry;
+
 /* Global variables for slides */
 typedef struct {
     char **lines;      // Array of g_content_height strings (each of length g_content_width)
-    char **undo_lines; // Backup copy for undo in edit mode (or NULL if none)
+    UndoEntry *undo_oldest;
+    UndoEntry *undo_newest;
+    size_t undo_count;
+    size_t undo_bytes;
 } Slide;
 
 Slide **g_slides = NULL;
@@ -297,7 +319,7 @@ void displayHelp(void) {
     row++;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+S : Save slides (in Edit mode)", row, col);
     row++;
-    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+Z : Undo changes (in Edit mode)", row, col);
+    dprintf(STDOUT_FILENO, "\x1b[%d;%dHCTRL+Z : Undo last edit (character, cut or paste)", row, col);
     row++;
     dprintf(STDOUT_FILENO, "\x1b[%d;%dHARROW KEYS : Navigate slides (Presentation) or editing cursor (Edit)", row, col);
     row++;
@@ -335,12 +357,108 @@ void enterHelpMode(void) {
  * Slide file load/save functions
  ************************************/
 
+/* Capture an edit before changing cells. Allocation failure leaves content intact. */
+static UndoEntry *beginUndo(Slide *slide, int row, int col, int rows, int cols,
+                            int cursor_row, int cursor_col) {
+    size_t count = (size_t)rows * (size_t)cols;
+    if (count > (UNDO_MAX_BYTES - sizeof(UndoEntry)) / sizeof(UndoCell)) {
+        fprintf(stderr, "slides: edit exceeds undo memory limit\n");
+        return NULL;
+    }
+    size_t bytes = sizeof(UndoEntry) + count * sizeof(UndoCell);
+    UndoEntry *entry = malloc(bytes);
+    if (!entry) {
+        perror("slides: undo allocation");
+        return NULL;
+    }
+    entry->cursor_row = cursor_row;
+    entry->cursor_col = cursor_col;
+    entry->count = count;
+    entry->bytes = bytes;
+    size_t index = 0;
+    for (int r = row; r < row + rows; r++) {
+        for (int c = col; c < col + cols; c++) {
+            entry->cells[index++] = (UndoCell){r, c, slide->lines[r][c]};
+        }
+    }
+    return entry;
+}
+
+static void discardOldestUndo(Slide *slide) {
+    UndoEntry *entry = slide->undo_oldest;
+    slide->undo_oldest = entry->newer;
+    if (slide->undo_oldest)
+        slide->undo_oldest->older = NULL;
+    else
+        slide->undo_newest = NULL;
+    slide->undo_count--;
+    slide->undo_bytes -= entry->bytes;
+    free(entry);
+}
+
+/* Store only changed cells; navigation and no-op edits do not consume history. */
+static void finishUndo(Slide *slide, UndoEntry *entry) {
+    size_t changed = 0;
+    for (size_t i = 0; i < entry->count; i++) {
+        UndoCell cell = entry->cells[i];
+        if (slide->lines[cell.row][cell.col] != cell.value)
+            entry->cells[changed++] = cell;
+    }
+    if (!changed) {
+        free(entry);
+        return;
+    }
+    entry->count = changed;
+    size_t bytes = sizeof(UndoEntry) + changed * sizeof(UndoCell);
+    UndoEntry *compact = realloc(entry, bytes);
+    if (compact) {
+        entry = compact;
+        entry->bytes = bytes;
+    }
+    while (slide->undo_oldest &&
+           (slide->undo_count >= UNDO_MAX_STEPS ||
+            slide->undo_bytes > UNDO_MAX_BYTES - entry->bytes))
+        discardOldestUndo(slide);
+    entry->older = slide->undo_newest;
+    entry->newer = NULL;
+    if (slide->undo_newest)
+        slide->undo_newest->newer = entry;
+    else
+        slide->undo_oldest = entry;
+    slide->undo_newest = entry;
+    slide->undo_count++;
+    slide->undo_bytes += entry->bytes;
+}
+
+static void undoEdit(Slide *slide, int *row, int *col) {
+    UndoEntry *entry = slide->undo_newest;
+    if (!entry)
+        return;
+    for (size_t i = 0; i < entry->count; i++) {
+        UndoCell cell = entry->cells[i];
+        slide->lines[cell.row][cell.col] = cell.value;
+    }
+    *row = entry->cursor_row;
+    *col = entry->cursor_col;
+    slide->undo_newest = entry->older;
+    if (slide->undo_newest)
+        slide->undo_newest->newer = NULL;
+    else
+        slide->undo_oldest = NULL;
+    slide->undo_count--;
+    slide->undo_bytes -= entry->bytes;
+    free(entry);
+}
+
 /* Allocate and initialize a new blank slide */
 Slide *newBlankSlide(void) {
     int i;
     Slide *s = malloc(sizeof(Slide));
     s->lines = malloc(sizeof(char*) * g_content_height);
-    s->undo_lines = NULL;
+    s->undo_oldest = NULL;
+    s->undo_newest = NULL;
+    s->undo_count = 0;
+    s->undo_bytes = 0;
     for (i = 0; i < g_content_height; i++) {
         s->lines[i] = malloc(g_content_width + 1);
         memset(s->lines[i], ' ', g_content_width);
@@ -356,12 +474,8 @@ void freeSlide(Slide *s) {
         free(s->lines[i]);
     }
     free(s->lines);
-    if (s->undo_lines) {
-        for (i = 0; i < g_content_height; i++) {
-            free(s->undo_lines[i]);
-        }
-        free(s->undo_lines);
-    }
+    while (s->undo_oldest)
+        discardOldestUndo(s);
     free(s);
 }
 
@@ -387,7 +501,10 @@ void loadSlides(const char *filename) {
         if (strcmp(line, "----") == 0) {
             Slide *s = malloc(sizeof(Slide));
             s->lines = malloc(sizeof(char*) * g_content_height);
-            s->undo_lines = NULL;
+            s->undo_oldest = NULL;
+            s->undo_newest = NULL;
+            s->undo_count = 0;
+            s->undo_bytes = 0;
             for (int i = 0; i < g_content_height; i++) {
                 s->lines[i] = malloc(g_content_width + 1);
                 if (i < bufCount) {
@@ -417,7 +534,10 @@ void loadSlides(const char *filename) {
     if (bufCount > 0) {
         Slide *s = malloc(sizeof(Slide));
         s->lines = malloc(sizeof(char*) * g_content_height);
-        s->undo_lines = NULL;
+        s->undo_oldest = NULL;
+        s->undo_newest = NULL;
+        s->undo_count = 0;
+        s->undo_bytes = 0;
         for (int i = 0; i < g_content_height; i++) {
             s->lines[i] = malloc(g_content_width + 1);
             if (i < bufCount) {
@@ -469,16 +589,6 @@ void enterEditMode(void) {
     int cur_col = g_last_edit_col;
     int ch, i;
     
-    /* Backup for undo */
-    if (slide->undo_lines) {
-        for (i = 0; i < g_content_height; i++)
-            free(slide->undo_lines[i]);
-        free(slide->undo_lines);
-    }
-    slide->undo_lines = malloc(sizeof(char*) * g_content_height);
-    for (i = 0; i < g_content_height; i++)
-        slide->undo_lines[i] = strdup(slide->lines[i]);
-    
     while (1) {
         refreshEditScreen(cur_row, cur_col);
         ch = readKey();
@@ -488,8 +598,7 @@ void enterEditMode(void) {
             fsync(STDOUT_FILENO);
             sleep(3);
         } else if (ch == CTRL_KEY('Z')) {
-            for (i = 0; i < g_content_height; i++)
-                strncpy(slide->lines[i], slide->undo_lines[i], g_content_width);
+            undoEdit(slide, &cur_row, &cur_col);
         } else if (ch == CTRL_KEY('E') || ch == 27) {
             break;
         } else if (ch == CTRL_KEY('Q')) {
@@ -507,31 +616,40 @@ void enterEditMode(void) {
             // Insert space at cursor: shift rest of line right
             char *line = slide->lines[cur_row];
             if (cur_col < g_content_width - 1) {
+                UndoEntry *entry = beginUndo(slide, cur_row, cur_col, 1,
+                                            g_content_width - cur_col, cur_row, cur_col);
+                if (!entry)
+                    continue;
                 for (i = g_content_width - 1; i > cur_col; i--) {
                     line[i] = line[i - 1];
                 }
                 line[cur_col] = ' ';
                 cur_col++;
+                finishUndo(slide, entry);
             }
         } else if (ch == 127 || ch == CTRL_KEY('H')) {
             // Backspace: delete preceding char (shift rest of line left)
             char *line = slide->lines[cur_row];
-            if (cur_col > 0) {
-                cur_col--;
-                for (i = cur_col; i < g_content_width - 1; i++) {
-                    line[i] = line[i + 1];
-                }
-                line[g_content_width - 1] = ' ';
-            } else if (cur_row > 0) {
-                cur_row--;
-                cur_col = g_content_width - 1;
+            if (cur_col > 0 || cur_row > 0) {
+                int row = cur_col > 0 ? cur_row : cur_row - 1;
+                int col = cur_col > 0 ? cur_col - 1 : g_content_width - 1;
+                UndoEntry *entry = beginUndo(slide, row, col, 1,
+                                            g_content_width - col, cur_row, cur_col);
+                if (!entry)
+                    continue;
+                cur_row = row;
+                cur_col = col;
                 line = slide->lines[cur_row];
                 for (i = cur_col; i < g_content_width - 1; i++) {
                     line[i] = line[i + 1];
                 }
                 line[g_content_width - 1] = ' ';
+                finishUndo(slide, entry);
             }
         } else if (isprint(ch)) {
+            UndoEntry *entry = beginUndo(slide, cur_row, cur_col, 1, 1, cur_row, cur_col);
+            if (!entry)
+                continue;
             slide->lines[cur_row][cur_col] = ch;
             if (cur_col < g_content_width - 1)
                 cur_col++;
@@ -539,6 +657,7 @@ void enterEditMode(void) {
                 cur_col = 0;
                 cur_row++;
             }
+            finishUndo(slide, entry);
         } else if (ch == CTRL_KEY('T')) {
             int toggle_start_row = cur_row, toggle_start_col = cur_col;
             int toggle_row = cur_row, toggle_col = cur_col;
@@ -558,6 +677,10 @@ void enterEditMode(void) {
                     int sel_col_end   = (toggle_start_col > toggle_col ? toggle_start_col : toggle_col);
                     int sel_rows = sel_row_end - sel_row_start + 1;
                     int sel_cols = sel_col_end - sel_col_start + 1;
+                    UndoEntry *entry = beginUndo(slide, sel_row_start, sel_col_start,
+                                                sel_rows, sel_cols, cur_row, cur_col);
+                    if (!entry)
+                        continue;
                     if (g_clipboard) {
                         for (i = 0; i < g_clipboard->rows; i++)
                             free(g_clipboard->data[i]);
@@ -580,6 +703,7 @@ void enterEditMode(void) {
                             g_slides[g_current_slide]->lines[sel_row_start + i][sel_col_start + j] = ' ';
                         }
                     }
+                    finishUndo(slide, entry);
                     dprintf(STDOUT_FILENO, "\x1b[%d;2HRegion cut!", g_term_rows - 1);
                     fsync(STDOUT_FILENO);
                     sleep(1);
@@ -628,6 +752,16 @@ void enterEditMode(void) {
             }
         } else if (ch == CTRL_KEY('V')) {
             if (g_clipboard) {
+                int rows = g_clipboard->rows;
+                int cols = g_clipboard->cols;
+                if (rows > g_content_height - cur_row)
+                    rows = g_content_height - cur_row;
+                if (cols > g_content_width - cur_col)
+                    cols = g_content_width - cur_col;
+                UndoEntry *entry = beginUndo(slide, cur_row, cur_col, rows, cols,
+                                            cur_row, cur_col);
+                if (!entry)
+                    continue;
                 int r, c;
                 for (r = 0; r < g_clipboard->rows; r++) {
                     if (cur_row + r >= g_content_height) break;
@@ -636,16 +770,13 @@ void enterEditMode(void) {
                         slide->lines[cur_row + r][cur_col + c] = g_clipboard->data[r][c];
                     }
                 }
+                finishUndo(slide, entry);
             }
         }
     }
     
     g_last_edit_row = cur_row;
     g_last_edit_col = cur_col;
-    for (i = 0; i < g_content_height; i++)
-        free(slide->undo_lines[i]);
-    free(slide->undo_lines);
-    slide->undo_lines = NULL;
     clearScreen();
     g_edit_mode = 0;
 }

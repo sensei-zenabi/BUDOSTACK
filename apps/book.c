@@ -959,16 +959,10 @@ static int save_file(struct BookState *state, int save_as) {
     return 0;
 }
 
-static int load_file(struct BookState *state) {
-    char *input = prompt_user(state, "Open (.bk/.txt/.md):");
-    if (!input) {
-        set_status(state, "Open cancelled");
-        return -1;
-    }
+static int load_path(struct BookState *state, const char *requested_path) {
     char path[PATH_MAX];
-    strncpy(path, input, sizeof(path));
+    strncpy(path, requested_path, sizeof(path));
     path[sizeof(path) - 1] = '\0';
-    free(input);
 
     if (ensure_default_extension(path, sizeof(path)) != 0) {
         set_status(state, "Filename too long");
@@ -1072,6 +1066,17 @@ static int load_file(struct BookState *state) {
     update_word_count(state);
     set_status(state, "Opened %s", state->filename);
     return 0;
+}
+
+static int load_file(struct BookState *state) {
+    char *input = prompt_user(state, "Open (.bk/.txt/.md):");
+    if (!input) {
+        set_status(state, "Open cancelled");
+        return -1;
+    }
+    int result = load_path(state, input);
+    free(input);
+    return result;
 }
 
 static void new_file(struct BookState *state) {
@@ -1464,7 +1469,12 @@ static void page_jump(struct BookState *state, int direction) {
     state->cursor = byte_for_display_col(state, (size_t)target, col);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    if (argc > 2) {
+        fprintf(stderr, "Usage: book [file.bk|file.txt|file.md]\n");
+        return 1;
+    }
+
     setlocale(LC_CTYPE, "");
     budostack_apply_terminal_layout();
     enable_raw_mode();
@@ -1479,6 +1489,10 @@ int main(void) {
     state.prompt_active = 0;
     update_word_count(&state);
     update_dimensions(&state);
+
+    if (argc == 2) {
+        load_path(&state, argv[1]);
+    }
 
     int running = 1;
     render(&state);

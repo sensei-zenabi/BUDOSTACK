@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <math.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -135,6 +136,9 @@ static int terminal_history_height = 0;
 static GLuint terminal_overlay_texture = 0;
 static int terminal_overlay_available = 0;
 static int terminal_overlay_enabled = 1;
+static double terminal_overlay_zoom = 100;
+static double terminal_overlay_offset_x = 0;
+static double terminal_overlay_offset_y = 0;
 static GLuint terminal_cursor_texture = 0;
 static int terminal_cursor_width = 0;
 static int terminal_cursor_height = 0;
@@ -1484,6 +1488,29 @@ static void terminal_display_rect(int drawable_width, int drawable_height, int *
     if (out_h) {
         *out_h = height;
     }
+}
+
+/* Zoom and offsets apply only to the overlay, independently of content. */
+static void terminal_overlay_rect(int drawable_width, int drawable_height,
+                                  int *out_x, int *out_y, int *out_w, int *out_h) {
+    double width = drawable_width * terminal_overlay_zoom / 100.0;
+    double height = drawable_height * terminal_overlay_zoom / 100.0;
+    /* Keep dimensions and positions representable even for extreme drawables. */
+    int limit = INT_MAX / 4;
+    int w = width > limit ? limit : (int)lround(width);
+    int h = height > limit ? limit : (int)lround(height);
+    if (w < 1) {
+        w = 1;
+    }
+    if (h < 1) {
+        h = 1;
+    }
+    double x = (drawable_width - w) / 2.0 + drawable_width * terminal_overlay_offset_x / 100.0;
+    double y = (drawable_height - h) / 2.0 + drawable_height * terminal_overlay_offset_y / 100.0;
+    *out_x = (int)lround(fmax(-limit, fmin(limit, x)));
+    *out_y = (int)lround(fmax(-limit, fmin(limit, y)));
+    *out_w = w;
+    *out_h = h;
 }
 
 static int terminal_window_point_to_framebuffer(int window_x, int window_y, int *out_x, int *out_y) {
@@ -6214,6 +6241,37 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             cursor_blink_toggle_requested = 1;
                             cursor_blink_enable_requested = 0;
                         }
+                    } else if (strcmp(key, "overlay_zoom") == 0 && value) {
+                        char *endptr = NULL;
+                        errno = 0;
+                        double zoom = strtod(value, &endptr);
+                        if (errno == 0 && endptr != value && *endptr == '\0' &&
+                            isfinite(zoom) && zoom >= 1 && zoom <= 1000) {
+                            terminal_overlay_zoom = zoom;
+                            terminal_mark_full_redraw();
+                            terminal_input_draw_requested = 1;
+                        }
+                    } else if (strcmp(key, "overlay_offset") == 0 && value) {
+                        char *sep = strchr(value, ',');
+                        if (sep) {
+                            *sep = '\0';
+                            char *end_x = NULL;
+                            char *end_y = NULL;
+                            const char *y_str = sep + 1;
+                            errno = 0;
+                            double x = strtod(value, &end_x);
+                            int x_valid = errno == 0 && end_x != value && *end_x == '\0' &&
+                                          isfinite(x) && x >= -100 && x <= 100;
+                            errno = 0;
+                            double y = strtod(y_str, &end_y);
+                            if (x_valid && errno == 0 && end_y != y_str && *end_y == '\0' &&
+                                isfinite(y) && y >= -100 && y <= 100) {
+                                terminal_overlay_offset_x = x;
+                                terminal_overlay_offset_y = y;
+                                terminal_mark_full_redraw();
+                                terminal_input_draw_requested = 1;
+                            }
+                        }
                     } else if (strcmp(key, "overlay") == 0 && value && *value != '\0') {
                         if (strcmp(value, "enable") == 0) {
                             overlay_toggle_requested = 1;
@@ -9526,11 +9584,17 @@ int main(int argc, char **argv) {
         glViewport(0, 0, drawable_width, drawable_height);
         glClear(GL_COLOR_BUFFER_BIT);
         if (terminal_overlay_available && terminal_overlay_enabled) {
+            int overlay_x;
+            int overlay_y;
+            int overlay_w;
+            int overlay_h;
+            terminal_overlay_rect(drawable_width, drawable_height,
+                                  &overlay_x, &overlay_y, &overlay_w, &overlay_h);
             terminal_draw_textured_quad(terminal_overlay_texture,
-                                        0,
-                                        0,
-                                        drawable_width,
-                                        drawable_height,
+                                        overlay_x,
+                                        overlay_y,
+                                        overlay_w,
+                                        overlay_h,
                                         drawable_width,
                                         drawable_height);
         }

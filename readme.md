@@ -87,3 +87,15 @@ The `OVERLAY_WIDTH`, `OVERLAY_HEIGHT`, `OVERLAY_OFFSET_X`, and
 `OVERLAY_OFFSET_Y` values in `config.ini` use the same units. Existing custom
 pixel settings/scripts require a one-time conversion: `pixels * 100 / screen
 axis resolution`. The bundled defaults preserve their layout at 1920×1080.
+
+`_TERM_OVERLAY_ZOOM <percent>` scales the overlay image around screen center.
+100 retains the full-screen image; 80 uses 80% of screen width and height;
+120 enlarges it to 120%, cropping its edges. Range: 1–1000, decimals allowed.
+`_TERM_OVERLAY_OFFSET <x_percent> <y_percent>` shifts the overlay image from
+center; positive X moves right and positive Y moves down. Range: −100–100.
+These commands affect only the overlay image; use `_TERM_SIZE` and
+`_TERM_OFFSET` to align terminal content with its opening.
+
+Boot settings: `_TERM_OVERLAY_ZOOM=100`, `_TERM_OVERLAY_OFFSET_X=0`, and
+`_TERM_OVERLAY_OFFSET_Y=0` in `config.ini`. Zoom and offsets are recalculated
+from current screen dimensions on each redraw and retained while disabled.

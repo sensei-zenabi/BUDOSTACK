@@ -209,6 +209,25 @@ int main(int argc, char **argv) {
     terminal_handle_osc_777(&percentage_buffer, "term_size=nanx50;term_offset=0,inf");
     assert(terminal_display_width == 80.5 && terminal_display_height == 75.25);
     assert(terminal_offset_x == -1.5 && terminal_offset_y == 2.5);
+    terminal_handle_osc_777(&percentage_buffer, "overlay_zoom=125;overlay_offset=-2.5,5");
+    assert(terminal_overlay_zoom == 125);
+    assert(terminal_overlay_offset_x == -2.5 && terminal_overlay_offset_y == 5);
+    terminal_overlay_rect(1920, 1080, &x, &y, &w, &h);
+    assert(x == -288 && y == -81 && w == 2400 && h == 1350);
+    terminal_overlay_rect(1280, 1024, &x, &y, &w, &h);
+    assert(x == -192 && y == -77 && w == 1600 && h == 1280);
+    terminal_handle_osc_777(&percentage_buffer, "overlay_zoom=nan;overlay_offset=0,inf");
+    assert(terminal_overlay_zoom == 125);
+    assert(terminal_overlay_offset_x == -2.5 && terminal_overlay_offset_y == 5);
+    terminal_handle_osc_777(&percentage_buffer, "overlay_zoom=80;overlay_offset=0,0");
+    terminal_overlay_rect(1280, 1024, &x, &y, &w, &h);
+    assert(x == 128 && y == 103 && w == 1024 && h == 819);
+    terminal_handle_osc_777(&percentage_buffer, "overlay_zoom=100;overlay_offset=0,0");
+    terminal_overlay_rect(1280, 1024, &x, &y, &w, &h);
+    assert(x == 0 && y == 0 && w == 1280 && h == 1024);
+    /* Overlay settings leave the content geometry unchanged. */
+    assert(terminal_display_width == 80.5 && terminal_display_height == 75.25);
+    assert(terminal_offset_x == -1.5 && terminal_offset_y == 2.5);
     /* Overlay disabled: ignore configured size/offsets and fill 5:4 displays. */
     terminal_overlay_enabled = 0;
     terminal_display_width = 62.5;

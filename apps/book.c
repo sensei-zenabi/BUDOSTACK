@@ -221,6 +221,7 @@ struct BookState {
     char status[BOOK_STATUS_MAX];
     char prompt[BOOK_PROMPT_MAX];
     int prompt_active;
+    time_t last_render_time;
 
     char filename[PATH_MAX];
     size_t word_count;
@@ -243,6 +244,22 @@ static const struct PageSize PAGE_SIZES[] = {
 };
 
 static void render(struct BookState *state);
+
+static void refresh_idle(struct BookState *state) {
+    struct winsize ws;
+    int resized = 0;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col != 0) {
+        int rows = ws.ws_row;
+        int cols = ws.ws_col;
+        budostack_clamp_terminal_size(&rows, &cols);
+        resized = rows != state->rows || cols != state->cols;
+    }
+    /* Frequent output resets the terminal's cursor blink timer. Only redraw
+     * while idle when the clock changes or the terminal is resized. */
+    if (resized || time(NULL) != state->last_render_time) {
+        render(state);
+    }
+}
 
 static void free_history_entry(struct HistoryEntry *e) {
     if (e->text) {
@@ -788,7 +805,7 @@ static char *prompt_user(struct BookState *state, const char *label) {
     while (1) {
         int key = read_key();
         if (key == KEY_NULL) {
-            render(state);
+            refresh_idle(state);
             continue;
         }
         if (key == '\r') {
@@ -1271,6 +1288,7 @@ static void draw_bottom_bar(const struct BookState *state) {
 }
 
 static void render(struct BookState *state) {
+    state->last_render_time = time(NULL);
     update_dimensions(state);
     scroll_to_cursor(state);
     printf("\x1b[?25l");
@@ -1336,15 +1354,24 @@ int main(void) {
     update_dimensions(&state);
 
     int running = 1;
+    render(&state);
     while (running) {
-        render(&state);
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
         struct timeval tv = {0, 200000};
         int ready = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv);
         if (ready == 0) {
+            refresh_idle(&state);
             continue;
+        }
+        if (ready < 0) {
+            if (errno == EINTR) {
+                refresh_idle(&state);
+                continue;
+            }
+            perror("select");
+            break;
         }
         int c = read_key();
         switch (c) {
@@ -1472,6 +1499,9 @@ int main(void) {
                 break;
         }
         wrap_text(&state);
+        if (running) {
+            render(&state);
+        }
     }
 
     printf("\x1b[2J\x1b[H\x1b[0m\x1b[?25h");

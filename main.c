@@ -1367,60 +1367,6 @@ static void run_shell_command(const char *shell_command) {
     }
 }
 
-static int execute_command_with_cwd_handoff(CommandStruct *cmd, const char *fallback_command) {
-    if (!cmd) {
-        return -1;
-    }
-
-    const int is_runtask = strcmp(cmd->command, "runtask") == 0;
-    char handoff_path[] = "/tmp/budostack-cwd-XXXXXX";
-    int handoff_fd = -1;
-
-    if (is_runtask) {
-        handoff_fd = mkstemp(handoff_path);
-        if (handoff_fd == -1) {
-            perror("mkstemp");
-            handoff_path[0] = '\0';
-        } else {
-            close(handoff_fd);
-            handoff_fd = -1;
-            if (setenv("BUDOSTACK_CWD_FILE", handoff_path, 1) != 0) {
-                perror("setenv BUDOSTACK_CWD_FILE");
-                unlink(handoff_path);
-                handoff_path[0] = '\0';
-            }
-        }
-    }
-
-    int result = execute_command_with_paging(cmd);
-    if (result == -1 && fallback_command) {
-        run_shell_command(fallback_command);
-        result = 0;
-    }
-
-    if (is_runtask && handoff_path[0] != '\0') {
-        if (unsetenv("BUDOSTACK_CWD_FILE") != 0) {
-            perror("unsetenv BUDOSTACK_CWD_FILE");
-        }
-
-        FILE *handoff = fopen(handoff_path, "r");
-        if (handoff) {
-            char requested_cwd[PATH_MAX];
-            if (fgets(requested_cwd, sizeof(requested_cwd), handoff)) {
-                requested_cwd[strcspn(requested_cwd, "\r\n")] = '\0';
-                if (requested_cwd[0] != '\0' && chdir(requested_cwd) != 0) {
-                    fprintf(stderr, "runtask: failed to apply working directory '%s': %s\n",
-                            requested_cwd, strerror(errno));
-                }
-            }
-            fclose(handoff);
-        }
-        unlink(handoff_path);
-    }
-
-    return result;
-}
-
 static int handle_tofile(CommandStruct *cmd) {
     if (strcmp(cmd->command, "_TOFILE") != 0)
         return 0;
@@ -1550,8 +1496,10 @@ int main(int argc, char *argv[]) {
             perror("strdup");
         } else {
             parse_input(autoexec_cmd, &aut);
-            /* Try in-app command first; if not handled, fall back to /bin/sh. */
-            (void)execute_command_with_cwd_handoff(&aut, autoexec_cmd);
+            /* Try in-app command first; if not handled, fall back to /bin/sh */
+            if (execute_command_with_paging(&aut) == -1) {
+                run_shell_command(autoexec_cmd);
+            }
             free_command_struct(&aut);
             free(autoexec_cmd);
         }
@@ -1587,7 +1535,9 @@ int main(int argc, char *argv[]) {
     /* Execute auto_command if set */
     if (auto_command != NULL) {
         parse_input(auto_command, &cmd);
-        (void)execute_command_with_cwd_handoff(&cmd, auto_command);
+        if (execute_command_with_paging(&cmd) == -1) {
+            run_shell_command(auto_command);
+        }
         free_command_struct(&cmd);
         free(auto_command);
     }
@@ -1696,7 +1646,9 @@ int main(int argc, char *argv[]) {
             free_command_struct(&cmd);
             continue;
         }
-        (void)execute_command_with_cwd_handoff(&cmd, input);
+        if (execute_command_with_paging(&cmd) == -1) {
+            run_shell_command(input);
+        }
         free(input);
         free_command_struct(&cmd);
     }

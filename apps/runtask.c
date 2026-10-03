@@ -163,6 +163,7 @@ static struct termios saved_termios;
 static bool saved_termios_valid = false;
 static bool echo_disabled = false;
 static char task_workdir[PATH_MAX];
+static bool task_cwd_handoff_requested = false;
 
 static void set_initial_argv0(const char *argv0) {
     if (!argv0) {
@@ -3822,6 +3823,7 @@ static bool handle_sys_cd_command(const char *cmdline, int line, int debug) {
         if (debug) {
             fprintf(stderr, "SYS: cwd changed to %s\n", new_cwd);
         }
+        task_cwd_handoff_requested = true;
     } else {
         perror("SYS: getcwd");
         cache_task_workdir(target);
@@ -3844,6 +3846,8 @@ static void run_sys_command(const char *cmdline, int line, int debug) {
     if (handle_sys_cd_command(cmdline, line, debug)) {
         return;
     }
+
+    task_cwd_handoff_requested = false;
 
     if (debug) {
         fprintf(stderr, "SYS: /bin/sh -c %s\n", cmdline);
@@ -5978,6 +5982,25 @@ int main(int argc, char *argv[]) {
 
     if (echo_disabled) {
         restore_terminal_settings();
+    }
+
+    if (task_cwd_handoff_requested) {
+        const char *handoff_path = getenv("BUDOSTACK_CWD_FILE");
+        if (handoff_path && *handoff_path) {
+            char final_cwd[PATH_MAX];
+            if (getcwd(final_cwd, sizeof(final_cwd))) {
+                FILE *handoff = fopen(handoff_path, "w");
+                if (handoff) {
+                    fprintf(handoff, "%s\n", final_cwd);
+                    fclose(handoff);
+                } else if (debug) {
+                    fprintf(stderr, "SYS: failed to open cwd handoff file '%s': %s\n",
+                            handoff_path, strerror(errno));
+                }
+            } else if (debug) {
+                perror("SYS: getcwd for cwd handoff");
+            }
+        }
     }
 
     stop_logging();

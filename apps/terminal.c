@@ -103,11 +103,11 @@ static int terminal_scale_factor = 1;
 static int terminal_resolution_override_active = 0;
 static int terminal_resolution_width = 0;
 static int terminal_resolution_height = 0;
-static int terminal_display_width = 0;
-static int terminal_display_height = 0;
+static double terminal_display_width = 0;
+static double terminal_display_height = 0;
 static int terminal_display_auto_size = 0;
-static int terminal_offset_x = 0;
-static int terminal_offset_y = 0;
+static double terminal_offset_x = 0;
+static double terminal_offset_y = 0;
 static int terminal_margin_pixels = 0;
 static size_t terminal_selection_anchor_row = 0u;
 static size_t terminal_selection_anchor_col = 0u;
@@ -1457,8 +1457,8 @@ static int terminal_size_to_active_display(void) {
 }
 
 static void terminal_display_rect(int drawable_width, int drawable_height, int *out_x, int *out_y, int *out_w, int *out_h) {
-    int width = terminal_display_width > 0 ? terminal_display_width : drawable_width;
-    int height = terminal_display_height > 0 ? terminal_display_height : drawable_height;
+    int width = terminal_display_width > 0 ? (int)lround(drawable_width * terminal_display_width / 100.0) : drawable_width;
+    int height = terminal_display_height > 0 ? (int)lround(drawable_height * terminal_display_height / 100.0) : drawable_height;
 
     if (width > drawable_width) {
         width = drawable_width;
@@ -1473,10 +1473,10 @@ static void terminal_display_rect(int drawable_width, int drawable_height, int *
         height = 1;
     }
     if (out_x) {
-        *out_x = ((drawable_width - width) / 2) + terminal_offset_x;
+        *out_x = ((drawable_width - width) / 2) + (int)lround(drawable_width * terminal_offset_x / 100.0);
     }
     if (out_y) {
-        *out_y = ((drawable_height - height) / 2) + terminal_offset_y;
+        *out_y = ((drawable_height - height) / 2) + (int)lround(drawable_height * terminal_offset_y / 100.0);
     }
     if (out_w) {
         *out_w = width;
@@ -5998,13 +5998,13 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
     int resolution_width_set = 0;
     int resolution_height_set = 0;
     int resolution_requested = 0;
-    int term_size_width = 0;
-    int term_size_height = 0;
+    double term_size_width = 0;
+    double term_size_height = 0;
     int term_size_width_set = 0;
     int term_size_height_set = 0;
     int term_size_requested = 0;
-    int requested_offset_x = 0;
-    int requested_offset_y = 0;
+    double requested_offset_x = 0;
+    double requested_offset_y = 0;
     int term_offset_x_set = 0;
     int term_offset_y_set = 0;
     int term_offset_requested = 0;
@@ -6153,16 +6153,16 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             const char *height_str = sep + 1;
                             char *endptr = NULL;
                             errno = 0;
-                            long parsed_width = strtol(value, &endptr, 10);
-                            if (errno == 0 && endptr && *endptr == '\0' && parsed_width >= 0 && parsed_width <= INT_MAX) {
-                                term_size_width = (int)parsed_width;
+                            double parsed_width = strtod(value, &endptr);
+                            if (errno == 0 && endptr && endptr != value && *endptr == '\0' && isfinite(parsed_width) && parsed_width >= 0 && parsed_width <= 100) {
+                                term_size_width = parsed_width;
                                 term_size_width_set = 1;
                             }
                             errno = 0;
                             endptr = NULL;
-                            long parsed_height = strtol(height_str, &endptr, 10);
-                            if (errno == 0 && endptr && *endptr == '\0' && parsed_height >= 0 && parsed_height <= INT_MAX) {
-                                term_size_height = (int)parsed_height;
+                            double parsed_height = strtod(height_str, &endptr);
+                            if (errno == 0 && endptr && endptr != height_str && *endptr == '\0' && isfinite(parsed_height) && parsed_height >= 0 && parsed_height <= 100) {
+                                term_size_height = parsed_height;
                                 term_size_height_set = 1;
                             }
                             if (term_size_width_set && term_size_height_set) {
@@ -6182,16 +6182,16 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                             const char *y_str = sep + 1;
                             char *endptr = NULL;
                             errno = 0;
-                            long parsed_x = strtol(value, &endptr, 10);
-                            if (errno == 0 && endptr && *endptr == '\0' && parsed_x >= INT_MIN && parsed_x <= INT_MAX) {
-                                requested_offset_x = (int)parsed_x;
+                            double parsed_x = strtod(value, &endptr);
+                            if (errno == 0 && endptr && endptr != value && *endptr == '\0' && isfinite(parsed_x) && parsed_x >= -100 && parsed_x <= 100) {
+                                requested_offset_x = parsed_x;
                                 term_offset_x_set = 1;
                             }
                             errno = 0;
                             endptr = NULL;
-                            long parsed_y = strtol(y_str, &endptr, 10);
-                            if (errno == 0 && endptr && *endptr == '\0' && parsed_y >= INT_MIN && parsed_y <= INT_MAX) {
-                                requested_offset_y = (int)parsed_y;
+                            double parsed_y = strtod(y_str, &endptr);
+                            if (errno == 0 && endptr && endptr != y_str && *endptr == '\0' && isfinite(parsed_y) && parsed_y >= -100 && parsed_y <= 100) {
+                                requested_offset_y = parsed_y;
                                 term_offset_y_set = 1;
                             }
                             if (term_offset_x_set && term_offset_y_set) {
@@ -8299,8 +8299,8 @@ int main(int argc, char **argv) {
     terminal_cell_pixel_height = glyph_height;
     terminal_scale_factor = 1;
     terminal_gl_ready = 1;
-    terminal_display_width = 1920;
-    terminal_display_height = 1080;
+    terminal_display_width = 100;
+    terminal_display_height = 100;
     (void)terminal_load_overlay(TERMINAL_OVERLAY_PATH);
 
     drawable_width = 0;

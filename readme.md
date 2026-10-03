@@ -70,3 +70,20 @@ code.
 Are not distributed using the GPL-2.0 license. Instead, these folders 
 contain their own LICENSE.txt files indicating their licensing conditions.
 
+
+### Overlay sizing
+
+`_TERM_SIZE <width_percent> <height_percent>` sets the centered display area
+using percentages of the current screen (0–100, decimals allowed). A zero
+dimension fills that axis; `0 0` fills the screen.
+`_TERM_OFFSET <x_percent> <y_percent>` shifts that area from the center, using
+screen width for X and screen height for Y (−100–100, decimals allowed).
+Positive X moves right; positive Y moves down. The area is recalculated when
+the screen resolution changes, including graphics apps and mouse mapping.
+
+For example, `_TERM_SIZE 80 75` and `_TERM_OFFSET 0 2.5` use 80% of the screen
+width, 75% of its height, and shift down by 2.5% of the screen height.
+The `OVERLAY_WIDTH`, `OVERLAY_HEIGHT`, `OVERLAY_OFFSET_X`, and
+`OVERLAY_OFFSET_Y` values in `config.ini` use the same units. Existing custom
+pixel settings/scripts require a one-time conversion: `pixels * 100 / screen
+axis resolution`. The bundled defaults preserve their layout at 1920×1080.

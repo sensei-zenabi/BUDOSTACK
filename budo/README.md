@@ -53,7 +53,8 @@ version, shared-file size and frame slots are validated by the host.
 The terminal owns all OpenGL resources. Screens use nearest-neighbour filtering. With the overlay disabled they fill
 the entire native display, including 1280×1024 screens. With the overlay enabled
 they fill the configured display area and use its offsets (`OVERLAY_WIDTH`,
-`OVERLAY_HEIGHT`, `OVERLAY_OFFSET_X`, `OVERLAY_OFFSET_Y` in `config.ini`).
+`OVERLAY_HEIGHT`, `OVERLAY_OFFSET_X`, `OVERLAY_OFFSET_Y` in `config.ini`,
+all percentages of the current screen).
 Horizontal and vertical scaling are independent, so the image fills the target
 area even when its aspect ratio differs from the application framebuffer.
 

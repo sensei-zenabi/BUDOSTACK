@@ -828,20 +828,83 @@ static char *prompt_user(struct BookState *state, const char *label) {
     }
 }
 
-static void ensure_extension(char *filename, size_t buflen, const char *ext) {
-    size_t len = strlen(filename);
-    size_t ext_len = strlen(ext);
-    if (len < ext_len || strcasecmp(filename + len - ext_len, ext) != 0) {
-        if (len + ext_len + 1 < buflen) {
-            strcat(filename, ext);
-        }
+enum BookFileFormat {
+    BOOK_FORMAT_BK = 0,
+    BOOK_FORMAT_TXT,
+    BOOK_FORMAT_MD,
+    BOOK_FORMAT_UNSUPPORTED
+};
+
+static const char *path_extension(const char *path) {
+    const char *slash = strrchr(path, '/');
+    const char *name = slash ? slash + 1 : path;
+    const char *dot = strrchr(name, '.');
+    if (!dot || dot == name || dot[1] == '\0') {
+        return NULL;
     }
+    return dot;
+}
+
+static enum BookFileFormat book_file_format(const char *path) {
+    const char *ext = path_extension(path);
+    if (!ext) {
+        return BOOK_FORMAT_BK;
+    }
+    if (strcasecmp(ext, ".bk") == 0) {
+        return BOOK_FORMAT_BK;
+    }
+    if (strcasecmp(ext, ".txt") == 0) {
+        return BOOK_FORMAT_TXT;
+    }
+    if (strcasecmp(ext, ".md") == 0) {
+        return BOOK_FORMAT_MD;
+    }
+    return BOOK_FORMAT_UNSUPPORTED;
+}
+
+static int ensure_default_extension(char *filename, size_t buflen) {
+    if (path_extension(filename)) {
+        return 0;
+    }
+    size_t len = strlen(filename);
+    static const char ext[] = ".bk";
+    if (len + sizeof(ext) > buflen) {
+        return -1;
+    }
+    strcat(filename, ext);
+    return 0;
+}
+
+static size_t normalize_plain_text(char *buffer, size_t len) {
+    size_t src = 0u;
+    size_t dst = 0u;
+
+    if (len >= 3u &&
+        (unsigned char)buffer[0] == 0xefu &&
+        (unsigned char)buffer[1] == 0xbbu &&
+        (unsigned char)buffer[2] == 0xbfu) {
+        src = 3u;
+    }
+
+    while (src < len) {
+        if (buffer[src] == '\r') {
+            if (src + 1u < len && buffer[src + 1u] == '\n') {
+                src++;
+            }
+            buffer[dst++] = '\n';
+            src++;
+            continue;
+        }
+        buffer[dst++] = buffer[src++];
+    }
+    buffer[dst] = '\0';
+    return dst;
 }
 
 static int save_file(struct BookState *state, int save_as) {
     char path[PATH_MAX];
     if (save_as || state->filename[0] == '\0') {
-        char *input = prompt_user(state, "Save as:");
+        char *input = prompt_user(state, "Save as (.bk/.txt/.md):");
         if (!input) {
             set_status(state, "Save cancelled");
             return -1;
@@ -857,19 +920,33 @@ static int save_file(struct BookState *state, int save_as) {
         set_status(state, "No filename provided");
         return -1;
     }
-    ensure_extension(path, sizeof(path), ".bk");
+    if (ensure_default_extension(path, sizeof(path)) != 0) {
+        set_status(state, "Filename too long");
+        return -1;
+    }
+
+    enum BookFileFormat format = book_file_format(path);
+    if (format == BOOK_FORMAT_UNSUPPORTED) {
+        set_status(state, "Unsupported format; use .bk, .txt, or .md");
+        return -1;
+    }
+
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd == -1) {
         set_status(state, "Save failed: %s", strerror(errno));
         return -1;
     }
-    char header[32];
-    int header_len = snprintf(header, sizeof(header), "BK1 %s\n", PAGE_SIZES[state->page_index].name);
-    if (write(fd, header, (size_t)header_len) != header_len) {
-        close(fd);
-        set_status(state, "Save failed: header");
-        return -1;
+
+    if (format == BOOK_FORMAT_BK) {
+        char header[32];
+        int header_len = snprintf(header, sizeof(header), "BK1 %s\n", PAGE_SIZES[state->page_index].name);
+        if (write(fd, header, (size_t)header_len) != header_len) {
+            close(fd);
+            set_status(state, "Save failed: header");
+            return -1;
+        }
     }
+
     if (state->len > 0 && write(fd, state->text, state->len) != (ssize_t)state->len) {
         close(fd);
         set_status(state, "Save failed: data");
@@ -883,7 +960,7 @@ static int save_file(struct BookState *state, int save_as) {
 }
 
 static int load_file(struct BookState *state) {
-    char *input = prompt_user(state, "Open:");
+    char *input = prompt_user(state, "Open (.bk/.txt/.md):");
     if (!input) {
         set_status(state, "Open cancelled");
         return -1;
@@ -892,52 +969,102 @@ static int load_file(struct BookState *state) {
     strncpy(path, input, sizeof(path));
     path[sizeof(path) - 1] = '\0';
     free(input);
-    ensure_extension(path, sizeof(path), ".bk");
+
+    if (ensure_default_extension(path, sizeof(path)) != 0) {
+        set_status(state, "Filename too long");
+        return -1;
+    }
+
+    enum BookFileFormat format = book_file_format(path);
+    if (format == BOOK_FORMAT_UNSUPPORTED) {
+        set_status(state, "Unsupported format; use .bk, .txt, or .md");
+        return -1;
+    }
+
     FILE *fp = fopen(path, "rb");
     if (!fp) {
         set_status(state, "Open failed: %s", strerror(errno));
         return -1;
     }
-    char header[32];
-    if (!fgets(header, sizeof(header), fp)) {
-        fclose(fp);
-        set_status(state, "Invalid book file");
-        return -1;
-    }
-    if (strncmp(header, "BK1", 3) != 0) {
-        fclose(fp);
-        set_status(state, "Missing BK1 header");
-        return -1;
-    }
-    char page_name[8] = {0};
-    if (sscanf(header, "BK1 %7s", page_name) == 1) {
-        for (size_t i = 0; i < sizeof(PAGE_SIZES) / sizeof(PAGE_SIZES[0]); i++) {
-            if (strcasecmp(page_name, PAGE_SIZES[i].name) == 0) {
-                state->page_index = (int)i;
-                break;
+
+    long content_offset = 0;
+    if (format == BOOK_FORMAT_BK) {
+        char header[32];
+        if (!fgets(header, sizeof(header), fp)) {
+            fclose(fp);
+            set_status(state, "Invalid book file");
+            return -1;
+        }
+        if (strncmp(header, "BK1", 3) != 0) {
+            fclose(fp);
+            set_status(state, "Missing BK1 header");
+            return -1;
+        }
+        char page_name[8] = {0};
+        if (sscanf(header, "BK1 %7s", page_name) == 1) {
+            for (size_t i = 0; i < sizeof(PAGE_SIZES) / sizeof(PAGE_SIZES[0]); i++) {
+                if (strcasecmp(page_name, PAGE_SIZES[i].name) == 0) {
+                    state->page_index = (int)i;
+                    break;
+                }
             }
         }
+        content_offset = ftell(fp);
+        if (content_offset < 0) {
+            fclose(fp);
+            set_status(state, "Open failed: invalid header");
+            return -1;
+        }
     }
-    fseek(fp, 0, SEEK_END);
+
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        set_status(state, "Open failed: seek");
+        return -1;
+    }
     long sz = ftell(fp);
-    if (sz < 0) sz = 0;
-    fseek(fp, (long)strlen(header), SEEK_SET);
-    size_t content_size = (size_t)(sz - (long)strlen(header));
-    char *buffer = malloc(content_size + 1);
+    if (sz < content_offset) {
+        fclose(fp);
+        set_status(state, "Open failed: invalid file");
+        return -1;
+    }
+    if (fseek(fp, content_offset, SEEK_SET) != 0) {
+        fclose(fp);
+        set_status(state, "Open failed: seek");
+        return -1;
+    }
+
+    size_t content_size = (size_t)(sz - content_offset);
+    char *buffer = malloc(content_size + 1u);
     if (!buffer) {
         fclose(fp);
         set_status(state, "Memory error");
         return -1;
     }
     size_t read_bytes = fread(buffer, 1, content_size, fp);
+    if (ferror(fp)) {
+        free(buffer);
+        fclose(fp);
+        set_status(state, "Open failed: read");
+        return -1;
+    }
     buffer[read_bytes] = '\0';
     fclose(fp);
+
+    if (format == BOOK_FORMAT_TXT || format == BOOK_FORMAT_MD) {
+        if (memchr(buffer, '\0', read_bytes) != NULL) {
+            free(buffer);
+            set_status(state, "Open failed: binary data");
+            return -1;
+        }
+        read_bytes = normalize_plain_text(buffer, read_bytes);
+    }
 
     push_undo(state);
     free(state->text);
     state->text = buffer;
     state->len = read_bytes;
-    state->cap = content_size + 1;
+    state->cap = content_size + 1u;
     state->cursor = 0;
     state->row_offset = 0;
     strncpy(state->filename, path, sizeof(state->filename));

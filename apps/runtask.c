@@ -163,8 +163,6 @@ static struct termios saved_termios;
 static bool saved_termios_valid = false;
 static bool echo_disabled = false;
 static char task_workdir[PATH_MAX];
-static bool task_cwd_handoff_requested = false;
-static char task_cwd_handoff_path[PATH_MAX];
 
 static void set_initial_argv0(const char *argv0) {
     if (!argv0) {
@@ -3824,7 +3822,6 @@ static bool handle_sys_cd_command(const char *cmdline, int line, int debug) {
         if (debug) {
             fprintf(stderr, "SYS: cwd changed to %s\n", new_cwd);
         }
-        task_cwd_handoff_requested = true;
     } else {
         perror("SYS: getcwd");
         cache_task_workdir(target);
@@ -3847,8 +3844,6 @@ static void run_sys_command(const char *cmdline, int line, int debug) {
     if (handle_sys_cd_command(cmdline, line, debug)) {
         return;
     }
-
-    task_cwd_handoff_requested = false;
 
     if (debug) {
         fprintf(stderr, "SYS: /bin/sh -c %s\n", cmdline);
@@ -4229,18 +4224,6 @@ int main(int argc, char *argv[]) {
     init_scopes();
     init_static_scopes();
     current_function_index = -1;
-
-    task_cwd_handoff_path[0] = '\0';
-    const char *cwd_handoff_env = getenv("BUDOSTACK_CWD_FILE");
-    if (cwd_handoff_env && *cwd_handoff_env) {
-        if (snprintf(task_cwd_handoff_path, sizeof(task_cwd_handoff_path), "%s", cwd_handoff_env) >=
-            (int)sizeof(task_cwd_handoff_path)) {
-            task_cwd_handoff_path[0] = '\0';
-        }
-        if (unsetenv("BUDOSTACK_CWD_FILE") != 0) {
-            perror("unsetenv BUDOSTACK_CWD_FILE");
-        }
-    }
 
     // Initialize base directory cache for resolving bundled executables.
     (void)get_base_dir();
@@ -5995,22 +5978,6 @@ int main(int argc, char *argv[]) {
 
     if (echo_disabled) {
         restore_terminal_settings();
-    }
-
-    if (task_cwd_handoff_requested && task_cwd_handoff_path[0] != '\0') {
-        char final_cwd[PATH_MAX];
-        if (getcwd(final_cwd, sizeof(final_cwd))) {
-            FILE *handoff = fopen(task_cwd_handoff_path, "w");
-            if (handoff) {
-                fprintf(handoff, "%s\n", final_cwd);
-                fclose(handoff);
-            } else if (debug) {
-                fprintf(stderr, "SYS: failed to open cwd handoff file '%s': %s\n",
-                        task_cwd_handoff_path, strerror(errno));
-            }
-        } else if (debug) {
-            perror("SYS: getcwd for cwd handoff");
-        }
     }
 
     stop_logging();

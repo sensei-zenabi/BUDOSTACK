@@ -1380,6 +1380,7 @@ static int execute_command_with_cwd_handoff(CommandStruct *cmd, const char *fall
         handoff_fd = mkstemp(handoff_path);
         if (handoff_fd == -1) {
             perror("mkstemp");
+            handoff_path[0] = '\0';
         } else {
             close(handoff_fd);
             handoff_fd = -1;

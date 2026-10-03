@@ -1,5 +1,5 @@
 #include "lib/budo_graphics.h"
-#include "lib/budo_shader_stack.h"
+#include "lib/budo_screen.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -103,187 +103,34 @@ static struct point2 project_point(struct point3 p, int width, int height, float
 
 int main(int argc, char **argv) {
     (void)argc;
-    (void)argv;
 
-    /* Initialize SDL */
-    
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
-        fprintf(stderr, "SDL init failed: %s\n", SDL_GetError());
+    if (SDL_Init(SDL_INIT_TIMER) != 0) {
+        fprintf(stderr, "SDL timer init failed: %s\n", SDL_GetError());
         return 1;
     }
-    
-
-    /* Initialize Font */
-    
+    char font_path[4096];
     psf_font_t font;
-    if (psf_font_load(&font, "./fonts/system.psf") != 0) {
-      fprintf(stderr, "Failed to load PSF font: %s\n", "./fonts/system.psf");
-      SDL_Quit();
-      return 1;
-    }
-
-
-    /* Configure SDL GL */
-    
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    
-    
-    /* Query desktop display mode */
-    
-    SDL_DisplayMode desktop_mode;
-    if (SDL_GetCurrentDisplayMode(0, &desktop_mode) != 0) {
-      fprintf(stderr, "Failed to query desktop display mode: %s\n", SDL_GetError());
-      SDL_Quit();
-      return 1;
-    }
-  
-    
-    /* Create the Application Window */
-
-    SDL_Window *window = SDL_CreateWindow("Budo Shader Stack Demo",
-                                          SDL_WINDOWPOS_CENTERED,
-                                          SDL_WINDOWPOS_CENTERED,
-                                          desktop_mode.w,
-                                          desktop_mode.h,
-                                          SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_ALLOW_HIGHDPI);
-    
-    if (!window) {
-        fprintf(stderr, "Failed to create window: %s\n", SDL_GetError());
+    if (budo_asset_path(font_path, sizeof(font_path), argv[0], "EXAMPLE/fonts/system.psf") < 0 ||
+        psf_font_load(&font, font_path) != 0) {
+        fprintf(stderr, "Failed to load application font.\n");
         SDL_Quit();
         return 1;
     }
-
-    SDL_ShowCursor(SDL_DISABLE);
-
-    
-    /* Create SDL GL context */
-    
-    SDL_GLContext context = SDL_GL_CreateContext(window);
-    if (!context) {
-        fprintf(stderr, "Failed to create GL context: %s\n", SDL_GetError());
-        SDL_DestroyWindow(window);
+    struct budo_screen screen;
+    if (budo_screen_open(&screen, GAME_WIDTH, GAME_HEIGHT) < 0) {
+        psf_font_destroy(&font);
         SDL_Quit();
         return 1;
     }
-    
-    
-    /* Query window drawable size */
-    
-    int drawable_width = 0;
-    int drawable_height = 0;
-    SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
-    if (drawable_width <= 0 || drawable_height <= 0) {
-      SDL_GetWindowSize(window, &drawable_width, &drawable_height);
-    }
-    
-    
-    /* Define VSync:
-     *
-     *   SDL_GL_SetSwapInterval(0);   // uncapped framerate
-     *   SDL_GL_SetSwapInterval(1);   // standard VSync
-     *   SDL_GL_SetSwapInterval(-1);  // adaptive VSync 
-    */
-    
-    SDL_GL_SetSwapInterval(1);
-
-
-    /* Create and initialize the main RGBA texture used as the game framebuffer.
-     * This texture will be updated each frame and rendered to the screen. 
-    */
-
-    GLuint texture = 0;
-    glGenTextures(1, &texture);
-    
-    /* Texture creation failure is fatal: rendering cannot continue */
-    
-    if (texture == 0) {
-        fprintf(stderr, "Failed to create GL texture.\n");
-        SDL_GL_DeleteContext(context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-
-
-    /* Configure texture for pixel-perfect rendering:
-     * - Nearest filtering avoids smoothing (important for low-res / retro visuals)
-     * - Clamp-to-edge prevents sampling artifacts at borders
-    */ 
-    
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    
-    
-    /* Allocate GPU storage for the framebuffer texture.
-     * Data is provided later via glTexSubImage2D.
-    */
-    
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, GAME_WIDTH, GAME_HEIGHT, 0, 
-                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-
-    /* Allocate CPU-side pixel buffer matching the game resolution.
-     * This buffer is used to compose each frame before uploading to the GPU texture.
-     * Allocation failure is fatal, as rendering cannot proceed without it.
-    */
-
-    uint32_t *pixels = malloc((size_t)GAME_WIDTH * (size_t)GAME_HEIGHT * sizeof(uint32_t));
+    uint32_t *pixels = malloc((size_t)GAME_WIDTH * GAME_HEIGHT * sizeof(*pixels));
     if (!pixels) {
-        fprintf(stderr, "Failed to allocate pixel buffer.\n");
-        
-        /* Clean up previously acquired graphics resources */
-        glDeleteTextures(1, &texture);
-        SDL_GL_DeleteContext(context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-    
-    
-    /* Initialize BUDOSTACK shader stack */
-
-    struct budo_shader_stack *stack = NULL;
-    if (budo_shader_stack_init(&stack) != 0) {
-        fprintf(stderr, "Failed to initialize shader stack.\n");
-        free(pixels);
-        glDeleteTextures(1, &texture);
-        SDL_GL_DeleteContext(context);
-        SDL_DestroyWindow(window);
+        perror("allocate framebuffer");
+        budo_screen_close(&screen);
+        psf_font_destroy(&font);
         SDL_Quit();
         return 1;
     }
 
-    
-    /* Define BUDOSTACK shader paths */
-
-    const char *shader_paths[] = {
-      "./shaders/noise.glsl",
-      "./shaders/effects.glsl",
-      "./shaders/crtscreen.glsl"
-    };
-    
-    
-    /* Load BUDOSTACK shaders */
-    
-    if (budo_shader_stack_load(stack, shader_paths, 3u) != 0) {
-        fprintf(stderr, "Failed to load shaders.\n");
-        budo_shader_stack_destroy(stack);
-        free(pixels);
-        glDeleteTextures(1, &texture);
-        SDL_GL_DeleteContext(context);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return 1;
-    }
-    
-    
     /* Create the Cube */ 
 
     struct point3 cube_vertices[8] = {
@@ -321,7 +168,7 @@ int main(int argc, char **argv) {
         /* Handle SDL events */
         
         SDL_Event event;
-        while (SDL_PollEvent(&event)) {
+        while (budo_screen_poll(&screen, &event)) {
           
           switch (event.type) {
             
@@ -341,17 +188,6 @@ int main(int argc, char **argv) {
               }
               break;
 
-            case SDL_WINDOWEVENT:
-              if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
-                  event.window.event == SDL_WINDOWEVENT_RESIZED) {
-
-                SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
-                if (drawable_width <= 0 || drawable_height <= 0) {
-                      SDL_GetWindowSize(window, &drawable_width, &drawable_height);
-                }
-              }
-              break;
-
             default:
               break;
           
@@ -368,9 +204,8 @@ int main(int argc, char **argv) {
 
 
         /* Clear the CPU framebuffer with a packed 32-bit RGBA color.
-         * Each pixel is stored as a uint32_t, matching SDL/OpenGL 32bpp formats
-         * (one byte per channel). Channel interpretation is defined by the
-         * GL_RGBA / GL_UNSIGNED_BYTE upload.
+         * Each pixel is stored as a uint32_t, in numeric ARGB8888 format
+         * (one byte per channel). The terminal converts it to RGBA bytes for display.
         */
         
         budo_clear_buffer(pixels, GAME_WIDTH, GAME_HEIGHT, 0x00101010u);
@@ -404,7 +239,7 @@ int main(int argc, char **argv) {
         }
 
         
-        /* Text overlay (draw AFTER cube, BEFORE uploading pixels to GL) */
+        /* Draw text into the application framebuffer. */
         
         char hud[128];
         snprintf(hud, sizeof(hud), "ROTATING CUBE DEMO  FPS:%d  frame:%d", TARGET_FPS, frame_value);
@@ -414,46 +249,11 @@ int main(int argc, char **argv) {
 
 
         
-        /* Upload the CPU-side framebuffer to the GPU texture.
-         * Pixel data is tightly packed (1-byte alignment) and matches the
-         * GL_RGBA / GL_UNSIGNED_BYTE texture format.
-        */
-        
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GAME_WIDTH, GAME_HEIGHT,
-                        GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-        glBindTexture(GL_TEXTURE_2D, 0);
-
-        /* Clear the default framebuffer before rendering the textured quad */
-        
-        glClear(GL_COLOR_BUFFER_BIT);
-        
-        
-        /* Render shaders */
-        
-        if (budo_shader_stack_render(stack,
-                                     texture,
-                                     GAME_WIDTH,
-                                     GAME_HEIGHT,
-                                     drawable_width,
-                                     drawable_height,
-                                     0,
-                                     frame_value) != 0) {
-            fprintf(stderr, "Shader stack render failed.\n");
+        /* Publish a complete frame to apps/terminal. */
+        if (!running || budo_screen_present(&screen, pixels) < 0) {
             running = 0;
         }
 
-        
-        /* Present the rendered frame by swapping the back buffer to the screen.
-         * Swap timing is controlled by the configured swap interval (VSync).
-        */
-        
-        SDL_GL_SwapWindow(window);
-        
-        
-        /* Frame value is used by BUDOSTACK noise shader */
-        
         frame_value++;
 
 
@@ -469,13 +269,10 @@ int main(int argc, char **argv) {
 
     /* Clean-Up before Exit */
      
-    budo_shader_stack_destroy(stack);
     free(pixels);
-    glDeleteTextures(1, &texture);
-    SDL_GL_DeleteContext(context);
-    SDL_DestroyWindow(window);
+    budo_screen_close(&screen);
     psf_font_destroy(&font);
     SDL_Quit();
     
-    return 0;
+    return screen.disconnected ? 1 : 0;
 }

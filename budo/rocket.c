@@ -1,6 +1,6 @@
 #include "lib/budo_audio.h"
 #include "lib/budo_graphics.h"
-#include "lib/budo_shader_stack.h"
+#include "lib/budo_screen.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -419,143 +419,61 @@ static void reset_game_state(struct ship_state *ship, struct bullet *bullets,
 
 int main(int argc, char **argv) {
     (void)argc;
-    (void)argv;
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
-        fprintf(stderr, "SDL init failed: %s\n", SDL_GetError());
+    if (SDL_Init(SDL_INIT_TIMER) != 0) {
+        fprintf(stderr, "SDL timer init failed: %s\n", SDL_GetError());
         return 1;
     }
-
+    char font_path[4096];
     psf_font_t font;
-    if (psf_font_load(&font, "./fonts/system.psf") != 0) {
-        fprintf(stderr, "Failed to load PSF font: %s\n", "./fonts/system.psf");
+    if (budo_asset_path(font_path, sizeof(font_path), argv[0], "ROCKET/fonts/system.psf") < 0 ||
+        psf_font_load(&font, font_path) != 0) {
+        fprintf(stderr, "Failed to load application font.\n");
         SDL_Quit();
         return 1;
     }
-
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-
-    SDL_DisplayMode desktop_mode;
-    if (SDL_GetCurrentDisplayMode(0, &desktop_mode) != 0) {
-        fprintf(stderr, "Failed to query desktop display mode: %s\n", SDL_GetError());
+    struct budo_screen screen;
+    if (budo_screen_open(&screen, GAME_WIDTH, GAME_HEIGHT) < 0) {
         psf_font_destroy(&font);
         SDL_Quit();
         return 1;
     }
-
-    SDL_Window *window = SDL_CreateWindow("Budo Rocket",
-                                          SDL_WINDOWPOS_CENTERED,
-                                          SDL_WINDOWPOS_CENTERED,
-                                          desktop_mode.w,
-                                          desktop_mode.h,
-                                          SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_ALLOW_HIGHDPI);
-    if (!window) {
-        fprintf(stderr, "Failed to create window: %s\n", SDL_GetError());
-        psf_font_destroy(&font);
-        SDL_Quit();
-        return 1;
-    }
-
-    SDL_ShowCursor(SDL_DISABLE);
-
-    SDL_GLContext context = SDL_GL_CreateContext(window);
-    if (!context) {
-        fprintf(stderr, "Failed to create GL context: %s\n", SDL_GetError());
-        SDL_DestroyWindow(window);
-        psf_font_destroy(&font);
-        SDL_Quit();
-        return 1;
-    }
-
-    int drawable_width = 0;
-    int drawable_height = 0;
-    SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
-    if (drawable_width <= 0 || drawable_height <= 0) {
-        SDL_GetWindowSize(window, &drawable_width, &drawable_height);
-    }
-
-    SDL_GL_SetSwapInterval(1);
-
-    GLuint texture = 0;
-    glGenTextures(1, &texture);
-    if (texture == 0) {
-        fprintf(stderr, "Failed to create GL texture.\n");
-        SDL_GL_DeleteContext(context);
-        SDL_DestroyWindow(window);
-        psf_font_destroy(&font);
-        SDL_Quit();
-        return 1;
-    }
-
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, GAME_WIDTH, GAME_HEIGHT, 0,
-                 GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    glBindTexture(GL_TEXTURE_2D, 0);
-
-    uint32_t *pixels = malloc((size_t)GAME_WIDTH * (size_t)GAME_HEIGHT * sizeof(uint32_t));
+    uint32_t *pixels = malloc((size_t)GAME_WIDTH * GAME_HEIGHT * sizeof(*pixels));
     if (!pixels) {
-        fprintf(stderr, "Failed to allocate pixel buffer.\n");
-        glDeleteTextures(1, &texture);
-        SDL_GL_DeleteContext(context);
-        SDL_DestroyWindow(window);
+        perror("allocate framebuffer");
+        budo_screen_close(&screen);
         psf_font_destroy(&font);
         SDL_Quit();
         return 1;
     }
 
-    struct budo_shader_stack *stack = NULL;
-    if (budo_shader_stack_init(&stack) != 0) {
-        fprintf(stderr, "Failed to initialize shader stack.\n");
+    char music_path[4096];
+    char sound_path[4096];
+    if (budo_asset_path(music_path, sizeof(music_path), argv[0], "ROCKET/music.s3m") < 0 ||
+        budo_asset_path(sound_path, sizeof(sound_path), argv[0], "ROCKET/fire.wav") < 0) {
+        fprintf(stderr, "Failed to resolve audio assets.\n");
         free(pixels);
-        glDeleteTextures(1, &texture);
-        SDL_GL_DeleteContext(context);
-        SDL_DestroyWindow(window);
+        budo_screen_close(&screen);
         psf_font_destroy(&font);
         SDL_Quit();
         return 1;
     }
-
-    const char *shader_paths[] = {
-        "./shaders/noise.glsl",
-        "./shaders/effects.glsl",
-        "./shaders/crtscreen.glsl"
-    };
-
-    if (budo_shader_stack_load(stack, shader_paths, 3u) != 0) {
-        fprintf(stderr, "Failed to load shaders.\n");
-        budo_shader_stack_destroy(stack);
-        free(pixels);
-        glDeleteTextures(1, &texture);
-        SDL_GL_DeleteContext(context);
-        SDL_DestroyWindow(window);
-        psf_font_destroy(&font);
-        SDL_Quit();
-        return 1;
-    }
-
     int audio_ready = 0;
     budo_music_t background_music = { 0 };
     budo_sound_t fire_sound = { 0 };
     int fire_sound_ready = 0;
     if (budo_audio_init(0, 0, 0, 0) == 0) {
         audio_ready = 1;
-        if (budo_music_load(&background_music, "../budo/ROCKET/music.s3m") != 0) {
-            fprintf(stderr, "Failed to load music: %s\n", "../budo/ROCKET/music.s3m");
+        if (budo_music_load(&background_music, music_path) != 0) {
+            fprintf(stderr, "Failed to load music: %s\n", music_path);
         } else {
             budo_music_set_volume(66);
             if (budo_music_play(&background_music, -1) != 0) {
                 fprintf(stderr, "Failed to start background music.\n");
             }
         }
-        if (budo_sound_load(&fire_sound, "../budo/ROCKET/fire.wav") != 0) {
-            fprintf(stderr, "Failed to load sound: %s\n", "../budo/ROCKET/fire.wav");
+        if (budo_sound_load(&fire_sound, sound_path) != 0) {
+            fprintf(stderr, "Failed to load sound: %s\n", sound_path);
         } else {
             budo_sound_set_volume(&fire_sound, 128);
             fire_sound_ready = 1;
@@ -598,7 +516,7 @@ int main(int argc, char **argv) {
 
     while (running) {
         SDL_Event event;
-        while (SDL_PollEvent(&event)) {
+        while (budo_screen_poll(&screen, &event)) {
             if (event.type == SDL_QUIT) {
                 running = 0;
             } else if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
@@ -663,14 +581,6 @@ int main(int argc, char **argv) {
                         state = STATE_MENU;
                     }
                 }
-            } else if (event.type == SDL_WINDOWEVENT) {
-                if (event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
-                    event.window.event == SDL_WINDOWEVENT_RESIZED) {
-                    SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
-                    if (drawable_width <= 0 || drawable_height <= 0) {
-                        SDL_GetWindowSize(window, &drawable_width, &drawable_height);
-                    }
-                }
             }
         }
 
@@ -682,7 +592,7 @@ int main(int argc, char **argv) {
         last_tick = now;
 
         if (state == STATE_PLAY) {
-            const Uint8 *keys = SDL_GetKeyboardState(NULL);
+            const Uint8 *keys = screen.keys;
             if (keys[SDL_SCANCODE_LEFT]) {
                 ship.angle -= SHIP_TURN_SPEED * delta;
             }
@@ -893,26 +803,9 @@ int main(int argc, char **argv) {
                                "PRESS ENTER", 0x0080c0ffu);
         }
 
-        glBindTexture(GL_TEXTURE_2D, texture);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GAME_WIDTH, GAME_HEIGHT,
-                        GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-        glBindTexture(GL_TEXTURE_2D, 0);
-
-        glClear(GL_COLOR_BUFFER_BIT);
-        if (budo_shader_stack_render(stack,
-                                     texture,
-                                     GAME_WIDTH,
-                                     GAME_HEIGHT,
-                                     drawable_width,
-                                     drawable_height,
-                                     0,
-                                     frame_value) != 0) {
-            fprintf(stderr, "Shader stack render failed.\n");
+        if (!running || budo_screen_present(&screen, pixels) < 0) {
             running = 0;
         }
-
-        SDL_GL_SwapWindow(window);
 
         frame_value++;
 
@@ -929,13 +822,10 @@ int main(int argc, char **argv) {
         budo_sound_destroy(&fire_sound);
         budo_audio_shutdown();
     }
-    budo_shader_stack_destroy(stack);
     free(pixels);
-    glDeleteTextures(1, &texture);
-    SDL_GL_DeleteContext(context);
-    SDL_DestroyWindow(window);
+    budo_screen_close(&screen);
     psf_font_destroy(&font);
     SDL_Quit();
 
-    return 0;
+    return screen.disconnected ? 1 : 0;
 }

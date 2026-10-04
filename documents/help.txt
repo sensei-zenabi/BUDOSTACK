@@ -328,7 +328,7 @@ _TERM_LAYOUT_ASPECT
        while overlay is enabled. Overlay image geometry is independent. 5:4 preserves
        calibrated 1280x1024 proportions on 1920x1080, without stretching
        terminal content. Center the layout and scale uniformly to screen height;
-       narrower screens fit the layout uniformly to screen width.
+       narrower screens crop at edges; sizing never switches to screen width.
        screen restores legacy independent screen width/height scaling.
        Ratio range: 1:10 to 10:1. Overlay-disabled sizing is unchanged.
        config.ini: _TERM_LAYOUT_ASPECT=5:4; autoexec applies it at startup.

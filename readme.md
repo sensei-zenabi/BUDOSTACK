@@ -81,8 +81,8 @@ Positive X moves right; positive Y moves down from the centered position.
 A zero dimension uses the full layout on that axis.
 
 `_TERM_LAYOUT_ASPECT=5:4` defines the terminal reference layout while the
-overlay is enabled: scale uniformly to screen height and center it, fitting
-to width on narrower displays. Terminal sizes and offsets use this layout's
+overlay is enabled: scale uniformly to screen height and center it.
+Narrower displays crop at screen edges without changing scale. Terminal sizes and offsets use this layout's
 width and height. Set `screen` for independent screen-relative percentages.
 For example, `TERMINAL_WIDTH=80` and `TERMINAL_HEIGHT=75` use 80% of the
 reference layout width and 75% of its height. Resolution changes retain
@@ -109,3 +109,9 @@ disabled.
 Custom configs using the previous terminal keys must rename `OVERLAY_WIDTH`,
 `OVERLAY_HEIGHT`, `OVERLAY_OFFSET_X`, and `OVERLAY_OFFSET_Y` to their
 `TERMINAL_` equivalents. Keep the `_TERM_OVERLAY_*` image settings unchanged.
+
+Terminal layout scaling always uses screen height. Configurations calibrated
+with the former width-fitting behavior on a narrower display can preserve
+their fit by multiplying terminal width, height, and both offsets by
+`screen_aspect / _TERM_LAYOUT_ASPECT`. For 5:4 with a 4:3 layout, this is
+0.9375. The bundled settings include this conversion.

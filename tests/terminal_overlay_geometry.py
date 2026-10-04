@@ -50,6 +50,19 @@ int main(void) {
     terminal_overlay_height = 1200;
     terminal_overlay_rect(1280, 1024, &x, &y, &w, &h);
     assert(x == 384 && y == 0 && w == 512 && h == 1024);
+    /* User's calibrated 4:3 layout on a 5:4 display must survive widescreen. */
+    terminal_layout_aspect = 4.0 / 3;
+    terminal_display_width = terminal_display_height = 57.1875;
+    terminal_offset_y = 1.171875;
+    terminal_display_rect(1280, 1024, &x, &y, &w, &h);
+    assert(x == 249 && y == 231 && w == 781 && h == 586);
+    terminal_display_rect(1920, 1080, &x, &y, &w, &h);
+    assert(x == 548 && y == 244 && w == 824 && h == 618);
+    /* A full reference width can exceed a narrow screen; do not squeeze it. */
+    terminal_display_width = terminal_display_height = 100;
+    terminal_offset_y = 0;
+    terminal_display_rect(1280, 1024, &x, &y, &w, &h);
+    assert(x == -42 && y == 0 && w == 1365 && h == 1024);
     terminal_overlay_enabled = 0;
     terminal_display_width = terminal_display_height = 0;
     terminal_display_rect(1920, 1080, &x, &y, &w, &h);

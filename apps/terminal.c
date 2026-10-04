@@ -1470,8 +1470,11 @@ static void terminal_layout_size(int drawable_width, int drawable_height,
     double width = drawable_width;
     double height = drawable_height;
     if (terminal_overlay_enabled && terminal_layout_aspect > 0) {
-        width = fmin(width, height * terminal_layout_aspect);
-        height = width / terminal_layout_aspect;
+        /* Use the same height baseline as the overlay on every display. */
+        width = height * terminal_layout_aspect;
+        double scale = fmin(1.0, (INT_MAX / 4) / fmax(width, height));
+        width *= scale;
+        height *= scale;
     }
     *out_width = width;
     *out_height = height;
@@ -1484,11 +1487,13 @@ static void terminal_display_rect(int drawable_width, int drawable_height, int *
     int width = terminal_display_width > 0 ? (int)lround(layout_width * terminal_display_width / 100.0) : (int)lround(layout_width);
     int height = terminal_display_height > 0 ? (int)lround(layout_height * terminal_display_height / 100.0) : (int)lround(layout_height);
 
-    if (width > drawable_width) {
-        width = drawable_width;
-    }
-    if (height > drawable_height) {
-        height = drawable_height;
+    if (terminal_layout_aspect == 0 || !terminal_overlay_enabled) {
+        if (width > drawable_width) {
+            width = drawable_width;
+        }
+        if (height > drawable_height) {
+            height = drawable_height;
+        }
     }
     if (width < 1) {
         width = 1;

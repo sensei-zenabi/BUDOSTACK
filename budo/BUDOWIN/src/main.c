@@ -3799,9 +3799,13 @@ static void draw_editor_window(void)
                       (EDITOR_WRITER_PAGE_COLS -
                        editor_writer_right_indent) * 6;
 
+        /*
+         * Writer ruler belongs to the page, not to application chrome.
+         * Keep the complete writing surface visually continuous.
+         */
         fill_rect(ruler_x, ruler_y, ruler_w, EDITOR_RULER_H - 3,
-                  FILE_DARK);
-        fill_rect(ruler_x, ruler_y + 10, ruler_w, 1, FOLDER_COLOR);
+                  FILE_COLOR);
+        fill_rect(ruler_x, ruler_y + 10, ruler_w, 1, FOLDER_DARK);
 
         for (tick = 0; tick <= ruler_w / 30; ++tick) {
             int x = ruler_x + tick * 30;

@@ -28,6 +28,10 @@ static const BwaHostApi *host_api;
 static unsigned char *canvas;
 static unsigned char *undo_canvas;
 static unsigned char *file_buffer;
+static unsigned char canvas_palette[768];
+static unsigned char undo_palette[768];
+static unsigned char undo_fg, undo_bg;
+static int palette_page, undo_palette_page;
 static int *fill_queue;
 static int undo_valid;
 static int dirty;
@@ -84,6 +88,37 @@ static int text_len(const char *text)
     return len;
 }
 
+static void default_palette(void)
+{
+    int i;
+    for (i = 0; i < 256; ++i) {
+        unsigned char r, g, b;
+        if (i < 16) {
+            r = palette_rgb[i][0]; g = palette_rgb[i][1]; b = palette_rgb[i][2];
+        } else if (i < 232) {
+            int c = i - 16;
+            r = (unsigned char)((c / 36) * 51);
+            g = (unsigned char)(((c / 6) % 6) * 51);
+            b = (unsigned char)((c % 6) * 51);
+        } else {
+            r = g = b = (unsigned char)((i - 232) * 255 / 23);
+        }
+        canvas_palette[i * 3] = r;
+        canvas_palette[i * 3 + 1] = g;
+        canvas_palette[i * 3 + 2] = b;
+    }
+    fg = 1;
+    bg = 4;
+    palette_page = 0;
+}
+
+static unsigned int canvas_rgb(unsigned char index)
+{
+    return ((unsigned int)canvas_palette[index * 3] << 16) |
+           ((unsigned int)canvas_palette[index * 3 + 1] << 8) |
+           canvas_palette[index * 3 + 2];
+}
+
 static int ensure_buffers(void)
 {
     if (canvas != 0 && undo_canvas != 0 &&
@@ -110,6 +145,7 @@ static int ensure_buffers(void)
         return 0;
     }
 
+    default_palette();
     bytes_fill(canvas, 4, PIXELS);
     bytes_fill(undo_canvas, 4, PIXELS);
     undo_valid = 0;
@@ -147,6 +183,10 @@ static void refresh_title(void)
 static void save_undo(void)
 {
     bytes_copy(undo_canvas, canvas, PIXELS);
+    bytes_copy(undo_palette, canvas_palette, sizeof(canvas_palette));
+    undo_fg = fg;
+    undo_bg = bg;
+    undo_palette_page = palette_page;
     undo_valid = 1;
 }
 
@@ -162,6 +202,17 @@ static void do_undo(void)
         canvas[i] = undo_canvas[i];
         undo_canvas[i] = t;
     }
+    for (i = 0; i < 768; ++i) {
+        unsigned char t = canvas_palette[i];
+        canvas_palette[i] = undo_palette[i];
+        undo_palette[i] = t;
+    }
+    unsigned char color = fg;
+    fg = undo_fg; undo_fg = color;
+    color = bg;
+    bg = undo_bg; undo_bg = color;
+    int page = palette_page;
+    palette_page = undo_palette_page; undo_palette_page = page;
     dirty = 1;
     refresh_title();
     set_status("Undo");
@@ -172,6 +223,15 @@ static void clear_canvas(unsigned char color)
     save_undo();
     bytes_fill(canvas, color, PIXELS);
     dirty = 1;
+    refresh_title();
+}
+
+static void new_canvas(void)
+{
+    save_undo();
+    default_palette();
+    bytes_fill(canvas, 4, PIXELS);
+    dirty = 0;
     refresh_title();
 }
 
@@ -299,14 +359,15 @@ static void flood(int sx, int sy, unsigned char replacement)
     }
 }
 
-static int nearest_color(unsigned char r, unsigned char g, unsigned char b)
+static int nearest_color(const unsigned char *palette,
+                         unsigned char r, unsigned char g, unsigned char b)
 {
     int best = 0, i;
     long best_d = 0x7fffffffL;
-    for (i = 0; i < 16; ++i) {
-        long dr = (long)r - palette_rgb[i][0];
-        long dg = (long)g - palette_rgb[i][1];
-        long db = (long)b - palette_rgb[i][2];
+    for (i = 0; i < 256; ++i) {
+        long dr = (long)r - palette[i * 3];
+        long dg = (long)g - palette[i * 3 + 1];
+        long db = (long)b - palette[i * 3 + 2];
         long d = dr * dr + dg * dg + db * db;
         if (d < best_d) { best_d = d; best = i; }
     }
@@ -317,22 +378,16 @@ static int load_pcx(const char *path)
 {
     const unsigned char *h;
     const unsigned char *pal;
-    unsigned char map[256];
+    unsigned char *loaded;
     unsigned int size = 0;
     unsigned int pos;
-    int xmin, ymin, xmax, ymax, w, hh, bpl, y, i;
+    int xmin, ymin, xmax, ymax, w, hh, bpl, y;
 
-    if (!host_api->file_read_all(path, file_buffer,
-                                 FILE_BUFFER_SIZE, &size) ||
-        size < 897U) {
-        return 0;
-    }
-
+    if (!host_api->file_read_all(path, file_buffer, FILE_BUFFER_SIZE, &size) ||
+        size < 897U) return 0;
     h = file_buffer;
-    if (h[0] != 10 || h[2] != 1 || h[3] != 8 || h[65] != 1) {
+    if (h[0] != 10 || (h[2] != 0 && h[2] != 1) || h[3] != 8 || h[65] != 1)
         return 0;
-    }
-
     xmin = h[4] | ((int)h[5] << 8);
     ymin = h[6] | ((int)h[7] << 8);
     xmax = h[8] | ((int)h[9] << 8);
@@ -340,53 +395,47 @@ static int load_pcx(const char *path)
     w = xmax - xmin + 1;
     hh = ymax - ymin + 1;
     bpl = h[66] | ((int)h[67] << 8);
-
-    if (w <= 0 || hh <= 0 || bpl < w ||
-        file_buffer[size - 769U] != 12) {
+    if (w <= 0 || hh <= 0 || bpl < w || file_buffer[size - 769U] != 12)
         return 0;
-    }
-
     pal = file_buffer + size - 768U;
-    for (i = 0; i < 256; ++i) {
-        map[i] = (unsigned char)nearest_color(
-            pal[i * 3], pal[i * 3 + 1], pal[i * 3 + 2]);
-    }
-
-    save_undo();
-    bytes_fill(canvas, bg, PIXELS);
+    loaded = (unsigned char *)host_api->memory_alloc(PIXELS);
+    if (loaded == 0) return 0;
+    bytes_fill(loaded, (unsigned char)nearest_color(pal, 255, 255, 255), PIXELS);
     pos = 128U;
-
     for (y = 0; y < hh; ++y) {
         int decoded = 0;
-
         while (decoded < bpl) {
-            int code;
-            int count = 1;
-            int value;
-
-            if (pos >= size - 769U) return 0;
+            int code, count = 1, value;
+            if (pos >= size - 769U) goto invalid;
             code = file_buffer[pos++];
-
-            if ((code & 0xC0) == 0xC0) {
+            if (h[2] == 1 && (code & 0xC0) == 0xC0) {
                 count = code & 0x3F;
-                if (pos >= size - 769U) return 0;
+                if (count == 0 || pos >= size - 769U) goto invalid;
                 value = file_buffer[pos++];
             } else {
                 value = code;
             }
-
-            while (count-- > 0 && decoded < bpl) {
-                if (y < CANVAS_H && decoded < w &&
-                    decoded < CANVAS_W) {
-                    canvas[y * CANVAS_W + decoded] = map[value & 255];
-                }
+            if (count > bpl - decoded) goto invalid;
+            while (count-- > 0) {
+                if (y < CANVAS_H && decoded < w && decoded < CANVAS_W)
+                    loaded[y * CANVAS_W + decoded] = (unsigned char)value;
                 ++decoded;
             }
         }
     }
-
+    save_undo();
+    bytes_copy(canvas, loaded, PIXELS);
+    bytes_copy(canvas_palette, pal, sizeof(canvas_palette));
+    host_api->memory_free(loaded);
+    fg = (unsigned char)nearest_color(canvas_palette, 0, 0, 0);
+    bg = (unsigned char)nearest_color(canvas_palette, 255, 255, 255);
+    palette_page = 0;
     dirty = 0;
+    refresh_title();
     return 1;
+invalid:
+    host_api->memory_free(loaded);
+    return 0;
 }
 
 static int buffer_put(unsigned int *pos, unsigned char value)
@@ -456,15 +505,9 @@ static int save_pcx(const char *path)
     if (!buffer_put(&pos, 12)) return 0;
 
     for (i = 0; i < 256; ++i) {
-        unsigned char r = 0;
-        unsigned char g = 0;
-        unsigned char b = 0;
-
-        if (i < 16) {
-            r = palette_rgb[i][0];
-            g = palette_rgb[i][1];
-            b = palette_rgb[i][2];
-        }
+        unsigned char r = canvas_palette[i * 3];
+        unsigned char g = canvas_palette[i * 3 + 1];
+        unsigned char b = canvas_palette[i * 3 + 2];
 
         if (!buffer_put(&pos, r) ||
             !buffer_put(&pos, g) ||
@@ -547,7 +590,7 @@ static void draw_canvas(int sx, int sy, int vw, int vh)
             int run = 1;
             while (x + run < vw && canvas[y * CANVAS_W + x + run] == c)
                 ++run;
-            host_api->fill_rect(sx + x, sy + y, run, 1, c);
+            host_api->fill_rect_rgb(sx + x, sy + y, run, 1, canvas_rgb(c));
             x += run;
         }
     }
@@ -557,7 +600,7 @@ static void preview_pixel(int sx, int sy, int vw, int vh,
                           int x, int y, unsigned char c)
 {
     if (x >= 0 && x < vw && y >= 0 && y < vh)
-        host_api->fill_rect(sx + x, sy + y, 1, 1, c);
+        host_api->fill_rect_rgb(sx + x, sy + y, 1, 1, canvas_rgb(c));
 }
 
 static void preview_line(int sx, int sy, int vw, int vh,
@@ -647,20 +690,23 @@ static void paint_draw(void)
         host_api->get_system_color(BUDO_SYS_COLOR_TEXT), 6);
     for (i = 0; i < 16; ++i) {
         x = cx + 6 + i * 22;
-        host_api->fill_rect(x, pal_y, 18, 16, (unsigned char)i);
+        int index = palette_page * 16 + i;
+        host_api->fill_rect_rgb(x, pal_y, 18, 16, canvas_rgb((unsigned char)index));
         host_api->draw_rect(x - 1, pal_y - 1, 20, 18,
-            host_api->get_system_color(i == fg ?
+            host_api->get_system_color(index == fg ?
                 BUDO_SYS_COLOR_ACCENT : BUDO_SYS_COLOR_SHADOW));
-        if (i == bg)
+        if (index == bg)
             host_api->draw_rect(x + 2, pal_y + 2, 14, 12,
                 host_api->get_system_color(BUDO_SYS_COLOR_HIGHLIGHT));
     }
     host_api->draw_text(cx + 366, pal_y + 4, "FG",
         host_api->get_system_color(BUDO_SYS_COLOR_TEXT), 2);
-    host_api->fill_rect(cx + 386, pal_y + 1, 14, 14, fg);
+    host_api->fill_rect_rgb(cx + 386, pal_y + 1, 14, 14, canvas_rgb(fg));
     host_api->draw_text(cx + 406, pal_y + 4, "BG",
         host_api->get_system_color(BUDO_SYS_COLOR_TEXT), 2);
-    host_api->fill_rect(cx + 426, pal_y + 1, 14, 14, bg);
+    host_api->fill_rect_rgb(cx + 426, pal_y + 1, 14, 14, canvas_rgb(bg));
+    host_api->draw_standard_button(cx + 448, pal_y, 18, 16, "<", 0);
+    host_api->draw_standard_button(cx + 470, pal_y, 18, 16, ">", 0);
     host_api->fill_rect(cx, status_y - 1, cw, 1,
         host_api->get_system_color(BUDO_SYS_COLOR_SHADOW));
     host_api->draw_text(cx + 6, status_y + 2, status_text,
@@ -700,7 +746,7 @@ static int paint_mouse_down(int x, int y, int buttons)
         for (i = 0; i < 6; ++i) {
             if (host_api->point_in_rect(x,y,bx,cy+3,widths[i],18)) {
                 if (i == 0) {
-                    clear_canvas(4); copy_name(filename,"PAINT.PCX");
+                    new_canvas(); copy_name(filename,"PAINT.PCX");
                     dirty = 0; refresh_title(); set_status("New image");
                 } else if (i == 1) begin_dialog(DIALOG_OPEN);
                 else if (i == 2) {
@@ -726,11 +772,18 @@ static int paint_mouse_down(int x, int y, int buttons)
     for (i = 0; i < 16; ++i) {
         int px_color = cx + 6 + i * 22;
         if (host_api->point_in_rect(x,y,px_color,pal_y,18,16)) {
-            if (button == 2) bg = (unsigned char)i; else fg = (unsigned char)i;
+            unsigned char index = (unsigned char)(palette_page * 16 + i);
+            if (button == 2) bg = index; else fg = index;
             set_status(button == 2 ? "Background color selected" :
                                       "Foreground color selected");
             return 1;
         }
+    }
+    if (host_api->point_in_rect(x,y,cx+448,pal_y,18,16) ||
+        host_api->point_in_rect(x,y,cx+470,pal_y,18,16)) {
+        palette_page = (palette_page + (x < cx + 470 ? 15 : 1)) % 16;
+        set_status("Palette page changed ([ / ])");
+        return 1;
     }
     if (!to_canvas(x,y,&px,&py)) return 0;
     if (tool == TOOL_PICK) {
@@ -797,9 +850,14 @@ static int paint_key(int key)
         }
         return 1;
     }
+    if (key == '[' || key == ']') {
+        palette_page = (palette_page + (key == '[' ? 15 : 1)) % 16;
+        set_status("Palette page changed ([ / ])");
+        return 1;
+    }
     if (key == 26) { do_undo(); return 1; }
     if (key == 14) {
-        clear_canvas(4); dirty=0; refresh_title(); copy_name(filename,"PAINT.PCX");
+        new_canvas(); dirty=0; refresh_title(); copy_name(filename,"PAINT.PCX");
         set_status("New image"); return 1;
     }
     if (key == 15) { begin_dialog(DIALOG_OPEN); return 1; }
@@ -865,14 +923,14 @@ static void paint_draw_icon(int x, int y)
 int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 {
     if (host==0 || app==0 || host->abi_major!=BWA_ABI_MAJOR ||
-        host->abi_minor<8 || host->window_create==0 ||
+        host->abi_minor<9 || host->window_create==0 ||
         host->window_get_client_rect==0 || host->window_close==0 ||
         host->fill_rect==0 || host->draw_rect==0 || host->draw_text==0 ||
         host->draw_standard_button==0 || host->draw_sunken_panel==0 ||
         host->point_in_rect==0 || host->get_system_color==0 ||
         host->window_set_min_size==0 || host->window_set_title==0 ||
         host->file_read_all==0 || host->file_write_all==0 ||
-        host->memory_alloc==0 || host->memory_free==0) return 0;
+        host->memory_alloc==0 || host->memory_free==0 || host->fill_rect_rgb==0) return 0;
 
     host_api=host;
     canvas=0;

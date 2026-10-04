@@ -1,6 +1,6 @@
 # Native BWA modules
 
-BUDOSTACK BUDOWIN retains upstream BWA ABI 1.8 (`src/bwa.h`). Modules use
+BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.9 (`src/bwa.h`). Modules use
 `BwaHostApi` for drawing, managed windows, binary file access and allocation.
 The built-in Explorer, Editor and Terminal launcher modules delegate to
 host-managed application implementations; Paint and Settings own their
@@ -25,3 +25,12 @@ coordinates are logical VGA pixels. Right button uses bit 2 and left bit 1.
 Host-managed callbacks retain their original window/focus/menu behavior.
 Relative file service paths resolve to the user workspace, not the module
 or asset directory. Absolute POSIX paths are supported.
+
+## Exact graphics colors (ABI 1.9)
+
+`fill_rect_rgb(x, y, w, h, rgb)` draws clipped opaque rectangles with exact
+`0x00RRGGBB` colors. Use it for palette-based image runs or arbitrary RGB
+artwork; it never changes the system palette. Existing indexed drawing and
+system color services remain available. The new callback is appended, so
+modules built for earlier ABI 1.x versions retain their field offsets. A
+module using this service must require `host->abi_minor >= 9`.

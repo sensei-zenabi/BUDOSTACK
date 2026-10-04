@@ -22,7 +22,9 @@ minimize, and maximize individual applications.
   rejects symlinks instead of following them.
 - Editor: text and RTF editing, file dialogs, search/replace, writer layout,
   and PostScript export, using the original editor implementation.
-- Paint: drawing tools, palette, undo, and PCX load/save.
+- Paint: drawing tools, all 256 palette entries, palette-aware undo, and
+  exact indexed PCX load/save. Use the palette arrow buttons or `[` / `]`
+  to browse 16 colors at a time.
 - Settings: native application associations and the original settings UI.
 - Terminal: command editing/history, persistent cd, output capture and
   scrollback. BUDOSTACK applications release the desktop transport before
@@ -36,8 +38,11 @@ User configuration and session files are stored under `$HOME/.budowin`.
 
 Optional upstream PCX artwork can be placed in `PCX/` without recompiling.
 This port uses the original built-in icon drawings and a native arrow cursor
-when artwork is absent. Binary artwork could not be retrieved through the
-GitHub connector used for this port.
+when artwork is absent. All supported PCX artwork (desktop, icons, cursor and native-app icons)
+retains its original RGB values. Pixels matching an icon or cursor's top-left
+RGB value are transparent. Each image has independent colors, so a 256-color
+image does not change the UI or another image's palette. Presentation uses
+RGB composition; the classic UI continues to use its system color indices.
 
 ## Native modules
 

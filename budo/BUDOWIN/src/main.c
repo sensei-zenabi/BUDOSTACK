@@ -208,9 +208,19 @@ typedef struct BwaLoadedApp {
 
 static unsigned char framebuffer[SCREEN_SIZE];
 static unsigned char desktop_background[SCREEN_SIZE];
-/* Keep PCX RGB separate from the GUI palette; mask marks uncovered desktop. */
+/* Keep PCX RGB separate from the GUI palette. */
 static uint32_t desktop_background_rgb[SCREEN_SIZE];
-static unsigned char background_mask[SCREEN_SIZE];
+/* A set mask selects exact RGB; otherwise the pixel uses the GUI palette. */
+static unsigned char rgb_mask[SCREEN_SIZE];
+static uint32_t rgb_framebuffer[SCREEN_SIZE];
+
+/* Each icon keeps its own exact PCX colors, independent of GUI indices. */
+typedef struct PcxIconColors {
+    const unsigned char *indices;
+    uint32_t rgb[DESKTOP_ICON_W * DESKTOP_ICON_H];
+} PcxIconColors;
+static PcxIconColors pcx_icon_colors[BWA_MAX_EXTERNAL + 9];
+static int pcx_icon_color_count;
 static int desktop_background_loaded = 0;
 static unsigned char explorer_pcx_icon[DESKTOP_ICON_W * DESKTOP_ICON_H];
 static unsigned char editor_pcx_icon[DESKTOP_ICON_W * DESKTOP_ICON_H];
@@ -556,12 +566,12 @@ static int vesa_copy_to_screen(unsigned long offset,
                                const unsigned char *mask)
 {
     return bw_screen_copy(offset, data, length,
-                          desktop_background_rgb + offset, mask);
+                          rgb_framebuffer + offset, mask);
 }
 static int present_framebuffer(void)
 {
     return bw_screen_copy(0, framebuffer, sizeof(framebuffer),
-                          desktop_background_rgb, background_mask);
+                          rgb_framebuffer, rgb_mask);
 }
 static int mouse_init(void) { return 1; }
 static void mouse_get_state(int *x, int *y, int *buttons)
@@ -576,7 +586,7 @@ static void put_pixel(int x, int y, unsigned char color)
     }
 
     framebuffer[y * SCREEN_WIDTH + x] = color;
-    background_mask[y * SCREEN_WIDTH + x] = 0;
+    rgb_mask[y * SCREEN_WIDTH + x] = 0;
 }
 
 static void fill_rect(int x, int y, int w, int h, unsigned char color)
@@ -601,8 +611,29 @@ static void fill_rect(int x, int y, int w, int h, unsigned char color)
     for (py = start_y; py < end_y; ++py) {
         memset(&framebuffer[py * SCREEN_WIDTH + start_x],
                color, (size_t)(end_x - start_x));
-        memset(&background_mask[py * SCREEN_WIDTH + start_x],
+        memset(&rgb_mask[py * SCREEN_WIDTH + start_x],
                0, (size_t)(end_x - start_x));
+    }
+}
+
+/* Exact RGB drawing shares clipping with the indexed UI primitives. */
+static void put_rgb_pixel(int x, int y, uint32_t rgb)
+{
+    if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) return;
+    rgb_framebuffer[y * SCREEN_WIDTH + x] = 0xff000000u | (rgb & 0xffffffu);
+    rgb_mask[y * SCREEN_WIDTH + x] = 1;
+}
+
+static void fill_rect_rgb(int x, int y, int w, int h, unsigned int rgb)
+{
+    if (w <= 0 || h <= 0 || x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT ||
+        (int64_t)x + w <= 0 || (int64_t)y + h <= 0) return;
+    int start_x = x < 0 ? 0 : x;
+    int start_y = y < 0 ? 0 : y;
+    int end_x = (int64_t)x + w > SCREEN_WIDTH ? SCREEN_WIDTH : x + w;
+    int end_y = (int64_t)y + h > SCREEN_HEIGHT ? SCREEN_HEIGHT : y + h;
+    for (int py = start_y; py < end_y; ++py) {
+        for (int px = start_x; px < end_x; ++px) put_rgb_pixel(px, py, rgb);
     }
 }
 
@@ -1100,10 +1131,19 @@ static int load_pcx_image(const char *path,
     return 1;
 }
 
+static const uint32_t *pcx_icon_rgb(const unsigned char *indices)
+{
+    for (int i = 0; i < pcx_icon_color_count; ++i) {
+        if (pcx_icon_colors[i].indices == indices) return pcx_icon_colors[i].rgb;
+    }
+    return NULL;
+}
+
 static void draw_pcx_icon(int x, int y, const unsigned char *pixels)
 {
     int px;
     int py;
+    const uint32_t *rgb = pcx_icon_rgb(pixels);
 
     for (py = 0; py < DESKTOP_ICON_H; ++py) {
         for (px = 0; px < DESKTOP_ICON_W; ++px) {
@@ -1111,7 +1151,11 @@ static void draw_pcx_icon(int x, int y, const unsigned char *pixels)
                 pixels[py * DESKTOP_ICON_W + px];
 
             if (color != PCX_TRANSPARENT) {
-                put_pixel(x + px, y + py, color);
+                if (rgb != NULL) {
+                    put_rgb_pixel(x + px, y + py, rgb[py * DESKTOP_ICON_W + px]);
+                } else {
+                    put_pixel(x + px, y + py, color);
+                }
             }
         }
     }
@@ -1176,7 +1220,21 @@ static int load_named_pcx(const char *filename,
     char path[MAX_PATH];
     char alternate[32];
     size_t len;
-    uint32_t *rgb_dest = dest == desktop_background ? desktop_background_rgb : NULL;
+    uint32_t *rgb_dest = desktop_background_rgb;
+    PcxIconColors *icon = NULL;
+    if (dest != desktop_background) {
+        for (int slot = 0; slot < pcx_icon_color_count; ++slot) {
+            if (pcx_icon_colors[slot].indices == dest) icon = &pcx_icon_colors[slot];
+        }
+        if (icon == NULL && pcx_icon_color_count < BWA_MAX_EXTERNAL + 9) {
+            icon = &pcx_icon_colors[pcx_icon_color_count];
+        }
+        if (icon == NULL || width * height > DESKTOP_ICON_W * DESKTOP_ICON_H) {
+            fprintf(stderr, "BUDOWIN: too many or oversized PCX icons\n");
+            return 0;
+        }
+        rgb_dest = icon->rgb;
+    }
     int loaded = 0;
     int i;
 
@@ -1232,16 +1290,20 @@ static int load_named_pcx(const char *filename,
     }
 
     if (loaded && icon_transparency) {
-        unsigned char transparent = dest[0];
+        uint32_t transparent = rgb_dest[0];
         int count = width * height;
 
         for (i = 0; i < count; ++i) {
-            if (dest[i] == transparent) {
+            if (rgb_dest[i] == transparent) {
                 dest[i] = PCX_TRANSPARENT;
             }
         }
     }
 
+    if (loaded && icon != NULL && icon->indices == NULL) {
+        icon->indices = dest;
+        ++pcx_icon_color_count;
+    }
     return loaded;
 }
 
@@ -1484,7 +1546,7 @@ static void restore_cursor_area(int x, int y)
         offset = sy * SCREEN_WIDTH + start_x;
         (void)vesa_copy_to_screen((unsigned long)offset,
                                   &framebuffer[offset],
-                                  (size_t)length, &background_mask[offset]);
+                                  (size_t)length, &rgb_mask[offset]);
     }
 }
 
@@ -1492,6 +1554,8 @@ static void draw_cursor_vga(int x, int y)
 {
     unsigned char rowbuf[MOUSE_CURSOR_W];
     unsigned char rowmask[MOUSE_CURSOR_W];
+    uint32_t rowrgb[MOUSE_CURSOR_W];
+    const uint32_t *cursor_rgb = pcx_icon_rgb(cursor_pcx_icon);
     int row;
 
     if (!cursor_pcx_icon_loaded) {
@@ -1531,13 +1595,15 @@ static void draw_cursor_vga(int x, int y)
 
             rowbuf[col] = pixel;
             rowmask[col] = cursor_pixel == PCX_TRANSPARENT ?
-                background_mask[sy * SCREEN_WIDTH + sx] : 0;
+                rgb_mask[sy * SCREEN_WIDTH + sx] : cursor_rgb != NULL;
+            rowrgb[col] = cursor_pixel == PCX_TRANSPARENT ?
+                rgb_framebuffer[sy * SCREEN_WIDTH + sx] :
+                cursor_rgb != NULL ? cursor_rgb[row * MOUSE_CURSOR_W + image_x] : 0;
         }
 
         offset = sy * SCREEN_WIDTH + start_x;
-        (void)vesa_copy_to_screen((unsigned long)offset,
-                                  rowbuf,
-                                  (size_t)length, rowmask);
+        (void)bw_screen_copy((unsigned long)offset, rowbuf,
+                             (size_t)length, rowrgb, rowmask);
     }
 }
 
@@ -1688,7 +1754,7 @@ static void restore_text_caret_vga(void)
         offset = sy * SCREEN_WIDTH + start_x;
         (void)vesa_copy_to_screen((unsigned long)offset,
                                   &framebuffer[offset],
-                                  (size_t)length, &background_mask[offset]);
+                                  (size_t)length, &rgb_mask[offset]);
     }
 }
 
@@ -5445,7 +5511,8 @@ static const BwaHostApi bwa_host_api = {
     bwa_file_read_all,
     bwa_file_write_all,
     bwa_memory_alloc,
-    bwa_memory_free
+    bwa_memory_free,
+    fill_rect_rgb
 };
 
 static BwaLoadedApp *bwa_find_external_app(int runtime_id)
@@ -5812,10 +5879,11 @@ static void draw_desktop(int page)
 
     if (desktop_background_loaded) {
         memcpy(framebuffer, desktop_background, sizeof(framebuffer));
-        memset(background_mask, 1, sizeof(background_mask));
+        memcpy(rgb_framebuffer, desktop_background_rgb, sizeof(rgb_framebuffer));
+        memset(rgb_mask, 1, sizeof(rgb_mask));
     } else {
         memset(framebuffer, DESKTOP_COLOR, sizeof(framebuffer));
-        memset(background_mask, 0, sizeof(background_mask));
+        memset(rgb_mask, 0, sizeof(rgb_mask));
     }
     draw_text_centered(8, "BUDOWIN by BUDOSTACK", DESKTOP_TEXT_COLOR);
 

@@ -142,7 +142,7 @@ int main(int argc, char **argv) {
                         assert(pixels[pixel] == 0 && pixels[pixel + 1u] == 0 && pixels[pixel + 2u] == 0);
                     } else if (x == 0) {
                         size_t pixel = (479u * 640u + 1u) * 4u;
-                        assert(pixels[pixel] == 149 && pixels[pixel + 1u] == 149 && pixels[pixel + 2u] == 149);
+                        assert(pixels[pixel] == 128 && pixels[pixel + 1u] == 128 && pixels[pixel + 2u] == 128);
                     } else {
                         assert(memcmp(pixels + (480u * 640u - 1u) * 4u, bottom_right, 3) == 0);
                     }

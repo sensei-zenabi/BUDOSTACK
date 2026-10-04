@@ -6,11 +6,11 @@
  *
  * In this native port, .BWA files are POSIX ELF shared libraries exposing
  * bwa_entry. Rebuild DOS/DJGPP modules from source for the target platform.
- * The callbacks and host services retain the upstream BWA 1.8 interface.
+ * The callbacks and host services retain the upstream BWA 1.8 interface with appended RGB services.
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 8
+#define BWA_ABI_MINOR 9
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -119,6 +119,10 @@ typedef struct BwaHostApi {
     /* ABI 1.8: host-owned heap allocation for DXE modules. */
     void *(*memory_alloc)(unsigned int size);
     void (*memory_free)(void *ptr);
+
+    /* ABI 1.9: exact 24-bit RGB, independent of the system palette.
+     * rgb is 0x00RRGGBB; the rectangle is clipped to the screen. */
+    void (*fill_rect_rgb)(int x, int y, int w, int h, unsigned int rgb);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

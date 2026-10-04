@@ -92,67 +92,95 @@ RUN _RETROPROFILE apply $RETROPROFILE
 
 #-------------------------------------------------------------------------
 # BUDOSTACK LOADER
+# Simulated 1988 AT-compatible boot; hardware figures are period scenery.
+# ROM/POST runs silently. Disk sounds belong only to seeks and disk reads.
+# The floppy sample is 1411 ms long: leave >= 1450 ms before reusing channel 1.
+# Channel 2 is reserved for the short POST beep, not a second disk drive.
 
 SET $SELECTION = "y"
 RUN cls
+RUN _TERM_TYPING_SOUND disable
+RUN _WAIT 500
+PRINT "BUDOSTACK AT BIOS  Version 1.00\n"
+PRINT "Copyright (C) 1988 BUDOSTACK Corporation\n\n"
+PRINT "80286 CPU at 12 MHz\n"
+RUN _WAIT 350
+PRINT "ROM BIOS Checksum .... OK\n"
+RUN _WAIT 250
+PRINT "CMOS Battery ......... OK\n\n"
+RUN _WAIT 250
+
+# Count conventional memory in place, as a BIOS would; no disk activity.
+FOR ($BOOT_RAM=64; $BOOT_RAM<=640; $BOOT_RAM=$BOOT_RAM+64):
+  PRINT "\rBase Memory:     "
+  IF ($BOOT_RAM < 100):
+    PRINT " "
+  END
+  PRINT $BOOT_RAM + " KB OK"
+  RUN _WAIT 100
+END
+PRINT "\n"
+FOR ($BOOT_RAM=64; $BOOT_RAM<=384; $BOOT_RAM=$BOOT_RAM+64):
+  PRINT "\rExtended Memory: "
+  IF ($BOOT_RAM < 100):
+    PRINT " "
+  END
+  PRINT $BOOT_RAM + " KB OK"
+  RUN _WAIT 100
+END
+PRINT "\n\n"
+PRINT "Keyboard ............. OK\n"
+RUN _WAIT 250
+PRINT "Video Adapter ........ VGA\n"
+RUN _WAIT 250
+PRINT "Diskette Drive A: ..... 1.2 MB\n"
+
+# POST recalibrates the floppy head before handing control to the boot loader.
+RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+RUN _WAIT 1500
+PRINT "Diskette Controller .. OK\n"
+RUN _WAIT 250
+RUN _TERM_SOUND_PLAY 2 ../sounds/environment/computer_beep.wav 100
+RUN _WAIT 300
+PRINT "\nBooting from drive A:\n"
+RUN _WAIT 350
+
+# Boot sector, system files and command interpreter: separate read bursts.
+RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+RUN _WAIT 1600
+PRINT "\nBUDOSTACK Disk Operating System\n"
+PRINT "Copyright (C) 1988 BUDOSTACK Corporation\n\n"
+RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+PRINT "Loading system files..."
+RUN _WAIT 1700
+PRINT " OK\n"
+RUN _WAIT 200
+# DOS initializes CONFIG.SYS drivers before loading the command interpreter.
+RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+PRINT "Processing CONFIG.SYS...\n"
+PRINT "FILES=20\nBUFFERS=15\nDEVICE=ANSI.SYS\n"
+RUN _WAIT 1500
+PRINT "\nANSI console driver installed.\n"
 RUN _WAIT 200
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-PRINT "\nLOADING FIRMWARE"
-SET $DOTS = 21
-SET $DELAY = 150
-FOR ($i=0; $i<$DOTS; $i=$i+1):
-  IF ($i==10):
-    RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-  END
-  PRINT "."
-  RUN _WAIT $DELAY
-END
-PRINT "OK!\n\n"
+PRINT "Loading command interpreter..."
+RUN _WAIT 1500
+PRINT " OK\n\n"
+RUN _WAIT 350
+
+# The command interpreter now reads AUTOEXEC.BAT.
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-PRINT "\nSTARTING SYSTEM:\n"
-PRINT "---------------------------------------\n\n"
-RUN _WAIT 1000
-#---------------------------------------
-PRINT " BOOTSTRAP SEQUENCE ........... "
-RUN _WAIT 1000
-PRINT "PASS\n\n"
-RUN _WAIT 100
-RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-#---------------------------------------
-PRINT " MEMORY CHECK ................. "
-RUN _WAIT 800
-PRINT "PASS\n\n"
-RUN _WAIT 10
-#---------------------------------------
-PRINT " KERNEL LOAD .................. "
-RUN _WAIT 250
-PRINT "COMPLETE\n\n"
-RUN _WAIT 25
-#---------------------------------------
-PRINT " SYS/COMMS/UPLINK ............. "
-RUN _WAIT 370
-PRINT "ACTIVATED\n\n"
-RUN _WAIT 10
-RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-#---------------------------------------
-PRINT " LOADING BUDOSTACK DATABASE ... "
-RUN _WAIT 400
-PRINT "COMPLETE\n\n"
-RUN _WAIT 70
-#---------------------------------------
-PRINT " MU/TH/UR CORE ................ "
-RUN _WAIT 500
-PRINT "READY\n\n"
-RUN _WAIT 100
-#---------------------------------------
-PRINT " PRIMARY TERMINAL ............. "
-RUN _WAIT 250
-PRINT "ACTIVATED\n\n"
-RUN _WAIT 90
-PRINT "---------------------------------------\n\n"
-PRINT "\nSYSTEM STARTED!\n\n\n"
-RUN _TERM_SOUND_PLAY 2 ../sounds/environment/computer_beep.wav 100
-PRINT "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n>> ENTER MENU? [y/n]: "
+PRINT "\nA:\\>AUTOEXEC\n"
+PRINT "A:\\>PATH A:\\;A:\\COMMANDS;A:\\APPS\n"
+PRINT "A:\\>SET COMSPEC=A:\\COMMAND.COM\n"
+RUN _WAIT 1500
+PRINT "A:\\>BUDOSTACK\n\n"
+PRINT "BUDOSTACK ready.\n\n"
+RUN _WAIT 300
+
+# Keep the complete POST visible in the 80x60 HIGH terminal.
+RUN _TERM_TYPING_SOUND $TYPING_SOUND
+PRINT ">> ENTER MENU? [y/n]: "
 INPUT $SELECTION
 
 IF ($SELECTION != "y"):
@@ -186,11 +214,12 @@ IF ($TERM_ACTIVE == "1"):
   @LOADING
   RUN _BAR -x 27 -y 29 -title LOADING: -progress $LOAD
   IF ($LOAD == 50):
-    RUN _TERM_SOUND_PLAY 2 ../sounds/628246__asiekierka__floppy_access6.ogg 100
+    RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
   END
   IF ($LOAD < 100):
     SET $LOAD = $LOAD + 10
-    RUN _WAIT 250
+    # Five steps leave 1500 ms between the two disk accesses.
+    RUN _WAIT 300
     GOTO LOADING
   END
 

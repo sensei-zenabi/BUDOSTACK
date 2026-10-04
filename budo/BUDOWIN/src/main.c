@@ -7899,8 +7899,7 @@ int main(int argc, char **argv)
                             }
                         } else if (executable_file(items[target].name)) {
                             if (request_launch(&items[target], page)) {
-                                set_text_mode();
-                                return 0;
+                                goto application_exit;
                             }
                         } else if (open_associated_file(items[target].path)) {
                             screen_dirty = 1;
@@ -8415,8 +8414,7 @@ int main(int argc, char **argv)
                             terminal_native_command,
                             terminal_native_is_batch,
                             page)) {
-                        set_text_mode();
-                        return 0;
+                        goto application_exit;
                     }
 
                     terminal_add_line("Unable to launch program.");
@@ -8769,6 +8767,7 @@ int main(int argc, char **argv)
         if (!bw_end_frame()) break;
     }
 
+application_exit:
     set_text_mode();
     bw_finish();
     return 0;

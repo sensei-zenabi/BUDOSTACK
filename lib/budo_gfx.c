@@ -440,6 +440,15 @@ void budo_gfx_host_poll(struct budo_gfx_host *host) {
     if (!host) {
         return;
     }
+    /* An application may close and launch its successor before the next
+     * UI poll. Release the old peer before accepting that new connection. */
+    if (host->fd >= 0) {
+        unsigned char byte;
+        ssize_t pending = recv(host->fd, &byte, 1, MSG_PEEK | MSG_DONTWAIT);
+        if (pending == 0 || (pending < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+            gfx_host_disconnect(host);
+        }
+    }
     int fd = accept(host->listener, NULL, NULL);
     if (fd >= 0) {
         if (host->fd >= 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {

@@ -17,6 +17,7 @@ static struct budo_gfx *screen;
 static uint8_t pixels[640 * 480];
 static uint32_t palette[256];
 static int mouse_x = 320, mouse_y = 240, mouse_buttons;
+static int raw_mouse_x, raw_mouse_y, raw_mouse_valid;
 static unsigned char keys[512];
 static int queue[256];
 static unsigned int queue_read, queue_write;
@@ -182,15 +183,21 @@ static int pump_one(void) {
     if (event.type == BUDO_GFX_QUIT) disconnected = 1;
     else if (event.type == BUDO_GFX_RESET) {
         memset(keys, 0, sizeof(keys)); mouse_buttons = 0;
+        raw_mouse_valid = 0;
         queue_read = queue_write = 0;
     } else if (event.type == BUDO_GFX_KEY_DOWN || event.type == BUDO_GFX_KEY_UP) {
         if (event.scancode >= 0 && event.scancode < 512) keys[event.scancode] = event.type == BUDO_GFX_KEY_DOWN;
         if (event.type == BUDO_GFX_KEY_DOWN) translate_key(&event);
     } else if (event.type == BUDO_GFX_MOUSE_MOVE || event.type == BUDO_GFX_MOUSE_DOWN || event.type == BUDO_GFX_MOUSE_UP) {
-        /* Overlay margins can map outside the logical VGA display.
-         * Clamp both motion and button coordinates to the visible edges. */
-        mouse_x = event.x < 0 ? 0 : event.x > 639 ? 639 : event.x;
-        mouse_y = event.y < 0 ? 0 : event.y > 479 ? 479 : event.y;
+        /* Apply movement to the already-clamped cursor, not the physical
+         * pointer position. Outward movement at an edge is discarded, so
+         * reversing direction moves the cursor immediately. */
+        int64_t x = raw_mouse_valid ? (int64_t)mouse_x + event.x - raw_mouse_x : event.x;
+        int64_t y = raw_mouse_valid ? (int64_t)mouse_y + event.y - raw_mouse_y : event.y;
+        mouse_x = x < 0 ? 0 : x > 639 ? 639 : (int)x;
+        mouse_y = y < 0 ? 0 : y > 479 ? 479 : (int)y;
+        raw_mouse_x = event.x; raw_mouse_y = event.y;
+        raw_mouse_valid = 1;
         int mask = event.button == 1 ? 1 : event.button == 3 ? 2 : 4;
         if (event.type == BUDO_GFX_MOUSE_DOWN) mouse_buttons |= mask;
         if (event.type == BUDO_GFX_MOUSE_UP) mouse_buttons &= ~mask;

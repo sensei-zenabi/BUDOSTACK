@@ -233,7 +233,15 @@ static void test_motion_queue(void) {
         assert(gfx_send(pair[0], &packet) == 0);
         assert(gfx_client_receive(&client, &received) == 1);
     }
-    assert(client.count == 1 && client.events[0].x == 999);
+    assert(client.count == 2 && client.events[0].x == 0 && client.events[1].x == 999);
+    packet.event.x = 998;
+    assert(gfx_send(pair[0], &packet) == 0);
+    assert(gfx_client_receive(&client, &received) == 1);
+    assert(client.count == 3 && client.events[1].x == 999 && client.events[2].x == 998);
+    client.head = client.count = 0;
+    packet.event.x = 999;
+    assert(gfx_send(pair[0], &packet) == 0);
+    assert(gfx_client_receive(&client, &received) == 1);
     packet.event.type = BUDO_GFX_MOUSE_DOWN;
     assert(gfx_send(pair[0], &packet) == 0);
     assert(gfx_client_receive(&client, &received) == 1);
@@ -246,11 +254,11 @@ static void test_motion_queue(void) {
     packet.event.type = BUDO_GFX_MOUSE_UP;
     assert(gfx_send(pair[0], &packet) == 0);
     assert(gfx_client_receive(&client, &received) == 1);
-    assert(client.count == 4);
+    assert(client.count == 5);
     assert(client.events[0].x == 999);
     assert(client.events[1].type == BUDO_GFX_MOUSE_DOWN);
-    assert(client.events[2].x == 1999);
-    assert(client.events[3].type == BUDO_GFX_MOUSE_UP);
+    assert(client.events[2].x == 1000 && client.events[3].x == 1999);
+    assert(client.events[4].type == BUDO_GFX_MOUSE_UP);
     close(pair[0]); close(pair[1]);
 }
 

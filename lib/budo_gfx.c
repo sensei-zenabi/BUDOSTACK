@@ -46,6 +46,8 @@ struct budo_gfx {
     struct budo_gfx_event events[GFX_QUEUE];
     size_t head;
     size_t count;
+    int motion_direction_x;
+    int motion_direction_y;
 };
 
 struct budo_gfx_host {
@@ -175,9 +177,27 @@ static int gfx_client_receive(struct budo_gfx *gfx, struct gfx_packet *packet) {
         if (packet->event.type == BUDO_GFX_MOUSE_MOVE && gfx->count > 0u) {
             size_t last = (gfx->head + gfx->count - 1u) % GFX_QUEUE;
             if (gfx->events[last].type == BUDO_GFX_MOUSE_MOVE) {
-                gfx->events[last] = packet->event;
-                return result;
+                int64_t dx = (int64_t)packet->event.x - gfx->events[last].x;
+                int64_t dy = (int64_t)packet->event.y - gfx->events[last].y;
+                int direction_x = (dx > 0) - (dx < 0);
+                int direction_y = (dy > 0) - (dy < 0);
+                int reversed = ((!gfx->motion_direction_x && !gfx->motion_direction_y) &&
+                                (direction_x || direction_y)) ||
+                               (direction_x && gfx->motion_direction_x &&
+                                direction_x != gfx->motion_direction_x) ||
+                               (direction_y && gfx->motion_direction_y &&
+                                direction_y != gfx->motion_direction_y);
+                if (direction_x) gfx->motion_direction_x = direction_x;
+                if (direction_y) gfx->motion_direction_y = direction_y;
+                /* Retain turning points: edge-clamped clients must see the
+                 * outward endpoint before the first inward movement. */
+                if (!reversed) {
+                    gfx->events[last] = packet->event;
+                    return result;
+                }
             }
+        } else {
+            gfx->motion_direction_x = gfx->motion_direction_y = 0;
         }
         if (gfx->count == GFX_QUEUE) {
             /* Stop rather than lose a key release and leave a key stuck. */

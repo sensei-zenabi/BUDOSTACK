@@ -135,13 +135,31 @@ int main(int argc, char **argv) {
                     size_t pixel = ((size_t)y * 640u + (size_t)x) * 4u;
                     assert(pixels[pixel] == 0 && pixels[pixel + 1u] == 0 && pixels[pixel + 2u] == 0);
                 }
-                if (frames == 26 || frames == 28 || frames == 30 || frames == 32) {
+                if (frames == 22 || frames == 31) {
+                    struct budo_gfx_event event = {0}; event.type = BUDO_GFX_RESET;
+                    budo_gfx_host_event(host, &event);
+                    if (frames == 22) {
+                        event.type = BUDO_GFX_MOUSE_MOVE; event.x = 0; event.y = 200;
+                        budo_gfx_host_event(host, &event);
+                    }
+                }
+                if (frames == 24) {
+                    struct budo_gfx_event event = {0}; event.type = BUDO_GFX_MOUSE_MOVE;
+                    event.y = 200;
+                    event.x = -1000; budo_gfx_host_event(host, &event);
+                    event.x = -999; budo_gfx_host_event(host, &event);
+                }
+                if (frames == 30) {
+                    size_t pixel = (200u * 640u + 1u) * 4u;
+                    assert(pixels[pixel] == 0 && pixels[pixel + 1u] == 0 && pixels[pixel + 2u] == 0);
+                }
+                if (frames == 36 || frames == 38 || frames == 40 || frames == 42) {
                     struct budo_gfx_event event = {0};
-                    event.type = (frames == 26 || frames == 30) ? BUDO_GFX_MOUSE_DOWN : BUDO_GFX_MOUSE_UP;
+                    event.type = (frames == 36 || frames == 40) ? BUDO_GFX_MOUSE_DOWN : BUDO_GFX_MOUSE_UP;
                     event.button = 1; event.x = 350; event.y = 56;
                     budo_gfx_host_event(host, &event);
                 }
-                if (frames == 40) {
+                if (frames == 50) {
                     char path[4096];
                     assert(snprintf(path, sizeof(path), "%s.paint.ppm", argv[3]) < (int)sizeof(path));
                     FILE *file = fopen(path, "wb"); assert(file);
@@ -150,12 +168,12 @@ int main(int argc, char **argv) {
                     assert(fclose(file) == 0);
                     assert(pixels[(200 * w + 200) * 4] != 0);
                 }
-                if (frames == 44) {
+                if (frames == 54) {
                     struct budo_gfx_event event = {0};
                     event.type = BUDO_GFX_KEY_DOWN; event.key = 27; event.scancode = 41;
                     budo_gfx_host_event(host, &event);
                 }
-                if (frames == 49) {
+                if (frames == 59) {
                     struct budo_gfx_event event = {0}; event.type = BUDO_GFX_QUIT;
                     budo_gfx_host_event(host, &event);
                 }

@@ -148,36 +148,38 @@ RUN _WAIT 300
 PRINT "\nBooting from drive A:\n"
 RUN _WAIT 350
 
-# Boot sector, system files and command interpreter: separate read bursts.
+# Boot sector and BUDOSTACK core: separate disk read bursts.
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 RUN _WAIT 1600
-PRINT "\nBUDOSTACK Disk Operating System  Version 6.00\n"
+PRINT "\nBUDOSTACK SYSTEM LOADER\n"
 PRINT "Copyright (C) 1993 BUDOSTACK Corporation\n\n"
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-PRINT "Loading system files..."
+PRINT "Loading BUDOSTACK core..."
 RUN _WAIT 1700
 PRINT " OK\n"
 RUN _WAIT 200
-# DOS initializes CONFIG.SYS drivers before loading the command interpreter.
+
+# Load system services before bringing up the terminal.
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-PRINT "Processing CONFIG.SYS...\n"
-PRINT "DEVICE=HIMEM.SYS\nDOS=HIGH\nFILES=30\nBUFFERS=20\nDEVICE=ANSI.SYS\n"
+PRINT "Loading system services...\n"
 RUN _WAIT 1500
-PRINT "\nXMS memory manager installed.\nDOS loaded in high memory.\nANSI console driver installed.\n"
+PRINT "Memory manager ....... READY\n"
+PRINT "Device interface ..... READY\n"
+PRINT "Console driver ....... READY\n"
 RUN _WAIT 200
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-PRINT "Loading command interpreter..."
+PRINT "Loading BUDOSTACK terminal..."
 RUN _WAIT 1500
 PRINT " OK\n\n"
 RUN _WAIT 350
 
-# The command interpreter now reads AUTOEXEC.BAT.
+# Read startup settings and prepare the BUDOSTACK session.
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
-PRINT "\nA:\\>AUTOEXEC\n"
-PRINT "A:\\>PATH A:\\;A:\\COMMANDS;A:\\APPS\n"
-PRINT "A:\\>SET COMSPEC=A:\\COMMAND.COM\n"
+PRINT "Reading startup configuration..."
 RUN _WAIT 1500
-PRINT "A:\\>BUDOSTACK\n\n"
+PRINT " OK\n"
+PRINT "Command library ...... READY\n"
+PRINT "Primary terminal ..... ACTIVE\n\n"
 PRINT "BUDOSTACK ready.\n\n"
 RUN _WAIT 300
 

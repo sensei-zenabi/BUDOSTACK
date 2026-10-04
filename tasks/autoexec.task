@@ -24,6 +24,7 @@ RUN _TERM_MOUSE_SHOW disable
 
 # Initialize variables
 
+SET $SELECTION = "n"
 SET $MARGIN = 0
 SET $TYPING_SOUND = "disable"
 SET $BACKGROUND_SOUND = "enable"
@@ -43,6 +44,25 @@ SET $RESOLUTION = "null"
 SET $TERM_SIZE = "81.5104167 74.0740741"
 SET $MOUSE = "null"
 SET $RETROPROFILE = "vt220-green"
+SET $FIRST_BOOT = 0
+
+# Detect whether this is first boot
+
+RUN _CONFIG -read VAR_FIRST_BOOT TO $FIRST_BOOT
+
+IF ($FIRST_BOOT == 1):
+  PRINT "\n\nFirst boot of BUDOSTACK detected.\n"
+  PRINT "\n"
+  PRINT "Do you want to use overlay? [y/n]: "
+  INPUT $SELECTION
+  IF ($SELECTION == "y"):
+    RUN _CONFIG -write _TERM_OVERLAY "enable"
+  ELSE
+    RUN _CONFIG -write _TERM_OVERLAY "disable"
+  END
+  RUN _CONFIG -write VAR_FIRST_BOOT 0
+END
+
 
 # Run configurations from config.ini
 
@@ -60,9 +80,9 @@ RUN _CONFIG -read _TERM_BACKGROUND_VOLUME TO $BACKGROUND_VOLUME
 RUN _TERM_BACKGROUND_VOLUME $BACKGROUND_VOLUME
 RUN _CONFIG -read _TERM_SHADER TO $SHADER
 RUN _TERM_SHADER $SHADER
-RUN _CONFIG -read _TERM_OVERLAY TO $OVERLAY
 RUN _CONFIG -read _TERM_LAYOUT_ASPECT TO $LAYOUT_ASPECT
 RUN _TERM_LAYOUT_ASPECT $LAYOUT_ASPECT
+RUN _CONFIG -read _TERM_OVERLAY TO $OVERLAY
 RUN _CONFIG -read _TERM_OVERLAY_ZOOM TO $OVERLAY_ZOOM
 RUN _CONFIG -read _TERM_OVERLAY_OFFSET_X TO $OVERLAY_IMAGE_OFFSET_X
 RUN _CONFIG -read _TERM_OVERLAY_OFFSET_Y TO $OVERLAY_IMAGE_OFFSET_Y
@@ -96,7 +116,6 @@ RUN _TERM_RESOLUTION HIGH
 # The floppy sample is 1411 ms long: leave >= 1450 ms before reusing channel 1.
 # Channel 2 is reserved for the short POST beep, not a second disk drive.
 
-SET $SELECTION = "y"
 RUN cls
 RUN _TERM_TYPING_SOUND disable
 RUN _WAIT 500

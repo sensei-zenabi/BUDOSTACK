@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "../lib/terminal_layout.h"
+
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
@@ -759,13 +761,13 @@ static void print_spaces(int count) {
 
 static void print_centered_text(const char *text) {
     int width = (int)strlen(text);
-    int padding = (80 - width) / 2;
+    int padding = (budostack_get_target_cols() - width) / 2;
 
     if (padding < 0) {
         padding = 0;
     }
     print_spaces(padding);
-    printf("%s\n", text);
+    printf("%.*s\n", budostack_get_target_cols() - padding - 1, text);
 }
 
 static void square_name(int row, int col, char *buffer, size_t buffer_size) {
@@ -818,8 +820,13 @@ static void print_board_cell(const GameState *state, int row, int col, int show_
 }
 
 static void print_info_pair(const char *left, const char *right) {
-    print_spaces(14);
-    printf("%-24s  %-24s\n", left, right);
+    int cols = budostack_get_target_cols();
+    int field = (cols - 4) / 2;
+    if (field > 24) {
+        field = 24;
+    }
+    print_spaces((cols - 2 * field - 2) / 2);
+    printf("%-*.*s  %-*.*s\n", field, field, left, field, field, right);
 }
 
 static void render_board(const GameState *state, const char *status, GameMode mode, Difficulty difficulty,
@@ -841,7 +848,24 @@ static void render_board(const GameState *state, const char *status, GameMode mo
                    state->black_castle_king ? "k" : "-", state->black_castle_queen ? "q" : "-");
 
     clear_screen();
-    printf("\n\n\n\n\n\n\n\n\n\n");
+    int cols = budostack_get_target_cols();
+    int rows = budostack_get_target_rows();
+    int cell_w = (cols - 8) / 8;
+    int cell_h = (rows - 19) / 8;
+    if (cell_w < 3) {
+        cell_w = 3;
+    }
+    if (cell_h < 1) {
+        cell_h = 1;
+    }
+    int padding = (cols - cell_w * 8 - 6) / 2;
+    if (padding < 0) {
+        padding = 0;
+    }
+    int top = (rows - (19 + cell_h * 8)) / 2;
+    for (int i = 0; i < top; i++) {
+        putchar('\n');
+    }
     print_centered_text("BUDOSTACK CHESS");
     if (mode == MODE_PVC) {
         (void)snprintf(line, sizeof(line), "%s  |  %s", mode_name, difficulty_name(difficulty));
@@ -854,26 +878,49 @@ static void render_board(const GameState *state, const char *status, GameMode mo
     print_centered_text(status);
     printf("\n");
 
-    print_spaces(25);
-    printf("    a  b  c  d  e  f  g  h\n");
-    print_spaces(25);
-    printf("  +------------------------+\n");
-
-    for (int row = 0; row < 8; row++) {
-        print_spaces(25);
-        printf("%d |", 8 - row);
-        for (int col = 0; col < 8; col++) {
-            print_board_cell(state, row, col, show_cursor, cursor_row, cursor_col,
-                             selected_row, selected_col, last_move);
-        }
-        printf("| %d\n", 8 - row);
+    print_spaces(padding + 3);
+    for (int col = 0; col < 8; col++) {
+        printf("%*c%*s", cell_w / 2 + 1, 'a' + col, cell_w - cell_w / 2 - 1, "");
     }
-
-    print_spaces(25);
-    printf("  +------------------------+\n");
-    print_spaces(25);
-    printf("    a  b  c  d  e  f  g  h\n");
-    printf("\n");
+    putchar('\n');
+    print_spaces(padding + 2);
+    putchar('+');
+    for (int i = 0; i < cell_w * 8; i++) {
+        putchar('-');
+    }
+    printf("+\n");
+    for (int row = 0; row < 8; row++) {
+        for (int line_no = 0; line_no < cell_h; line_no++) {
+            print_spaces(padding);
+            if (line_no == cell_h / 2) {
+                printf("%d |", 8 - row);
+            } else {
+                printf("  |");
+            }
+            for (int col = 0; col < 8; col++) {
+                if (line_no == cell_h / 2) {
+                    print_spaces((cell_w - 3) / 2);
+                    print_board_cell(state, row, col, show_cursor, cursor_row, cursor_col,
+                                     selected_row, selected_col, last_move);
+                    print_spaces(cell_w - 3 - (cell_w - 3) / 2);
+                } else {
+                    print_spaces(cell_w);
+                }
+            }
+            printf("|\n");
+        }
+    }
+    print_spaces(padding + 2);
+    putchar('+');
+    for (int i = 0; i < cell_w * 8; i++) {
+        putchar('-');
+    }
+    printf("+\n");
+    print_spaces(padding + 3);
+    for (int col = 0; col < 8; col++) {
+        printf("%*c%*s", cell_w / 2 + 1, 'a' + col, cell_w - cell_w / 2 - 1, "");
+    }
+    printf("\n\n");
 
     (void)snprintf(left, sizeof(left), "Turn: %s", side_name);
     (void)snprintf(right, sizeof(right), "Selected: %s", selected);

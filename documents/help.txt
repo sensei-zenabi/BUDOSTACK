@@ -273,7 +273,7 @@
   _TERM_RECT           : Queue a filled terminal pixel rectangle using
                          palette color or RGB.
   _TERM_RENDER         : Trigger full render or render selected layer.
-  _TERM_RESOLUTION     : Set pixel resolution (LOW 640x360, HIGH 800x450,
+  _TERM_RESOLUTION     : Set pixel resolution (LOW 320x240, HIGH 640x480,
                          or width/height; 0 0 restores default).
   _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
   _TERM_SHADER         : Enable or disable terminal shader.

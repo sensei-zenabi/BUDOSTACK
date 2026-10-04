@@ -13,6 +13,13 @@ maximum focus and efficiency on basic primitives of computing,
 such as file manipulation, text editing, command-line interactions, 
 and efficient resource management.
 
+The terminal defaults to HIGH (640x480, 80x60 cells with the 8x8 font).
+LOW uses 320x240 (40x30 cells). `_TERM_RESOLUTION HIGH` and
+`_TERM_RESOLUTION LOW` select these modes; custom pixel dimensions remain
+supported. Applications use the active terminal size. Games scale and center
+their boards. Native graphical applications in `budo/` retain their own
+320x240 or 640x480 mode.
+
 Screenshots from BUDOSTACK built-in retro terminal emulator (apps/terminal).
 
 | ![shot1](screenshots/login.png) | ![shot2](screenshots/demo.png) | ![shot3](screenshots/help.png) | ![shot4](screenshots/paint.png) |

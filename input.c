@@ -1,6 +1,8 @@
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 
+#include "lib/terminal_layout.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -386,7 +388,7 @@ char* read_input(const char *prompt) {
 static int terminal_width_columns(void) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        return 80;
+        return budostack_get_target_cols();
     }
     return (int)ws.ws_col;
 }

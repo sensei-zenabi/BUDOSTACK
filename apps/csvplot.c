@@ -1,4 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
+#include "../lib/terminal_layout.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -163,7 +165,8 @@ int main(int argc, char *argv[]) {
 
     /* Terminal size */
     struct winsize w;
-    int term_w = 80, term_h = 24;
+    int term_w = budostack_get_target_cols();
+    int term_h = budostack_get_target_rows();
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) {
         term_w = w.ws_col;
         term_h = w.ws_row;

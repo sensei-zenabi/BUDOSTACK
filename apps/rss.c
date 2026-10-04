@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "../lib/terminal_layout.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
@@ -324,8 +326,8 @@ static void configure_terminal(void) {
 static void get_terminal_size(TerminalSize *size) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0 || ws.ws_row == 0) {
-        size->cols = 80;
-        size->rows = 24;
+        size->cols = (unsigned short)budostack_get_target_cols();
+        size->rows = (unsigned short)budostack_get_target_rows();
     } else {
         size->cols = ws.ws_col;
         size->rows = ws.ws_row;

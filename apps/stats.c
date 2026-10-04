@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "../lib/terminal_layout.h"
+
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -17,8 +19,7 @@
 #include <unistd.h>
 
 #define STATS_MIN_COLUMNS 60
-#define STATS_LOW_COLUMNS 80
-#define STATS_LOW_ROWS 45
+#define STATS_MAX_COLUMNS 80
 #define STATS_BAR_WIDTH 24
 #define STATS_MAX_PROCESSES 512
 #define STATS_CMD_WIDTH 27
@@ -416,7 +417,7 @@ static void print_panel_line(int columns, const char *text)
     int content_width = columns - 4;
 
     if (content_width < 1) {
-        content_width = STATS_LOW_COLUMNS - 4;
+        content_width = STATS_MAX_COLUMNS - 4;
     }
     printf("| %-*.*s |\n", content_width, content_width, text);
 }
@@ -458,12 +459,12 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
     double mem_percent = 0.0;
     double swap_percent = 0.0;
     double disk_percent = 0.0;
-    int rows = STATS_LOW_ROWS;
+    int rows = budostack_get_target_rows();
     int process_rows;
     int index;
 
     if (columns < STATS_MIN_COLUMNS) {
-        columns = STATS_LOW_COLUMNS;
+        columns = STATS_MAX_COLUMNS;
     }
     localtime_r(&now, &local_time);
     strftime(time_buffer, sizeof(time_buffer), "%H:%M:%S  %d-%b-%Y", &local_time);
@@ -529,7 +530,11 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
     print_panel_line(columns, "PID    S CPU-TICKS   RSS-MB   VSZ-MB  COMMAND");
     print_rule(columns, '+', '-', '+');
 
-    process_rows = rows - 15;
+    /* Sixteen fixed lines plus one spare row avoid scrolling at the bottom. */
+    process_rows = rows - 17;
+    if (process_rows < 0) {
+        process_rows = 0;
+    }
     for (index = 0; index < process_rows; index++) {
         if (index < snapshot->process_count) {
             const struct process_info *process = &snapshot->processes[index];
@@ -546,7 +551,7 @@ static void draw_snapshot(const struct system_snapshot *snapshot, int columns)
         }
     }
     print_rule(columns, '+', '-', '+');
-    print_panel_line(columns, "[Q] QUIT  [R] REDRAW  [1s] AUTO-REFRESH  DISPLAY: _TERM_RESOLUTION LOW");
+    print_panel_line(columns, "[Q] QUIT  [R] REDRAW  [1s] AUTO-REFRESH  DISPLAY: _TERM_RESOLUTION HIGH");
     print_rule(columns, '+', '=', '+');
     fflush(stdout);
 }
@@ -556,9 +561,9 @@ static int terminal_columns(void)
     struct winsize size;
 
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col > 0) {
-        return size.ws_col > STATS_LOW_COLUMNS ? STATS_LOW_COLUMNS : size.ws_col;
+        return size.ws_col > STATS_MAX_COLUMNS ? STATS_MAX_COLUMNS : size.ws_col;
     }
-    return STATS_LOW_COLUMNS;
+    return STATS_MAX_COLUMNS;
 }
 
 static int wait_for_key_or_timeout(void)

@@ -1,4 +1,6 @@
 #define _XOPEN_SOURCE 600  // Feature test macro to expose usleep
+#include "../lib/terminal_layout.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -154,7 +156,7 @@ void updateSnake(void) {
         }
     }
     // Move snake segments: shift each segment to the position of the previous one
-    for (int i = snake_length; i > 0; i--) {
+    for (int i = snake_length < MAX_SNAKE_LENGTH ? snake_length : MAX_SNAKE_LENGTH - 1; i > 0; i--) {
         snake[i] = snake[i - 1];
     }
     snake[0] = new_head;
@@ -189,58 +191,21 @@ void updateSnake(void) {
 // Draw the game board using line-drawing characters for the borders,
 // and display the snake, fruit, score, and instructions.
 void drawBoard(void) {
-    // Clear the screen and move cursor to home position
-    printf("\033[2J\033[H");
-    
-    // Draw top border using line-drawing characters
-    printf("┌");
-    for (int x = 0; x < WIDTH; x++) {
-        printf("─");
-    }
-    printf("┐\n");
-    
-    // Draw board rows with left/right borders
+    char board[HEIGHT][WIDTH];
+    char status[80];
     for (int y = 0; y < HEIGHT; y++) {
-        printf("│"); // left border
         for (int x = 0; x < WIDTH; x++) {
-            int printed = 0;
-            // Draw fruit if at this position
-            if(fruit.x == x && fruit.y == y) {
-                printf("*");
-                printed = 1;
-            } else {
-                // Check if snake occupies this cell
-                for (int k = 0; k < snake_length; k++) {
-                    if(snake[k].x == x && snake[k].y == y) {
-                        if(k == 0)
-                            // Unicode full block for snake head
-                            printf("\u2588");
-                        else
-                            // Unicode dark shade block for snake body
-                            printf("\u2593");
-                        printed = 1;
-                        break;
-                    }
-                }
-            }
-            if(!printed)
-                printf(" ");
+            board[y][x] = ' ';
         }
-        printf("│\n"); // right border
     }
-    
-    // Draw bottom border using line-drawing characters
-    printf("└");
-    for (int x = 0; x < WIDTH; x++) {
-        printf("─");
+    board[fruit.y][fruit.x] = '*';
+    for (int k = snake_length - 1; k >= 0; k--) {
+        board[snake[k].y][snake[k].x] = k == 0 ? '@' : 'o';
     }
-    printf("┘\n");
-    
-    // Display game status, score, and instructions
-    if(game_over)
-        printf("Game Over!\n");
-    printf("Score: %d\n", snake_length - 3);
-    printf("Press 'r' to restart, 'q' to quit.\n");
+    snprintf(status, sizeof(status), "SNAKE  Score: %d%s", snake_length - 3,
+             game_over ? "  Game Over!" : "");
+    budostack_draw_terminal_grid(&board[0][0], WIDTH, HEIGHT, status,
+                                 "WASD/Arrows move  R restart  Q quit");
 }
 
 // Main game loop: if game_over is set, wait for 'r' (restart) or 'q' (quit)

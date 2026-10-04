@@ -1,6 +1,8 @@
 #define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200112L   /* Changed per instructions to POSIX.1-200112L */
 
+#include "lib/terminal_layout.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -468,7 +470,7 @@ static int terminal_width_columns(void) {
     struct winsize ws;
 
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
-        return 80;
+        return budostack_get_target_cols();
     }
     return (int)ws.ws_col;
 }
@@ -608,7 +610,7 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
     int menu_start = 0;
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
-        w.ws_row = 24;
+        w.ws_row = (unsigned short)budostack_get_target_rows();
     }
     int menu_height = w.ws_row - 1;
     while (1) {
@@ -670,10 +672,10 @@ int search_mode(const char **lines, size_t line_count, const char *query) {
 static int get_terminal_rows(void) {
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
-        w.ws_row = 24;
+        w.ws_row = (unsigned short)budostack_get_target_rows();
     }
     if (w.ws_row < 1) {
-        w.ws_row = 24;
+        w.ws_row = (unsigned short)budostack_get_target_rows();
     }
     return (int)w.ws_row;
 }
@@ -681,10 +683,10 @@ static int get_terminal_rows(void) {
 static int get_terminal_cols(void) {
     struct winsize w;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == -1) {
-        w.ws_col = 80;
+        w.ws_col = (unsigned short)budostack_get_target_cols();
     }
     if (w.ws_col < 1) {
-        w.ws_col = 80;
+        w.ws_col = (unsigned short)budostack_get_target_cols();
     }
     return (int)w.ws_col;
 }

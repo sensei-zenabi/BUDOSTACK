@@ -14,10 +14,10 @@
 #include <unistd.h>
 #endif
 
-#define BUDOSTACK_LOW_COLS 80
-#define BUDOSTACK_LOW_ROWS 45
-#define BUDOSTACK_HIGH_COLS 100
-#define BUDOSTACK_HIGH_ROWS 56
+#define BUDOSTACK_LOW_COLS 40
+#define BUDOSTACK_LOW_ROWS 30
+#define BUDOSTACK_HIGH_COLS 80
+#define BUDOSTACK_HIGH_ROWS 60
 
 static int mode_matches(const char *value, const char *expected) {
     if (!value || !expected) {
@@ -39,7 +39,7 @@ static int get_layout_from_mode(int *rows, int *cols) {
         return 0;
     }
 
-    if (mode_matches(mode, "high") || mode_matches(mode, "hi") || mode_matches(mode, "800x450")) {
+    if (mode_matches(mode, "high") || mode_matches(mode, "hi") || mode_matches(mode, "640x480")) {
         if (rows) {
             *rows = BUDOSTACK_HIGH_ROWS;
         }
@@ -49,7 +49,7 @@ static int get_layout_from_mode(int *rows, int *cols) {
         return 1;
     }
 
-    if (mode_matches(mode, "low") || mode_matches(mode, "640x360")) {
+    if (mode_matches(mode, "low") || mode_matches(mode, "320x240")) {
         if (rows) {
             *rows = BUDOSTACK_LOW_ROWS;
         }
@@ -145,8 +145,8 @@ static void set_layout_env(int rows, int cols) {
         columns_str[2] = '\0';
     }
     if (written_rows <= 0 || written_rows >= (int)sizeof(rows_str)) {
-        rows_str[0] = '4';
-        rows_str[1] = '5';
+        rows_str[0] = '6';
+        rows_str[1] = '0';
         rows_str[2] = '\0';
     }
 #if defined(_WIN32)
@@ -227,6 +227,11 @@ int budostack_terminal_layout_enabled(void) {
 void budostack_apply_terminal_layout(void) {
     int rows = 0;
     int cols = 0;
+    /* The SDL terminal owns its PTY size, including resolution/font changes. */
+    if (getenv("BUDOSTACK_TERM_ACTIVE") != NULL && read_terminal_size(&rows, &cols)) {
+        set_layout_env(rows, cols);
+        return;
+    }
     get_desired_layout(&rows, &cols);
     set_layout_env(rows, cols);
 #if !defined(_WIN32)
@@ -254,4 +259,41 @@ static void budostack_terminal_layout_constructor(void) {
         return;
     }
     budostack_apply_terminal_layout();
+}
+
+void budostack_draw_terminal_grid(const char *cells, int width, int height,
+                                  const char *status, const char *controls) {
+    int cols = budostack_get_target_cols();
+    int rows = budostack_get_target_rows();
+    if (!cells || width <= 0 || height <= 0 || cols < 4 || rows < 7) {
+        return;
+    }
+    int border = cols >= width + 2;
+    double scale_x = (double)(border ? cols - 4 : cols) / width;
+    double scale_y = (double)(rows - 6) / height;
+    double scale = scale_x < scale_y ? scale_x : scale_y;
+    int w = (int)(width * scale);
+    int h = (int)(height * scale);
+    if (w < 1 || h < 1) {
+        return;
+    }
+    int left = (cols - w - 2 * border) / 2 + 1;
+    int top = (rows - h - 5) / 2 + 1;
+    printf("\033[2J\033[%d;%dH%.*s", top, left, cols - left + 1, status);
+    for (int y = 0; y < h + 2 * border; y++) {
+        printf("\033[%d;%dH", top + 1 + y, left);
+        int edge = border && (y == 0 || y == h + 1);
+        if (border) {
+            putchar(edge ? '+' : '|');
+        }
+        for (int x = 0; x < w; x++) {
+            putchar(edge ? '-' :
+                    cells[((y - border) * height / h) * width + x * width / w]);
+        }
+        if (border) {
+            putchar(edge ? '+' : '|');
+        }
+    }
+    printf("\033[%d;%dH%.*s", top + h + 3, left, cols - left + 1, controls);
+    fflush(stdout);
 }

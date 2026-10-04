@@ -13,6 +13,8 @@
 
 #define _POSIX_C_SOURCE 200112L  // Enable POSIX.1-2001 features
 
+#include "../lib/terminal_layout.h"
+
 #include "../lib/termbg.h"
 
 #include <stdio.h>
@@ -30,10 +32,10 @@ int main(void)
     fflush(stdout);
 
     /* Try to get the size of the terminal.
-       If ioctl() fails, default to 24 rows x 80 columns. */
+       If ioctl() fails, use the shared terminal layout. */
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) < 0) {
-        w.ws_row = 24;
-        w.ws_col = 80;
+        w.ws_row = (unsigned short)budostack_get_target_rows();
+        w.ws_col = (unsigned short)budostack_get_target_cols();
     }
 
     /* Optionally, a short delay can be inserted before starting the animation,

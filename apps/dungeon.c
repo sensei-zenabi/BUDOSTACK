@@ -1,6 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700
 
+#include "../lib/terminal_layout.h"
+
 #include <ctype.h>
 #include <errno.h>
 #include <limits.h>
@@ -50,8 +52,8 @@ static int g_cursor_x = 0;
 static int g_cursor_y = 0;
 static int g_view_x = 0;
 static int g_view_y = 0;
-static int g_term_rows = 24;
-static int g_term_cols = 80;
+static int g_term_rows = BUDOSTACK_TARGET_ROWS;
+static int g_term_cols = BUDOSTACK_TARGET_COLS;
 static int g_dirty = 0;
 static int g_full_redraw = 1;
 static int g_status_dirty = 1;
@@ -157,8 +159,8 @@ static void enable_raw_mode(void) {
 static void get_terminal_size(void) {
     struct winsize ws;
     if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0 || ws.ws_row == 0) {
-        g_term_rows = 24;
-        g_term_cols = 80;
+        g_term_rows = budostack_get_target_rows();
+        g_term_cols = budostack_get_target_cols();
         return;
     }
     g_term_rows = ws.ws_row;

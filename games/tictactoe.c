@@ -1,5 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
+#include "../lib/terminal_layout.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,7 +61,7 @@ int main(void) {
 
     printf("%dx%d Tic-Tac-Toe (connect %d)\n\n", BOARD_SIZE, BOARD_SIZE, WIN_CONDITION);
     printf("Arrow keys move, Space/Enter place, q quits.\n");
-    printf("Keep the window at least 80x42 characters for best results.\n\n");
+    printf("The board adapts to the current terminal size.\n\n");
 
     int mode = prompt_mode();
     if (mode == 0) {
@@ -186,48 +188,50 @@ static void init_board(char board[BOARD_SIZE][BOARD_SIZE]) {
 static void render_game(char board[BOARD_SIZE][BOARD_SIZE], char current_player,
                         int cursor_row, int cursor_col, int show_cursor,
                         int last_move_row, int last_move_col, const char *mode_name) {
-    printf("\033[2J\033[H");
-    printf("%dx%d Tic-Tac-Toe (connect %d)\n", BOARD_SIZE, BOARD_SIZE, WIN_CONDITION);
-    printf("Mode: %s\n", mode_name);
-    printf("Current player: %c\n", current_player);
-    printf("Controls: Arrows move, Space/Enter place, q quits.\n");
-    printf("%s\n\n", status_line);
-
-    printf("    ");
-    for (int c = 0; c < BOARD_SIZE; ++c) {
-        printf("%3d ", c + 1);
+    int cols = budostack_get_target_cols();
+    int rows = budostack_get_target_rows();
+    int cell_w = (cols - 4) / BOARD_SIZE;
+    int cell_h = (rows - 7) / BOARD_SIZE;
+    if (cell_w < 1 || cell_h < 1) {
+        printf("\033[2J\033[HTic-Tac-Toe needs at least 21x24 characters.\n");
+        return;
     }
-    printf("\n");
-
-    for (int r = 0; r < BOARD_SIZE; ++r) {
-        printf("    ");
-        for (int c = 0; c < BOARD_SIZE; ++c) {
-            printf("+---");
-        }
-        printf("+\n");
-
-        printf("%3d ", r + 1);
-        for (int c = 0; c < BOARD_SIZE; ++c) {
-            char cell = board[r][c];
-            printf("|");
-            if (show_cursor && r == cursor_row && c == cursor_col) {
-                char display = (cell == ' ') ? ' ' : cell;
-                printf(" \033[7m%c\033[0m ", display);
-            } else if (r == last_move_row && c == last_move_col && cell != ' ') {
-                printf(" \033[1m%c\033[0m ", cell);
-            } else {
-                printf(" %c ", cell);
+    int width = cell_w * BOARD_SIZE;
+    int height = cell_h * BOARD_SIZE;
+    int left = (cols - width) / 2 + 1;
+    int top = (rows - height - 5) / 2 + 1;
+    printf("\033[2J\033[%d;%dH%dx%d CONNECT %d  Player %c", top, left,
+           BOARD_SIZE, BOARD_SIZE, WIN_CONDITION, current_player);
+    printf("\033[%d;%dH%.*s", top + 1, left, width, mode_name);
+    printf("\033[%d;%dH%.*s", top + 2, left, width, status_line);
+    for (int r = 0; r < BOARD_SIZE; r++) {
+        for (int line = 0; line < cell_h; line++) {
+            printf("\033[%d;%dH", top + 3 + r * cell_h + line, left);
+            for (int c = 0; c < BOARD_SIZE; c++) {
+                int cursor = show_cursor && r == cursor_row && c == cursor_col;
+                int last = r == last_move_row && c == last_move_col;
+                if (cursor) {
+                    printf("\033[7m");
+                } else if (last) {
+                    printf("\033[1m");
+                }
+                for (int x = 0; x < cell_w; x++) {
+                    char ch = ' ';
+                    if (cell_h > 1 && line == 0) {
+                        ch = x == 0 ? '+' : '-';
+                    } else if (x == cell_w / 2 && line == cell_h / 2) {
+                        ch = board[r][c] == ' ' ? '.' : board[r][c];
+                    } else if (cell_w > 2 && x == 0) {
+                        ch = '|';
+                    }
+                    putchar(ch);
+                }
+                printf("\033[0m");
             }
         }
-        printf("|\n");
     }
-
-    printf("    ");
-    for (int c = 0; c < BOARD_SIZE; ++c) {
-        printf("+---");
-    }
-    printf("+\n");
-
+    printf("\033[%d;%dH%.*s", top + height + 3, left, width,
+           "Arrows move  Space/Enter place  Q quit");
     fflush(stdout);
 }
 

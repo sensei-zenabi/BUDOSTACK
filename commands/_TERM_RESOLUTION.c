@@ -11,9 +11,9 @@ static void print_usage(void) {
     fprintf(stderr, "  Changes the resolution to <width>x<height> defined as pixels.\n");
     fprintf(stderr, "  Use 0 0 to restore the default resolution.\n");
     fprintf(stderr, "Usage: _TERM_RESOLUTION LOW\n");
-    fprintf(stderr, "  Changes the resolution to 640x360.\n");
+    fprintf(stderr, "  Changes the resolution to 320x240.\n");
     fprintf(stderr, "Usage: _TERM_RESOLUTION HIGH\n");
-    fprintf(stderr, "  Changes the resolution to 800x450.\n");
+    fprintf(stderr, "  Changes the resolution to 640x480.\n");
 }
 
 static int parse_dimension(const char *arg, const char *name, long *out_value) {
@@ -44,14 +44,14 @@ static int parse_preset(const char *arg, long *width, long *height) {
     }
 
     if (strcasecmp(arg, "LOW") == 0) {
-        *width = 640;
-        *height = 360;
+        *width = 320;
+        *height = 240;
         return 1;
     }
 
     if (strcasecmp(arg, "HIGH") == 0) {
-        *width = 800;
-        *height = 450;
+        *width = 640;
+        *height = 480;
         return 1;
     }
 

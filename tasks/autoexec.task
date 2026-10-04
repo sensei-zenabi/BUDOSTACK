@@ -84,9 +84,9 @@ END
 
 # Run or set other default configurations
 
-RUN _TERM_RESOLUTION LOW
+RUN _TERM_RESOLUTION HIGH
 RUN _RETROPROFILE apply $RETROPROFILE
-RUN _TERM_MARGIN 8
+RUN _TERM_MARGIN 0
 
 #-------------------------------------------------------------------------
 # BUDOSTACK LOADER
@@ -182,7 +182,7 @@ IF ($TERM_ACTIVE == "1"):
 
   RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
   @LOADING
-  RUN _BAR -x 27 -y 22 -title LOADING: -progress $LOAD
+  RUN _BAR -x 27 -y 29 -title LOADING: -progress $LOAD
   IF ($LOAD == 50):
     RUN _TERM_SOUND_PLAY 2 ../sounds/628246__asiekierka__floppy_access6.ogg 100
   END
@@ -198,15 +198,15 @@ IF ($TERM_ACTIVE == "1"):
   RUN _WAIT 50
   SET $SPRITES = {}
   RUN _TERM_SPRITE_LOAD -file "./examples/assets/login_logo.png" TO $SPRITES[0]
-  RUN _TERM_SPRITE -x 200 -y 60 -sprite $SPRITES[0] -layer 15
+  RUN _TERM_SPRITE -x 200 -y 120 -sprite $SPRITES[0] -layer 15
   RUN _TERM_RENDER -layer 15
   RUN _TERM_SOUND_PLAY 1 ../sounds/static_orchard.mp3 90
   RUN _WAIT 8300
-  RUN _TEXT -x 28 -y 40 -text "- BUDOSTACK CORPORATION -" -color 1 
+  RUN _TEXT -x 28 -y 47 -text "- BUDOSTACK CORPORATION -" -color 1
   RUN _WAIT 4700
-  RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 360 -layer 15
+  RUN _TERM_CLEAN -x 0 -y 0 -width 640 -height 480 -layer 15
   RUN _TERM_RENDER -layer 15
-  RUN _RECT -x 0 -y 0 -width 80 -height 45 -color 0 -fill on
+  RUN _RECT -x 0 -y 0 -width 80 -height 60 -color 0 -fill on
 
 END
 
@@ -231,17 +231,17 @@ SET $MENU = "USER LOGIN"
 SET $MENU_X = 32
 SET $EVENT = 0
 SET $CURSOR_X = $MENU_X-2
-SET $CURSOR_Y = 21
+SET $CURSOR_Y = 28
 
 
 # FUNCTIONS
 
 FUNCTION DRAW_FRAME():
   RUN _CLEAR
-  RUN _RECT -x 1 -y 1 -width 79 -height 45 -fill off
+  RUN _RECT -x 1 -y 1 -width 78 -height 58 -fill off
   RUN _TEXT -x 23 -y 3 -text "====== BUDOSTACK CORPORATION ====="
-  RUN _TEXT -x 56 -y 44 -text " Ville Suoranta @ 2026 " -color 1
-  RUN _TEXT -x 31 -y 42 -text "<ENTER> to SELECT"
+  RUN _TEXT -x 56 -y 57 -text " Ville Suoranta @ 2026 " -color 1
+  RUN _TEXT -x 31 -y 55 -text "<ENTER> to SELECT"
 END
 
 FUNCTION DRAW_CURSOR($X, $Y):
@@ -294,16 +294,16 @@ IF ($MENU == "QUICK START"):
 
   # Limit cursor movement upon returning
 
-  IF ($CURSOR_Y > 23):
-    $CURSOR_Y = 23
+  IF ($CURSOR_Y > 30):
+    $CURSOR_Y = 30
   END
 
 
   # Draw
 
-  RUN _TEXT -x $MENU_X-6 -y 17 -text "-- SELECT PRIME DIRECTIVE --             "
-  RUN _TEXT -x $MENU_X+2 -y 21 -text "SYSTEM CONFIG      "
-  RUN _TEXT -x $MENU_X+2 -y 23 -text "TERMINAL           "
+  RUN _TEXT -x $MENU_X-6 -y 24 -text "-- SELECT PRIME DIRECTIVE --             "
+  RUN _TEXT -x $MENU_X+2 -y 28 -text "SYSTEM CONFIG      "
+  RUN _TEXT -x $MENU_X+2 -y 30 -text "TERMINAL           "
 
   EVAL DRAW_CURSOR($CURSOR_X+2, $CURSOR_Y)
 
@@ -330,25 +330,25 @@ IF ($MENU == "QUICK START"):
 
   # Limit Cursor Movement
 
-  IF ($CURSOR_Y < 21):
-    $CURSOR_Y = 21
+  IF ($CURSOR_Y < 28):
+    $CURSOR_Y = 28
   END
-  
-  IF ($CURSOR_Y > 23):
-    $CURSOR_Y = 23
+
+  IF ($CURSOR_Y > 30):
+    $CURSOR_Y = 30
   END
 
 
   # Act on ENTER press
 
   IF ($EVENT == 3):
-  
-    IF ($CURSOR_Y == 21):
+
+    IF ($CURSOR_Y == 28):
       # Configuration Menu
       $MENU = "CONFIGURATION"
     END
-    
-    IF ($CURSOR_Y == 23):
+
+    IF ($CURSOR_Y == 30):
       # Command line
       GOTO EXIT
     END
@@ -408,21 +408,21 @@ IF ($MENU == "CONFIGURATION"):
 
   # Draw
 
-  RUN _TEXT -x $MENU_X-8 -y 11-$YOFF -text "For more settings see config.ini"
-  RUN _TEXT -x $MENU_X-1 -y 15-$YOFF -text "-- CONFIGURATION --       "
-  RUN _TEXT -x $MENU_X-3 -y 17-$YOFF -text "Resolution Mode = " + $RESOLUTION
-  RUN _TEXT -x $MENU_X-3 -y 19-$YOFF -text "Mouse Cursor    = " + $MOUSE
-  RUN _TEXT -x $MENU_X-3 -y 21-$YOFF -text "Login Screen    = " + $LOGIN_SCREEN
-  RUN _TEXT -x $MENU_X-3 -y 23-$YOFF -text "Login Menu      = " + $LOGIN_MENU
-  RUN _TEXT -x $MENU_X-3 -y 25-$YOFF -text "Typing Sound    = " + $TYPING_SOUND
-  RUN _TEXT -x $MENU_X-3 -y 27-$YOFF -text "Typing Volume   = " + $TYPING_VOLUME
-  RUN _TEXT -x $MENU_X-3 -y 29-$YOFF -text "Background Hum  = " + $BACKGROUND_SOUND
-  RUN _TEXT -x $MENU_X-3 -y 31-$YOFF -text "Hum Volume      = " + $BACKGROUND_VOLUME
-  RUN _TEXT -x $MENU_X-3 -y 33-$YOFF -text "Retro Profile   = " + $RETROPROFILE
-  RUN _TEXT -x $MENU_X-3 -y 35-$YOFF -text "Shader Passes   = " + $SHADER
-  RUN _TEXT -x $MENU_X-3 -y 37-$YOFF -text "Shaders         = " + $SHADER_QUALITY
-  RUN _TEXT -x $MENU_X-3 -y 39-$YOFF -text "Overlay         = " + $OVERLAY
-  RUN _TEXT -x $MENU_X-3 -y 41-$YOFF -text "<-- MAIN MENU             "
+  RUN _TEXT -x $MENU_X-8 -y 18-$YOFF -text "For more settings see config.ini"
+  RUN _TEXT -x $MENU_X-1 -y 22-$YOFF -text "-- CONFIGURATION --       "
+  RUN _TEXT -x $MENU_X-3 -y 24-$YOFF -text "Resolution Mode = " + $RESOLUTION
+  RUN _TEXT -x $MENU_X-3 -y 26-$YOFF -text "Mouse Cursor    = " + $MOUSE
+  RUN _TEXT -x $MENU_X-3 -y 28-$YOFF -text "Login Screen    = " + $LOGIN_SCREEN
+  RUN _TEXT -x $MENU_X-3 -y 30-$YOFF -text "Login Menu      = " + $LOGIN_MENU
+  RUN _TEXT -x $MENU_X-3 -y 32-$YOFF -text "Typing Sound    = " + $TYPING_SOUND
+  RUN _TEXT -x $MENU_X-3 -y 34-$YOFF -text "Typing Volume   = " + $TYPING_VOLUME
+  RUN _TEXT -x $MENU_X-3 -y 36-$YOFF -text "Background Hum  = " + $BACKGROUND_SOUND
+  RUN _TEXT -x $MENU_X-3 -y 38-$YOFF -text "Hum Volume      = " + $BACKGROUND_VOLUME
+  RUN _TEXT -x $MENU_X-3 -y 40-$YOFF -text "Retro Profile   = " + $RETROPROFILE
+  RUN _TEXT -x $MENU_X-3 -y 42-$YOFF -text "Shader Passes   = " + $SHADER
+  RUN _TEXT -x $MENU_X-3 -y 44-$YOFF -text "Shaders         = " + $SHADER_QUALITY
+  RUN _TEXT -x $MENU_X-3 -y 46-$YOFF -text "Overlay         = " + $OVERLAY
+  RUN _TEXT -x $MENU_X-3 -y 48-$YOFF -text "<-- MAIN MENU             "
 
   EVAL DRAW_CURSOR($CURSOR_X-3, $CURSOR_Y)
 
@@ -449,11 +449,11 @@ IF ($MENU == "CONFIGURATION"):
 
   # Limit Cursor Movement
 
-  IF ($CURSOR_Y < 17-$YOFF):
-    $CURSOR_Y = 17-$YOFF
+  IF ($CURSOR_Y < 24-$YOFF):
+    $CURSOR_Y = 24-$YOFF
   END
-  IF ($CURSOR_Y > 41-$YOFF):
-    $CURSOR_Y = 41-$YOFF
+  IF ($CURSOR_Y > 48-$YOFF):
+    $CURSOR_Y = 48-$YOFF
   END
 
 
@@ -462,7 +462,7 @@ IF ($MENU == "CONFIGURATION"):
   IF ($EVENT == 3):
     # Enter Key
 
-    IF ($CURSOR_Y == 17-$YOFF):
+    IF ($CURSOR_Y == 24-$YOFF):
       # Set resolution
       IF ($RESOLUTION == "HIGH"):
         RUN _CONFIG -write _TERM_RESOLUTION LOW
@@ -471,7 +471,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _TERM_RESOLUTION HIGH
       END
     END
-    IF ($CURSOR_Y == 19-$YOFF):
+    IF ($CURSOR_Y == 26-$YOFF):
       # Set mouse cursor
       IF ($MOUSE == "enable"):
         RUN _CONFIG -write _TERM_MOUSE_SHOW disable
@@ -480,7 +480,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _TERM_MOUSE_SHOW enable
       END
     END
-    IF ($CURSOR_Y == 21-$YOFF):
+    IF ($CURSOR_Y == 28-$YOFF):
       # Set login screen
       IF ($LOGIN_SCREEN == "enable"):
         RUN _CONFIG -write LOGIN_SCREEN disable
@@ -489,7 +489,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write LOGIN_SCREEN enable
       END
     END
-    IF ($CURSOR_Y == 23-$YOFF):
+    IF ($CURSOR_Y == 30-$YOFF):
       # Set login menu
       IF ($LOGIN_MENU == "enable"):
         RUN _CONFIG -write LOGIN_MENU disable
@@ -498,7 +498,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write LOGIN_MENU enable
       END
     END
-    IF ($CURSOR_Y == 25-$YOFF):
+    IF ($CURSOR_Y == 32-$YOFF):
       # Set typing sound
       IF ($TYPING_SOUND == "enable"):
         RUN _CONFIG -write _TERM_TYPING_SOUND disable
@@ -507,7 +507,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _TERM_TYPING_SOUND enable
       END
     END
-    IF ($CURSOR_Y == 27-$YOFF):
+    IF ($CURSOR_Y == 34-$YOFF):
       # Set typing volume
       IF ($TYPING_VOLUME == "0"):
         RUN _CONFIG -write _TERM_TYPING_VOLUME 25
@@ -525,7 +525,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _TERM_TYPING_VOLUME 0
       END
     END
-    IF ($CURSOR_Y == 29-$YOFF):
+    IF ($CURSOR_Y == 36-$YOFF):
       # Set background hum
       IF ($BACKGROUND_SOUND == "enable"):
         RUN _CONFIG -write _TERM_BACKGROUND_SOUND disable
@@ -534,7 +534,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _TERM_BACKGROUND_SOUND enable
       END
     END
-    IF ($CURSOR_Y == 31-$YOFF):
+    IF ($CURSOR_Y == 38-$YOFF):
       # Set background hum volume
       IF ($BACKGROUND_VOLUME == "0"):
         RUN _CONFIG -write _TERM_BACKGROUND_VOLUME 25
@@ -552,7 +552,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _TERM_BACKGROUND_VOLUME 0
       END
     END
-    IF ($CURSOR_Y == 33-$YOFF):
+    IF ($CURSOR_Y == 40-$YOFF):
       # Switch retro profile
       $RETROPROFILE_IDX = $RETROPROFILE_IDX + 1
       IF ($RETROPROFILE_IDX > 3):
@@ -571,7 +571,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _RETROPROFILE vt220-green
       END
     END
-    IF ($CURSOR_Y == 35-$YOFF):
+    IF ($CURSOR_Y == 42-$YOFF):
       # Set shader passes
       IF ($SHADER == "enable"):
         RUN _CONFIG -write _TERM_SHADER disable
@@ -580,7 +580,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _TERM_SHADER enable
       END
     END
-    IF ($CURSOR_Y == 37-$YOFF):
+    IF ($CURSOR_Y == 44-$YOFF):
       # Switch shaders quality
       $SHADER_QUALITY_IDX = $SHADER_QUALITY_IDX + 1
       IF ($SHADER_QUALITY_IDX > 2):
@@ -596,7 +596,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write SHADER_QUALITY HIGH
       END
     END
-    IF ($CURSOR_Y == 39-$YOFF):
+    IF ($CURSOR_Y == 46-$YOFF):
       # Switch overlay on/off
       IF ($OVERLAY == "enable"):
         RUN _CONFIG -write _TERM_OVERLAY disable
@@ -605,7 +605,7 @@ IF ($MENU == "CONFIGURATION"):
         RUN _CONFIG -write _TERM_OVERLAY enable
       END
     END
-    IF ($CURSOR_Y == 41-$YOFF):
+    IF ($CURSOR_Y == 48-$YOFF):
       $MENU = "QUICK START"
     END
 

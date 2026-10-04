@@ -7,7 +7,7 @@
  * - The game board is a 40x20 grid drawn with borders using ANSI escape codes.
  * - The player's ship is represented by 'A' at the bottom row.
  * - A single bullet (represented by '|') is allowed at a time.
- * - Invaders (represented by 'W') are arranged in a grid (3 rows x 8 columns)
+ * - Invaders (represented by 'W') are arranged in a grid (4 rows x 12 columns)
  *   with a fixed horizontal spacing. They move as a group.
  * - Invader group movement: Every 5 frames, the group moves one step horizontally.
  *   If any invader would hit the board edge, the group drops one row and reverses direction.
@@ -24,6 +24,8 @@
  *
  * Compilation: gcc -std=c11 -Wall -O2 -o space_invaders invaders.c
  */
+
+#include "../lib/terminal_layout.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -291,40 +293,15 @@ void draw_game(void) {
     if (player_x >= 0 && player_x < BOARD_WIDTH)
         board[BOARD_HEIGHT - 1][player_x] = 'A';
     
-    // Clear screen and move cursor to top-left
-    printf("\033[H\033[J");
-    // Print SCORE field
-    printf("SCORE: %d\n", score);
-    
-    // Draw top border
-    printf("+");
-    for (int j = 0; j < BOARD_WIDTH; j++) {
-        printf("-");
+    char cells[BOARD_HEIGHT][BOARD_WIDTH];
+    for (int y = 0; y < BOARD_HEIGHT; y++) {
+        memcpy(cells[y], board[y], BOARD_WIDTH);
     }
-    printf("+\n");
-    
-    // Print board with vertical borders
-    for (int i = 0; i < BOARD_HEIGHT; i++) {
-        printf("|%s|\n", board[i]);
-    }
-    
-    // Draw bottom border
-    printf("+");
-    for (int j = 0; j < BOARD_WIDTH; j++) {
-        printf("-");
-    }
-    printf("+\n");
-    
-    // Print game status messages if game over or win
-    if (game_over) {
-        printf("\nGame Over! Invaders reached your ship.\n");
-    }
-    if (game_win) {
-        printf("\nYou Win! All invaders eliminated.\n");
-    }
-    
-    // Print key instructions below the game area
-    printf("\nControls: Arrow keys to move, Space to fire, Q to quit, R to restart\n");
+    char status[100];
+    snprintf(status, sizeof(status), "INVADERS  Score: %d%s", score,
+             game_over ? "  Game Over!" : game_win ? "  You Win!" : "");
+    budostack_draw_terminal_grid(&cells[0][0], BOARD_WIDTH, BOARD_HEIGHT, status,
+                                 "Arrows move Space fire R restart Q quit");
 }
 
 /* Main game loop */

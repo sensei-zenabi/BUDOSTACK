@@ -303,8 +303,8 @@ _TERM_RESOLUTION
   Syntax: _TERM_RESOLUTION <width> <height>
           _TERM_RESOLUTION LOW
           _TERM_RESOLUTION HIGH
-  Use: Set the apps/terminal pixel resolution or select LOW (640x360)
-       or HIGH (800x450). Use 0 0 to restore the default resolution.
+  Use: Set the apps/terminal pixel resolution or select LOW (320x240)
+       or HIGH (640x480, default). Use 0 0 to restore the default resolution.
   Examples:
     _TERM_RESOLUTION 0 0
     _TERM_RESOLUTION 320 200

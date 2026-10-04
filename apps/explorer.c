@@ -18,8 +18,6 @@
 #endif
 
 #define CTRL_KEY(k) ((k) & 0x1f)
-#define EXPLORER_MIN_ROWS BUDOSTACK_TARGET_ROWS
-#define EXPLORER_MIN_COLS BUDOSTACK_TARGET_COLS
 #define EXPLORER_RESERVED_ROWS 7
 #define EXPLORER_STATUS_SIZE 256
 #define EXPLORER_SESSION_HEADER "EXPLORER_SESSION 1"
@@ -223,13 +221,6 @@ static int explorer_get_window_size(int *rows, int *cols)
     } else {
         *rows = ws.ws_row;
         *cols = ws.ws_col;
-    }
-
-    if (*rows < EXPLORER_MIN_ROWS) {
-        *rows = EXPLORER_MIN_ROWS;
-    }
-    if (*cols < EXPLORER_MIN_COLS) {
-        *cols = EXPLORER_MIN_COLS;
     }
 
     return 0;

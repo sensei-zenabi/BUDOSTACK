@@ -137,6 +137,8 @@ static GLuint terminal_overlay_texture = 0;
 static int terminal_overlay_available = 0;
 static int terminal_overlay_enabled = 1;
 static double terminal_overlay_zoom = 100;
+/* Zero retains legacy screen-relative percentages. */
+static double terminal_layout_aspect = 0;
 static double terminal_overlay_offset_x = 0;
 static double terminal_overlay_offset_y = 0;
 static GLuint terminal_cursor_texture = 0;
@@ -1460,9 +1462,25 @@ static int terminal_size_to_active_display(void) {
     return 0;
 }
 
+/* Share one uniform reference transform for the overlay and its content. */
+static void terminal_layout_size(int drawable_width, int drawable_height,
+                                 double *out_width, double *out_height) {
+    double width = drawable_width;
+    double height = drawable_height;
+    if (terminal_overlay_enabled && terminal_layout_aspect > 0) {
+        width = fmin(width, height * terminal_layout_aspect);
+        height = width / terminal_layout_aspect;
+    }
+    *out_width = width;
+    *out_height = height;
+}
+
 static void terminal_display_rect(int drawable_width, int drawable_height, int *out_x, int *out_y, int *out_w, int *out_h) {
-    int width = terminal_display_width > 0 ? (int)lround(drawable_width * terminal_display_width / 100.0) : drawable_width;
-    int height = terminal_display_height > 0 ? (int)lround(drawable_height * terminal_display_height / 100.0) : drawable_height;
+    double layout_width;
+    double layout_height;
+    terminal_layout_size(drawable_width, drawable_height, &layout_width, &layout_height);
+    int width = terminal_display_width > 0 ? (int)lround(layout_width * terminal_display_width / 100.0) : (int)lround(layout_width);
+    int height = terminal_display_height > 0 ? (int)lround(layout_height * terminal_display_height / 100.0) : (int)lround(layout_height);
 
     if (width > drawable_width) {
         width = drawable_width;
@@ -1477,10 +1495,10 @@ static void terminal_display_rect(int drawable_width, int drawable_height, int *
         height = 1;
     }
     if (out_x) {
-        *out_x = ((drawable_width - width) / 2) + (int)lround(drawable_width * terminal_offset_x / 100.0);
+        *out_x = ((drawable_width - width) / 2) + (int)lround(layout_width * terminal_offset_x / 100.0);
     }
     if (out_y) {
-        *out_y = ((drawable_height - height) / 2) + (int)lround(drawable_height * terminal_offset_y / 100.0);
+        *out_y = ((drawable_height - height) / 2) + (int)lround(layout_height * terminal_offset_y / 100.0);
     }
     if (out_w) {
         *out_w = width;
@@ -1493,8 +1511,11 @@ static void terminal_display_rect(int drawable_width, int drawable_height, int *
 /* Zoom and offsets apply only to the overlay, independently of content. */
 static void terminal_overlay_rect(int drawable_width, int drawable_height,
                                   int *out_x, int *out_y, int *out_w, int *out_h) {
-    double width = drawable_width * terminal_overlay_zoom / 100.0;
-    double height = drawable_height * terminal_overlay_zoom / 100.0;
+    double layout_width;
+    double layout_height;
+    terminal_layout_size(drawable_width, drawable_height, &layout_width, &layout_height);
+    double width = layout_width * terminal_overlay_zoom / 100.0;
+    double height = layout_height * terminal_overlay_zoom / 100.0;
     /* Keep dimensions and positions representable even for extreme drawables. */
     int limit = INT_MAX / 4;
     int w = width > limit ? limit : (int)lround(width);
@@ -1505,8 +1526,8 @@ static void terminal_overlay_rect(int drawable_width, int drawable_height,
     if (h < 1) {
         h = 1;
     }
-    double x = (drawable_width - w) / 2.0 + drawable_width * terminal_overlay_offset_x / 100.0;
-    double y = (drawable_height - h) / 2.0 + drawable_height * terminal_overlay_offset_y / 100.0;
+    double x = (drawable_width - w) / 2.0 + layout_width * terminal_overlay_offset_x / 100.0;
+    double y = (drawable_height - h) / 2.0 + layout_height * terminal_overlay_offset_y / 100.0;
     *out_x = (int)lround(fmax(-limit, fmin(limit, x)));
     *out_y = (int)lround(fmax(-limit, fmin(limit, y)));
     *out_w = w;
@@ -6240,6 +6261,33 @@ static void terminal_handle_osc_777(struct terminal_buffer *buffer, const char *
                         } else if (strcmp(value, "disable") == 0) {
                             cursor_blink_toggle_requested = 1;
                             cursor_blink_enable_requested = 0;
+                        }
+                    } else if (strcmp(key, "layout_aspect") == 0 && value) {
+                        double aspect = -1;
+                        if (strcmp(value, "screen") == 0) {
+                            aspect = 0;
+                        } else {
+                            char *sep = strchr(value, ':');
+                            if (sep) {
+                                *sep = '\0';
+                                char *end_x = NULL;
+                                char *end_y = NULL;
+                                errno = 0;
+                                double x = strtod(value, &end_x);
+                                int valid_x = errno == 0 && end_x != value && *end_x == '\0' &&
+                                              isfinite(x) && x > 0;
+                                errno = 0;
+                                double y = strtod(sep + 1, &end_y);
+                                if (valid_x && errno == 0 && end_y != sep + 1 && *end_y == '\0' &&
+                                    isfinite(y) && y > 0) {
+                                    aspect = x / y;
+                                }
+                            }
+                        }
+                        if (aspect == 0 || (isfinite(aspect) && aspect >= 0.1 && aspect <= 10)) {
+                            terminal_layout_aspect = aspect;
+                            terminal_mark_full_redraw();
+                            terminal_input_draw_requested = 1;
                         }
                     } else if (strcmp(key, "overlay_zoom") == 0 && value) {
                         char *endptr = NULL;

@@ -7,7 +7,7 @@
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: _TERM_OFFSET <x_percent> <y_percent>\n");
-    fprintf(stderr, "  Offsets the centered apps/terminal display as percentages of the current screen. Values may be positive or negative.\n");
+    fprintf(stderr, "  Offsets the centered apps/terminal display as percentages of the active layout. Values may be positive or negative.\n");
 }
 
 static int parse_offset(const char *arg, const char *name, double *out_value) {

@@ -7,8 +7,8 @@
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: _TERM_SIZE <x_percent> <y_percent>\n");
-    fprintf(stderr, "  Sets the centered apps/terminal display size as percentages of the current screen.\n");
-    fprintf(stderr, "  Use 0 0 to fill the current display.\n");
+    fprintf(stderr, "  Sets the centered apps/terminal display size as percentages of the active layout.\n");
+    fprintf(stderr, "  Use 0 0 for automatic layout size.\n");
 }
 
 static int parse_dimension(const char *arg, const char *name, double *out_value) {

@@ -262,12 +262,12 @@
   _TERM_MARGIN         : Set terminal pixel render margin.
   _TERM_MOUSE          : Read mouse X/Y and left/right button counters.
   _TERM_MOUSE_SHOW     : Show or hide terminal mouse cursor.
-  _TERM_OFFSET         : Offset centered terminal display by screen width/height
+  _TERM_OFFSET         : Offset centered terminal display by layout width/height
                          percentages (-100 to 100 each; decimals allowed).
   _TERM_OVERLAY        : Query overlay state (no arguments), enable or disable.
-  _TERM_OVERLAY_OFFSET : Offset centered overlay by screen width/height
+  _TERM_OVERLAY_OFFSET : Offset centered overlay by layout width/height
                          percentages (-100 to 100 each; decimals allowed).
-  _TERM_OVERLAY_ZOOM   : Set overlay size to 1-1000% of screen; 100 fills it.
+  _TERM_OVERLAY_ZOOM   : Set overlay size to 1-1000% of layout; 100 fills it.
                          Decimals allowed; smaller zooms out, larger zooms in.
   _TERM_PIXEL          : Queue one terminal pixel using palette color or RGB.
   _TERM_RECT           : Queue a filled terminal pixel rectangle using
@@ -277,8 +277,8 @@
                          or width/height; 0 0 restores default).
   _TERM_SCALE          : Set pixel scaling mode 1x or 2x.
   _TERM_SHADER         : Enable or disable terminal shader.
-  _TERM_SIZE           : Set centered terminal size as screen width/height
-                         percentages (0-100 each; 0 0 fills current display).
+  _TERM_SIZE           : Set centered terminal size as layout width/height
+                         percentages (0-100 each; 0 0 uses automatic layout size).
   _TERM_SOUND_KEYBOARD : Enable or disable keyboard typing sound effects
                          in terminal apps.
   _TERM_SOUND_PLAY     : Play audio file on selected channel (1-32)
@@ -321,3 +321,17 @@
   waves.task           : Demonstration how to plot basic math
 
 =============================================================================
+
+_TERM_LAYOUT_ASPECT
+  Syntax: _TERM_LAYOUT_ASPECT <width:height|screen>
+  Use: Select the reference layout for terminal size/offset and overlay
+       zoom/offset percentages while overlay is enabled. 5:4 preserves
+       calibrated 1280x1024 proportions on 1920x1080, showing more artwork
+       at the sides. Center the layout and scale uniformly to screen height;
+       narrower screens fit the layout uniformly to screen width.
+       screen restores legacy independent screen width/height scaling.
+       Ratio range: 1:10 to 10:1. Overlay-disabled sizing is unchanged.
+       config.ini: _TERM_LAYOUT_ASPECT=5:4; autoexec applies it at startup.
+  Examples:
+    _TERM_LAYOUT_ASPECT 5:4
+    _TERM_LAYOUT_ASPECT screen

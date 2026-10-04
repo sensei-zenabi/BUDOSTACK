@@ -266,7 +266,7 @@ _TERM_MOUSE_SHOW
 _TERM_OFFSET
   Syntax: _TERM_OFFSET <x_percent> <y_percent>
   Use: Offset the centered terminal display by percentages of the current
-       screen width and height. Each value is -100 to 100; decimals allowed.
+       layout width and height. Each value is -100 to 100; decimals allowed.
        Positive X moves right, positive Y moves down. Use 0 0 to recenter.
   Examples:
     _TERM_OFFSET 0 0
@@ -337,7 +337,7 @@ _TERM_OVERLAY
 _TERM_OVERLAY_OFFSET
   Syntax: _TERM_OVERLAY_OFFSET <x_percent> <y_percent>
   Use: Offset the centered overlay image by percentages of the current
-       screen width and height. Each value is -100 to 100; decimals allowed.
+       layout width and height. Each value is -100 to 100; decimals allowed.
        Positive X moves right, positive Y moves down. Use 0 0 to recenter.
   Examples:
     _TERM_OVERLAY_OFFSET 0 0
@@ -345,8 +345,8 @@ _TERM_OVERLAY_OFFSET
 
 _TERM_OVERLAY_ZOOM
   Syntax: _TERM_OVERLAY_ZOOM <percent>
-  Use: Set overlay width and height as percentages of the current screen.
-       Range is 1-1000; decimals allowed. 100 fills the screen, smaller
+  Use: Set overlay width and height as percentages of the active layout.
+       Range is 1-1000; decimals allowed. 100 fills the layout, smaller
        values zoom out, larger values zoom in. Does not enable the overlay.
   Examples:
     _TERM_OVERLAY_ZOOM 100
@@ -355,8 +355,8 @@ _TERM_OVERLAY_ZOOM
 _TERM_SIZE
   Syntax: _TERM_SIZE <x_percent> <y_percent>
   Use: Set the centered terminal display width and height as percentages
-       of the current screen. Each value is 0-100; decimals allowed.
-       Use 0 0 to fill the current display automatically.
+       of the active layout. Each value is 0-100; decimals allowed.
+       Use 0 0 for automatic layout size (full display with overlay disabled).
   Examples:
     _TERM_SIZE 0 0
     _TERM_SIZE 80 75.5
@@ -479,3 +479,17 @@ _WAIT
   Examples:
     _WAIT 100
     _WAIT 1000
+
+_TERM_LAYOUT_ASPECT
+  Syntax: _TERM_LAYOUT_ASPECT <width:height|screen>
+  Use: Select the reference layout for terminal size/offset and overlay
+       zoom/offset percentages while overlay is enabled. 5:4 preserves
+       calibrated 1280x1024 proportions on 1920x1080, showing more artwork
+       at the sides. Center the layout and scale uniformly to screen height;
+       narrower screens fit the layout uniformly to screen width.
+       screen restores legacy independent screen width/height scaling.
+       Ratio range: 1:10 to 10:1. Overlay-disabled sizing is unchanged.
+       config.ini: _TERM_LAYOUT_ASPECT=5:4; autoexec applies it at startup.
+  Examples:
+    _TERM_LAYOUT_ASPECT 5:4
+    _TERM_LAYOUT_ASPECT screen

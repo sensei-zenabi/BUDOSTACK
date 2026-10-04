@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "platform.h"
 #include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -207,6 +208,9 @@ typedef struct BwaLoadedApp {
 
 static unsigned char framebuffer[SCREEN_SIZE];
 static unsigned char desktop_background[SCREEN_SIZE];
+/* Keep PCX RGB separate from the GUI palette; mask marks uncovered desktop. */
+static uint32_t desktop_background_rgb[SCREEN_SIZE];
+static unsigned char background_mask[SCREEN_SIZE];
 static int desktop_background_loaded = 0;
 static unsigned char explorer_pcx_icon[DESKTOP_ICON_W * DESKTOP_ICON_H];
 static unsigned char editor_pcx_icon[DESKTOP_ICON_W * DESKTOP_ICON_H];
@@ -548,13 +552,16 @@ static void set_classic_gui_palette(void)
 }
 
 static int vesa_copy_to_screen(unsigned long offset,
-                               const unsigned char *data, size_t length)
+                               const unsigned char *data, size_t length,
+                               const unsigned char *mask)
 {
-    return bw_screen_copy(offset, data, length);
+    return bw_screen_copy(offset, data, length,
+                          desktop_background_rgb + offset, mask);
 }
 static int present_framebuffer(void)
 {
-    return bw_screen_copy(0, framebuffer, sizeof(framebuffer));
+    return bw_screen_copy(0, framebuffer, sizeof(framebuffer),
+                          desktop_background_rgb, background_mask);
 }
 static int mouse_init(void) { return 1; }
 static void mouse_get_state(int *x, int *y, int *buttons)
@@ -569,6 +576,7 @@ static void put_pixel(int x, int y, unsigned char color)
     }
 
     framebuffer[y * SCREEN_WIDTH + x] = color;
+    background_mask[y * SCREEN_WIDTH + x] = 0;
 }
 
 static void fill_rect(int x, int y, int w, int h, unsigned char color)
@@ -593,6 +601,8 @@ static void fill_rect(int x, int y, int w, int h, unsigned char color)
     for (py = start_y; py < end_y; ++py) {
         memset(&framebuffer[py * SCREEN_WIDTH + start_x],
                color, (size_t)(end_x - start_x));
+        memset(&background_mask[py * SCREEN_WIDTH + start_x],
+               0, (size_t)(end_x - start_x));
     }
 }
 
@@ -922,7 +932,8 @@ static int pcx_decode_bytes(FILE *file,
 static int load_pcx_image(const char *path,
                           int expected_w,
                           int expected_h,
-                          unsigned char *dest)
+                          unsigned char *dest,
+                          uint32_t *rgb_dest)
 {
     FILE *file;
     unsigned char header[128];
@@ -1077,6 +1088,10 @@ static int load_pcx_image(const char *path,
 
             dest[y * width + x] =
                 pcx_rgb_to_index(red, green, blue);
+            if (rgb_dest != NULL) {
+                rgb_dest[y * width + x] = 0xff000000u |
+                    ((uint32_t)red << 16) | ((uint32_t)green << 8) | blue;
+            }
         }
     }
 
@@ -1161,6 +1176,7 @@ static int load_named_pcx(const char *filename,
     char path[MAX_PATH];
     char alternate[32];
     size_t len;
+    uint32_t *rgb_dest = dest == desktop_background ? desktop_background_rgb : NULL;
     int loaded = 0;
     int i;
 
@@ -1169,7 +1185,7 @@ static int load_named_pcx(const char *filename,
     }
 
     if (join_path(path, sizeof(path), pcx_dir, filename)) {
-        loaded = load_pcx_image(path, width, height, dest);
+        loaded = load_pcx_image(path, width, height, dest, rgb_dest);
     }
 
     if (!loaded) {
@@ -1187,7 +1203,7 @@ static int load_named_pcx(const char *filename,
                 alternate[len - 1] = 'x';
 
                 if (join_path(path, sizeof(path), pcx_dir, alternate)) {
-                    loaded = load_pcx_image(path, width, height, dest);
+                    loaded = load_pcx_image(path, width, height, dest, rgb_dest);
                 }
             }
         }
@@ -1203,7 +1219,7 @@ static int load_named_pcx(const char *filename,
             alternate[len] = '\0';
 
             if (join_path(path, sizeof(path), pcx_dir, alternate)) {
-                loaded = load_pcx_image(path, width, height, dest);
+                loaded = load_pcx_image(path, width, height, dest, rgb_dest);
             }
         }
     }
@@ -1212,7 +1228,7 @@ static int load_named_pcx(const char *filename,
         find_asset_filename(pcx_dir, filename,
                             alternate, sizeof(alternate)) &&
         join_path(path, sizeof(path), pcx_dir, alternate)) {
-        loaded = load_pcx_image(path, width, height, dest);
+        loaded = load_pcx_image(path, width, height, dest, rgb_dest);
     }
 
     if (loaded && icon_transparency) {
@@ -1468,13 +1484,14 @@ static void restore_cursor_area(int x, int y)
         offset = sy * SCREEN_WIDTH + start_x;
         (void)vesa_copy_to_screen((unsigned long)offset,
                                   &framebuffer[offset],
-                                  (size_t)length);
+                                  (size_t)length, &background_mask[offset]);
     }
 }
 
 static void draw_cursor_vga(int x, int y)
 {
     unsigned char rowbuf[MOUSE_CURSOR_W];
+    unsigned char rowmask[MOUSE_CURSOR_W];
     int row;
 
     if (!cursor_pcx_icon_loaded) {
@@ -1513,12 +1530,14 @@ static void draw_cursor_vga(int x, int y)
             }
 
             rowbuf[col] = pixel;
+            rowmask[col] = cursor_pixel == PCX_TRANSPARENT ?
+                background_mask[sy * SCREEN_WIDTH + sx] : 0;
         }
 
         offset = sy * SCREEN_WIDTH + start_x;
         (void)vesa_copy_to_screen((unsigned long)offset,
                                   rowbuf,
-                                  (size_t)length);
+                                  (size_t)length, rowmask);
     }
 }
 
@@ -1669,7 +1688,7 @@ static void restore_text_caret_vga(void)
         offset = sy * SCREEN_WIDTH + start_x;
         (void)vesa_copy_to_screen((unsigned long)offset,
                                   &framebuffer[offset],
-                                  (size_t)length);
+                                  (size_t)length, &background_mask[offset]);
     }
 }
 
@@ -1707,7 +1726,7 @@ static void draw_text_caret_vga(void)
         offset = sy * SCREEN_WIDTH + start_x;
         (void)vesa_copy_to_screen((unsigned long)offset,
                                   rowbuf + (start_x - x),
-                                  (size_t)length);
+                                  (size_t)length, NULL);
     }
 }
 
@@ -5793,8 +5812,10 @@ static void draw_desktop(int page)
 
     if (desktop_background_loaded) {
         memcpy(framebuffer, desktop_background, sizeof(framebuffer));
+        memset(background_mask, 1, sizeof(background_mask));
     } else {
         memset(framebuffer, DESKTOP_COLOR, sizeof(framebuffer));
+        memset(background_mask, 0, sizeof(background_mask));
     }
     draw_text_centered(8, "BUDOWIN by BUDOSTACK", DESKTOP_TEXT_COLOR);
 

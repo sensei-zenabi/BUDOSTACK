@@ -95,6 +95,7 @@ int main(int argc, char **argv) {
         _exit(127);
     }
     close(endpoints[1]);
+    unsigned char bottom_right[3] = {0};
     int frames = 0, status = 0, done = 0;
     for (int iteration = 0; iteration < 10000; ++iteration) {
         budo_gfx_host_poll(host);
@@ -105,6 +106,7 @@ int main(int argc, char **argv) {
             if (dirty) {
                 ++frames;
                 if (frames == 5) {
+                    memcpy(bottom_right, pixels + (480u * 640u - 1u) * 4u, 3);
                     FILE *file = fopen(argv[3], "wb");
                     assert(file);
                     fputs("P6\n640 480\n255\n", file);
@@ -119,7 +121,7 @@ int main(int argc, char **argv) {
                 }
                 if (frames == 9) {
                     /* Latest position must win before all stale samples replay. */
-                    size_t pixel = (300u * 640u + 500u) * 4u;
+                    size_t pixel = (301u * 640u + 500u) * 4u;
                     assert(pixels[pixel + 1u] == 0 && pixels[pixel + 2u] == 0);
                 }
                 if (frames == 9 || frames == 12 || frames == 15 || frames == 18) {
@@ -132,8 +134,18 @@ int main(int argc, char **argv) {
                 if (frames == 12 || frames == 15 || frames == 18 || frames == 21) {
                     int x = (frames == 12 || frames == 18) ? 0 : 639;
                     int y = (frames == 12 || frames == 15) ? 0 : 479;
-                    size_t pixel = ((size_t)y * 640u + (size_t)x) * 4u;
-                    assert(pixels[pixel] == 0 && pixels[pixel + 1u] == 0 && pixels[pixel + 2u] == 0);
+                    /* The cursor's top-left pixel is transparent. Check its
+                     * opaque black/grey neighbor, or the exact background
+                     * when the bottom-right corner clips every opaque pixel. */
+                    if (y < 479) {
+                        size_t pixel = ((size_t)(y + 1) * 640u + (size_t)x) * 4u;
+                        assert(pixels[pixel] == 0 && pixels[pixel + 1u] == 0 && pixels[pixel + 2u] == 0);
+                    } else if (x == 0) {
+                        size_t pixel = (479u * 640u + 1u) * 4u;
+                        assert(pixels[pixel] == 149 && pixels[pixel + 1u] == 149 && pixels[pixel + 2u] == 149);
+                    } else {
+                        assert(memcmp(pixels + (480u * 640u - 1u) * 4u, bottom_right, 3) == 0);
+                    }
                 }
                 if (frames == 22 || frames == 31) {
                     struct budo_gfx_event event = {0}; event.type = BUDO_GFX_RESET;
@@ -150,7 +162,7 @@ int main(int argc, char **argv) {
                     event.x = -999; budo_gfx_host_event(host, &event);
                 }
                 if (frames == 30) {
-                    size_t pixel = (200u * 640u + 1u) * 4u;
+                    size_t pixel = (201u * 640u + 1u) * 4u;
                     assert(pixels[pixel] == 0 && pixels[pixel + 1u] == 0 && pixels[pixel + 2u] == 0);
                 }
                 if (frames == 36 || frames == 38 || frames == 40 || frames == 42) {

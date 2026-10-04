@@ -1,6 +1,7 @@
 #ifndef BUDOWIN_PLATFORM_H
 #define BUDOWIN_PLATFORM_H
 #include <stddef.h>
+#include <stdint.h>
 #include <time.h>
 #define FA_RDONLY 1
 #define FA_HIDDEN 2
@@ -25,7 +26,8 @@ int bw_initialize(int argc, char **argv);
 int bw_screen_open(void);
 void bw_screen_close(void);
 void bw_palette_entry(unsigned int index, unsigned int r, unsigned int g, unsigned int b);
-int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t length);
+int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t length,
+                   const uint32_t *background, const unsigned char *mask);
 void bw_mouse_state(int *x, int *y, int *buttons);
 unsigned int bw_modifiers(void);
 clock_t bw_clock(void);

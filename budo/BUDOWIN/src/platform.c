@@ -14,7 +14,7 @@
 #include <unistd.h>
 
 static struct budo_gfx *screen;
-static uint8_t pixels[640 * 480];
+static uint32_t pixels[640 * 480];
 static uint32_t palette[256];
 static int mouse_x = 320, mouse_y = 240, mouse_buttons;
 static int raw_mouse_x, raw_mouse_y, raw_mouse_valid;
@@ -125,15 +125,20 @@ const char *bw_state_file(const char *name) {
 }
 int bw_screen_open(void) {
     disconnected = 0;
-    return budo_gfx_open(&screen, 640, 480, BUDO_GFX_INDEX8) == 0;
+    return budo_gfx_open(&screen, 640, 480, BUDO_GFX_ARGB8888) == 0;
 }
 void bw_screen_close(void) { budo_gfx_close(screen); screen = NULL; }
 void bw_palette_entry(unsigned int index, unsigned int r, unsigned int g, unsigned int b) {
     if (index < 256) palette[index] = 0xff000000u | ((r * 255 / 63) << 16) | ((g * 255 / 63) << 8) | (b * 255 / 63);
 }
-int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t length) {
-    if (offset > sizeof(pixels) || length > sizeof(pixels) - offset) return 0;
-    memcpy(pixels + offset, data, length);
+/* Composite exact PCX RGB with the independent indexed GUI palette. */
+int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t length,
+                   const uint32_t *background, const unsigned char *mask) {
+    size_t count = sizeof(pixels) / sizeof(pixels[0]);
+    if (offset > count || length > count - offset) return 0;
+    for (size_t i = 0; i < length; ++i) {
+        pixels[offset + i] = mask && mask[i] ? background[i] : palette[data[i]];
+    }
     return 1;
 }
 static void enqueue(int key) {
@@ -218,7 +223,7 @@ int bw_begin_frame(void) {
 }
 int bw_end_frame(void) {
     struct timespec delay = {0, 16000000};
-    if (budo_gfx_present(screen, pixels, palette) != 0) return 0;
+    if (budo_gfx_present(screen, pixels, NULL) != 0) return 0;
     nanosleep(&delay, NULL);
     return !disconnected;
 }

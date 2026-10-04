@@ -14,6 +14,8 @@ printf 'input' > "$BUDOWIN_TEST_DIR/input.txt"
 COMPILER=${CC:-cc}
 FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
 budo/BUDOWIN/build.sh
+"$COMPILER" "${FLAGS[@]}" tests/budowin_background.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/background"
+"$TEST_DIR/background" "$TEST_DIR/background.pcx"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_native.c budo/BUDOWIN/src/platform.c lib/budo_gfx.c -ldl -lm -o "$TEST_EXE"
 "$TEST_EXE" "$ROOT_DIR/budo/BUDOWIN"
 "$COMPILER" "${FLAGS[@]}" -shared -fPIC tests/gfx_socket_preload.c -o "$TEST_DIR/socket.so"

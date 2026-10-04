@@ -1,5 +1,6 @@
 #include "lib/budo_graphics.h"
 #include "lib/budo_screen.h"
+#include "lib/budo_resolution.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -7,10 +8,10 @@
 
 #include <SDL.h>
 
-#define GAME_WIDTH 640
-#define GAME_HEIGHT 480
+#define GAME_WIDTH BUDO_WIDTH
+#define GAME_HEIGHT BUDO_HEIGHT
 #define TARGET_FPS 30
-#define CUBE_SIZE 220.0f
+#define CUBE_SIZE (220.0f * BUDO_PIXEL_SCALE)
 
 /*--------------------------------------------------------------------------------------------
  * DEFINE STRUCTS 
@@ -181,10 +182,10 @@ int main(int argc, char **argv) {
                 running = 0;
               }
               if (event.key.keysym.sym == SDLK_UP) {
-                cube_size = cube_size + 1.0f;
+                cube_size = cube_size + BUDO_PIXEL_SCALE;
               }
               if (event.key.keysym.sym == SDLK_DOWN) {
-                cube_size = cube_size - 1.0f;
+                cube_size = cube_size - BUDO_PIXEL_SCALE;
               }
               break;
 
@@ -242,7 +243,7 @@ int main(int argc, char **argv) {
         /* Draw text into the application framebuffer. */
         
         char hud[128];
-        snprintf(hud, sizeof(hud), "ROTATING CUBE DEMO  FPS:%d  frame:%d", TARGET_FPS, frame_value);
+        snprintf(hud, sizeof(hud), "CUBE FPS:%d FRAME:%d", TARGET_FPS, frame_value);
         psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8, hud, 0x00FFFFFFu);
         psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8 + (int)font.height,
                       "Exit with ESC", 0x00A0E0FFu);

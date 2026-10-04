@@ -24,7 +24,7 @@ for object in lib/*.o; do
     fi
 done
 $COMPILER $FLAGS -shared -fPIC tests/gfx_socket_preload.c -o "$TEST_DIR/socket.so"
-$COMPILER $FLAGS $SDL_CFLAGS tests/terminal_gfx.c budo/lib/budo_screen.c \
+$COMPILER $FLAGS -DBUDO_WIDTH="${BUDO_WIDTH:-320}" $SDL_CFLAGS tests/terminal_gfx.c budo/lib/budo_screen.c \
     "${LIB_OBJECTS[@]}" $SDL_LIBS $GL_LIBS -lm -pthread -o "$TEST_DIR/display"
 SDL_VIDEODRIVER=${SDL_VIDEODRIVER:-offscreen} SDL_AUDIODRIVER=dummy \
     "$TEST_DIR/display" "$TEST_DIR/socket.so" "$ROOT_DIR"

@@ -1,6 +1,7 @@
 #include "lib/budo_audio.h"
 #include "lib/budo_graphics.h"
 #include "lib/budo_screen.h"
+#include "lib/budo_resolution.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -9,8 +10,8 @@
 
 #include <SDL.h>
 
-#define GAME_WIDTH 640
-#define GAME_HEIGHT 480
+#define GAME_WIDTH BUDO_WIDTH
+#define GAME_HEIGHT BUDO_HEIGHT
 #define TARGET_FPS 60
 
 #define MAX_ASTEROIDS 16
@@ -19,11 +20,11 @@
 #define MAX_LEVEL 10
 
 #define SHIP_TURN_SPEED 3.5f
-#define SHIP_THRUST 150.0f
+#define SHIP_THRUST (150.0f * BUDO_PIXEL_SCALE)
 #define SHIP_FRICTION 0.98f
-#define SHIP_RADIUS 10.0f
+#define SHIP_RADIUS (10.0f * BUDO_PIXEL_SCALE)
 
-#define BULLET_SPEED 220.0f
+#define BULLET_SPEED (220.0f * BUDO_PIXEL_SCALE)
 #define BULLET_LIFE 3.0f
 #define FIRE_COOLDOWN 0.18f
 
@@ -169,7 +170,7 @@ static void spawn_random_asteroid(struct asteroid *a, float radius, struct vec2 
                         frand_range(0.0f, (float)GAME_HEIGHT) };
     float dx = pos.x - avoid.x;
     float dy = pos.y - avoid.y;
-    if ((dx * dx + dy * dy) < (radius + 80.0f) * (radius + 80.0f)) {
+    if ((dx * dx + dy * dy) < (radius + 80.0f * BUDO_PIXEL_SCALE) * (radius + 80.0f * BUDO_PIXEL_SCALE)) {
         pos.x = fmodf(pos.x + (float)GAME_WIDTH * 0.5f, (float)GAME_WIDTH);
         pos.y = fmodf(pos.y + (float)GAME_HEIGHT * 0.5f, (float)GAME_HEIGHT);
     }
@@ -300,8 +301,8 @@ static void get_level_config(int level, int difficulty, struct level_config *out
     float speed_base = 20.0f + (float)level * 6.0f;
     float speed_var = 15.0f + (float)level * 2.5f;
     float speed_mult = 1.0f + (float)difficulty * 0.15f;
-    out->speed_min = speed_base * speed_mult;
-    out->speed_max = (speed_base + speed_var) * speed_mult;
+    out->speed_min = speed_base * speed_mult * BUDO_PIXEL_SCALE;
+    out->speed_max = (speed_base + speed_var) * speed_mult * BUDO_PIXEL_SCALE;
 
     float radius_max = 34.0f - (float)level * 1.4f;
     if (radius_max < 18.0f) {
@@ -311,8 +312,8 @@ static void get_level_config(int level, int difficulty, struct level_config *out
     if (radius_min < 12.0f) {
         radius_min = 12.0f;
     }
-    out->radius_max = radius_max;
-    out->radius_min = radius_min;
+    out->radius_max = radius_max * BUDO_PIXEL_SCALE;
+    out->radius_min = radius_min * BUDO_PIXEL_SCALE;
 
     out->fragment_scale = 0.62f - (float)level * 0.01f;
     if (out->fragment_scale < 0.45f) {
@@ -350,7 +351,7 @@ static void spawn_fragment(struct asteroid *asteroids, struct vec2 position, flo
     }
     for (int i = 0; i < MAX_ASTEROIDS; i++) {
         if (!asteroids[i].active) {
-            float speed_boost = 12.0f;
+            float speed_boost = 12.0f * BUDO_PIXEL_SCALE;
             spawn_asteroid(&asteroids[i], radius, position,
                            config->speed_min + speed_boost,
                            config->speed_max + speed_boost);
@@ -376,7 +377,7 @@ static void handle_bullet_hits(struct bullet *bullets,
                 bullets[b].active = 0;
                 asteroids[a].active = 0;
                 if (score) {
-                    *score += (int)radius;
+                    *score += (int)(radius / BUDO_PIXEL_SCALE);
                 }
                 if (config && radius > config->radius_min * 0.95f) {
                     float fragment_radius = radius * config->fragment_scale;
@@ -395,7 +396,7 @@ static void draw_centered_text(const psf_font_t *font, uint32_t *pixels,
     if (!font || !pixels || !text) {
         return;
     }
-    (void)height;
+    y = (int)(y * BUDO_PIXEL_SCALE);
     size_t len = strlen(text);
     int text_width = (int)(len * (size_t)font->width);
     int x = (width - text_width) / 2;
@@ -738,7 +739,7 @@ int main(int argc, char **argv) {
 
         if (state == STATE_PLAY) {
             char hud[128];
-            snprintf(hud, sizeof(hud), "ROCKET ASTEROIDS  SCORE:%d  LIVES:%d  LEVEL:%d",
+            snprintf(hud, sizeof(hud), "SCORE:%d LIVES:%d LEVEL:%d",
                      score, ship.lives, level);
             psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8, 8, hud, 0x00ffffffu);
             psf_draw_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT, 8,
@@ -749,7 +750,7 @@ int main(int argc, char **argv) {
                 char banner[64];
                 snprintf(banner, sizeof(banner), "LEVEL %d", level);
                 draw_centered_text(&font, pixels, GAME_WIDTH, GAME_HEIGHT,
-                                   (int)(GAME_HEIGHT * 0.35f),
+                                   (int)(480 * 0.35f),
                                    banner, 0x00ffd070u);
             }
         } else if (state == STATE_MENU) {

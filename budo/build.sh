@@ -3,6 +3,11 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BUILD_DIR="$SCRIPT_DIR"
+BUDO_WIDTH=${BUDO_WIDTH:-320}
+case "$BUDO_WIDTH" in
+    320|640) ;;
+    *) echo "BUDO_WIDTH must be 320 or 640." >&2; exit 1 ;;
+esac
 
 SDL_CFLAGS=$(pkg-config --cflags sdl2 2>/dev/null || sdl2-config --cflags 2>/dev/null || true)
 SDL_LIBS=$(pkg-config --libs sdl2 2>/dev/null || sdl2-config --libs 2>/dev/null || true)
@@ -35,6 +40,7 @@ build_demo() {
     local output="$2"
 
     cc -std=c11 -Wall -Wextra -Werror -Wpedantic \
+        -DBUDO_WIDTH="$BUDO_WIDTH" \
         $SDL_IMAGE_DEFINE \
         $SDL_MIXER_DEFINE \
         $SDL_CFLAGS $SDL_IMAGE_CFLAGS $SDL_MIXER_CFLAGS \

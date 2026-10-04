@@ -38,7 +38,7 @@ connection and restores the text display without resizing the text grid.
 open a logical framebuffer, poll input, present complete frames and close.
 Formats are numeric ARGB8888 (alpha ignored) and INDEX8 with a configurable
 256-entry ARGB8888 palette. 320×200 VGA-style frames are supported; both existing
-applications render at standard VGA resolution, 640×480 (4:3). This is a native
+applications support 320×240 and 640×480 (both 4:3), defaulting to 320×240. This is a native
 pixel graphics mode, not DOS binary or VGA hardware emulation.
 
 The terminal exports a private Unix `SOCK_SEQPACKET` endpoint per tab through
@@ -73,3 +73,19 @@ substituted; FD transfer, shared memory, packets and disconnects are unchanged.
 The offscreen OpenGL checks run the actual demo executables using inherited
 socketpairs, exercise input/assets/exit/crash, and compare GPU texture data with
 submitted frames. Set `SDL_VIDEODRIVER=x11` if offscreen GL is unavailable.
+
+## Framebuffer resolution
+
+Both applications use `lib/budo_resolution.h`. The default is 320×240;
+ship/cube sizes, movement speeds, and menu positions scale with the mode.
+Fonts retain their native pixels for the retro appearance.
+
+Build the default mode with `./budo/build.sh`. To use 640×480 instead:
+
+```sh
+BUDO_WIDTH=640 ./budo/build.sh
+```
+
+Changing the mode requires rebuilding the applications. New applications
+should use `BUDO_WIDTH`, `BUDO_HEIGHT`, and `BUDO_PIXEL_SCALE` from the shared
+header. Other values are rejected at build time.

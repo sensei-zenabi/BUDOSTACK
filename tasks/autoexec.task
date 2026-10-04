@@ -24,6 +24,7 @@ RUN _TERM_MOUSE_SHOW disable
 
 # Initialize variables
 
+SET $MARGIN = 0
 SET $LOAD = 0
 SET $TYPING_SOUND = "disable"
 SET $BACKGROUND_SOUND = "enable"
@@ -48,6 +49,8 @@ SET $RETROPROFILE = "vt220-green"
 
 # Run configurations from config.ini
 
+RUN _CONFIG -read _TERM_MARGIN TO $MARGIN
+RUN _TERM_MARGIN $MARGIN
 RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
 RUN _TERM_TYPING_SOUND $TYPING_SOUND
 RUN _CONFIG -read _TERM_TYPING_VOLUME TO $TYPING_VOLUME
@@ -86,7 +89,6 @@ END
 
 RUN _TERM_RESOLUTION HIGH
 RUN _RETROPROFILE apply $RETROPROFILE
-RUN _TERM_MARGIN 0
 
 #-------------------------------------------------------------------------
 # BUDOSTACK LOADER

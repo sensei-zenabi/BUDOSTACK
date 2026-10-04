@@ -1,13 +1,13 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "../lib/terminal_layout.h"
+#include "../lib/terminal_input.h"
 
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -67,7 +67,6 @@ typedef struct {
 #define MATE_SCORE 900000
 #define INPUT_SIZE 64
 
-static struct termios orig_termios;
 static int raw_mode_enabled = 0;
 
 static char piece_glyph(char piece) {
@@ -665,12 +664,7 @@ static void clear_screen(void) {
 
 
 static void disable_raw_mode(void) {
-    if (!raw_mode_enabled) {
-        return;
-    }
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1) {
-        perror("chess: tcsetattr");
-    }
+    budostack_terminal_input_stop();
     raw_mode_enabled = 0;
 }
 
@@ -678,47 +672,21 @@ static void enable_raw_mode(void) {
     if (raw_mode_enabled || !isatty(STDIN_FILENO)) {
         return;
     }
-    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
-        perror("chess: tcgetattr");
-        exit(EXIT_FAILURE);
-    }
-
-    struct termios raw = orig_termios;
-    raw.c_lflag &= (tcflag_t)~(ECHO | ICANON);
-    raw.c_cc[VMIN] = 1;
-    raw.c_cc[VTIME] = 0;
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
-        perror("chess: tcsetattr");
+    if (budostack_terminal_input_start() != 0) {
         exit(EXIT_FAILURE);
     }
     raw_mode_enabled = 1;
-    atexit(disable_raw_mode);
 }
 
 static int read_key(void) {
-    int ch = getchar();
-
-    if (ch == EOF) {
-        return KEY_QUIT;
-    }
-    if (ch == '\033') {
-        int first = getchar();
-        int second = getchar();
-        if (first == '[') {
-            if (second == 'A') {
-                return KEY_UP;
-            }
-            if (second == 'B') {
-                return KEY_DOWN;
-            }
-            if (second == 'C') {
-                return KEY_RIGHT;
-            }
-            if (second == 'D') {
-                return KEY_LEFT;
-            }
-        }
-        return KEY_NONE;
+    int ch = budostack_terminal_read_key(100);
+    switch (ch) {
+        case BUDOSTACK_KEY_EOF: return KEY_QUIT;
+        case BUDOSTACK_KEY_UP: return KEY_UP;
+        case BUDOSTACK_KEY_DOWN: return KEY_DOWN;
+        case BUDOSTACK_KEY_LEFT: return KEY_LEFT;
+        case BUDOSTACK_KEY_RIGHT: return KEY_RIGHT;
+        default: break;
     }
     if (ch == 'w' || ch == 'W') {
         return KEY_UP;
@@ -766,6 +734,7 @@ static void print_centered_text(const char *text) {
     if (padding < 0) {
         padding = 0;
     }
+    printf("\033[2K");
     print_spaces(padding);
     printf("%.*s\n", budostack_get_target_cols() - padding - 1, text);
 }
@@ -825,6 +794,7 @@ static void print_info_pair(const char *left, const char *right) {
     if (field > 24) {
         field = 24;
     }
+    printf("\033[2K");
     print_spaces((cols - 2 * field - 2) / 2);
     printf("%-*.*s  %-*.*s\n", field, field, left, field, field, right);
 }
@@ -847,9 +817,14 @@ static void render_board(const GameState *state, const char *status, GameMode mo
                    state->white_castle_king ? "K" : "-", state->white_castle_queen ? "Q" : "-",
                    state->black_castle_king ? "k" : "-", state->black_castle_queen ? "q" : "-");
 
-    clear_screen();
+    budostack_terminal_begin_frame();
     int cols = budostack_get_target_cols();
     int rows = budostack_get_target_rows();
+    if (cols < 32 || rows < 27) {
+        printf("\033[2K%.*s", cols, "Chess needs 32x27; enlarge window.");
+        fflush(stdout);
+        return;
+    }
     int cell_w = (cols - 8) / 8;
     int cell_h = (rows - 19) / 8;
     if (cell_w < 3) {
@@ -873,7 +848,8 @@ static void render_board(const GameState *state, const char *status, GameMode mo
         (void)snprintf(line, sizeof(line), "%s", mode_name);
     }
     print_centered_text(line);
-    print_centered_text("Arrows/WASD move   SPACE selects   R restarts   Q quits");
+    print_centered_text(cols < 60 ? "WASD Space select R restart Q quit" :
+                        "Arrows/WASD move   SPACE selects   R restarts   Q quits");
     printf("\n");
     print_centered_text(status);
     printf("\n");
@@ -1060,6 +1036,9 @@ static int human_turn(GameState *state, GameMode mode, Difficulty difficulty,
         if (key == KEY_RESTART) {
             return 2;
         }
+        if (budostack_get_target_cols() < 32 || budostack_get_target_rows() < 27) {
+            continue;
+        }
         if (key == KEY_UP || key == KEY_DOWN || key == KEY_LEFT || key == KEY_RIGHT) {
             move_cursor(key, cursor_row, cursor_col);
             continue;
@@ -1139,6 +1118,7 @@ static int game_over(const GameState *state) {
 }
 
 int main(void) {
+    setvbuf(stdin, NULL, _IONBF, 0);
     GameState state;
     GameMode mode;
     Difficulty difficulty = DIFF_EASY;
@@ -1164,8 +1144,7 @@ int main(void) {
             int key;
             render_board(&state, status, mode, difficulty, last_move, cursor_row, cursor_col,
                          -1, -1, 0);
-            printf("Game over. Press r to restart or q to quit.\n");
-            fflush(stdout);
+
             key = read_key();
             if (key == KEY_RESTART) {
                 init_game(&state);
@@ -1180,6 +1159,14 @@ int main(void) {
             continue;
         }
 
+        if (computer_turn && (budostack_get_target_cols() < 32 || budostack_get_target_rows() < 27)) {
+            render_board(&state, status, mode, difficulty, last_move, cursor_row, cursor_col,
+                         -1, -1, 0);
+            if (read_key() == KEY_QUIT) {
+                break;
+            }
+            continue;
+        }
         if (computer_turn) {
             Move ai_move;
             (void)snprintf(status, sizeof(status), "Computer is thinking...");

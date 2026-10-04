@@ -13,7 +13,10 @@
 #define BUDOSTACK_TARGET_ROWS 60
 #endif
 
-/* Draw a logical character board at the largest centered size that fits. */
+/* Clear only on first frame/resize, then rewind for a complete repaint. */
+void budostack_terminal_begin_frame(void);
+
+/* Draw a centered board with uniform integer-sized cells; never downsample. */
 void budostack_draw_terminal_grid(const char *cells, int width, int height,
                                   const char *status, const char *controls);
 

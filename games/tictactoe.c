@@ -1,11 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "../lib/terminal_layout.h"
+#include "../lib/terminal_input.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -41,7 +41,6 @@ static int read_key(void);
 static int find_winning_move(char board[BOARD_SIZE][BOARD_SIZE], char marker,
                              int *best_row, int *best_col);
 
-static struct termios orig_termios;
 static int raw_mode_enabled = 0;
 static char status_line[256];
 
@@ -56,6 +55,7 @@ enum InputKey {
 };
 
 int main(void) {
+    setvbuf(stdin, NULL, _IONBF, 0);
     char board[BOARD_SIZE][BOARD_SIZE];
     init_board(board);
 
@@ -103,7 +103,6 @@ int main(void) {
     }
 
     enable_raw_mode();
-    tcflush(STDIN_FILENO, TCIFLUSH);
 
     int cursor_row = BOARD_SIZE / 2;
     int cursor_col = BOARD_SIZE / 2;
@@ -117,7 +116,15 @@ int main(void) {
     }
 
     int running = 1;
-    while (running) {
+    while (running && !budostack_terminal_interrupted()) {
+        if (budostack_get_target_cols() < 21 || budostack_get_target_rows() < 24) {
+            render_game(board, current_player, cursor_row, cursor_col, 0,
+                        last_move_row, last_move_col, mode_name);
+            if (read_key() == KEY_QUIT) {
+                break;
+            }
+            continue;
+        }
         int human_turn_flag = (current_player == 'X') ? human_x : human_o;
         if (human_turn_flag) {
             render_game(board, current_player, cursor_row, cursor_col, 1,
@@ -125,6 +132,10 @@ int main(void) {
             human_turn(board, current_player, &cursor_row, &cursor_col,
                        &last_move_row, &last_move_col, mode_name);
         } else {
+            int input = budostack_terminal_read_key(0);
+            if (input == BUDOSTACK_KEY_EOF || input == 'q' || input == 'Q') {
+                break;
+            }
             snprintf(status_line, sizeof(status_line), "Computer (%c) is thinking...", current_player);
             render_game(board, current_player, cursor_row, cursor_col, 0,
                         last_move_row, last_move_col, mode_name);
@@ -174,6 +185,7 @@ int main(void) {
     }
 
     disable_raw_mode();
+    printf("%.*s\n", budostack_get_target_cols() - 1, status_line);
     return 0;
 }
 
@@ -193,17 +205,20 @@ static void render_game(char board[BOARD_SIZE][BOARD_SIZE], char current_player,
     int cell_w = (cols - 4) / BOARD_SIZE;
     int cell_h = (rows - 7) / BOARD_SIZE;
     if (cell_w < 1 || cell_h < 1) {
-        printf("\033[2J\033[HTic-Tac-Toe needs at least 21x24 characters.\n");
+        budostack_terminal_begin_frame();
+        printf("\033[2K%.*s", cols, "Connect 5 needs 21x24; enlarge window.");
+        fflush(stdout);
         return;
     }
     int width = cell_w * BOARD_SIZE;
     int height = cell_h * BOARD_SIZE;
     int left = (cols - width) / 2 + 1;
     int top = (rows - height - 5) / 2 + 1;
-    printf("\033[2J\033[%d;%dH%dx%d CONNECT %d  Player %c", top, left,
-           BOARD_SIZE, BOARD_SIZE, WIN_CONDITION, current_player);
-    printf("\033[%d;%dH%.*s", top + 1, left, width, mode_name);
-    printf("\033[%d;%dH%.*s", top + 2, left, width, status_line);
+    budostack_terminal_begin_frame();
+    printf("\033[%d;1H\033[2K\033[%d;%dHCONNECT %d  Player %c", top, top, left,
+           WIN_CONDITION, current_player);
+    printf("\033[%d;1H\033[2K\033[%d;%dH%.*s", top + 1, top + 1, left, width, mode_name);
+    printf("\033[%d;1H\033[2K\033[%d;%dH%.*s", top + 2, top + 2, left, width, status_line);
     for (int r = 0; r < BOARD_SIZE; r++) {
         for (int line = 0; line < cell_h; line++) {
             printf("\033[%d;%dH", top + 3 + r * cell_h + line, left);
@@ -231,7 +246,7 @@ static void render_game(char board[BOARD_SIZE][BOARD_SIZE], char current_player,
         }
     }
     printf("\033[%d;%dH%.*s", top + height + 3, left, width,
-           "Arrows move  Space/Enter place  Q quit");
+           "WASD/Arrows Space place Q quit");
     fflush(stdout);
 }
 
@@ -337,30 +352,14 @@ static int prompt_first_player(void) {
 }
 
 static void enable_raw_mode(void) {
-    if (raw_mode_enabled) {
-        return;
-    }
-    if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) {
-        perror("tcgetattr");
-        exit(EXIT_FAILURE);
-    }
-    struct termios raw = orig_termios;
-    raw.c_lflag &= ~(ECHO | ICANON);
-    raw.c_cc[VMIN] = 1;
-    raw.c_cc[VTIME] = 0;
-    if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
-        perror("tcsetattr");
+    if (budostack_terminal_input_start() != 0) {
         exit(EXIT_FAILURE);
     }
     raw_mode_enabled = 1;
-    atexit(disable_raw_mode);
 }
 
 static void disable_raw_mode(void) {
-    if (!raw_mode_enabled) {
-        return;
-    }
-    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+    budostack_terminal_input_stop();
     raw_mode_enabled = 0;
 }
 
@@ -370,12 +369,17 @@ static void human_turn(char board[BOARD_SIZE][BOARD_SIZE], char player,
     while (1) {
         int key = read_key();
         if (key == KEY_NONE) {
+            render_game(board, player, *cursor_row, *cursor_col, 1,
+                        *last_move_row, *last_move_col, mode_name);
             continue;
         }
         if (key == KEY_QUIT) {
             disable_raw_mode();
             printf("\nPlayer quit the game.\n");
             exit(0);
+        }
+        if (budostack_get_target_cols() < 21 || budostack_get_target_rows() < 24) {
+            continue;
         }
         if (key == KEY_UP) {
             if (*cursor_row > 0) {
@@ -746,34 +750,14 @@ static void sort_moves_by_proximity(int moves[][2], int count) {
 }
 
 static int read_key(void) {
-    unsigned char c;
-    ssize_t n = read(STDIN_FILENO, &c, 1);
-    if (n <= 0) {
-        return KEY_NONE;
-    }
-    if (c == '\033') {
-        unsigned char seq[2];
-        if (read(STDIN_FILENO, &seq[0], 1) <= 0) {
-            return KEY_NONE;
-        }
-        if (read(STDIN_FILENO, &seq[1], 1) <= 0) {
-            return KEY_NONE;
-        }
-        if (seq[0] == '[') {
-            if (seq[1] == 'A') {
-                return KEY_UP;
-            }
-            if (seq[1] == 'B') {
-                return KEY_DOWN;
-            }
-            if (seq[1] == 'C') {
-                return KEY_RIGHT;
-            }
-            if (seq[1] == 'D') {
-                return KEY_LEFT;
-            }
-        }
-        return KEY_NONE;
+    int c = budostack_terminal_read_key(100);
+    switch (c) {
+        case BUDOSTACK_KEY_EOF: return KEY_QUIT;
+        case BUDOSTACK_KEY_UP: return KEY_UP;
+        case BUDOSTACK_KEY_DOWN: return KEY_DOWN;
+        case BUDOSTACK_KEY_LEFT: return KEY_LEFT;
+        case BUDOSTACK_KEY_RIGHT: return KEY_RIGHT;
+        default: break;
     }
     if (c == 'q' || c == 'Q') {
         return KEY_QUIT;

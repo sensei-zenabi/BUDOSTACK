@@ -261,25 +261,42 @@ static void budostack_terminal_layout_constructor(void) {
     budostack_apply_terminal_layout();
 }
 
+void budostack_terminal_begin_frame(void) {
+    static int previous_cols;
+    static int previous_rows;
+    int cols = budostack_get_target_cols();
+    int rows = budostack_get_target_rows();
+    if (cols != previous_cols || rows != previous_rows) {
+        printf("\033[0m\033[2J");
+        previous_cols = cols;
+        previous_rows = rows;
+    }
+    printf("\033[H");
+}
+
 void budostack_draw_terminal_grid(const char *cells, int width, int height,
                                   const char *status, const char *controls) {
     int cols = budostack_get_target_cols();
     int rows = budostack_get_target_rows();
-    if (!cells || width <= 0 || height <= 0 || cols < 4 || rows < 7) {
+    if (!cells || !status || !controls || width <= 0 || height <= 0 || height > INT_MAX - 6) {
         return;
     }
-    int border = cols >= width + 2;
-    double scale_x = (double)(border ? cols - 4 : cols) / width;
-    double scale_y = (double)(rows - 6) / height;
-    double scale = scale_x < scale_y ? scale_x : scale_y;
-    int w = (int)(width * scale);
-    int h = (int)(height * scale);
-    if (w < 1 || h < 1) {
+    budostack_terminal_begin_frame();
+    if (cols < width || rows < height + 6) {
+        printf("\033[2K%.*s", cols, "Window too small; enlarge to resume.");
+        fflush(stdout);
         return;
     }
+    int scale_x = cols / width;
+    int scale_y = (rows - 6) / height;
+    int scale = scale_x < scale_y ? scale_x : scale_y;
+    int w = width * scale;
+    int h = height * scale;
+    int border = cols - w >= 2;
     int left = (cols - w - 2 * border) / 2 + 1;
     int top = (rows - h - 5) / 2 + 1;
-    printf("\033[2J\033[%d;%dH%.*s", top, left, cols - left + 1, status);
+    printf("\033[%d;1H\033[2K\033[%d;%dH%.*s", top, top, left,
+           cols - left + 1, status);
     for (int y = 0; y < h + 2 * border; y++) {
         printf("\033[%d;%dH", top + 1 + y, left);
         int edge = border && (y == 0 || y == h + 1);
@@ -288,12 +305,13 @@ void budostack_draw_terminal_grid(const char *cells, int width, int height,
         }
         for (int x = 0; x < w; x++) {
             putchar(edge ? '-' :
-                    cells[((y - border) * height / h) * width + x * width / w]);
+                    cells[((y - border) / scale) * width + x / scale]);
         }
         if (border) {
             putchar(edge ? '+' : '|');
         }
     }
-    printf("\033[%d;%dH%.*s", top + h + 3, left, cols - left + 1, controls);
+    printf("\033[%d;1H\033[2K\033[%d;%dH%.*s", top + h + 3, top + h + 3,
+           left, cols - left + 1, controls);
     fflush(stdout);
 }

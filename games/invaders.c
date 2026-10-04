@@ -26,12 +26,11 @@
  */
 
 #include "../lib/terminal_layout.h"
+#include "../lib/terminal_input.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <termios.h>
-#include <sys/select.h>
 #include <string.h>
 #include <time.h>
 
@@ -52,47 +51,16 @@ void sleep_ms(int milliseconds) {
     nanosleep(&ts, NULL);
 }
 
-/* Global terminal settings backup */
-static struct termios orig_termios;
+static int quit_requested;
 
-/* Restore original terminal settings on exit and show the cursor */
-void reset_terminal_mode(void) {
-    tcsetattr(0, TCSANOW, &orig_termios);
-    // Show the cursor when exiting
-    printf("\033[?25h");
+static void reset_terminal_mode(void) {
+    budostack_terminal_input_stop();
 }
 
-/* Set terminal to raw mode for nonblocking input and hide the cursor */
-void set_conio_terminal_mode(void) {
-    struct termios new_termios;
-    tcgetattr(0, &orig_termios);
-    memcpy(&new_termios, &orig_termios, sizeof(new_termios));
-    new_termios.c_lflag &= ~(ICANON | ECHO); // disable canonical mode and echo
-    new_termios.c_cc[VMIN] = 0;
-    new_termios.c_cc[VTIME] = 0;
-    tcsetattr(0, TCSANOW, &new_termios);
-    // Hide the cursor during the game
-    printf("\033[?25l");
-    atexit(reset_terminal_mode);
-}
-
-/* Check if a key has been pressed (nonblocking) */
-int kbhit(void) {
-    struct timeval tv = {0, 0};
-    fd_set readfds;
-    FD_ZERO(&readfds);
-    FD_SET(0, &readfds);
-    return select(1, &readfds, NULL, NULL, &tv) > 0;
-}
-
-/* Get one character from input */
-int getch(void) {
-    int r;
-    unsigned char c;
-    if ((r = read(0, &c, sizeof(c))) < 0)
-        return r;
-    else
-        return c;
+static void set_conio_terminal_mode(void) {
+    if (budostack_terminal_input_start() != 0) {
+        exit(EXIT_FAILURE);
+    }
 }
 
 /* Structure for the player's bullet */
@@ -107,7 +75,7 @@ Bullet bullet;
 int invaders[INV_ROWS][INV_COLS]; // 1 = alive, 0 = dead
 int invader_offset_x, invader_offset_y;
 int invader_dir; // 1 = moving right, -1 = moving left
-int frame_count = 0;
+unsigned int frame_count = 0;
 int game_over = 0;
 int game_win = 0;
 int score = 0;  // Global score variable
@@ -137,43 +105,27 @@ void init_game(void) {
  * When game over or win, only R and Q are processed.
  */
 void process_input(void) {
-    while (kbhit()) {
-        int c = getch();
-        // When game over or win, restrict input to 'r' (restart) and 'q' (quit)
+    int c;
+    while ((c = budostack_terminal_read_key(0)) != BUDOSTACK_KEY_NONE) {
+        if (c == BUDOSTACK_KEY_EOF || c == 'q' || c == 'Q') {
+            quit_requested = 1;
+            return;
+        }
+        if (c == 'r' || c == 'R') {
+            init_game();
+            return;
+        }
         if (game_over || game_win) {
-            if (c == 'q' || c == 'Q')
-                exit(0);
-            if (c == 'r' || c == 'R') {
-                init_game();
-                return;
-            }
-            // Ignore any other key
             continue;
         }
-        if (c == 27) { // possible escape sequence for arrow keys
-            if (kbhit() && getch() == 91) {
-                int dir = getch();
-                if (dir == 68) { // Left arrow
-                    if (player_x > 0)
-                        player_x--;
-                } else if (dir == 67) { // Right arrow
-                    if (player_x < BOARD_WIDTH - 1)
-                        player_x++;
-                }
-            }
-        } else if (c == ' ') {
-            // Fire bullet if none is active
-            if (!bullet.active) {
-                bullet.active = 1;
-                bullet.x = player_x;
-                bullet.y = BOARD_HEIGHT - 2;
-            }
-        } else if (c == 'q' || c == 'Q') {
-            // Quit the game
-            exit(0);
-        } else if (c == 'r' || c == 'R') {
-            // Restart the game
-            init_game();
+        if ((c == BUDOSTACK_KEY_LEFT || c == 'a' || c == 'A') && player_x > 0) {
+            player_x--;
+        } else if ((c == BUDOSTACK_KEY_RIGHT || c == 'd' || c == 'D') && player_x < BOARD_WIDTH - 1) {
+            player_x++;
+        } else if (c == ' ' && !bullet.active) {
+            bullet.active = 1;
+            bullet.x = player_x;
+            bullet.y = BOARD_HEIGHT - 2;
         }
     }
 }
@@ -181,28 +133,41 @@ void process_input(void) {
 /* Update bullet position and check for collision with invaders.
  * Collision is checked at the bullet's current position before moving it.
  */
-void update_bullet(void) {
-    if (bullet.active) {
-        // Check collision at the bullet's current position
-        for (int i = 0; i < INV_ROWS; i++) {
-            for (int j = 0; j < INV_COLS; j++) {
-                if (invaders[i][j]) {
-                    int inv_x = invader_offset_x + j * INV_SPACING_X;
-                    int inv_y = invader_offset_y + i * INV_SPACING_Y;
-                    if (bullet.x == inv_x && bullet.y == inv_y) {
-                        invaders[i][j] = 0; // invader hit
-                        bullet.active = 0;
-                        score += 10;  // Increase score
-                        return;
+static int hit_invader(void) {
+    if (!bullet.active) {
+        return 0;
+    }
+    for (int i = 0; i < INV_ROWS; i++) {
+        for (int j = 0; j < INV_COLS; j++) {
+            if (invaders[i][j] && bullet.x == invader_offset_x + j * INV_SPACING_X &&
+                bullet.y == invader_offset_y + i * INV_SPACING_Y) {
+                invaders[i][j] = 0;
+                bullet.active = 0;
+                score += 10;
+                game_win = 1;
+                for (int row = 0; row < INV_ROWS; row++) {
+                    for (int col = 0; col < INV_COLS; col++) {
+                        if (invaders[row][col]) {
+                            game_win = 0;
+                        }
                     }
                 }
+                return 1;
             }
         }
-        // Move bullet up after collision check
-        bullet.y--;
-        if (bullet.y < 0) {
-            bullet.active = 0;
-        }
+    }
+    return 0;
+}
+
+void update_bullet(void) {
+    if (!bullet.active || hit_invader()) {
+        return;
+    }
+    bullet.y--;
+    if (bullet.y < 0) {
+        bullet.active = 0;
+    } else {
+        (void)hit_invader();
     }
 }
 
@@ -257,10 +222,19 @@ void update_invaders(void) {
  * No movement is performed if game is over or won.
  */
 void update_game(void) {
-    if (game_over || game_win)
+    if (game_over || game_win || budostack_get_target_cols() < BOARD_WIDTH ||
+        budostack_get_target_rows() < BOARD_HEIGHT + 6) {
         return;
+    }
     update_bullet();
-    update_invaders();
+    if (!game_win) {
+        update_invaders();
+        /* Check the new bullet/formation positions without advancing twice. */
+        (void)hit_invader();
+        if (game_win) {
+            game_over = 0;
+        }
+    }
 }
 
 /* Render the game board with borders and a SCORE field */
@@ -306,16 +280,19 @@ void draw_game(void) {
 
 /* Main game loop */
 int main(void) {
+    setvbuf(stdin, NULL, _IONBF, 0);
     set_conio_terminal_mode();
     init_game();
-    while (1) {
+    while (!quit_requested) {
         process_input();
+        if (quit_requested) {
+            break;
+        }
         update_game();
         draw_game();
         frame_count++;
         sleep_ms(100); // Sleep 100ms => ~10fps
     }
-    // Final draw to show end message (never reached because of exit() on quit)
-    draw_game();
+    reset_terminal_mode();
     return 0;
 }

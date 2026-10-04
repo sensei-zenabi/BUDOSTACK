@@ -47,7 +47,7 @@ with tempfile.TemporaryDirectory(dir=ROOT) as directory:
         path.write_text(source)
         exe = work / name
         subprocess.run(['cc', *FLAGS, '-I', str(ROOT), str(path),
-                        str(ROOT / 'lib/terminal_layout.c'), '-o', str(exe)], check=True)
+                        str(ROOT / 'lib/terminal_layout.c'), str(ROOT / 'lib/terminal_input.c'), '-o', str(exe)], check=True)
         return exe
 
     bodies = {

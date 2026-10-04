@@ -92,7 +92,7 @@ RUN _RETROPROFILE apply $RETROPROFILE
 
 #-------------------------------------------------------------------------
 # BUDOSTACK LOADER
-# Simulated 1988 AT-compatible boot; hardware figures are period scenery.
+# Simulated 1993 486DX2-66 boot (8 MB RAM, floppy boot); hardware figures are period scenery.
 # ROM/POST runs silently. Disk sounds belong only to seeks and disk reads.
 # The floppy sample is 1411 ms long: leave >= 1450 ms before reusing channel 1.
 # Channel 2 is reserved for the short POST beep, not a second disk drive.
@@ -101,13 +101,15 @@ SET $SELECTION = "y"
 RUN cls
 RUN _TERM_TYPING_SOUND disable
 RUN _WAIT 500
-PRINT "BUDOSTACK AT BIOS  Version 1.00\n"
-PRINT "Copyright (C) 1988 BUDOSTACK Corporation\n\n"
-PRINT "80286 CPU at 12 MHz\n"
+PRINT "BUDOSTACK 486 BIOS  Version 2.00\n"
+PRINT "Copyright (C) 1993 BUDOSTACK Corporation\n\n"
+PRINT "80486DX2 CPU at 66 MHz\n"
 RUN _WAIT 350
 PRINT "ROM BIOS Checksum .... OK\n"
 RUN _WAIT 250
-PRINT "CMOS Battery ......... OK\n\n"
+PRINT "CMOS Battery ......... OK\n"
+RUN _WAIT 250
+PRINT "Internal Cache ....... 8 KB Enabled\n\n"
 RUN _WAIT 250
 
 # Count conventional memory in place, as a BIOS would; no disk activity.
@@ -120,20 +122,21 @@ FOR ($BOOT_RAM=64; $BOOT_RAM<=640; $BOOT_RAM=$BOOT_RAM+64):
   RUN _WAIT 100
 END
 PRINT "\n"
-FOR ($BOOT_RAM=64; $BOOT_RAM<=384; $BOOT_RAM=$BOOT_RAM+64):
+# 8 MB installed: 640 KB base + 384 KB reserved + 7168 KB extended.
+FOR ($BOOT_RAM=256; $BOOT_RAM<=7168; $BOOT_RAM=$BOOT_RAM+256):
   PRINT "\rExtended Memory: "
-  IF ($BOOT_RAM < 100):
+  IF ($BOOT_RAM < 1000):
     PRINT " "
   END
   PRINT $BOOT_RAM + " KB OK"
-  RUN _WAIT 100
+  RUN _WAIT 40
 END
 PRINT "\n\n"
 PRINT "Keyboard ............. OK\n"
 RUN _WAIT 250
 PRINT "Video Adapter ........ VGA\n"
 RUN _WAIT 250
-PRINT "Diskette Drive A: ..... 1.2 MB\n"
+PRINT "Diskette Drive A: ..... 1.44 MB\n"
 
 # POST recalibrates the floppy head before handing control to the boot loader.
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
@@ -148,8 +151,8 @@ RUN _WAIT 350
 # Boot sector, system files and command interpreter: separate read bursts.
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 RUN _WAIT 1600
-PRINT "\nBUDOSTACK Disk Operating System\n"
-PRINT "Copyright (C) 1988 BUDOSTACK Corporation\n\n"
+PRINT "\nBUDOSTACK Disk Operating System  Version 6.00\n"
+PRINT "Copyright (C) 1993 BUDOSTACK Corporation\n\n"
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT "Loading system files..."
 RUN _WAIT 1700
@@ -158,9 +161,9 @@ RUN _WAIT 200
 # DOS initializes CONFIG.SYS drivers before loading the command interpreter.
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT "Processing CONFIG.SYS...\n"
-PRINT "FILES=20\nBUFFERS=15\nDEVICE=ANSI.SYS\n"
+PRINT "DEVICE=HIMEM.SYS\nDOS=HIGH\nFILES=30\nBUFFERS=20\nDEVICE=ANSI.SYS\n"
 RUN _WAIT 1500
-PRINT "\nANSI console driver installed.\n"
+PRINT "\nXMS memory manager installed.\nDOS loaded in high memory.\nANSI console driver installed.\n"
 RUN _WAIT 200
 RUN _TERM_SOUND_PLAY 1 ../sounds/628246__asiekierka__floppy_access6.ogg 100
 PRINT "Loading command interpreter..."

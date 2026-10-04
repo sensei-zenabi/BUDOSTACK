@@ -46,6 +46,8 @@ SET $RETROPROFILE = "vt220-green"
 
 # Run configurations from config.ini
 
+RUN _CONFIG -read _RETROPROFILE TO $RETROPROFILE
+RUN _RETROPROFILE apply $RETROPROFILE
 RUN _CONFIG -read _TERM_MARGIN TO $MARGIN
 RUN _TERM_MARGIN $MARGIN
 RUN _CONFIG -read _TERM_TYPING_SOUND TO $TYPING_SOUND
@@ -85,7 +87,7 @@ END
 # Run or set other default configurations
 
 RUN _TERM_RESOLUTION HIGH
-RUN _RETROPROFILE apply $RETROPROFILE
+
 
 #-------------------------------------------------------------------------
 # BUDOSTACK LOADER

@@ -194,7 +194,7 @@ END
 # Start the native GUI at VGA HIGH resolution and return to the command line.
 RUN _TERM_RESOLUTION HIGH
 RUN _TERM_TYPING_SOUND disable
-RUN ../budo/BUDOWIN
+RUN budo/budowin
 GOTO EXIT
 
 #-------------------------------------------------------------------------

@@ -28,7 +28,7 @@ else
     SDL_MIXER_DEFINE="-DBUDO_USE_SDL_MIXER=0"
 fi
 
-"$SCRIPT_DIR/budowin/build.sh"
+"$SCRIPT_DIR/BUDOWIN/build.sh"
 
 if [[ -z "$SDL_LIBS" ]]; then
     echo "Skipping BUDO SDL demos: SDL2 development files not found."

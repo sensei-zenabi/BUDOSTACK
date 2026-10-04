@@ -38,7 +38,7 @@ for active, answer in [(1, 'y'), (1, 'Y'), (1, 'n'), (0, 'y')]:
                                 input=answer + '\n', text=True, capture_output=True,
                                 check=True, timeout=10)
     assert not re.search('Unrecognized|unexpected|failed|invalid', result.stderr, re.I)
-    launch = '@RUN ../budo/BUDOWIN'
+    launch = '@RUN budo/budowin'
     assert (launch in result.stdout) == (active and answer.lower() == 'y')
     if launch in result.stdout:
         preceding = result.stdout.split(launch)[0]
@@ -46,3 +46,17 @@ for active, answer in [(1, 'y'), (1, 'Y'), (1, 'n'), (0, 'y')]:
         assert '@RUN _TERM_RESOLUTION HIGH' in preceding
     assert '@RUN _TERM_CURSOR_BLINK enable' in result.stdout
 print('BUDOWIN startup: y/Y launch, n bypass, inactive guard and cleanup passed.')
+
+# Unlike the UI stubs above, execute the actual TASK path resolver. The GUI
+# exits immediately without a graphics endpoint, after proving RUN found it.
+import os
+with tempfile.TemporaryDirectory(dir=root) as directory:
+    task = pathlib.Path(directory) / 'launch.task'
+    task.write_text('RUN budo/budowin\n')
+    env = dict(os.environ, BUDOSTACK_BASE=str(root), HOME=directory)
+    env.pop('BUDOSTACK_GFX_SOCKET', None)
+    result = subprocess.run([root / 'apps/runtask', task, '-d'], env=env,
+                            text=True, capture_output=True, timeout=10, check=True)
+    assert 'RUN: execv ' + str(root / 'budo/budowin') in result.stderr
+    assert 'executable not found' not in result.stderr
+print('BUDOWIN startup: real repository-root executable resolution passed.')

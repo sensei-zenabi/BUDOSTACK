@@ -3,14 +3,14 @@
 Native port of sensei-zenabi/BUDOWIN, based on upstream commit
 `5203fe933edeee72e486dbba3779493b819cac50`.
 
-Build from the BUDOSTACK root with `make`, or run `budo/budowin/build.sh`.
-The executable is `budo/BUDOWIN`; sources and modules live under
-`budo/budowin/`. A directory and executable cannot share the same pathname.
+Build from the BUDOSTACK root with `make`, or run `budo/BUDOWIN/build.sh`.
+The executable is `budo/budowin`; sources and modules live under
+`budo/BUDOWIN/`. A directory and executable cannot share the same pathname.
 No DOSBox, DJGPP, SDL, or Microsoft software is required by BUDOWIN.
 
 The startup task asks **Start BUDOWIN?**. Answer `y` or `Y` to start the GUI
 in HIGH (640x480) mode. Answer `n` to use the BUDOSTACK command line.
-Launch manually with `./budo/BUDOWIN` inside apps/terminal.
+Launch manually with `./budo/budowin` inside apps/terminal.
 Escape on the desktop exits to the terminal. Window title buttons close,
 minimize, and maximize individual applications.
 

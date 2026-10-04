@@ -8,5 +8,5 @@ mkdir -p APPS
 for application in explorer editor terminal settings paint; do
     "$COMPILER" "${FLAGS[@]}" -fPIC -shared "appsrc/$application.c" -o "APPS/${application^^}.BWA"
 done
-"$COMPILER" "${FLAGS[@]}" src/main.c src/platform.c ../../lib/budo_gfx.c -ldl -lm -o ../BUDOWIN
+"$COMPILER" "${FLAGS[@]}" src/main.c src/platform.c ../../lib/budo_gfx.c -ldl -lm -o ../budowin
 printf 'Built BUDOWIN and five native applications.\n'

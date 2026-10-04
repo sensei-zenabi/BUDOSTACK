@@ -169,6 +169,16 @@ static int gfx_client_receive(struct budo_gfx *gfx, struct gfx_packet *packet) {
         return -1;
     }
     if (result == 1 && packet->type == GFX_EVENT) {
+        /* Pointer motion is a position snapshot. Keep the newest position
+         * between discrete events so high-rate mice cannot fill the queue
+         * with stale coordinates while a frame acknowledgement is pending. */
+        if (packet->event.type == BUDO_GFX_MOUSE_MOVE && gfx->count > 0u) {
+            size_t last = (gfx->head + gfx->count - 1u) % GFX_QUEUE;
+            if (gfx->events[last].type == BUDO_GFX_MOUSE_MOVE) {
+                gfx->events[last] = packet->event;
+                return result;
+            }
+        }
         if (gfx->count == GFX_QUEUE) {
             /* Stop rather than lose a key release and leave a key stuck. */
             errno = ENOBUFS;

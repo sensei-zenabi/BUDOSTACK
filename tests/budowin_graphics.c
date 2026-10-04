@@ -111,16 +111,24 @@ int main(int argc, char **argv) {
                     for (int p = 0; p < w * h; ++p) assert(fwrite(pixels + p * 4, 1, 3, file) == 3);
                     assert(fclose(file) == 0);
                     struct budo_gfx_event event = {0};
-                    event.type = BUDO_GFX_MOUSE_MOVE; event.x = 100; event.y = 100;
-                    budo_gfx_host_event(host, &event);
+                    event.type = BUDO_GFX_MOUSE_MOVE;
+                    for (int move = 0; move < 100; ++move) {
+                        event.x = 401 + move; event.y = 300;
+                        budo_gfx_host_event(host, &event);
+                    }
                 }
-                if (frames == 6 || frames == 8 || frames == 10 || frames == 12) {
+                if (frames == 9) {
+                    /* Latest position must win before all stale samples replay. */
+                    size_t pixel = (300u * 640u + 500u) * 4u;
+                    assert(pixels[pixel + 1u] == 0 && pixels[pixel + 2u] == 0);
+                }
+                if (frames == 12 || frames == 14 || frames == 16 || frames == 18) {
                     struct budo_gfx_event event = {0};
-                    event.type = (frames == 6 || frames == 10) ? BUDO_GFX_MOUSE_DOWN : BUDO_GFX_MOUSE_UP;
+                    event.type = (frames == 12 || frames == 16) ? BUDO_GFX_MOUSE_DOWN : BUDO_GFX_MOUSE_UP;
                     event.button = 1; event.x = 350; event.y = 56;
                     budo_gfx_host_event(host, &event);
                 }
-                if (frames == 20) {
+                if (frames == 26) {
                     char path[4096];
                     assert(snprintf(path, sizeof(path), "%s.paint.ppm", argv[3]) < (int)sizeof(path));
                     FILE *file = fopen(path, "wb"); assert(file);
@@ -129,12 +137,12 @@ int main(int argc, char **argv) {
                     assert(fclose(file) == 0);
                     assert(pixels[(200 * w + 200) * 4] != 0);
                 }
-                if (frames == 25) {
+                if (frames == 30) {
                     struct budo_gfx_event event = {0};
                     event.type = BUDO_GFX_KEY_DOWN; event.key = 27; event.scancode = 41;
                     budo_gfx_host_event(host, &event);
                 }
-                if (frames == 30) {
+                if (frames == 35) {
                     struct budo_gfx_event event = {0}; event.type = BUDO_GFX_QUIT;
                     budo_gfx_host_event(host, &event);
                 }

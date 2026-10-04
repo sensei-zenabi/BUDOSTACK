@@ -47,5 +47,5 @@ utilities/*
 Thumbs.db
 
 # Native BUDOWIN build products
-budo/BUDOWIN
-budo/budowin/APPS/*.BWA
+budo/budowin
+budo/BUDOWIN/APPS/*.BWA

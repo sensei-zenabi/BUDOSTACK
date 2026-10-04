@@ -188,6 +188,6 @@ $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS
 clean:
 	rm -f $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
 	rm -f ./apps/terminal
-	rm -f ./budo/example ./budo/rocket ./budo/BUDOWIN ./budo/budowin/APPS/*.BWA $(BUDO_BUILD_STAMP)
+	rm -f ./budo/example ./budo/rocket ./budo/budowin ./budo/BUDOWIN/APPS/*.BWA $(BUDO_BUILD_STAMP)
 	@echo "Removing all .o files..."
 	$(shell find . -type f -name '*.o' -delete)

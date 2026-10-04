@@ -1,5 +1,5 @@
 #define main budowin_application_main
-#include "../budo/budowin/src/main.c"
+#include "../budo/BUDOWIN/src/main.c"
 #undef main
 #include <assert.h>
 

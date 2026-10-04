@@ -91,7 +91,7 @@ int bw_initialize(int argc, char **argv) {
     char *slash = strrchr(executable, '/');
     if (!slash) return 0;
     *slash = '\0';
-    int written = snprintf(assets, sizeof(assets), "%s/budowin", executable);
+    int written = snprintf(assets, sizeof(assets), "%s/BUDOWIN", executable);
     if (written < 0 || (size_t)written >= sizeof(assets)) return 0;
     if (!getcwd(user_directory, sizeof(user_directory))) return 0;
     if (base) {
@@ -191,14 +191,19 @@ static int pump_one(void) {
         int mask = event.button == 1 ? 1 : event.button == 3 ? 2 : 4;
         if (event.type == BUDO_GFX_MOUSE_DOWN) mouse_buttons |= mask;
         if (event.type == BUDO_GFX_MOUSE_UP) mouse_buttons &= ~mask;
+        if (event.type != BUDO_GFX_MOUSE_MOVE) return 2;
     } else if (event.type == BUDO_GFX_WHEEL) {
         enqueue(0); enqueue(event.y > 0 ? 73 : 81);
     }
     return 1;
 }
 int bw_begin_frame(void) {
-    /* Consume one pointer transition per frame so quick clicks cannot collapse. */
-    (void)pump_one();
+    /* Collapse stale motion promptly, but render every button transition.
+     * A press and release must remain separate frames for the original UI. */
+    for (unsigned int i = 0; i < 256; ++i) {
+        int result = pump_one();
+        if (!result || result == 2 || disconnected) break;
+    }
     return !disconnected;
 }
 int bw_end_frame(void) {
@@ -228,7 +233,7 @@ int bw_command_needs_handoff(const char *command) {
     if (!length || length >= sizeof(name)) return 0;
     memcpy(name, command, length); name[length] = '\0';
     if (strstr(name, "/budo/") || strncmp(name, "budo/", 5) == 0 ||
-        strcmp(name, "BUDOWIN") == 0 || strcmp(name, "rocket") == 0 ||
+        strcmp(name, "budowin") == 0 || strcmp(name, "rocket") == 0 ||
         strcmp(name, "example") == 0) return 1;
     if (base) {
         const char *groups[] = {"apps", "games", "budo"};

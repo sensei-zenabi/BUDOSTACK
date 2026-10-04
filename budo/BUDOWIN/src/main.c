@@ -3745,14 +3745,21 @@ static void draw_editor_window(void)
                   "Editor", TITLE_TEXT_COLOR, 6);
     }
 
-    draw_checkbox(wrap_x, editor_window.y + 6,
-                  editor_wrap_enabled());
-    draw_text(wrap_x + 14, editor_window.y + 6,
-              "Wrap", TITLE_TEXT_COLOR, 4);
-    draw_checkbox(rows_x, editor_window.y + 6,
-                  editor_rows_enabled());
-    draw_text(rows_x + 14, editor_window.y + 6,
-              "Rows", TITLE_TEXT_COLOR, 4);
+    /*
+     * Keep Writer deliberately quiet: wrapping and row numbers are
+     * implementation details there, so only expose the mode switch.
+     * The plain editor retains its compact technical controls.
+     */
+    if (!editor_writer_mode) {
+        draw_checkbox(wrap_x, editor_window.y + 6,
+                      editor_wrap_enabled());
+        draw_text(wrap_x + 14, editor_window.y + 6,
+                  "Wrap", TITLE_TEXT_COLOR, 4);
+        draw_checkbox(rows_x, editor_window.y + 6,
+                      editor_rows_enabled());
+        draw_text(rows_x + 14, editor_window.y + 6,
+                  "Rows", TITLE_TEXT_COLOR, 4);
+    }
     draw_checkbox(writer_x, editor_window.y + 6,
                   editor_writer_mode);
     draw_text(writer_x + 14, editor_window.y + 6,
@@ -3783,6 +3790,22 @@ static void draw_editor_window(void)
     fill_rect(editor_window.x + 2,
               editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H,
               editor_window.w - 4, 1, FOLDER_DARK);
+
+    if (editor_writer_mode) {
+        int page_x = text_x;
+        int page_y = editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 1;
+        int page_bottom = editor_window.y + editor_window.h -
+                          EDITOR_STATUS_H - 2;
+        int page_h = page_bottom - page_y;
+
+        /* A restrained paper sheet keeps attention on the document. */
+        fill_rect(page_x + EDITOR_WRITER_PAGE_W, page_y + 2,
+                  2, page_h, WINDOW_SHADOW_COLOR);
+        fill_rect(page_x + 2, page_bottom, EDITOR_WRITER_PAGE_W,
+                  2, WINDOW_SHADOW_COLOR);
+        fill_rect(page_x, page_y, EDITOR_WRITER_PAGE_W, page_h,
+                  FILE_COLOR);
+    }
 
     if (editor_writer_mode && editor_writer_ruler) {
         int ruler_y = editor_window.y + WINDOW_TITLE_H +
@@ -3923,12 +3946,21 @@ static void draw_editor_window(void)
         fill_rect(editor_window.x + 2, status_y,
                   editor_window.w - 4,
                   EDITOR_STATUS_H - 2, FILE_DARK);
-        snprintf(status_text, sizeof(status_text),
-                 "Ln %d  Col %d  Words %d  Saved %s",
-                 editor_cursor_line + 1,
-                 editor_cursor_col + 1,
-                 words,
-                 editor_last_save);
+        if (editor_writer_mode) {
+            snprintf(status_text, sizeof(status_text),
+                     "WRITER  Ln %d  Col %d  Words %d  Saved %s",
+                     editor_cursor_line + 1,
+                     editor_cursor_col + 1,
+                     words,
+                     editor_last_save);
+        } else {
+            snprintf(status_text, sizeof(status_text),
+                     "EDITOR  Ln %d  Col %d  Words %d  Saved %s",
+                     editor_cursor_line + 1,
+                     editor_cursor_col + 1,
+                     words,
+                     editor_last_save);
+        }
         draw_text(editor_window.x + 6, status_y + 3,
                   status_text, TEXT_COLOR,
                   (editor_window.w - 16) / 6);

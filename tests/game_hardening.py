@@ -47,7 +47,7 @@ INVADERS = r'''
     invaders[0][0] = 1; invader_offset_x = 5; invader_offset_y = 10;
     bullet = (Bullet){1, 5, 11}; frame_count = 0;
     update_game(); assert(game_win && !game_over && score == 10 && !bullet.active);
-    init_game(); bullet = (Bullet){1, 39, 18}; frame_count = 1;
+    init_game(); bullet = (Bullet){1, BOARD_WIDTH - 1, 18}; frame_count = 1;
     update_game(); assert(bullet.y == 17);
     init_game(); invader_offset_x = BOARD_WIDTH - 1 - (INV_COLS - 1) * INV_SPACING_X;
     int old_y = invader_offset_y; frame_count = 0;
@@ -196,10 +196,19 @@ with tempfile.TemporaryDirectory(dir=ROOT) as directory:
             grid = screen(data, rows, cols)
             assert data.count('\x1b[2J') == 1, 'full-screen clear on an unchanged viewport'
             if name == 'invaders' and cols >= 40 and rows >= 26:
-                scale = min(cols // 40, (rows - 6) // 20)
+                scale = min((cols - 2) // 38, (rows - 6) // 20)
                 assert sum(line.count('W') for line in grid) == 48 * scale * scale
+                assert sum(line.count('┌') for line in grid) == 1
+                assert sum(line.count('┐') for line in grid) == 1
+                assert sum(line.count('└') for line in grid) == 1
+                assert sum(line.count('┘') for line in grid) == 1
                 ship_rows = [line for line in grid if 'A' in line and 'INVADERS' not in line and 'Arrows' not in line]
                 assert len(ship_rows) == scale and all(line.count('A') == scale for line in ship_rows)
+            if name == 'snake' and cols >= 22 and rows >= 26:
+                assert any('█' in line for line in grid)
+                assert any('▓' in line for line in grid)
+            if name == 'tictactoe' and cols >= 21 and rows >= 24:
+                assert all(sum(line.count(corner) for line in grid) == 1 for corner in '┌┐└┘')
         print(f'{name}: viewport sweep and repaint checks passed')
 
     # Exercise real terminals: raw settings/cursor recover after Ctrl+C and quit.

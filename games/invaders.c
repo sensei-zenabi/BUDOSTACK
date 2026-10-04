@@ -4,7 +4,7 @@
  * Space Invaders Clone for Linux Terminal
  *
  * Design Notes:
- * - The game board is a 40x20 grid drawn with borders using ANSI escape codes.
+ * - The game board is a 38x20 grid drawn with borders using ANSI escape codes.
  * - The player's ship is represented by 'A' at the bottom row.
  * - A single bullet (represented by '|') is allowed at a time.
  * - Invaders (represented by 'W') are arranged in a grid (4 rows x 12 columns)
@@ -34,7 +34,7 @@
 #include <string.h>
 #include <time.h>
 
-#define BOARD_WIDTH 40
+#define BOARD_WIDTH 38
 #define BOARD_HEIGHT 20
 
 #define INV_ROWS 4
@@ -222,7 +222,7 @@ void update_invaders(void) {
  * No movement is performed if game is over or won.
  */
 void update_game(void) {
-    if (game_over || game_win || budostack_get_target_cols() < BOARD_WIDTH ||
+    if (game_over || game_win || budostack_get_target_cols() < BOARD_WIDTH + 2 ||
         budostack_get_target_rows() < BOARD_HEIGHT + 6) {
         return;
     }
@@ -239,13 +239,12 @@ void update_game(void) {
 
 /* Render the game board with borders and a SCORE field */
 void draw_game(void) {
-    char board[BOARD_HEIGHT][BOARD_WIDTH + 1];
+    uint32_t board[BOARD_HEIGHT][BOARD_WIDTH];
     // Initialize board with spaces
     for (int i = 0; i < BOARD_HEIGHT; i++) {
         for (int j = 0; j < BOARD_WIDTH; j++) {
             board[i][j] = ' ';
         }
-        board[i][BOARD_WIDTH] = '\0';
     }
     // Draw invaders
     for (int i = 0; i < INV_ROWS; i++) {
@@ -267,14 +266,10 @@ void draw_game(void) {
     if (player_x >= 0 && player_x < BOARD_WIDTH)
         board[BOARD_HEIGHT - 1][player_x] = 'A';
     
-    char cells[BOARD_HEIGHT][BOARD_WIDTH];
-    for (int y = 0; y < BOARD_HEIGHT; y++) {
-        memcpy(cells[y], board[y], BOARD_WIDTH);
-    }
     char status[100];
     snprintf(status, sizeof(status), "INVADERS  Score: %d%s", score,
              game_over ? "  Game Over!" : game_win ? "  You Win!" : "");
-    budostack_draw_terminal_grid(&cells[0][0], BOARD_WIDTH, BOARD_HEIGHT, status,
+    budostack_draw_terminal_grid(&board[0][0], BOARD_WIDTH, BOARD_HEIGHT, status,
                                  "Arrows move Space fire R restart Q quit");
 }
 

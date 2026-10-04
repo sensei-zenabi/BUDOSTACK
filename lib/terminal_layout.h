@@ -1,6 +1,8 @@
 #ifndef BUDOSTACK_TERMINAL_LAYOUT_H
 #define BUDOSTACK_TERMINAL_LAYOUT_H
 
+#include <stdint.h>
+
 // Shared terminal layout defaults so every application targets the same
 // 80x60 (640x480 @ 8x8 font) character grid. They are defined as macros so
 // projects embedding Budostack can override them at compile time if the
@@ -17,7 +19,7 @@
 void budostack_terminal_begin_frame(void);
 
 /* Draw a centered board with uniform integer-sized cells; never downsample. */
-void budostack_draw_terminal_grid(const char *cells, int width, int height,
+void budostack_draw_terminal_grid(const uint32_t *cells, int width, int height,
                                   const char *status, const char *controls);
 
 int budostack_terminal_layout_enabled(void);

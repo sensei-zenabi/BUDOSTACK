@@ -212,16 +212,23 @@ static void render_game(char board[BOARD_SIZE][BOARD_SIZE], char current_player,
     }
     int width = cell_w * BOARD_SIZE;
     int height = cell_h * BOARD_SIZE;
-    int left = (cols - width) / 2 + 1;
-    int top = (rows - height - 5) / 2 + 1;
+    int left = (cols - width - 2) / 2 + 1;
+    int top = (rows - height - 7) / 2 + 1;
     budostack_terminal_begin_frame();
     printf("\033[%d;1H\033[2K\033[%d;%dHCONNECT %d  Player %c", top, top, left,
            WIN_CONDITION, current_player);
     printf("\033[%d;1H\033[2K\033[%d;%dH%.*s", top + 1, top + 1, left, width, mode_name);
     printf("\033[%d;1H\033[2K\033[%d;%dH%.*s", top + 2, top + 2, left, width, status_line);
+    printf("\033[%d;%dH┌", top + 3, left);
+    for (int x = 0; x < width; x++) {
+        fputs("─", stdout);
+    }
+    fputs("┐", stdout);
     for (int r = 0; r < BOARD_SIZE; r++) {
         for (int line = 0; line < cell_h; line++) {
-            printf("\033[%d;%dH", top + 3 + r * cell_h + line, left);
+            int separator = cell_h > 1 && r > 0 && line == 0;
+            printf("\033[%d;%dH", top + 4 + r * cell_h + line, left);
+            fputs(separator ? "├" : "│", stdout);
             for (int c = 0; c < BOARD_SIZE; c++) {
                 int cursor = show_cursor && r == cursor_row && c == cursor_col;
                 int last = r == last_move_row && c == last_move_col;
@@ -231,21 +238,27 @@ static void render_game(char board[BOARD_SIZE][BOARD_SIZE], char current_player,
                     printf("\033[1m");
                 }
                 for (int x = 0; x < cell_w; x++) {
-                    char ch = ' ';
-                    if (cell_h > 1 && line == 0) {
-                        ch = x == 0 ? '+' : '-';
+                    if (separator) {
+                        fputs(x == 0 && c > 0 ? "┼" : "─", stdout);
                     } else if (x == cell_w / 2 && line == cell_h / 2) {
-                        ch = board[r][c] == ' ' ? '.' : board[r][c];
-                    } else if (cell_w > 2 && x == 0) {
-                        ch = '|';
+                        putchar(board[r][c] == ' ' ? '.' : board[r][c]);
+                    } else if (cell_w > 2 && c > 0 && x == 0) {
+                        fputs("│", stdout);
+                    } else {
+                        putchar(' ');
                     }
-                    putchar(ch);
                 }
                 printf("\033[0m");
             }
+            fputs(separator ? "┤" : "│", stdout);
         }
     }
-    printf("\033[%d;%dH%.*s", top + height + 3, left, width,
+    printf("\033[%d;%dH└", top + height + 4, left);
+    for (int x = 0; x < width; x++) {
+        fputs("─", stdout);
+    }
+    fputs("┘", stdout);
+    printf("\033[%d;%dH%.*s", top + height + 5, left, width + 2,
            "WASD/Arrows Space place Q quit");
     fflush(stdout);
 }

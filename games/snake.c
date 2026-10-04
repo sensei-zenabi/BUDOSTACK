@@ -167,7 +167,7 @@ void updateSnake(void) {
 // Draw the game board using line-drawing characters for the borders,
 // and display the snake, fruit, score, and instructions.
 void drawBoard(void) {
-    char board[HEIGHT][WIDTH];
+    uint32_t board[HEIGHT][WIDTH];
     char status[80];
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
@@ -176,7 +176,7 @@ void drawBoard(void) {
     }
     board[fruit.y][fruit.x] = '*';
     for (int k = snake_length - 1; k >= 0; k--) {
-        board[snake[k].y][snake[k].x] = k == 0 ? '@' : 'o';
+        board[snake[k].y][snake[k].x] = k == 0 ? 0x2588u : 0x2593u;
     }
     snprintf(status, sizeof(status), "SNAKE  Score: %d%s", snake_length - 3,
              game_over ? (snake_length == MAX_SNAKE_LENGTH ? "  You Win!" : "  Game Over!") : "");
@@ -195,7 +195,7 @@ int main(void) {
         if (quit_requested) {
             break;
         }
-        if (!game_over && budostack_get_target_cols() >= WIDTH &&
+        if (!game_over && budostack_get_target_cols() >= WIDTH + 2 &&
             budostack_get_target_rows() >= HEIGHT + 6) {
             updateSnake();
         }

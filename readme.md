@@ -71,31 +71,41 @@ Are not distributed using the GPL-2.0 license. Instead, these folders
 contain their own LICENSE.txt files indicating their licensing conditions.
 
 
-### Overlay sizing
+### Terminal and overlay sizing
 
-`_TERM_SIZE <width_percent> <height_percent>` sets the centered display area
-using percentages of the current screen (0–100, decimals allowed). A zero
-dimension fills that axis; `0 0` fills the screen.
-`_TERM_OFFSET <x_percent> <y_percent>` shifts that area from the center, using
-screen width for X and screen height for Y (−100–100, decimals allowed).
-Positive X moves right; positive Y moves down. The area is recalculated when
-the screen resolution changes, including graphics apps and mouse mapping.
+`TERMINAL_WIDTH`, `TERMINAL_HEIGHT`, `TERMINAL_OFFSET_X`, and
+`TERMINAL_OFFSET_Y` in `config.ini` configure terminal content through
+`_TERM_SIZE` and `_TERM_OFFSET`. Width/height are percentages (0–100),
+while offsets are signed percentages (−100–100). Decimals are allowed.
+Positive X moves right; positive Y moves down from the centered position.
+A zero dimension uses the full layout on that axis.
 
-For example, `_TERM_SIZE 80 75` and `_TERM_OFFSET 0 2.5` use 80% of the screen
-width, 75% of its height, and shift down by 2.5% of the screen height.
-The `OVERLAY_WIDTH`, `OVERLAY_HEIGHT`, `OVERLAY_OFFSET_X`, and
-`OVERLAY_OFFSET_Y` values in `config.ini` use the same units. Existing custom
-pixel settings/scripts require a one-time conversion: `pixels * 100 / screen
-axis resolution`. The bundled defaults preserve their layout at 1920×1080.
+`_TERM_LAYOUT_ASPECT=5:4` defines the terminal reference layout while the
+overlay is enabled: scale uniformly to screen height and center it, fitting
+to width on narrower displays. Terminal sizes and offsets use this layout's
+width and height. Set `screen` for independent screen-relative percentages.
+For example, `TERMINAL_WIDTH=80` and `TERMINAL_HEIGHT=75` use 80% of the
+reference layout width and 75% of its height. Resolution changes retain
+terminal proportions, including graphics apps and mouse mapping.
+When the overlay is disabled, autoexec uses `_TERM_SIZE 0 0` and
+`_TERM_OFFSET 0 0` for the full screen.
 
-`_TERM_OVERLAY_ZOOM <percent>` scales the overlay image around screen center.
-100 retains the full-screen image; 80 uses 80% of screen width and height;
-120 enlarges it to 120%, cropping its edges. Range: 1–1000, decimals allowed.
-`_TERM_OVERLAY_OFFSET <x_percent> <y_percent>` shifts the overlay image from
-center; positive X moves right and positive Y moves down. Range: −100–100.
-These commands affect only the overlay image; use `_TERM_SIZE` and
-`_TERM_OFFSET` to align terminal content with its opening.
+`_TERM_OVERLAY_ZOOM <percent>` scales the overlay image uniformly around
+screen center, preserving the native image aspect independently of the
+terminal layout. 100 matches screen height; 80 uses 80% of screen height;
+120 enlarges it to 120%. Screen edges crop the image as needed.
+Range: 1–1000, decimals allowed.
+`_TERM_OVERLAY_OFFSET <x_percent> <y_percent>` shifts the image using
+percentages of screen height on BOTH axes. Positive X moves right and
+positive Y moves down. Range: −100–100.
+These commands affect only the overlay image; use terminal settings to
+align content with its opening.
 
-Boot settings: `_TERM_OVERLAY_ZOOM=100`, `_TERM_OVERLAY_OFFSET_X=0`, and
-`_TERM_OVERLAY_OFFSET_Y=0` in `config.ini`. Zoom and offsets are recalculated
-from current screen dimensions on each redraw and retained while disabled.
+Overlay boot settings are `_TERM_OVERLAY_ZOOM`, `_TERM_OVERLAY_OFFSET_X`,
+and `_TERM_OVERLAY_OFFSET_Y`. The bundled zoom is 125. Image geometry is
+recalculated from current screen height on each redraw and retained while
+disabled.
+
+Custom configs using the previous terminal keys must rename `OVERLAY_WIDTH`,
+`OVERLAY_HEIGHT`, `OVERLAY_OFFSET_X`, and `OVERLAY_OFFSET_Y` to their
+`TERMINAL_` equivalents. Keep the `_TERM_OVERLAY_*` image settings unchanged.

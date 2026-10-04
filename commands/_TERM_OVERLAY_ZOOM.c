@@ -7,8 +7,8 @@
 
 static void print_usage(void) {
     fprintf(stderr, "Usage: _TERM_OVERLAY_ZOOM <percent>\n");
-    fprintf(stderr, "  Sets overlay width and height as percentages of the active layout.\n");
-    fprintf(stderr, "  100 fills the layout; smaller values zoom out, larger values zoom in.\n");
+    fprintf(stderr, "  Scales the native overlay uniformly; 100 matches screen height.\n");
+    fprintf(stderr, "  Preserves image aspect; smaller values zoom out, larger values zoom in.\n");
     fprintf(stderr, "  Range: 1 to 1000 percent; decimals allowed.\n");
 }
 

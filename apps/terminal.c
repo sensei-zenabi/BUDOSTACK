@@ -135,6 +135,8 @@ static int terminal_history_width = 0;
 static int terminal_history_height = 0;
 static GLuint terminal_overlay_texture = 0;
 static int terminal_overlay_available = 0;
+static int terminal_overlay_width = 0;
+static int terminal_overlay_height = 0;
 static int terminal_overlay_enabled = 1;
 static double terminal_overlay_zoom = 100;
 /* Zero retains legacy screen-relative percentages. */
@@ -1462,7 +1464,7 @@ static int terminal_size_to_active_display(void) {
     return 0;
 }
 
-/* Share one uniform reference transform for the overlay and its content. */
+/* Reference layout applies only to terminal content. */
 static void terminal_layout_size(int drawable_width, int drawable_height,
                                  double *out_width, double *out_height) {
     double width = drawable_width;
@@ -1511,23 +1513,24 @@ static void terminal_display_rect(int drawable_width, int drawable_height, int *
 /* Zoom and offsets apply only to the overlay, independently of content. */
 static void terminal_overlay_rect(int drawable_width, int drawable_height,
                                   int *out_x, int *out_y, int *out_w, int *out_h) {
-    double layout_width;
-    double layout_height;
-    terminal_layout_size(drawable_width, drawable_height, &layout_width, &layout_height);
-    double width = layout_width * terminal_overlay_zoom / 100.0;
-    double height = layout_height * terminal_overlay_zoom / 100.0;
-    /* Keep dimensions and positions representable even for extreme drawables. */
+    /* Fit native image height, then zoom uniformly; crop at screen edges. */
+    double aspect = terminal_overlay_width > 0 && terminal_overlay_height > 0
+        ? (double)terminal_overlay_width / terminal_overlay_height : 1.0;
+    double height = drawable_height * terminal_overlay_zoom / 100.0;
+    double width = height * aspect;
+    /* Bound both dimensions together so extreme sizes also retain aspect. */
     int limit = INT_MAX / 4;
-    int w = width > limit ? limit : (int)lround(width);
-    int h = height > limit ? limit : (int)lround(height);
+    double scale = fmin(1.0, limit / fmax(width, height));
+    int w = (int)lround(width * scale);
+    int h = (int)lround(height * scale);
     if (w < 1) {
         w = 1;
     }
     if (h < 1) {
         h = 1;
     }
-    double x = (drawable_width - w) / 2.0 + layout_width * terminal_overlay_offset_x / 100.0;
-    double y = (drawable_height - h) / 2.0 + layout_height * terminal_overlay_offset_y / 100.0;
+    double x = (drawable_width - w) / 2.0 + drawable_height * terminal_overlay_offset_x / 100.0;
+    double y = (drawable_height - h) / 2.0 + drawable_height * terminal_overlay_offset_y / 100.0;
     *out_x = (int)lround(fmax(-limit, fmin(limit, x)));
     *out_y = (int)lround(fmax(-limit, fmin(limit, y)));
     *out_w = w;
@@ -3962,6 +3965,8 @@ static int terminal_load_overlay(const char *path) {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
     terminal_bind_texture(0);
     stbi_image_free(pixels);
+    terminal_overlay_width = width;
+    terminal_overlay_height = height;
     terminal_overlay_available = 1;
     return 0;
 }
@@ -4171,6 +4176,8 @@ static void terminal_release_gl_resources(void) {
         terminal_overlay_texture = 0;
     }
     terminal_overlay_available = 0;
+    terminal_overlay_width = 0;
+    terminal_overlay_height = 0;
     terminal_destroy_cursor_sprite();
     terminal_clear_gl_shaders();
     if (terminal_gl_intermediate_textures[0] != 0) {

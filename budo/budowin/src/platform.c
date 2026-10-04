@@ -1,0 +1,262 @@
+#define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
+#include "platform.h"
+#include "../../../lib/budo_gfx.h"
+#include <dirent.h>
+#include <errno.h>
+#include <fnmatch.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static struct budo_gfx *screen;
+static uint8_t pixels[640 * 480];
+static uint32_t palette[256];
+static int mouse_x = 320, mouse_y = 240, mouse_buttons;
+static unsigned char keys[512];
+static int queue[256];
+static unsigned int queue_read, queue_write;
+static int disconnected;
+static int caps_lock;
+static char user_directory[4096], state_directory[4096];
+static char own_executable[4096];
+static char launch_command[4096], launch_directory[4096];
+static int launch_shell;
+
+int findnext(struct ffblk *entry) {
+    DIR *directory = opendir(entry->directory);
+    struct dirent *item;
+    char chosen[256] = "";
+    unsigned int attrib = 0;
+    if (!directory) return -1;
+    while ((item = readdir(directory)) != NULL) {
+        char path[4096];
+        struct stat st;
+        int written;
+        if (strlen(item->d_name) >= sizeof(chosen) ||
+            strcmp(item->d_name, entry->previous) <= 0 ||
+            (chosen[0] && strcmp(item->d_name, chosen) >= 0)) continue;
+        if (strcmp(entry->pattern, "*.*") != 0 &&
+            fnmatch(entry->pattern, item->d_name, 0) != 0) continue;
+        written = snprintf(path, sizeof(path), "%s/%s", entry->directory, item->d_name);
+        if (written < 0 || (size_t)written >= sizeof(path) || stat(path, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode) && !(entry->attributes & FA_DIREC)) continue;
+        strcpy(chosen, item->d_name);
+        attrib = S_ISDIR(st.st_mode) ? FA_DIREC : FA_ARCH;
+    }
+    closedir(directory);
+    if (!chosen[0]) return -1;
+    strcpy(entry->ff_name, chosen);
+    strcpy(entry->previous, chosen);
+    entry->ff_attrib = attrib;
+    return 0;
+}
+int findfirst(const char *pattern, struct ffblk *entry, int attributes) {
+    const char *slash = strrchr(pattern, '/');
+    size_t length = slash ? (size_t)(slash - pattern) : 1;
+    memset(entry, 0, sizeof(*entry));
+    if (length >= sizeof(entry->directory) ||
+        strlen(slash ? slash + 1 : pattern) >= sizeof(entry->pattern)) return -1;
+    if (slash) {
+        memcpy(entry->directory, pattern, length);
+        if (!length) strcpy(entry->directory, "/");
+    } else strcpy(entry->directory, ".");
+    strcpy(entry->pattern, slash ? slash + 1 : pattern);
+    entry->attributes = (unsigned int)attributes;
+    return findnext(entry);
+}
+static int copy_path(char *dest, size_t size, const char *source) {
+    size_t length = strlen(source);
+    if (length >= size) return 0;
+    memcpy(dest, source, length + 1);
+    return 1;
+}
+int bw_initialize(int argc, char **argv) {
+    char executable[4096], assets[4096], path[8192];
+    const char *base = getenv("BUDOSTACK_BASE");
+    const char *home = getenv("HOME");
+    ssize_t length = readlink("/proc/self/exe", executable, sizeof(executable) - 1);
+    if (length < 0) {
+        if (argc < 1 || !realpath(argv[0], executable)) {
+            perror("BUDOWIN: executable path"); return 0;
+        }
+        length = (ssize_t)strlen(executable);
+    }
+    executable[length] = '\0';
+    (void)copy_path(own_executable, sizeof(own_executable), executable);
+    char *slash = strrchr(executable, '/');
+    if (!slash) return 0;
+    *slash = '\0';
+    int written = snprintf(assets, sizeof(assets), "%s/budowin", executable);
+    if (written < 0 || (size_t)written >= sizeof(assets)) return 0;
+    if (!getcwd(user_directory, sizeof(user_directory))) return 0;
+    if (base) {
+        written = snprintf(path, sizeof(path), "%s/users/default", base);
+        if (written > 0 && (size_t)written < sizeof(path) && access(path, R_OK | X_OK) == 0)
+            (void)copy_path(user_directory, sizeof(user_directory), path);
+        written = snprintf(path, sizeof(path), "%s/apps:%s/commands:%s/utilities:%s/budo:%s", base, base, base, base, getenv("PATH") ? getenv("PATH") : "/usr/bin:/bin");
+        if (written < 0 || (size_t)written >= sizeof(path) || setenv("PATH", path, 1) != 0) return 0;
+    }
+    /* All writable state is user-owned, never stored beside installed sources. */
+    written = snprintf(state_directory, sizeof(state_directory), "%s/.budowin", home ? home : user_directory);
+    if (written < 0 || (size_t)written >= sizeof(state_directory)) return 0;
+    if (mkdir(state_directory, 0700) != 0 && errno != EEXIST) { perror("BUDOWIN: state directory"); return 0; }
+    if (chdir(assets) != 0) { perror("BUDOWIN: asset directory"); return 0; }
+    return 1;
+}
+const char *bw_user_directory(void) { return user_directory; }
+int bw_user_path(char *out, size_t size, const char *path) {
+    if (path[0] == '/') return copy_path(out, size, path);
+    int written = snprintf(out, size, "%s/%s", user_directory, path);
+    return written >= 0 && (size_t)written < size;
+}
+const char *bw_state_file(const char *name) {
+    static char paths[16][4096];
+    static unsigned int next;
+    char *path = paths[next++ % 16];
+    int written = snprintf(path, 4096, "%s/%s", state_directory, name);
+    if (written < 0 || written >= 4096) { fprintf(stderr, "BUDOWIN: state path too long\n"); return "/dev/null"; }
+    return path;
+}
+int bw_screen_open(void) {
+    disconnected = 0;
+    return budo_gfx_open(&screen, 640, 480, BUDO_GFX_INDEX8) == 0;
+}
+void bw_screen_close(void) { budo_gfx_close(screen); screen = NULL; }
+void bw_palette_entry(unsigned int index, unsigned int r, unsigned int g, unsigned int b) {
+    if (index < 256) palette[index] = 0xff000000u | ((r * 255 / 63) << 16) | ((g * 255 / 63) << 8) | (b * 255 / 63);
+}
+int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t length) {
+    if (offset > sizeof(pixels) || length > sizeof(pixels) - offset) return 0;
+    memcpy(pixels + offset, data, length);
+    return 1;
+}
+static void enqueue(int key) {
+    if (queue_write - queue_read < 256) queue[queue_write++ % 256] = key;
+}
+unsigned int bw_modifiers(void) {
+    return ((keys[225] || keys[229]) ? 3u : 0u) | ((keys[224] || keys[228]) ? 4u : 0u);
+}
+static void translate_key(const struct budo_gfx_event *event) {
+    int key = event->key;
+    int code = event->scancode;
+    int extended = 0;
+    switch (code) {
+        case 73: extended = 82; break; case 74: extended = 71; break;
+        case 75: extended = 73; break; case 76: extended = 83; break;
+        case 77: extended = 79; break; case 78: extended = 81; break;
+        case 79: extended = 77; break; case 80: extended = 75; break;
+        case 81: extended = 80; break; case 82: extended = 72; break;
+        default: if (code >= 58 && code <= 67) extended = code - 58 + 59; break;
+    }
+    if (extended) {
+        if (queue_write - queue_read <= 254) { enqueue(0); enqueue(extended); }
+        return;
+    }
+    if (code >= 224 && code <= 231) return;
+    if (code == 57) { if (!event->repeat) caps_lock = !caps_lock; return; }
+    if (code == 88) key = 13;
+    if (code >= 89 && code <= 97) key = '1' + code - 89;
+    if (code == 98) key = '0';
+    if (key == 10) key = 13;
+    if (key == 127) key = 8;
+    if ((bw_modifiers() & 4u) && key >= 'a' && key <= 'z') key -= 'a' - 1;
+    else if (((bw_modifiers() & 3u) != 0) != (caps_lock != 0) && key >= 'a' && key <= 'z') key -= 'a' - 'A';
+    else if (bw_modifiers() & 3u) {
+        const char *plain = "1234567890-=[]\\;',./`";
+        const char *shift = "!@#$%^&*()_+{}|:\"<>?~";
+        const char *found = key > 0 && key < 128 ? strchr(plain, key) : NULL;
+        if (found) key = shift[found - plain];
+    }
+    if (key > 0 && key < 128) enqueue(key);
+}
+static int pump_one(void) {
+    struct budo_gfx_event event;
+    int result = budo_gfx_poll_event(screen, &event);
+    if (result < 0) { disconnected = 1; return 0; }
+    if (!result) return 0;
+    if (event.type == BUDO_GFX_QUIT) disconnected = 1;
+    else if (event.type == BUDO_GFX_RESET) {
+        memset(keys, 0, sizeof(keys)); mouse_buttons = 0;
+        queue_read = queue_write = 0;
+    } else if (event.type == BUDO_GFX_KEY_DOWN || event.type == BUDO_GFX_KEY_UP) {
+        if (event.scancode >= 0 && event.scancode < 512) keys[event.scancode] = event.type == BUDO_GFX_KEY_DOWN;
+        if (event.type == BUDO_GFX_KEY_DOWN) translate_key(&event);
+    } else if (event.type == BUDO_GFX_MOUSE_MOVE || event.type == BUDO_GFX_MOUSE_DOWN || event.type == BUDO_GFX_MOUSE_UP) {
+        mouse_x = event.x; mouse_y = event.y;
+        int mask = event.button == 1 ? 1 : event.button == 3 ? 2 : 4;
+        if (event.type == BUDO_GFX_MOUSE_DOWN) mouse_buttons |= mask;
+        if (event.type == BUDO_GFX_MOUSE_UP) mouse_buttons &= ~mask;
+    } else if (event.type == BUDO_GFX_WHEEL) {
+        enqueue(0); enqueue(event.y > 0 ? 73 : 81);
+    }
+    return 1;
+}
+int bw_begin_frame(void) {
+    /* Consume one pointer transition per frame so quick clicks cannot collapse. */
+    (void)pump_one();
+    return !disconnected;
+}
+int bw_end_frame(void) {
+    struct timespec delay = {0, 16000000};
+    if (budo_gfx_present(screen, pixels, palette) != 0) return 0;
+    nanosleep(&delay, NULL);
+    return !disconnected;
+}
+void bw_mouse_state(int *x, int *y, int *buttons) { *x = mouse_x; *y = mouse_y; *buttons = mouse_buttons; }
+int kbhit(void) { return queue_read != queue_write; }
+int getch(void) { return kbhit() ? queue[queue_read++ % 256] : -1; }
+clock_t bw_clock(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (clock_t)((double)now.tv_sec * CLOCKS_PER_SEC + (double)now.tv_nsec * CLOCKS_PER_SEC / 1000000000.0);
+}
+int bw_request_launch(const char *command, const char *directory, int shell) {
+    if (!copy_path(launch_command, sizeof(launch_command), command) ||
+        !copy_path(launch_directory, sizeof(launch_directory), directory)) return 0;
+    launch_shell = shell;
+    return 1;
+}
+int bw_command_needs_handoff(const char *command) {
+    char name[256];
+    size_t length = strcspn(command, " \t");
+    const char *base = getenv("BUDOSTACK_BASE");
+    if (!length || length >= sizeof(name)) return 0;
+    memcpy(name, command, length); name[length] = '\0';
+    if (strstr(name, "/budo/") || strncmp(name, "budo/", 5) == 0 ||
+        strcmp(name, "BUDOWIN") == 0 || strcmp(name, "rocket") == 0 ||
+        strcmp(name, "example") == 0) return 1;
+    if (base) {
+        const char *groups[] = {"apps", "games", "budo"};
+        for (size_t i = 0; i < sizeof(groups) / sizeof(groups[0]); ++i) {
+            char path[4096];
+            int written = snprintf(path, sizeof(path), "%s/%s/%s", base, groups[i], name);
+            if (written > 0 && (size_t)written < sizeof(path) && access(path, X_OK) == 0) return 1;
+        }
+    }
+    return 0;
+}
+void bw_finish(void) {
+    if (!launch_command[0]) return;
+    pid_t pid = fork();
+    if (pid < 0) { perror("BUDOWIN: launch"); return; }
+    if (pid == 0) {
+        if (chdir(launch_directory) != 0) { perror("BUDOWIN: launch directory"); _exit(1); }
+        if (launch_shell) execl("/bin/sh", "sh", "-c", launch_command, (char *)NULL);
+        else execl(launch_command, launch_command, (char *)NULL);
+        perror("BUDOWIN: executable"); _exit(127);
+    }
+    int status;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    bw_restore_directory(user_directory);
+    execl(own_executable, own_executable, (char *)NULL);
+    perror("BUDOWIN: resume");
+}
+
+void bw_restore_directory(const char *path) {
+    if (chdir(path) != 0) perror("BUDOWIN: restore directory");
+}

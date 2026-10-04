@@ -146,7 +146,7 @@ UTILITIES_EXES = $(UTILITIES_SRCS:.c=)
 # Define all targets (main, commands, and apps)
 ALL_TARGETS = $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
 
-BUDO_SRCS = $(shell find ./budo -type f \( -name '*.c' -o -name '*.h' \))
+BUDO_SRCS = $(shell find ./budo -type f \( -name '*.c' -o -name '*.h' -o -name 'build.sh' \))
 BUDO_BUILD_STAMP = ./budo/.budo_build_stamp
 
 .PHONY: all clean budo_build debian termux print-platform
@@ -188,6 +188,6 @@ $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES): %: %.o $(LIB_OBJS
 clean:
 	rm -f $(TARGET) $(COMMANDS_EXES) $(APPS_EXES) $(GAMES_EXES) $(UTILITIES_EXES)
 	rm -f ./apps/terminal
-	rm -f ./budo/example ./budo/rocket $(BUDO_BUILD_STAMP)
+	rm -f ./budo/example ./budo/rocket ./budo/BUDOWIN ./budo/budowin/APPS/*.BWA $(BUDO_BUILD_STAMP)
 	@echo "Removing all .o files..."
 	$(shell find . -type f -name '*.o' -delete)

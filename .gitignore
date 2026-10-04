@@ -45,3 +45,7 @@ utilities/*
 # OS-specific files
 .DS_Store
 Thumbs.db
+
+# Native BUDOWIN build products
+budo/BUDOWIN
+budo/budowin/APPS/*.BWA

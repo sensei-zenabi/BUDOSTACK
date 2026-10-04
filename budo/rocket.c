@@ -10,7 +10,7 @@
 #include <SDL.h>
 
 #define GAME_WIDTH 640
-#define GAME_HEIGHT 360
+#define GAME_HEIGHT 480
 #define TARGET_FPS 60
 
 #define MAX_ASTEROIDS 16

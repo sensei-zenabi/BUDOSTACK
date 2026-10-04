@@ -38,7 +38,7 @@ connection and restores the text display without resizing the text grid.
 open a logical framebuffer, poll input, present complete frames and close.
 Formats are numeric ARGB8888 (alpha ignored) and INDEX8 with a configurable
 256-entry ARGB8888 palette. 320×200 VGA-style frames are supported; both existing
-demos retain 640×360 to preserve their layout and gameplay. This is a native
+applications render at standard VGA resolution, 640×480 (4:3). This is a native
 pixel graphics mode, not DOS binary or VGA hardware emulation.
 
 The terminal exports a private Unix `SOCK_SEQPACKET` endpoint per tab through

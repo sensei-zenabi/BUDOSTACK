@@ -53,7 +53,7 @@ static void test_demo(const char *root, const char *preload, const char *name, i
             int height;
             int dirty;
             const uint8_t *pixels = budo_gfx_host_pixels(host, &width, &height, &dirty);
-            assert(width == 640 && height == 360);
+            assert(width == 640 && height == 480);
             if (dirty) {
                 frames++;
                 assert(terminal_upload_framebuffer(pixels, width, height, 1) == 0);

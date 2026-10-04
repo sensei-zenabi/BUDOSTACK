@@ -7708,26 +7708,24 @@ int main(int argc, char **argv)
                     handled = 1;
                 } else if (editor_dialog != EDITOR_DIALOG_NONE) {
                     handled = 1;
-                } else if (point_in_rect(mouse_x, mouse_y,
+                } else if (!editor_writer_mode &&
+                           point_in_rect(mouse_x, mouse_y,
                                          wrap_x, editor_window.y + 4,
                                          48, 12)) {
-                    if (!editor_writer_mode) {
-                        editor_word_wrap = !editor_word_wrap;
-                        editor_left_col = 0;
-                        editor_ensure_cursor_visible();
-                        (void)save_editor_settings();
-                    }
+                    editor_word_wrap = !editor_word_wrap;
+                    editor_left_col = 0;
+                    editor_ensure_cursor_visible();
+                    (void)save_editor_settings();
                     screen_dirty = 1;
                     handled = 1;
-                } else if (point_in_rect(mouse_x, mouse_y,
+                } else if (!editor_writer_mode &&
+                           point_in_rect(mouse_x, mouse_y,
                                          rows_x, editor_window.y + 4,
                                          48, 12)) {
-                    if (!editor_writer_mode) {
-                        editor_show_row_numbers =
-                            !editor_show_row_numbers;
-                        editor_ensure_cursor_visible();
-                        (void)save_editor_settings();
-                    }
+                    editor_show_row_numbers =
+                        !editor_show_row_numbers;
+                    editor_ensure_cursor_visible();
+                    (void)save_editor_settings();
                     screen_dirty = 1;
                     handled = 1;
                 } else if (point_in_rect(mouse_x, mouse_y,

@@ -187,7 +187,10 @@ static int pump_one(void) {
         if (event.scancode >= 0 && event.scancode < 512) keys[event.scancode] = event.type == BUDO_GFX_KEY_DOWN;
         if (event.type == BUDO_GFX_KEY_DOWN) translate_key(&event);
     } else if (event.type == BUDO_GFX_MOUSE_MOVE || event.type == BUDO_GFX_MOUSE_DOWN || event.type == BUDO_GFX_MOUSE_UP) {
-        mouse_x = event.x; mouse_y = event.y;
+        /* Overlay margins can map outside the logical VGA display.
+         * Clamp both motion and button coordinates to the visible edges. */
+        mouse_x = event.x < 0 ? 0 : event.x > 639 ? 639 : event.x;
+        mouse_y = event.y < 0 ? 0 : event.y > 479 ? 479 : event.y;
         int mask = event.button == 1 ? 1 : event.button == 3 ? 2 : 4;
         if (event.type == BUDO_GFX_MOUSE_DOWN) mouse_buttons |= mask;
         if (event.type == BUDO_GFX_MOUSE_UP) mouse_buttons &= ~mask;

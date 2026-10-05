@@ -28,6 +28,18 @@ else
     SDL_MIXER_DEFINE="-DBUDO_USE_SDL_MIXER=0"
 fi
 
+# Dungeon Hero uses the native indexed transport without an SDL dependency.
+# SDL2, when available, synthesizes the original PC speaker notes.
+DHERO_AUDIO_DEFINE=""
+if [[ -n "$SDL_LIBS" ]]; then
+    DHERO_AUDIO_DEFINE="-DDHERO_SDL_AUDIO=1"
+fi
+cc -std=c11 -Wall -Wextra -Werror -Wpedantic \
+    $DHERO_AUDIO_DEFINE $SDL_CFLAGS \
+    "$SCRIPT_DIR/dhero.c" "$SCRIPT_DIR"/DHERO/{runtime,main,editor,data,pcx}.c \
+    "$SCRIPT_DIR/../lib/budo_gfx.c" -o "$SCRIPT_DIR/dhero" $SDL_LIBS
+echo "Built $SCRIPT_DIR/dhero"
+
 "$SCRIPT_DIR/BUDOWIN/build.sh"
 
 if [[ -z "$SDL_LIBS" ]]; then

@@ -49,3 +49,9 @@ Thumbs.db
 # Native BUDOWIN build products
 budo/budowin
 budo/BUDOWIN/APPS/*.BWA
+
+budo/dhero
+budo/DHERO/DATA/GAME/SETTINGS.DAT
+budo/DHERO/DATA/GAME/SCORES.DAT
+budo/DHERO/DATA/GFX/MAP/*.TMP
+budo/DHERO/DATA/GFX/MAP/*.BAK

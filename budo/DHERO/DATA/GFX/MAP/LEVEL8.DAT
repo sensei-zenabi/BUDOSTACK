@@ -1,0 +1,31 @@
+NAME LEVEL8
+SIZE 20 12
+TILES TILE000
+HERO CHAR000
+LEGEND
+# WALL BLOCK
+. FLOOR WALK
+S STAIRS WALK
+C CHEST BLOCK
+END
+MAP
+####################
+#.................S#
+#.###############..#
+#.#.............#..#
+#.#.###########.#.##
+#.#.#.........#.#..#
+#...#.#######.#.##.#
+#####.#.....#.#....#
+#.....#.###.#.####.#
+#.#####...#........#
+#C................##
+####################
+END
+START 1 1 RIGHT
+CHEST 1 10 FLOOR 110 BATTLE_AXE
+ENEMY MUMMY 5 1 LEFT
+ENEMY CHAOS_WARRIOR 10 3 DOWN
+ENEMY ORC 7 8 UP
+ENEMY CHAOS_WARRIOR 15 9 LEFT
+EXIT 18 1 LEVEL9

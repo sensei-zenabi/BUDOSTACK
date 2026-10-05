@@ -1,0 +1,14 @@
+# TILE000.PCX
+# Format: NAME COLUMN ROW
+# Grid coordinates are zero-based from top-left.
+
+CELL 16 16
+
+FLOOR       0 0
+WALL        1 0
+WALL_TORCH  2 0
+DOOR_CLOSED 3 0
+DOOR_OPEN   0 1
+STAIRS      1 1
+CHEST       2 1
+WALL_SKULL  3 1

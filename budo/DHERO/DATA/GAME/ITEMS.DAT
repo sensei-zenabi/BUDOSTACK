@@ -1,0 +1,16 @@
+; NAME         SLOT        ATTACK DEFENSE MAX_HP HEAL GOLD
+; Equipping WEAPON or ARMOR replaces the previous item in that slot.
+; CONSUMABLE applies immediately. NONE is treasure-only.
+
+DAGGER          WEAPON      1      0       0      0    0
+SWORD           WEAPON      2      0       0      0    0
+AXE             WEAPON      3      0       0      0    0
+BATTLE_AXE      WEAPON      5      0       0      0    0
+SHIELD          ARMOR       0      2       0      0    0
+CHAINMAIL       ARMOR       0      3       2      0    0
+PLATE_ARMOR     ARMOR       0      5       4      0    0
+POTION          CONSUMABLE  0      0       0      6    0
+ELIXIR          CONSUMABLE  0      0       0      12   0
+GOLD10          NONE        0      0       0      0    10
+GOLD25          NONE        0      0       0      0    25
+GOLD50          NONE        0      0       0      0    50

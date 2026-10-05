@@ -1,0 +1,41 @@
+; DUNGEON HERO - LEVEL 1
+NAME LEVEL1
+SIZE 20 12
+TILES TILE000
+HERO CHAR000
+LEGEND
+# WALL BLOCK
+. FLOOR WALK
+T WALL_TORCH BLOCK
+D DOOR_CLOSED BLOCK
+O DOOR_OPEN WALK
+S STAIRS WALK
+C CHEST BLOCK
+K WALL_SKULL BLOCK
+END
+MAP
+####################
+#.....#.......#...S#
+#.....#.......#....#
+#.....D.......D....#
+#.....#.......#....#
+###D###.......###D##
+#.....#.......#....#
+#.....D.......D....#
+#..C..#.......#..C.#
+#.....#.......#....#
+#.....#.......#....#
+####################
+END
+START 2 2 DOWN
+DOOR 6 3 DOOR_OPEN
+DOOR 14 3 DOOR_OPEN
+DOOR 3 5 DOOR_OPEN
+DOOR 17 5 DOOR_OPEN
+DOOR 6 7 DOOR_OPEN
+DOOR 14 7 DOOR_OPEN
+CHEST 3 8 FLOOR 25 NONE
+CHEST 17 8 FLOOR 0 POTION
+ENEMY GOBLIN 9 3 LEFT
+ENEMY GOBLIN 11 7 UP
+EXIT 18 1 LEVEL2

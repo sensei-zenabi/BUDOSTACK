@@ -5,6 +5,7 @@ Each application keeps its assets in a corresponding folder:
 
 - `example.c` → `example`, with assets in `EXAMPLE/`
 - `rocket.c` → `rocket`, with assets in `ROCKET/`
+- `dhero.c` → `dhero`, with assets and game sources in `DHERO/`
 
 Build with `make clean all` from the repository root, or `./budo/build.sh`.
 SDL2 development files are required. SDL_image and SDL_mixer remain optional;
@@ -18,6 +19,7 @@ Inside the BUDOSTACK terminal:
 cd budo
 ./example
 ./rocket
+./dhero
 ```
 
 Launching `./budo/example` or `./budo/rocket` from another working directory also
@@ -89,3 +91,16 @@ BUDO_WIDTH=640 ./budo/build.sh
 Changing the mode requires rebuilding the applications. New applications
 should use `BUDO_WIDTH`, `BUDO_HEIGHT`, and `BUDO_PIXEL_SCALE` from the shared
 header. Other values are rejected at build time.
+
+## Dungeon Hero
+
+Dungeon Hero is a native port of `sensei-zenabi/dosgame1`. It retains the original
+320×200 indexed framebuffer, PCX art, ten-level campaign, turn-based combat,
+inventory, English/Finnish text, scores, settings, and level editor. It uses the
+same terminal graphics transport and shader/overlay settings as Rocket. SDL2
+is optional for synthesized speaker audio; graphics and input work without it.
+
+Arrows move/navigate, Enter interacts/confirms, Space opens inventory, and Escape
+returns/exits. In Options, E opens the editor. `./budo/dhero --editor` opens it
+directly. Assets resolve relative to the executable from any working directory.
+See `DHERO/README.md` for provenance, editor controls, and verification.

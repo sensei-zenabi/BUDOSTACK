@@ -98,7 +98,7 @@ static void settings_scroll_configure(void)
 static int settings_pointer(int x, int y, int event)
 {
     settings_scroll_configure();
-    int handled = budo_scroll_pointer(&association_scroll, x, y, event);
+    int handled = budo_scroll_pointer_host(host_api, &association_scroll, x, y, event);
     top_row = association_scroll.position;
     return handled;
 }
@@ -182,6 +182,7 @@ static void draw_list(void)
 static int settings_open(void)
 {
     top_row = 0;
+    association_scroll.held = association_scroll.armed = association_scroll.dragging = 0;
     if (!host_api->window_create(WIN_X, WIN_Y, WIN_W, WIN_H,
                                   "Settings - File Associations",
                                   BUDO_WINDOW_DEFAULT_BUTTONS)) return 0;

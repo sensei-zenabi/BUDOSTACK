@@ -2,6 +2,7 @@
 #define BUDOWIN_UI_H
 #include "budowin.h"
 #include "selection.h"
+#include <time.h>
 
 #define BUDO_SCROLL_WIDTH 16
 #define BUDO_POINTER_DOWN 1
@@ -12,6 +13,8 @@ typedef struct BudoScrollbar {
     int x, y, length, horizontal;
     int total, page, position;
     int dragging, grab;
+    int held, armed;
+    unsigned long long repeat_at;
 } BudoScrollbar;
 
 static inline int budo_scroll_limit(const BudoScrollbar *bar)
@@ -38,6 +41,16 @@ static inline void budo_scroll_thumb(BudoScrollbar *bar, int *start, int *size)
     *start = 16 + (limit ? (int)((long long)(track - *size) * bar->position / limit) : 0);
 }
 
+static inline void budo_button_draw(const BwaHostApi *host, int x, int y,
+                                     int w, int h, const char *label,
+                                     unsigned int state)
+{
+    if (host->abi_minor >= 12 && host->draw_button_state)
+        host->draw_button_state(x, y, w, h, label, state);
+    else host->draw_standard_button(x, y, w, h, label,
+                                    (state & BUDO_BUTTON_PRESSED) != 0);
+}
+
 static inline void budo_scroll_draw(const BwaHostApi *host, BudoScrollbar *bar)
 {
     int start, size;
@@ -47,18 +60,31 @@ static inline void budo_scroll_draw(const BwaHostApi *host, BudoScrollbar *bar)
     budo_scroll_thumb(bar, &start, &size);
     host->draw_sunken_panel(bar->x, bar->y, w, h,
                             host->get_system_color(BUDO_SYS_COLOR_MIDGRAY));
-    host->draw_standard_button(bar->x, bar->y, 16, 16,
-                               horizontal ? "<" : "^", 0);
-    host->draw_standard_button(bar->x + (horizontal ? bar->length - 16 : 0),
+    unsigned int state = BUDO_BUTTON_IMMEDIATE |
+        (budo_scroll_limit(bar) ? 0U : BUDO_BUTTON_DISABLED);
+    budo_button_draw(host, bar->x, bar->y, 16, 16,
+                      horizontal ? "<" : "^", state |
+                      (bar->held == -1 && bar->armed ? BUDO_BUTTON_PRESSED : 0U));
+    budo_button_draw(host, bar->x + (horizontal ? bar->length - 16 : 0),
                                bar->y + (horizontal ? 0 : bar->length - 16),
-                               16, 16, horizontal ? ">" : "v", 0);
+                               16, 16, horizontal ? ">" : "v", state |
+                      (bar->held == 1 && bar->armed ? BUDO_BUTTON_PRESSED : 0U));
     host->draw_standard_button(bar->x + (horizontal ? start : 0),
                                bar->y + (horizontal ? 0 : start),
                                horizontal ? size : 16,
                                horizontal ? 16 : size, "", bar->dragging);
+    if (host->abi_minor >= 12 && host->pointer_region) {
+        host->pointer_region(bar->x, bar->y, 16, 16, BUDO_CURSOR_ARROW,
+                              horizontal ? "Scroll left" : "Scroll up");
+        host->pointer_region(bar->x + (horizontal ? bar->length - 16 : 0),
+                              bar->y + (horizontal ? 0 : bar->length - 16),
+                              16, 16, BUDO_CURSOR_ARROW,
+                              horizontal ? "Scroll right" : "Scroll down");
+    }
 }
 
-static inline int budo_scroll_pointer(BudoScrollbar *bar, int mx, int my, int event)
+static inline int budo_scroll_pointer_at(BudoScrollbar *bar, int mx, int my,
+                                         int event, unsigned long long now)
 {
     int coordinate = bar->horizontal ? mx - bar->x : my - bar->y;
     int cross = bar->horizontal ? my - bar->y : mx - bar->x;
@@ -66,9 +92,25 @@ static inline int budo_scroll_pointer(BudoScrollbar *bar, int mx, int my, int ev
     int limit = budo_scroll_limit(bar);
     budo_scroll_thumb(bar, &start, &size);
     if (event == BUDO_POINTER_UP) {
-        int handled = bar->dragging;
-        bar->dragging = 0;
+        int handled = bar->dragging || bar->held;
+        bar->dragging = bar->held = bar->armed = 0;
         return handled;
+    }
+    if (bar->held && event == BUDO_POINTER_MOVE) {
+        int inside = cross >= 0 && cross < 16 && coordinate >= 0 &&
+                     coordinate < bar->length;
+        int armed = inside && (bar->held == -1 ? coordinate < 16 :
+                     bar->held == 1 ? coordinate >= bar->length - 16 :
+                     bar->held == -2 ? coordinate < start : coordinate >= start + size);
+        if (!armed || !bar->armed) bar->repeat_at = now + 350;
+        bar->armed = armed;
+        if (armed && now >= bar->repeat_at) {
+            bar->position += bar->held == -1 ? -1 : bar->held == 1 ? 1 :
+                             bar->held == -2 ? -bar->page : bar->page;
+            budo_scroll_clamp(bar);
+            bar->repeat_at = now + 60;
+        }
+        return 1;
     }
     if (bar->dragging && event == BUDO_POINTER_MOVE) {
         int travel = bar->length - 32 - size;
@@ -81,15 +123,34 @@ static inline int budo_scroll_pointer(BudoScrollbar *bar, int mx, int my, int ev
     if (event != BUDO_POINTER_DOWN || coordinate < 0 ||
         coordinate >= bar->length || cross < 0 || cross >= 16) return 0;
     if (!limit) return 1;
-    if (coordinate < 16) --bar->position;
-    else if (coordinate >= bar->length - 16) ++bar->position;
+    bar->held = bar->armed = 0;
+    if (coordinate < 16) { --bar->position; bar->held = -1; }
+    else if (coordinate >= bar->length - 16) { ++bar->position; bar->held = 1; }
     else if (coordinate >= start && coordinate < start + size) {
         bar->dragging = 1;
         bar->grab = coordinate - start;
-    } else if (coordinate < start) bar->position -= bar->page;
-    else bar->position += bar->page;
+    } else if (coordinate < start) { bar->position -= bar->page; bar->held = -2; }
+    else { bar->position += bar->page; bar->held = 2; }
+    bar->armed = bar->held != 0;
+    bar->repeat_at = now + 350;
     budo_scroll_clamp(bar);
     return 1;
+}
+
+static inline int budo_scroll_pointer(BudoScrollbar *bar, int mx, int my, int event)
+{
+    struct timespec now;
+    if (timespec_get(&now, TIME_UTC) != TIME_UTC) return 0;
+    return budo_scroll_pointer_at(bar, mx, my, event,
+        (unsigned long long)now.tv_sec * 1000 + (unsigned long long)now.tv_nsec / 1000000);
+}
+
+static inline int budo_scroll_pointer_host(const BwaHostApi *host,
+                                           BudoScrollbar *bar, int x, int y, int event)
+{
+    if (host->abi_minor >= 12 && host->get_time_ms)
+        return budo_scroll_pointer_at(bar, x, y, event, host->get_time_ms());
+    return budo_scroll_pointer(bar, x, y, event);
 }
 
 /* Shared menu bars, bevels, disabled items and check marks. */
@@ -132,6 +193,8 @@ static inline void budo_menu_items_draw(const BwaHostApi *host, int x, int y,
                                         int width, const BudoMenuItem *items, int count)
 {
     host->draw_standard_button(x, y, width, count * 16 + 4, "", 0);
+    if (host->abi_minor >= 12 && host->pointer_region)
+        host->pointer_region(x, y, width, count * 16 + 4, BUDO_CURSOR_ARROW | BUDO_CURSOR_OVERLAY, NULL);
     for (int i = 0; i < count; ++i)
         budo_menu_row_draw(host, x, y + i * 16, width, &items[i]);
 }
@@ -140,6 +203,8 @@ static inline void budo_menu_draw(const BwaHostApi *host, int x, int y,
                                   int width, const char *const *labels, int count)
 {
     host->draw_standard_button(x, y, width, count * 16 + 4, "", 0);
+    if (host->abi_minor >= 12 && host->pointer_region)
+        host->pointer_region(x, y, width, count * 16 + 4, BUDO_CURSOR_ARROW | BUDO_CURSOR_OVERLAY, NULL);
     for (int i = 0; i < count; ++i) {
         BudoMenuItem item = {labels[i], 1, 0};
         budo_menu_row_draw(host, x, y + i * 16, width, &item);

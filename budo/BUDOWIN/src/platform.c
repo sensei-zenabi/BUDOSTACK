@@ -221,6 +221,9 @@ int bw_begin_frame(void) {
     }
     return !disconnected;
 }
+void bw_screen_flush(void) {
+    if (screen && budo_gfx_present(screen, pixels, NULL) != 0) disconnected = 1;
+}
 int bw_end_frame(void) {
     struct timespec delay = {0, 16000000};
     if (budo_gfx_present(screen, pixels, NULL) != 0) return 0;

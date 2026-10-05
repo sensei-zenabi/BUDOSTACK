@@ -33,6 +33,7 @@ unsigned int bw_modifiers(void);
 clock_t bw_clock(void);
 int bw_begin_frame(void);
 int bw_end_frame(void);
+void bw_screen_flush(void);
 const char *bw_state_file(const char *name);
 const char *bw_user_directory(void);
 int bw_user_path(char *out, size_t size, const char *path);

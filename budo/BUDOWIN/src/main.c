@@ -812,8 +812,170 @@ static void draw_bevel(int x, int y, int w, int h, int raised)
     }
 }
 
+/* Draw-time regions follow the same front-to-back ownership as windows. */
+typedef struct UiRegion {
+    int x, y, w, h, owner, scope, cursor, button;
+    unsigned int state;
+    char tip[MAX_NAME];
+} UiRegion;
+#define UI_OVERLAY_OWNER (-400)
+static UiRegion ui_regions[512], ui_capture;
+static int ui_region_count, ui_captured, ui_draw_owner, ui_draw_scope;
+static int ui_pointer_x = -1, ui_pointer_y = -1, ui_pointer_buttons;
+static int ui_tip_x = -1, ui_tip_y = -1, ui_tip_visible;
+static clock_t ui_tip_since;
+static int ui_tip_scope, ui_tip_owner;
+static int ui_busy;
+static int desktop_point_owner(int x, int y);
+static void bwa_draw_standard_button(int x, int y, int w, int h,
+                                     const char *label, int pressed);
+static void bwa_draw_button_state(int x, int y, int w, int h,
+                                  const char *label, unsigned int state);
+
+static int ui_scope(void)
+{
+    if (confirm_kind) return -100 - confirm_kind;
+    if (editor_file_dialog != EDITOR_FILE_DIALOG_NONE) return -200 - editor_file_dialog;
+    if (active_window == APP_EDITOR && editor_search_dialog_active()) return -300;
+    return 0;
+}
+
+static int ui_region_contains(const UiRegion *region, int x, int y)
+{
+    return point_in_rect(x, y, region->x, region->y, region->w, region->h);
+}
+
+static int ui_region_visible(const UiRegion *region, int x, int y)
+{
+    return region->scope == ui_scope() &&
+           (region->scope || region->owner == UI_OVERLAY_OWNER ||
+            region->owner == desktop_point_owner(x, y));
+}
+
+static void ui_register(int x, int y, int w, int h, int cursor,
+                         const char *tip, int button, unsigned int state)
+{
+    if (ui_region_count >= (int)(sizeof(ui_regions) / sizeof(ui_regions[0]))) return;
+    UiRegion *region = &ui_regions[ui_region_count++];
+    *region = (UiRegion){.x=x, .y=y, .w=w, .h=h, .owner=ui_draw_owner,
+                        .scope=ui_draw_scope, .cursor=cursor, .button=button, .state=state};
+    snprintf(region->tip, sizeof(region->tip), "%s", tip ? tip : "");
+}
+
+static unsigned long long bwa_get_time_ms(void)
+{
+    return (unsigned long long)(bw_clock() / (CLOCKS_PER_SEC / 1000));
+}
+
+static void bwa_pointer_region(int x, int y, int w, int h, int cursor,
+                                const char *tooltip)
+{
+    int overlay = (cursor & BUDO_CURSOR_OVERLAY) != 0;
+    cursor &= ~BUDO_CURSOR_OVERLAY;
+    if (cursor < BUDO_CURSOR_ARROW || cursor > BUDO_CURSOR_BUSY) return;
+    int owner = ui_draw_owner;
+    if (overlay && (owner == active_window || owner == APP_NONE))
+        ui_draw_owner = UI_OVERLAY_OWNER;
+    ui_register(x, y, w, h, cursor, tooltip, 0, 0);
+    ui_draw_owner = owner;
+}
+
+static int ui_hit(int x, int y, int buttons_only)
+{
+    for (int i = ui_region_count - 1; i >= 0; --i)
+        if (ui_region_contains(&ui_regions[i], x, y) &&
+            ui_region_visible(&ui_regions[i], x, y))
+            return !buttons_only || ui_regions[i].button ? i : -1;
+    return -1;
+}
+
+static int ui_same_control(const UiRegion *a, const UiRegion *b)
+{
+    return a->x == b->x && a->y == b->y && a->w == b->w && a->h == b->h &&
+           a->owner == b->owner && a->scope == b->scope && !strcmp(a->tip, b->tip);
+}
+
+/* Returns whether the existing application down-handler should run. */
+static int ui_button_event(int x, int y, int down, int up)
+{
+    int hit = ui_hit(x, y, 1);
+    if (down && hit >= 0) {
+        ui_capture = ui_regions[hit];
+        ui_captured = 1;
+        return 0;
+    }
+    if (up && ui_captured) {
+        int activate = hit >= 0 && ui_same_control(&ui_capture, &ui_regions[hit]) &&
+                       !(ui_regions[hit].state & BUDO_BUTTON_DISABLED);
+        ui_captured = 0;
+        return activate;
+    }
+    return down && !ui_captured;
+}
+
+static int ui_cursor_kind(int x, int y)
+{
+    if (ui_busy) return BUDO_CURSOR_BUSY;
+    int hit = ui_hit(x, y, 0);
+    if (hit >= 0) return ui_regions[hit].cursor;
+    return BUDO_CURSOR_ARROW;
+}
+
+static int ui_cursor_ink(int kind, int x, int y)
+{
+    int ink = 0;
+    if (kind == BUDO_CURSOR_TEXT)
+        ink = (x == 8 && y >= 1 && y <= 15) ||
+              ((y == 1 || y == 15) && x >= 5 && x <= 11);
+    else if (kind == BUDO_CURSOR_CROSSHAIR)
+        ink = (x == 8 && y >= 1 && y <= 15) || (y == 8 && x >= 1 && x <= 15);
+    else if (kind == BUDO_CURSOR_RESIZE)
+        ink = (x == y && x >= 2 && x <= 14) ||
+              (x == 2 && y >= 2 && y <= 7) || (y == 2 && x >= 2 && x <= 7) ||
+              (x == 14 && y >= 9 && y <= 14) || (y == 14 && x >= 9 && x <= 14);
+    else if (kind == BUDO_CURSOR_BUSY)
+        ink = ((y == 2 || y == 14) && x >= 3 && x <= 13) ||
+              (y >= 3 && y <= 13 && (x == y || x == 16 - y));
+    return ink;
+}
+
+static unsigned char ui_cursor_pixel(int kind, int x, int y)
+{
+    if (ui_cursor_ink(kind, x, y)) return TEXT_COLOR;
+    if (ui_cursor_ink(kind, x - 1, y) || ui_cursor_ink(kind, x + 1, y) ||
+        ui_cursor_ink(kind, x, y - 1) || ui_cursor_ink(kind, x, y + 1))
+        return WINDOW_HIGHLIGHT_COLOR;
+    return PCX_TRANSPARENT;
+}
+
+static void ui_tooltip_draw(void)
+{
+    int hit = ui_hit(ui_pointer_x, ui_pointer_y, 0);
+    if (hit < 0 || !ui_regions[hit].tip[0] || !ui_tip_visible ||
+        ui_pointer_buttons || ui_captured) return;
+    const char *tip = ui_regions[hit].tip;
+    int length = (int)strlen(tip);
+    int cols = length > 100 ? 100 : length;
+    int rows = (length + cols - 1) / cols;
+    int w = cols * 6 + 10;
+    int h = rows * 9 + 8;
+    if (h < 18) h = 18;
+    int x = ui_pointer_x + 12, y = ui_pointer_y + 22;
+    if (x + w > SCREEN_WIDTH) x = SCREEN_WIDTH - w;
+    if (y + h > SCREEN_HEIGHT) y = ui_pointer_y - h - 2;
+    if (y < 0) y = 0;
+    fill_rect(x, y, w, h, 8U);
+    draw_rect(x, y, w, h, TEXT_COLOR);
+    for (int row = 0; row < rows; ++row)
+        draw_text(x + 5, y + 5 + row * 9, tip + row * cols, TEXT_COLOR, cols);
+}
+
 static void draw_window_chrome(const AppWindow *window)
 {
+    if (!window->maximized)
+        bwa_pointer_region(window->x + window->w - 12,
+                            window->y + window->h - 12, 12, 12,
+                            BUDO_CURSOR_RESIZE, "Resize window");
     fill_rect(window->x, window->y,
               window->w, window->h, WINDOW_CHROME_COLOR);
 
@@ -848,7 +1010,7 @@ static void draw_window_chrome(const AppWindow *window)
               window->y + WINDOW_BORDER,
               window->w - WINDOW_BORDER * 2,
               WINDOW_TITLE_H - WINDOW_BORDER,
-              TITLE_COLOR);
+              ui_draw_owner == active_window || ui_draw_scope ? TITLE_COLOR : 14U);
 }
 
 static int window_close_button_x(const AppWindow *window)
@@ -1645,11 +1807,13 @@ static void draw_text_centered(int y, const char *text, unsigned char color)
 static void restore_cursor_area(int x, int y)
 {
     int row;
+    x -= 8;
+    y -= 8;
 
-    for (row = 0; row < MOUSE_CURSOR_H; ++row) {
+    for (row = 0; row < MOUSE_CURSOR_H + 8; ++row) {
         int sy = y + row;
         int start_x = x;
-        int end_x = x + MOUSE_CURSOR_W;
+        int end_x = x + MOUSE_CURSOR_W + 8;
         int offset;
         int length;
 
@@ -1679,6 +1843,12 @@ static void draw_cursor_vga(int x, int y)
     uint32_t rowrgb[MOUSE_CURSOR_W];
     const uint32_t *cursor_rgb = pcx_icon_rgb(cursor_pcx_icon);
     int row;
+    int kind = ui_cursor_kind(x, y);
+    if (kind != BUDO_CURSOR_ARROW) {
+        cursor_rgb = NULL;
+        x -= 8;
+        y -= 8;
+    }
 
     if (!cursor_pcx_icon_loaded) {
         return;
@@ -1709,7 +1879,8 @@ static void draw_cursor_vga(int x, int y)
             int image_x = sx - x;
             unsigned char pixel = framebuffer[sy * SCREEN_WIDTH + sx];
             unsigned char cursor_pixel =
-                cursor_pcx_icon[row * MOUSE_CURSOR_W + image_x];
+                kind == BUDO_CURSOR_ARROW ? cursor_pcx_icon[row * MOUSE_CURSOR_W + image_x] :
+                ui_cursor_pixel(kind, image_x, row);
 
             if (cursor_pixel != PCX_TRANSPARENT) {
                 pixel = cursor_pixel;
@@ -1727,6 +1898,22 @@ static void draw_cursor_vga(int x, int y)
         (void)bw_screen_copy((unsigned long)offset, rowbuf,
                              (size_t)length, rowrgb, rowmask);
     }
+}
+
+static int ui_busy_begin(void)
+{
+    int previous = ui_busy;
+    ui_busy = 1;
+    draw_cursor_vga(ui_pointer_x, ui_pointer_y);
+    bw_screen_flush();
+    return previous;
+}
+
+static void ui_busy_end(int previous)
+{
+    ui_busy = previous;
+    restore_cursor_area(ui_pointer_x, ui_pointer_y);
+    draw_cursor_vga(ui_pointer_x, ui_pointer_y);
 }
 
 static int text_caret_rect(int *x, int *y)
@@ -2343,6 +2530,7 @@ static void draw_labeled_icon(int x, int y, const char *name, int type,
     int pcx;
     const unsigned char *pixels;
     int label_width = shown * 6 - 1;
+    if (len > shown) bwa_pointer_region(x, y, DESKTOP_ICON_W, DESKTOP_ICON_H + 12, BUDO_CURSOR_ARROW, name);
     int label_x;
     unsigned char label_color = TEXT_COLOR;
     budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W,
@@ -2450,8 +2638,16 @@ static void draw_editor_app_icon(int x, int y)
 
 static void draw_window_button(int x, int y, int kind)
 {
-    fill_rect(x, y, 14, 14, WINDOW_CHROME_COLOR);
-    draw_bevel(x, y, 14, 14, 1);
+    const char *tip = kind == 0 ? "Minimize" : kind == 1 ? "Maximize / Restore" : "Close";
+    UiRegion region = {.x=x, .y=y, .w=14, .h=14, .owner=ui_draw_owner, .scope=ui_draw_scope};
+    snprintf(region.tip, sizeof(region.tip), "%s", tip);
+    ui_register(x, y, 14, 14, BUDO_CURSOR_ARROW, tip, 1, 0);
+    int hover = point_in_rect(ui_pointer_x, ui_pointer_y, x, y, 14, 14) &&
+                ui_region_visible(&region, ui_pointer_x, ui_pointer_y);
+    int pressed = hover && ui_captured &&
+                  ui_same_control(&region, &ui_capture);
+    fill_rect(x, y, 14, 14, hover ? 3U : WINDOW_CHROME_COLOR);
+    draw_bevel(x, y, 14, 14, !pressed);
 
     if (kind == 0) {
         fill_rect(x + 3, y + 9, 8, 2, WINDOW_FRAME_COLOR);
@@ -2469,7 +2665,12 @@ static void draw_window_button(int x, int y, int kind)
 
 static void draw_checkbox(int x, int y, int checked)
 {
-    fill_rect(x, y, 10, 10, FILE_COLOR);
+    int hover = point_in_rect(ui_pointer_x, ui_pointer_y, x, y, 10, 10) &&
+                ui_draw_scope == ui_scope() &&
+                (ui_draw_scope || ui_draw_owner == desktop_point_owner(ui_pointer_x, ui_pointer_y));
+    int pressed = ui_captured && hover && ui_region_contains(&ui_capture, x, y);
+    fill_rect(x, y, 10, 10, hover ? 3U : FILE_COLOR);
+    if (pressed) draw_rect(x + 1, y + 1, 8, 8, WINDOW_SHADOW_COLOR);
     draw_bevel(x, y, 10, 10, 0);
 
     if (checked) {
@@ -2502,6 +2703,7 @@ static void draw_file_explorer_window(int page)
     draw_text(explorer_window.x + 7, title_y + 6,
               "File Explorer", TITLE_TEXT_COLOR, 13);
 
+    ui_register(filter_x, filter_y, 112, 12, BUDO_CURSOR_ARROW, "Only Executables", 1, 0);
     draw_checkbox(filter_x, filter_y, only_executables);
     draw_text(filter_x + 14, title_y + 6,
               "Only Executables", TITLE_TEXT_COLOR, 16);
@@ -3053,7 +3255,16 @@ static int editor_export_postscript(const char *path)
     return 1;
 }
 
+static int editor_load_file_impl(const char *path);
 static int editor_load_file(const char *path)
+{
+    int previous = ui_busy_begin();
+    int result = editor_load_file_impl(path);
+    ui_busy_end(previous);
+    return result;
+}
+
+static int editor_load_file_impl(const char *path)
 {
     FILE *file;
     char (*loaded)[EDITOR_MAX_COLS];
@@ -3099,7 +3310,16 @@ static int editor_load_file(const char *path)
     return 1;
 }
 
+static int editor_save_file_impl(const char *path);
 static int editor_save_file(const char *path)
+{
+    int previous = ui_busy_begin();
+    int result = editor_save_file_impl(path);
+    ui_busy_end(previous);
+    return result;
+}
+
+static int editor_save_file_impl(const char *path)
 {
     FILE *file;
     char temporary[MAX_PATH];
@@ -4128,14 +4348,15 @@ static void editor_draw_search_dialog(void)
     int x, y, w;
     int i;
     const char *buttons[4] = {"Next", "Previous", "Replace", "Replace All"};
+    if (active_window == APP_EDITOR) ui_region_count = 0;
+    ui_draw_scope = ui_scope();
     editor_search_geometry(&x, &y, &w);
     fill_rect(x + 3, y + 3, w, 154, WINDOW_SHADOW_COLOR);
     fill_rect(x, y, w, 154, WINDOW_CHROME_COLOR);
     draw_bevel(x, y, w, 154, 1);
     fill_rect(x + 2, y + 2, w - 4, 16, TITLE_COLOR);
     draw_text(x + 6, y + 6, "Find / Replace", TITLE_TEXT_COLOR, 24);
-    draw_bevel(x + w - 18, y + 3, 14, 13, 1);
-    draw_text(x + w - 14, y + 6, "x", TEXT_COLOR, 1);
+    bwa_draw_standard_button(x + w - 18, y + 3, 14, 13, "x", 0);
     for (i = 0; i < 2; ++i) {
         const char *value = i ? editor_replacement : editor_search_text;
         int cols = (w - 82) / 6;
@@ -4147,6 +4368,7 @@ static void editor_draw_search_dialog(void)
         if (editor_search_field == i && editor_search_selected) {
             fill_rect(x + 73, y + 27 + i * 24, w - 84, 12, TITLE_COLOR);
         }
+        bwa_pointer_region(x + 70, y + 24 + i * 24, w - 78, 18, BUDO_CURSOR_TEXT, NULL);
         draw_text(x + 74, y + 29 + i * 24, value + offset,
                   editor_search_field == i && editor_search_selected ?
                   TITLE_TEXT_COLOR : TEXT_COLOR, cols);
@@ -4154,13 +4376,12 @@ static void editor_draw_search_dialog(void)
             fill_rect(x + 74 + (editor_search_caret - offset) * 6,
                       y + 28 + i * 24, 1, 9, TEXT_COLOR);
     }
-    draw_text(x + 8, y + 77, editor_search_case ? "[x] Case" : "[ ] Case", TEXT_COLOR, 9);
-    draw_text(x + 76, y + 77, editor_search_word ? "[x] Word" : "[ ] Word", TEXT_COLOR, 9);
-    draw_text(x + 144, y + 77, editor_search_wrap ? "[x] Wrap" : "[ ] Wrap", TEXT_COLOR, 9);
+    bwa_draw_standard_button(x + 8, y + 73, 60, 16, "Case", editor_search_case);
+    bwa_draw_standard_button(x + 76, y + 73, 60, 16, "Word", editor_search_word);
+    bwa_draw_standard_button(x + 144, y + 73, 60, 16, "Wrap", editor_search_wrap);
     for (i = 0; i < 4; ++i) {
         int bw = (w - 16) / 4;
-        draw_bevel(x + 8 + i * bw, y + 94, bw - 3, 19, 1);
-        draw_text(x + 12 + i * bw, y + 100, buttons[i], TEXT_COLOR, (bw - 8) / 6);
+        bwa_draw_standard_button(x + 8 + i * bw, y + 94, bw - 3, 19, buttons[i], 0);
     }
     draw_text(x + 8, y + 120, editor_status, TEXT_COLOR, (w - 16) / 6);
     draw_text(x + 8, y + 138, "Enter=Next Ctrl+P=Prev Esc=Close", TEXT_COLOR, (w - 16) / 6);
@@ -4330,15 +4551,18 @@ static void draw_editor_window(void)
      * The plain editor retains its compact technical controls.
      */
     if (!editor_writer_mode) {
+        ui_register(wrap_x, editor_window.y + 6, 44, 12, BUDO_CURSOR_ARROW, "Wrap lines", 1, 0);
         draw_checkbox(wrap_x, editor_window.y + 6,
                       editor_wrap_enabled());
         draw_text(wrap_x + 14, editor_window.y + 6,
                   "Wrap", TITLE_TEXT_COLOR, 4);
+        ui_register(rows_x, editor_window.y + 6, 44, 12, BUDO_CURSOR_ARROW, "Show row numbers", 1, 0);
         draw_checkbox(rows_x, editor_window.y + 6,
                       editor_rows_enabled());
         draw_text(rows_x + 14, editor_window.y + 6,
                   "Rows", TITLE_TEXT_COLOR, 4);
     }
+    ui_register(writer_x, editor_window.y + 6, 56, 12, BUDO_CURSOR_ARROW, "Writer mode", 1, 0);
     draw_checkbox(writer_x, editor_window.y + 6,
                   editor_writer_mode);
     draw_text(writer_x + 14, editor_window.y + 6,
@@ -5744,6 +5968,12 @@ static void bwa_draw_explorer(void)
 static void bwa_draw_editor(void)
 {
     draw_editor_window();
+    if (editor_window.open && !editor_window.minimized && !editor_search_dialog_active()) {
+        int y = editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H +
+                ((editor_writer_mode && editor_writer_ruler) ? EDITOR_RULER_H : 0) + 5;
+        bwa_pointer_region(editor_text_x(), y, editor_visible_cols() * 6,
+                            editor_visible_rows() * 9, BUDO_CURSOR_TEXT, NULL);
+    }
 }
 
 static int bwa_open_editor_file(const char *path)
@@ -5757,6 +5987,10 @@ static int bwa_open_editor_file(const char *path)
 static void bwa_draw_terminal(void)
 {
     draw_terminal_window();
+    if (terminal_window.open && !terminal_window.minimized && !terminal_paging)
+        bwa_pointer_region(terminal_window.x + 7,
+                            terminal_window.y + terminal_window.h - 19,
+                            terminal_window.w - 30, 12, BUDO_CURSOR_TEXT, NULL);
 }
 
 static BwaAppDefinition bwa_builtin_apps[] = {
@@ -5810,7 +6044,10 @@ static void bwa_draw_builtin_app(int runtime_id)
     BwaAppDefinition *app = bwa_find_builtin_app(runtime_id);
 
     if (app != NULL && app->callbacks.draw != NULL) {
+        ui_draw_owner = runtime_id;
         app->callbacks.draw();
+        ui_draw_owner = APP_NONE;
+        ui_draw_scope = 0;
     }
 }
 
@@ -5847,6 +6084,7 @@ static unsigned char bwa_get_system_color(int role)
         case BUDO_SYS_COLOR_TITLE_ACTIVE: return TITLE_COLOR;
         case BUDO_SYS_COLOR_TITLE_TEXT:   return TITLE_TEXT_COLOR;
         case BUDO_SYS_COLOR_ACCENT:       return 7U;
+        case BUDO_SYS_COLOR_TITLE_INACTIVE: return 14U;
         default:                          return TEXT_COLOR;
     }
 }
@@ -5880,6 +6118,8 @@ static void bwa_draw_standard_window(int x, int y, int w, int h,
     window.w = w;
     window.h = h;
     window.open = 1;
+    BwaLoadedApp *owner = bwa_find_external_app(ui_draw_owner);
+    if (owner) window.maximized = owner->window.maximized;
 
     draw_window_chrome(&window);
     if (title != NULL) {
@@ -5901,26 +6141,47 @@ static void bwa_draw_standard_window(int x, int y, int w, int h,
     }
 }
 
+static void bwa_draw_button_state(int x, int y, int w, int h,
+                                  const char *label, unsigned int state)
+{
+    int command = label && label[0] && !(state & BUDO_BUTTON_IMMEDIATE);
+    int hover = point_in_rect(ui_pointer_x, ui_pointer_y, x, y, w, h) &&
+                (ui_draw_scope == ui_scope() &&
+                 (ui_draw_scope || ui_draw_owner == desktop_point_owner(ui_pointer_x, ui_pointer_y)));
+    int disabled = (state & BUDO_BUTTON_DISABLED) != 0;
+    UiRegion candidate = {.x=x, .y=y, .w=w, .h=h, .owner=ui_draw_owner, .scope=ui_draw_scope};
+    snprintf(candidate.tip, sizeof(candidate.tip), "%s", label ? label : "");
+    int depressed = !disabled && ((state & BUDO_BUTTON_PRESSED) != 0 ||
+                    (hover && ui_captured && ui_same_control(&candidate, &ui_capture)));
+    unsigned char face = hover && !disabled ? 3U : WINDOW_CHROME_COLOR;
+    if (label && label[0]) ui_register(x, y, w, h, BUDO_CURSOR_ARROW,
+                                      label, command, state);
+    fill_rect(x, y, w, h, face);
+    draw_bevel(x, y, w, h, !depressed);
+    if (state & BUDO_BUTTON_DEFAULT) draw_rect(x + 2, y + 2, w - 4, h - 4, TEXT_COLOR);
+    if (state & BUDO_BUTTON_FOCUSED) {
+        for (int i = 3; i < w - 3; i += 2) {
+            put_pixel(x + i, y + 3, TEXT_COLOR);
+            put_pixel(x + i, y + h - 4, TEXT_COLOR);
+        }
+        for (int i = 3; i < h - 3; i += 2) {
+            put_pixel(x + 3, y + i, TEXT_COLOR);
+            put_pixel(x + w - 4, y + i, TEXT_COLOR);
+        }
+    }
+    if (!label) return;
+    int cols = w > 6 ? (w - 6) / 6 : 0;
+    int shown = (int)strlen(label);
+    if (shown > cols) shown = cols;
+    draw_text(x + (w - shown * 6) / 2 + depressed,
+              y + (h - 7) / 2 + depressed, label,
+              disabled ? WINDOW_SHADOW_COLOR : TEXT_COLOR, cols);
+}
+
 static void bwa_draw_standard_button(int x, int y, int w, int h,
                                      const char *label, int pressed)
 {
-    int text_w;
-    int text_x;
-    int text_y;
-
-    fill_rect(x, y, w, h, WINDOW_CHROME_COLOR);
-    draw_bevel(x, y, w, h, pressed ? 0 : 1);
-
-    if (label == NULL) return;
-
-    text_w = (int)strlen(label) * 6;
-    text_x = x + (w - text_w) / 2;
-    text_y = y + (h - 7) / 2;
-    if (pressed) {
-        ++text_x;
-        ++text_y;
-    }
-    draw_text(text_x, text_y, label, TEXT_COLOR, w / 6);
+    bwa_draw_button_state(x, y, w, h, label, pressed ? BUDO_BUTTON_PRESSED : 0U);
 }
 
 static void bwa_draw_sunken_panel(int x, int y, int w, int h,
@@ -6050,7 +6311,16 @@ static int bwa_window_set_title(const char *title)
     return 1;
 }
 
-static int bwa_file_read_all(const char *path,
+static int bwa_file_read_all_impl(const char *path, unsigned char *buffer, unsigned int capacity, unsigned int *size_out);
+static int bwa_file_read_all(const char *path, unsigned char *buffer, unsigned int capacity, unsigned int *size_out)
+{
+    int previous = ui_busy_begin();
+    int result = bwa_file_read_all_impl(path, buffer, capacity, size_out);
+    ui_busy_end(previous);
+    return result;
+}
+
+static int bwa_file_read_all_impl(const char *path,
                              unsigned char *buffer,
                              unsigned int capacity,
                              unsigned int *size_out)
@@ -6079,7 +6349,16 @@ static int bwa_file_read_all(const char *path,
     return 1;
 }
 
-static int bwa_file_write_all(const char *path,
+static int bwa_file_write_all_impl(const char *path, const unsigned char *buffer, unsigned int size);
+static int bwa_file_write_all(const char *path, const unsigned char *buffer, unsigned int size)
+{
+    int previous = ui_busy_begin();
+    int result = bwa_file_write_all_impl(path, buffer, size);
+    ui_busy_end(previous);
+    return result;
+}
+
+static int bwa_file_write_all_impl(const char *path,
                               const unsigned char *buffer,
                               unsigned int size)
 {
@@ -6149,7 +6428,10 @@ static const BwaHostApi bwa_host_api = {
     bwa_file_dialog,
     bwa_confirm_dialog,
     mouse_get_state,
-    keyboard_modifiers
+    keyboard_modifiers,
+    bwa_draw_button_state,
+    bwa_pointer_region,
+    bwa_get_time_ms
 };
 
 static BwaLoadedApp *bwa_find_external_app(int runtime_id)
@@ -6463,8 +6745,9 @@ static void bwa_draw_external_app(BwaLoadedApp *app)
         return;
     }
 
+    if (app->managed_window && app->window.minimized) return;
+    ui_draw_owner = app->definition.runtime_id;
     if (app->managed_window) {
-        if (app->window.minimized) return;
         bwa_draw_standard_window(app->window.x, app->window.y,
                                  app->window.w, app->window.h,
                                  app->window_title,
@@ -6476,6 +6759,7 @@ static void bwa_draw_external_app(BwaLoadedApp *app)
         app->definition.callbacks.draw();
         bwa_callback_app = NULL;
     }
+    ui_draw_owner = APP_NONE;
 }
 
 static void bwa_draw_external_nonactive(void)
@@ -6498,6 +6782,9 @@ static void draw_desktop(int page)
     int editor_x;
     int editor_y;
 
+    ui_region_count = 0;
+    ui_draw_scope = 0;
+    ui_draw_owner = APP_NONE;
     if (desktop_background_loaded) {
         memcpy(framebuffer, desktop_background, sizeof(framebuffer));
         memcpy(rgb_framebuffer, desktop_background_rgb, sizeof(rgb_framebuffer));
@@ -6609,7 +6896,11 @@ static void draw_desktop(int page)
         bwa_draw_builtin_app(APP_TERMINAL);
         bwa_draw_external_app(active_app);
     }
-    if (editor_file_dialog != EDITOR_FILE_DIALOG_NONE) editor_draw_file_dialog();
+    if (editor_file_dialog != EDITOR_FILE_DIALOG_NONE) {
+        ui_region_count = 0;
+        ui_draw_scope = ui_scope();
+        editor_draw_file_dialog();
+    }
     if (context_menu) {
         const char *file_items[] = {"Open", "Create Shortcut", "Rename...", "Delete..."};
         BudoMenuItem shortcut_items[] = {
@@ -6620,7 +6911,12 @@ static void draw_desktop(int page)
             budo_menu_draw(&bwa_host_api, context_x, context_y, 156, file_items, 4);
         else budo_menu_items_draw(&bwa_host_api, context_x, context_y, 156, shortcut_items, 2);
     }
-    if (confirm_kind) desktop_confirm_draw();
+    if (confirm_kind) {
+        ui_region_count = 0;
+        ui_draw_scope = ui_scope();
+        desktop_confirm_draw();
+    }
+    ui_tooltip_draw();
 }
 
 static int copy_text(char *dest, size_t dest_size, const char *src)
@@ -7313,8 +7609,8 @@ static void editor_draw_file_dialog(void)
     draw_text(dialog_x + 8, dialog_y + 21,
               editor_file_path, TEXT_COLOR, (dialog_w - 140) / 6);
     bwa_draw_standard_button(dialog_x + dialog_w - 126, dialog_y + 18, 72, 14, "New Folder", 0);
-    draw_bevel(dialog_x + dialog_w - 48, dialog_y + 18, 38, 14, 1);
-    draw_text(dialog_x + dialog_w - 41, dialog_y + 22, "Up", TEXT_COLOR, 2);
+    bwa_draw_standard_button(dialog_x + dialog_w - 48, dialog_y + 18, 38, 14, "Up", 0);
+
 
     fill_rect(list_x, list_y, list_w, list_h, WINDOW_FACE_COLOR);
     draw_bevel(list_x, list_y, list_w, list_h, 0);
@@ -7348,6 +7644,8 @@ static void editor_draw_file_dialog(void)
               dialog_w - 82, 16, WINDOW_FACE_COLOR);
     draw_bevel(dialog_x + 72, dialog_y + dialog_h - 53,
                dialog_w - 82, 16, 0);
+    bwa_pointer_region(dialog_x + 72, dialog_y + dialog_h - 53,
+                        dialog_w - 82, 16, BUDO_CURSOR_TEXT, NULL);
     {
         int cols = (dialog_w - 92) / 6;
         int offset = picker_name_cursor >= cols ? picker_name_cursor - cols + 1 : 0;
@@ -7366,10 +7664,8 @@ static void editor_draw_file_dialog(void)
         draw_text(dialog_x + 160, dialog_y + dialog_h - 31,
                   editor_status, TEXT_COLOR, (dialog_w - 170) / 6);
     }
-    draw_bevel(ok_x, button_y, 58, 16, 1);
-    draw_text(ok_x + 9, button_y + 5, picker_mkdir ? "Create" : ok_text, TEXT_COLOR, 6);
-    draw_bevel(cancel_x, button_y, 58, 16, 1);
-    draw_text(cancel_x + 8, button_y + 5, "Cancel", TEXT_COLOR, 6);
+    bwa_draw_button_state(ok_x, button_y, 58, 16, picker_mkdir ? "Create" : ok_text, BUDO_BUTTON_DEFAULT);
+    bwa_draw_standard_button(cancel_x, button_y, 58, 16, "Cancel", 0);
     if (picker_filter_menu) {
         const char *types[4];
         int values[4];
@@ -8068,7 +8364,16 @@ static int explorer_make_copy_name(const char *name,
     return 0;
 }
 
+static int explorer_paste_clipboard_impl(void);
 static int explorer_paste_clipboard(void)
+{
+    int previous = ui_busy_begin();
+    int result = explorer_paste_clipboard_impl();
+    ui_busy_end(previous);
+    return result;
+}
+
+static int explorer_paste_clipboard_impl(void)
 {
     char refresh_path[MAX_PATH];
     int i;
@@ -8770,23 +9075,30 @@ static int desktop_scroll_pointer(int x, int y, int event, int *page)
 {
     int app = active_window;
     int handled = 0;
+    if (event == BUDO_POINTER_UP) {
+        BudoScrollbar *bars[] = {&editor_vscroll, &editor_hscroll,
+                                &explorer_scroll, &terminal_scrollbar, &picker_scroll};
+        for (size_t i = 0; i < sizeof(bars) / sizeof(bars[0]); ++i)
+            handled |= budo_scroll_pointer_at(bars[i], x, y, event, 0);
+        return handled;
+    }
     desktop_scroll_configure(app, *page);
     if (editor_file_dialog != EDITOR_FILE_DIALOG_NONE) {
-        handled = budo_scroll_pointer(&picker_scroll, x, y, event);
+        handled = budo_scroll_pointer_host(&bwa_host_api, &picker_scroll, x, y, event);
         editor_file_top = picker_scroll.position;
     } else if (app == APP_EDITOR && editor_dialog == EDITOR_DIALOG_NONE &&
                editor_menu == EDITOR_MENU_NONE) {
-        handled = budo_scroll_pointer(&editor_vscroll, x, y, event);
+        handled = budo_scroll_pointer_host(&bwa_host_api, &editor_vscroll, x, y, event);
         if (handled) editor_set_top_visual_row(editor_vscroll.position);
-        if (!editor_wrap_enabled() && budo_scroll_pointer(&editor_hscroll, x, y, event)) {
+        if (!editor_wrap_enabled() && budo_scroll_pointer_host(&bwa_host_api, &editor_hscroll, x, y, event)) {
             editor_left_col = editor_hscroll.position;
             handled = 1;
         }
     } else if (app == APP_EXPLORER && !explorer_rename_active) {
-        handled = budo_scroll_pointer(&explorer_scroll, x, y, event);
+        handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_scroll, x, y, event);
         *page = explorer_scroll.position;
     } else if (app == APP_TERMINAL) {
-        handled = budo_scroll_pointer(&terminal_scrollbar, x, y, event);
+        handled = budo_scroll_pointer_host(&bwa_host_api, &terminal_scrollbar, x, y, event);
         if (handled) {
             if (terminal_paging) terminal_page_top = terminal_scrollbar.position;
             else terminal_scroll = terminal_line_count - terminal_visible_rows() - terminal_scrollbar.position;
@@ -9361,7 +9673,28 @@ int main(int argc, char **argv)
         if (!bw_begin_frame()) break;
         mouse_get_state(&mouse_x, &mouse_y, &buttons);
 
-        if ((buttons & 1) && !(previous_buttons & 1)) {
+        ui_pointer_x = mouse_x;
+        ui_pointer_y = mouse_y;
+        ui_pointer_buttons = buttons;
+        int down = (buttons & 1) && !(previous_buttons & 1);
+        int up = !(buttons & 1) && (previous_buttons & 1);
+        int command_down = ui_button_event(mouse_x, mouse_y, down, up);
+        if (down || up || mouse_x != previous_mouse_x || mouse_y != previous_mouse_y)
+            screen_dirty = 1;
+        if (mouse_x != ui_tip_x || mouse_y != ui_tip_y || buttons ||
+            ui_tip_scope != ui_scope() || ui_tip_owner != active_window) {
+            ui_tip_scope = ui_scope();
+            ui_tip_owner = active_window;
+            ui_tip_x = mouse_x;
+            ui_tip_y = mouse_y;
+            ui_tip_since = bw_clock();
+            if (ui_tip_visible) screen_dirty = 1;
+            ui_tip_visible = 0;
+        } else if (!ui_tip_visible && bw_clock() - ui_tip_since >= CLOCKS_PER_SEC * 3 / 5) {
+            ui_tip_visible = 1;
+            screen_dirty = 1;
+        }
+        if (command_down) {
             clock_t now = bw_clock();
             int handled = 0;
             if (!confirm_kind && editor_file_dialog == EDITOR_FILE_DIALOG_NONE &&
@@ -9988,8 +10321,8 @@ int main(int argc, char **argv)
 
         if (!confirm_kind && editor_file_dialog == EDITOR_FILE_DIALOG_NONE &&
             active_window >= APP_BWA_BASE &&
-            (mouse_x != previous_mouse_x ||
-             mouse_y != previous_mouse_y)) {
+            ((buttons & 1) || mouse_x != previous_mouse_x ||
+             mouse_y != previous_mouse_y) && !ui_captured) {
             BwaLoadedApp *app =
                 bwa_find_external_app(active_window);
 
@@ -10009,7 +10342,7 @@ int main(int argc, char **argv)
             }
         }
 
-        if ((buttons & 1) &&
+        if ((buttons & 1) && !ui_captured &&
             desktop_scroll_pointer(mouse_x, mouse_y, BUDO_POINTER_MOVE, &page))
             screen_dirty = 1;
         if (!(buttons & 1) && (previous_buttons & 1))

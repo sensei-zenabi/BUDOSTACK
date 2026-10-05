@@ -31,6 +31,116 @@ static void render(const char *directory, const char *name)
     assert(fclose(file) == 0);
 }
 
+static void test_polish(void)
+{
+    editor_window.open = 1;
+    active_window = APP_EDITOR;
+    ui_draw_owner = APP_EDITOR;
+    ui_draw_scope = 0;
+    ui_region_count = 0;
+    ui_pointer_x = ui_pointer_y = -1;
+    int x = editor_window.x + 30, y = editor_window.y + 50;
+    bwa_draw_standard_button(x, y, 80, 20, "Test", 0);
+    assert(framebuffer[(y + 2) * SCREEN_WIDTH + x + 2] == WINDOW_CHROME_COLOR);
+    ui_pointer_x = x + 5;
+    ui_pointer_y = y + 5;
+    bwa_draw_standard_button(x, y, 80, 20, "Test", 0);
+    assert(framebuffer[(y + 2) * SCREEN_WIDTH + x + 2] == 3U);
+    assert(!ui_button_event(x + 5, y + 5, 1, 0));
+    assert(ui_captured);
+    bwa_draw_standard_button(x, y, 80, 20, "Test", 0);
+    assert(framebuffer[y * SCREEN_WIDTH + x] == WINDOW_SHADOW_COLOR);
+    assert(!ui_button_event(x - 5, y, 0, 1));
+    assert(!ui_captured);
+    assert(!ui_button_event(x + 5, y + 5, 1, 0));
+    assert(!ui_button_event(x - 5, y, 0, 0));
+    assert(ui_button_event(x + 5, y + 5, 0, 1));
+    assert(!ui_button_event(x + 5, y + 5, 0, 1));
+    ui_region_count = 0;
+    bwa_draw_button_state(x, y, 80, 20, "Disabled", BUDO_BUTTON_DISABLED);
+    assert(!ui_button_event(x + 5, y + 5, 1, 0));
+    bwa_draw_button_state(x, y, 80, 20, "Disabled", BUDO_BUTTON_DISABLED);
+    assert(framebuffer[y * SCREEN_WIDTH + x] == WINDOW_HIGHLIGHT_COLOR);
+    assert(!ui_button_event(x + 5, y + 5, 0, 1));
+    bwa_draw_button_state(x, y, 80, 20, "Focus", BUDO_BUTTON_FOCUSED | BUDO_BUTTON_DEFAULT);
+    assert(framebuffer[(y + 3) * SCREEN_WIDTH + x + 3] == TEXT_COLOR);
+    /* A popup covering a button must intercept its hit test. */
+    const char *items[] = {"Menu"};
+    budo_menu_draw(&bwa_host_api, x, y, 100, items, 1);
+    assert(ui_hit(x + 5, y + 5, 1) == -1);
+    /* A popup can extend beyond its owner window. */
+    budo_menu_draw(&bwa_host_api, 5, 5, 100, items, 1);
+    assert(ui_hit(10, 10, 0) >= 0);
+    /* An overlapping front window blocks controls in a background window. */
+    ui_region_count = 0;
+    bwa_draw_standard_button(x, y, 80, 20, "Background", 0);
+    explorer_window.open = 1;
+    active_window = APP_EXPLORER;
+    assert(ui_hit(x + 5, y + 5, 1) == -1);
+    active_window = APP_EDITOR;
+    explorer_window.open = 0;
+    /* A dialog appearing during a press cancels activation of the old target. */
+    assert(!ui_button_event(x + 5, y + 5, 1, 0));
+    confirm_kind = BUDO_CONFIRM_SAVE;
+    assert(!ui_button_event(x + 5, y + 5, 0, 1));
+    confirm_kind = 0;
+    ui_draw_owner = APP_EXPLORER;
+    draw_window_chrome(&editor_window);
+    assert(framebuffer[(editor_window.y + 4) * SCREEN_WIDTH + editor_window.x + 4] == 14U);
+    ui_draw_owner = APP_EDITOR;
+    draw_window_chrome(&editor_window);
+    assert(framebuffer[(editor_window.y + 4) * SCREEN_WIDTH + editor_window.x + 4] == TITLE_COLOR);
+    ui_region_count = 0;
+    bwa_pointer_region(x, y, 100, 30, BUDO_CURSOR_TEXT, NULL);
+    assert(ui_cursor_kind(x + 5, y + 5) == BUDO_CURSOR_TEXT);
+    assert(ui_cursor_pixel(BUDO_CURSOR_TEXT, 8, 8) == TEXT_COLOR);
+    assert(ui_cursor_pixel(BUDO_CURSOR_TEXT, 7, 8) == WINDOW_HIGHLIGHT_COLOR);
+    ui_busy = 1;
+    assert(ui_cursor_kind(x + 5, y + 5) == BUDO_CURSOR_BUSY);
+    ui_busy = 0;
+    /* Tooltip boxes at the lower right are clipped into the screen. */
+    ui_draw_owner = APP_NONE;
+    editor_window.open = 0;
+    ui_region_count = 0;
+    bwa_pointer_region(600, 450, 40, 30, BUDO_CURSOR_ARROW, "Tooltip");
+    ui_pointer_x = 638;
+    ui_pointer_y = 478;
+    ui_tip_visible = 1;
+    ui_tooltip_draw();
+    assert(framebuffer[458 * SCREEN_WIDTH + 588] == TEXT_COLOR);
+    ui_tip_visible = 0;
+    ui_pointer_x = ui_pointer_y = -1;
+    ui_region_count = 0;
+    BudoScrollbar bar = {.x=10, .y=20, .length=200, .total=100, .page=10};
+    assert(budo_scroll_pointer_at(&bar, 14, 215, BUDO_POINTER_DOWN, 1000));
+    assert(bar.position == 1 && bar.held == 1);
+    assert(budo_scroll_pointer_at(&bar, 14, 215, BUDO_POINTER_MOVE, 1349));
+    assert(bar.position == 1);
+    assert(budo_scroll_pointer_at(&bar, 14, 215, BUDO_POINTER_MOVE, 1350));
+    assert(bar.position == 2);
+    assert(budo_scroll_pointer_at(&bar, 14, 215, BUDO_POINTER_MOVE, 1410));
+    assert(bar.position == 3);
+    assert(budo_scroll_pointer_at(&bar, 40, 215, BUDO_POINTER_MOVE, 1500));
+    assert(!bar.armed && bar.position == 3);
+    assert(budo_scroll_pointer_at(&bar, 14, 215, BUDO_POINTER_MOVE, 2000));
+    assert(bar.position == 3 && bar.armed);
+    assert(budo_scroll_pointer_at(&bar, 14, 215, BUDO_POINTER_MOVE, 2350));
+    assert(bar.position == 4);
+    assert(budo_scroll_pointer_at(&bar, 14, 215, BUDO_POINTER_UP, 2351));
+    assert(!budo_scroll_pointer_at(&bar, 14, 215, BUDO_POINTER_MOVE, 3000));
+    assert(bar.position == 4);
+    assert(budo_scroll_pointer_at(&bar, 14, 150, BUDO_POINTER_DOWN, 4000));
+    assert(bar.position == 14 && bar.held == 2);
+    assert(budo_scroll_pointer_at(&bar, 14, 150, BUDO_POINTER_MOVE, 4350));
+    assert(bar.position == 24);
+    assert(budo_scroll_pointer_at(&bar, 14, 150, BUDO_POINTER_UP, 4351));
+    BwaHostApi old = bwa_host_api;
+    old.abi_minor = 11;
+    old.draw_button_state = NULL;
+    old.pointer_region = NULL;
+    budo_button_draw(&old, 10, 10, 80, 20, "Old ABI", 0);
+}
+
 int main(int argc, char **argv)
 {
     assert(argc == 2);
@@ -48,6 +158,7 @@ int main(int argc, char **argv)
     assert(!desktop_apply_ui_style(&custom));
     assert(desktop_ui_style.colors[0][0] == original.colors[0][0]);
     assert(desktop_apply_ui_style(&original));
+    test_polish();
     const char *directory = argv[1];
     char path[MAX_PATH];
     BudoScrollbar bar = {.x=10, .y=20, .length=200, .total=100, .page=10};

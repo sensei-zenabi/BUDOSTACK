@@ -57,7 +57,7 @@ static void assert_matches_explorer(const int *order, int count)
 int main(void)
 {
     set_classic_gui_palette();
-    assert(bwa_host_api.abi_minor == 11);
+    assert(bwa_host_api.abi_minor == 12);
     keys[224] = keys[225] = 1;
     assert(budo_selection_modifiers(&bwa_host_api) == (KEYMOD_CTRL | KEYMOD_SHIFT));
     BwaHostApi old_host = bwa_host_api;

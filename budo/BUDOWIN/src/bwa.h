@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 11
+#define BWA_ABI_MINOR 12
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -34,7 +34,20 @@
 #define BUDO_SYS_COLOR_TITLE_ACTIVE   6
 #define BUDO_SYS_COLOR_TITLE_TEXT     7
 #define BUDO_SYS_COLOR_ACCENT         8
-#define BUDO_SYS_COLOR_COUNT          9
+#define BUDO_SYS_COLOR_TITLE_INACTIVE 9
+#define BUDO_SYS_COLOR_COUNT          10
+
+#define BUDO_BUTTON_PRESSED 1U
+#define BUDO_BUTTON_DISABLED 2U
+#define BUDO_BUTTON_FOCUSED 4U
+#define BUDO_BUTTON_DEFAULT 8U
+#define BUDO_BUTTON_IMMEDIATE 16U
+#define BUDO_CURSOR_ARROW 0
+#define BUDO_CURSOR_TEXT 1
+#define BUDO_CURSOR_RESIZE 2
+#define BUDO_CURSOR_CROSSHAIR 3
+#define BUDO_CURSOR_BUSY 4
+#define BUDO_CURSOR_OVERLAY 0x100
 
 /* Stable UI geometry roles. */
 #define BUDO_SYS_METRIC_WINDOW_BORDER    0
@@ -138,6 +151,14 @@ typedef struct BwaHostApi {
     void (*get_pointer_state)(int *x, int *y, int *buttons);
     /* ABI 1.11: Shift (0x03) and Ctrl (0x04) for shared item selection. */
     unsigned int (*get_keyboard_modifiers)(void);
+    /* ABI 1.12: explicit button states and draw-time contextual regions.
+     * Immediate buttons (scroll arrows) bypass release-to-activate capture.
+     * Regions are rebuilt on each draw; coordinates are screen-relative. */
+    void (*draw_button_state)(int x, int y, int w, int h,
+                              const char *label, unsigned int state);
+    void (*pointer_region)(int x, int y, int w, int h, int cursor,
+                            const char *tooltip);
+    unsigned long long (*get_time_ms)(void);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

@@ -180,7 +180,27 @@ int main(int argc, char **argv) {
                     assert(fclose(file) == 0);
                     assert(pixels[(200 * w + 200) * 4] != 0);
                 }
+                if (frames == 52) {
+                    struct budo_gfx_event event = {0};
+                    event.type = BUDO_GFX_MOUSE_DOWN;
+                    event.button = 1;
+                    event.x = 606;
+                    event.y = 32;
+                    budo_gfx_host_event(host, &event);
+                }
                 if (frames == 54) {
+                    /* Pressing Close must leave Paint open until release. */
+                    assert(pixels[(200 * w + 200) * 4] != 0);
+                    struct budo_gfx_event event = {0};
+                    event.type = BUDO_GFX_MOUSE_UP;
+                    event.button = 1;
+                    event.x = 0;
+                    event.y = 200;
+                    budo_gfx_host_event(host, &event);
+                }
+                if (frames == 56) {
+                    /* Releasing outside cancels; Escape can still close it. */
+                    assert(pixels[(200 * w + 200) * 4] != 0);
                     struct budo_gfx_event event = {0};
                     event.type = BUDO_GFX_KEY_DOWN; event.key = 27; event.scancode = 41;
                     budo_gfx_host_event(host, &event);

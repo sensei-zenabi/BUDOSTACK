@@ -140,3 +140,27 @@ underscore. The original callback ABI is retained.
 
 Run the native and graphics integration checks with
 `tests/run_budowin.sh`. They require a C compiler and Python, but no SDL.
+
+## Interaction feedback
+
+Command buttons, window title buttons and bundled checkbox/toggle controls
+show hover/pressed feedback and activate on release inside the original
+control. Dragging outside cancels; returning inside before release permits
+activation. Drawing, selection, window dragging and scrollbars continue to
+start on press. Disabled command buttons ignore clicks. Native apps can
+request disabled, focused and default button rendering through ABI 1.12.
+Full keyboard focus traversal is a separate feature.
+
+Active windows have blue title bars; inactive windows have gray title bars.
+The pointer changes to an I-beam over Editor/search/file-name/Terminal input,
+a crosshair over Paint's canvas, and a diagonal resize arrow over the existing
+bottom-right resize grip. Blocking document reads/writes and Explorer paste
+show an hourglass; this feedback does not make file operations asynchronous.
+Custom arrow artwork remains available outside these contexts.
+
+Hover for 600 ms to see tips for command/frame buttons, Paint tools, scroll
+arrows, resize grips and truncated file/shortcut names. Tips stay on screen,
+wrap long names, and disappear on movement or button press. Scroll arrows
+and tracks repeat after a 350 ms initial delay, then at 60 ms intervals while
+held over their original target. Leaving suspends repeat; returning restarts
+the initial delay. Releasing stops repeat.

@@ -1,6 +1,6 @@
 # Native BWA modules
 
-BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.10 (`src/bwa.h`). Modules use
+BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.12 (`src/bwa.h`). Modules use
 `BwaHostApi` for drawing, managed windows, binary file access and allocation.
 The built-in Explorer, Editor and Terminal launcher modules delegate to
 host-managed application implementations; Paint and Settings own their
@@ -160,3 +160,42 @@ before replacing the current image and persist its path with the theme.
 Settings pages should reuse the existing shared menu, panels and scrollbars.
 The page navigation, theme persistence and wallpaper-selection UI are future
 work; no UI Style settings page is exposed by this change.
+
+## Interaction feedback (ABI 1.12)
+
+The host appends `draw_button_state`, `pointer_region` and `get_time_ms`.
+Earlier ABI 1.x offsets are unchanged. Check `abi_minor >= 12` before using
+these fields. `sdk/ui.h` supplies `budo_button_draw` and
+`budo_scroll_pointer_host` with fallbacks for older hosts.
+
+`draw_button_state(x, y, w, h, label, flags)` supports
+`BUDO_BUTTON_PRESSED`, `BUDO_BUTTON_DISABLED`, `BUDO_BUTTON_FOCUSED`,
+`BUDO_BUTTON_DEFAULT` and `BUDO_BUTTON_IMMEDIATE`. Focus/default flags are
+rendering requests; they do not add keyboard navigation. The original
+`draw_standard_button` remains supported and receives hover/capture feedback.
+Nonempty command labels register a release-to-activate target. Empty labels
+remain decorative panels. Disabled registered commands do not dispatch clicks.
+
+The host captures command presses and dispatches the existing `mouse_down`
+handler on a valid release. A following `mouse_up` can occur in the same frame.
+Use `BUDO_BUTTON_IMMEDIATE` for controls that require physical press events,
+such as scroll arrows. Canvas drawing and unregistered areas retain physical
+mouse events. While held, native apps receive `mouse_move` every frame to
+support timed repetition even when the pointer is stationary.
+
+`pointer_region(x, y, w, h, cursor, tooltip)` registers a contextual area during
+an application's draw callback. Regions are rebuilt each frame; the last
+visible covering region takes precedence. Available cursors are
+`BUDO_CURSOR_ARROW`, `BUDO_CURSOR_TEXT`, `BUDO_CURSOR_RESIZE`,
+`BUDO_CURSOR_CROSSHAIR` and `BUDO_CURSOR_BUSY`. A null/empty tooltip suppresses
+tips. OR the cursor with `BUDO_CURSOR_OVERLAY` for a popup extending beyond
+the active window; inactive app regions retain ordinary window ownership.
+Regions are non-command areas: do not overlay a command button with a
+pointer region to customize its tooltip, because the region blocks command
+capture. Menu popup regions deliberately use this behavior.
+
+`get_time_ms()` returns monotonic milliseconds. Use
+`budo_scroll_pointer_host(host, bar, x, y, event)` for production input and
+`budo_scroll_pointer_at(bar, x, y, event, now_ms)` for deterministic timing tests.
+Reconfigure geometry/content without clearing the scrollbar's held/drag state;
+clear that state when reopening an application after closing during a gesture.

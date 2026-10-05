@@ -766,8 +766,8 @@ static int paint_scroll_pointer(int x, int y, int event)
     int cx,cy,cw,ch,sx,sy,vw,vh,py,st;
     if (!layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&py,&st)) return 0;
     paint_scroll_layout(sx, sy, vw, vh);
-    int handled = budo_scroll_pointer(&canvas_hscroll, x, y, event);
-    handled |= budo_scroll_pointer(&canvas_vscroll, x, y, event);
+    int handled = budo_scroll_pointer_host(host_api, &canvas_hscroll, x, y, event);
+    handled |= budo_scroll_pointer_host(host_api, &canvas_vscroll, x, y, event);
     canvas_left = canvas_hscroll.position;
     canvas_top = canvas_vscroll.position;
     return handled;
@@ -790,6 +790,8 @@ static void paint_draw(void)
         host_api->draw_standard_button(cx + 5 + (i & 1) * 42,
             cy + 30 + (i >> 1) * 24, 38, 20, tool_labels[i], i == tool);
     draw_canvas(sx, sy, vw, vh);
+    if (host_api->abi_minor >= 12 && host_api->pointer_region)
+        host_api->pointer_region(sx, sy, vw, vh, BUDO_CURSOR_CROSSHAIR, NULL);
     budo_scroll_draw(host_api, &canvas_hscroll);
     budo_scroll_draw(host_api, &canvas_vscroll);
     draw_preview(sx, sy, vw, vh, draw_button == 2 ? bg : fg);
@@ -972,6 +974,8 @@ static int paint_open(void)
         return 0;
     }
 
+    canvas_hscroll.held = canvas_hscroll.armed = canvas_hscroll.dragging = 0;
+    canvas_vscroll.held = canvas_vscroll.armed = canvas_vscroll.dragging = 0;
     drawing=0; dialog_mode=DIALOG_NONE; set_status("Ready");
     if (!host_api->window_create(WIN_X,WIN_Y,WIN_W,WIN_H,
         dirty ? "Paint *" : "Paint", BUDO_WINDOW_DEFAULT_BUTTONS)) {

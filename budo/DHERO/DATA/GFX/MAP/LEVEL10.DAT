@@ -1,0 +1,31 @@
+NAME LEVEL10
+SIZE 20 12
+TILES TILE000
+HERO CHAR000
+LEGEND
+# WALL BLOCK
+. FLOOR WALK
+S STAIRS WALK
+C CHEST BLOCK
+END
+MAP
+####################
+#.................S#
+#.######.#########.#
+#.#....#.#.......#.#
+#.#.##.#.#.#####.#.#
+#...##...#.....#...#
+###.######.###.###.#
+#...#......#.#.....#
+#.###.######.#####.#
+#.....#............#
+#C.................#
+####################
+END
+START 1 1 RIGHT
+CHEST 1 10 FLOOR 200 ELIXIR
+ENEMY GARGOYLE 5 1 LEFT
+ENEMY CHAOS_WARRIOR 10 3 DOWN
+ENEMY GARGOYLE 5 7 RIGHT
+ENEMY GARGOYLE 15 9 LEFT
+EXIT 18 1 END

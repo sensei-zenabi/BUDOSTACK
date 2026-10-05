@@ -1,0 +1,10 @@
+; NAME            SHEET     HP ATTACK DEFENSE MOVE GOLD
+; All characters are drawn from CHAR000.PCX.
+; XP is derived by the engine from HP + ATTACK + DEFENSE + GOLD/2.
+
+GOBLIN            CHAR000   2  2      0       4    5
+SKELETON          CHAR000   4  3      1       3    8
+ORC               CHAR000   6  4      2       3    12
+MUMMY             CHAR000   8  5      3       2    15
+CHAOS_WARRIOR     CHAR000   14 6      4       3    20
+GARGOYLE          CHAR000   20 7      5       2    30

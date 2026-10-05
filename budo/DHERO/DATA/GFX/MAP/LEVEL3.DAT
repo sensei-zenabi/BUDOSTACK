@@ -1,0 +1,35 @@
+NAME LEVEL3
+SIZE 20 12
+TILES TILE000
+HERO CHAR000
+LEGEND
+# WALL BLOCK
+. FLOOR WALK
+D DOOR_CLOSED BLOCK
+O DOOR_OPEN WALK
+S STAIRS WALK
+C CHEST BLOCK
+END
+MAP
+####################
+#S.....#...........#
+#.###D.#.#########.#
+#.#....#.....#.....#
+#.#.######D#.#.###.#
+#.#........#.#...#.#
+#.########.#.###.#.#
+#........#.#.....#.#
+######D#.#.#######.#
+#......#.#.........#
+#..C...............#
+####################
+END
+START 18 9 LEFT
+DOOR 5 2 DOOR_OPEN
+DOOR 10 4 DOOR_OPEN
+DOOR 6 8 DOOR_OPEN
+CHEST 3 10 FLOOR 40 SHIELD
+ENEMY GOBLIN 10 3 DOWN
+ENEMY SKELETON 15 7 LEFT
+ENEMY SKELETON 8 9 RIGHT
+EXIT 1 1 LEVEL4

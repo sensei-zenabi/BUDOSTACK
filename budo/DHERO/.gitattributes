@@ -1,0 +1,7 @@
+# Preserve the imported DOS files exactly, including CRLF line endings.
+original/** -text whitespace=-blank-at-eol,cr-at-eol
+DATA/** -text whitespace=-blank-at-eol,cr-at-eol
+*.pcx binary
+*.PCX binary
+*.aseprite binary
+*.psf binary

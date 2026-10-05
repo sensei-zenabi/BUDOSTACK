@@ -1,0 +1,14 @@
+# CHAR000.PCX
+# One 16x16 cell per character. Direction is drawn by the engine.
+# Format: NAME COLUMN ROW
+
+CELL 16 16
+TRANSPARENT TOP_LEFT
+
+HERO          0 0
+GOBLIN        1 0
+SKELETON      2 0
+ORC           3 0
+MUMMY         0 1
+CHAOS_WARRIOR 1 1
+GARGOYLE      2 1

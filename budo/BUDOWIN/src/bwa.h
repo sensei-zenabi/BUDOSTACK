@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 9
+#define BWA_ABI_MINOR 10
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -56,6 +56,14 @@
     (BUDO_WINDOW_BUTTON_MINIMIZE | \
      BUDO_WINDOW_BUTTON_MAXIMIZE | \
      BUDO_WINDOW_BUTTON_CLOSE)
+
+#define BUDO_FILE_OPEN 1
+#define BUDO_FILE_SAVE_AS 2
+#define BUDO_CONFIRM_SAVE 1
+#define BUDO_CONFIRM_OVERWRITE 2
+#define BUDO_RESPONSE_CANCEL 0
+#define BUDO_RESPONSE_SAVE 1
+#define BUDO_RESPONSE_DISCARD 2
 
 typedef struct BwaHostApi {
     unsigned short abi_major;
@@ -123,6 +131,11 @@ typedef struct BwaHostApi {
     /* ABI 1.9: exact 24-bit RGB, independent of the system palette.
      * rgb is 0x00RRGGBB; the rectangle is clipped to the screen. */
     void (*fill_rect_rgb)(int x, int y, int w, int h, unsigned int rgb);
+    /* ABI 1.10: shared asynchronous desktop dialogs. Results are delivered
+     * to file_selected / confirm_result on the requesting application. */
+    int (*file_dialog)(int mode, const char *initial_path);
+    int (*confirm_dialog)(int kind, const char *title, const char *message);
+    void (*get_pointer_state)(int *x, int *y, int *buttons);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {
@@ -145,6 +158,11 @@ typedef struct BwaAppDefinition {
     const char *name;
     unsigned long flags;
     BwaAppCallbacks callbacks;
+    /* ABI 1.10. Zero permits close; request_close returns nonzero to permit
+     * it, or zero while the app handles a save confirmation. */
+    int (*request_close)(void);
+    int (*file_selected)(int mode, const char *path);
+    void (*confirm_result)(int kind, int response);
 } BwaAppDefinition;
 
 typedef int (*BwaEntryPoint)(const BwaHostApi *host,

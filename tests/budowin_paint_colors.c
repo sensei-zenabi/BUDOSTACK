@@ -68,12 +68,24 @@ int main(void) {
     assert(canvas[0] == 4 && canvas_palette[0] == palette_rgb[0][0]);
     do_undo();
     assert(memcmp(canvas_palette, expected_palette, 768) == 0 && canvas[255] == 255);
+    assert(!dirty); /* Undo returned exactly to the saved content. */
     assert(paint_key('[') && palette_page == 15);
     assert(paint_key(']') && palette_page == 0);
     /* Invalid RLE must leave both canvas and palette intact. */
     disk[128] = 0xc0;
     assert(!load_pcx("broken.pcx"));
     assert(memcmp(canvas_palette, expected_palette, 768) == 0 && canvas[255] == 255);
+    /* Scrolling affects presentation only; absolute drawing coordinates
+     * must not apply the viewport offset twice. */
+    canvas_left = 10;
+    canvas_top = 20;
+    pixel(CANVAS_W - 1, CANVAS_H - 1, 123);
+    assert(canvas[PIXELS - 1] == 123);
+    assert(pixel_at(CANVAS_W - 1, CANVAS_H - 1) == 123);
+    draw_canvas(0, 0, CANVAS_W - 10, CANVAS_H - 20);
+    uint32_t index = canvas[20 * CANVAS_W + 10];
+    assert(drawn[0] == (index << 16 | (255u - index) << 8 | (index ^ 85u)));
+    canvas_left = canvas_top = 0;
     free(fill_queue);
     free(file_buffer);
     free(undo_canvas);

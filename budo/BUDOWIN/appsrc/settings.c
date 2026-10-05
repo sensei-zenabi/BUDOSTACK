@@ -1,4 +1,4 @@
-#include "../sdk/budowin.h"
+#include "../sdk/ui.h"
 
 #define WIN_X 110
 #define WIN_Y 70
@@ -8,6 +8,9 @@
 
 static const BwaHostApi *host_api;
 static int top_row = 0;
+static int file_menu = 0;
+static const char *settings_status = "Click an entry to change its application.";
+static BudoScrollbar association_scroll;
 
 static int text_equal(const char *a, const char *b)
 {
@@ -44,7 +47,7 @@ static int settings_rect(int *x, int *y, int *w, int *h)
 
 static int visible_rows_for_height(int h)
 {
-    int list_h = h - 82;
+    int list_h = h - 94;
     int rows = list_h / ROW_H;
 
     return rows > 1 ? rows : 1;
@@ -78,6 +81,40 @@ static void app_name_for_id(const char *app_id,
     copy_text(name, name_size, app_id);
 }
 
+static void settings_scroll_configure(void)
+{
+    int x, y, w, h;
+    if (!settings_rect(&x, &y, &w, &h)) return;
+    association_scroll.x = x + w - 32;
+    association_scroll.y = y + 60;
+    association_scroll.length = h - 94;
+    association_scroll.total = host_api->get_file_association_count();
+    association_scroll.page = visible_rows_for_height(h);
+    association_scroll.position = top_row;
+    budo_scroll_clamp(&association_scroll);
+    top_row = association_scroll.position;
+}
+
+static int settings_pointer(int x, int y, int event)
+{
+    settings_scroll_configure();
+    int handled = budo_scroll_pointer(&association_scroll, x, y, event);
+    top_row = association_scroll.position;
+    return handled;
+}
+
+static int settings_mouse_move(int x, int y, int buttons)
+{
+    if (file_menu) return 1;
+    return buttons & 1 ? settings_pointer(x, y, BUDO_POINTER_MOVE) : 0;
+}
+
+static int settings_mouse_up(int x, int y, int buttons)
+{
+    (void)buttons;
+    return settings_pointer(x, y, BUDO_POINTER_UP);
+}
+
 static void draw_list(void)
 {
     int wx;
@@ -93,17 +130,19 @@ static void draw_list(void)
     int row;
 
     if (!settings_rect(&wx, &wy, &ww, &wh)) return;
+    settings_scroll_configure();
+    budo_menu_bar_item(host_api, wx + 5, wy + 23, 36, "File", file_menu);
 
     list_x = wx + 16;
-    list_y = wy + 48;
-    list_w = ww - 32;
-    list_h = wh - 82;
+    list_y = wy + 60;
+    list_w = ww - 48;
+    list_h = wh - 94;
     visible_rows = visible_rows_for_height(wh);
     count = host_api->get_file_association_count();
 
-    host_api->draw_text(list_x, wy + 32, "Type",
+    host_api->draw_text(list_x, wy + 47, "Type",
                         ui_color(BUDO_SYS_COLOR_TEXT), 8);
-    host_api->draw_text(list_x + 92, wy + 32, "Application",
+    host_api->draw_text(list_x + 92, wy + 47, "Application",
                         ui_color(BUDO_SYS_COLOR_TEXT), 16);
 
     host_api->draw_sunken_panel(list_x - 1, list_y - 1,
@@ -133,28 +172,31 @@ static void draw_list(void)
                             ui_color(BUDO_SYS_COLOR_TEXT), 24);
     }
 
-    host_api->draw_standard_button(wx + 16, wy + wh - 25,
-                                   44, 16, "Up", 0);
-    host_api->draw_standard_button(wx + 66, wy + wh - 25,
-                                   44, 16, "Down", 0);
-    host_api->draw_text(wx + 128, wy + wh - 20,
-                        "Click an entry to change its application.",
+    budo_scroll_draw(host_api, &association_scroll);
+    host_api->draw_text(wx + 16, wy + wh - 20,
+                        settings_status,
                         ui_color(BUDO_SYS_COLOR_TEXT),
-                        (ww - 136) / 6);
+                        (ww - 32) / 6);
 }
 
 static int settings_open(void)
 {
     top_row = 0;
-    return host_api->window_create(
-        WIN_X, WIN_Y, WIN_W, WIN_H,
-        "Settings - File Associations",
-        BUDO_WINDOW_DEFAULT_BUTTONS);
+    if (!host_api->window_create(WIN_X, WIN_Y, WIN_W, WIN_H,
+                                  "Settings - File Associations",
+                                  BUDO_WINDOW_DEFAULT_BUTTONS)) return 0;
+    return host_api->window_set_min_size(360, 220);
 }
 
 static void settings_draw(void)
 {
     draw_list();
+    if (file_menu) {
+        int x,y,w,h;
+        const char *items[1] = {"Close"};
+        if (settings_rect(&x,&y,&w,&h))
+            budo_menu_draw(host_api, x + 5, y + 41, 140, items, 1);
+    }
 }
 
 static void cycle_association(int index)
@@ -206,7 +248,8 @@ static void cycle_association(int index)
         next_id[0] = '\0';
     }
 
-    (void)host_api->set_file_association(ext, next_id);
+    settings_status = host_api->set_file_association(ext, next_id) ?
+                      "Association saved." : "Save failed; previous association preserved.";
 }
 
 static int settings_mouse_down(int x, int y, int buttons)
@@ -219,7 +262,6 @@ static int settings_mouse_down(int x, int y, int buttons)
     int list_y;
     int list_w;
     int list_h;
-    int visible_rows;
     int count;
 
     (void)buttons;
@@ -227,23 +269,22 @@ static int settings_mouse_down(int x, int y, int buttons)
     if (!settings_rect(&wx, &wy, &ww, &wh)) return 0;
 
     list_x = wx + 16;
-    list_y = wy + 48;
-    list_w = ww - 32;
-    list_h = wh - 82;
-    visible_rows = visible_rows_for_height(wh);
+    list_y = wy + 60;
+    list_w = ww - 48;
+    list_h = wh - 94;
     count = host_api->get_file_association_count();
 
-    if (host_api->point_in_rect(x, y, wx + 16, wy + wh - 25,
-                                44, 16)) {
-        if (top_row > 0) --top_row;
+    if (file_menu) {
+        int item = budo_menu_hit(x,y,wx+5,wy+41,140,1);
+        file_menu = 0;
+        if (item == 0) (void)host_api->window_close();
         return 1;
     }
-
-    if (host_api->point_in_rect(x, y, wx + 66, wy + wh - 25,
-                                44, 16)) {
-        if (top_row + visible_rows < count) ++top_row;
+    if (host_api->point_in_rect(x,y,wx+5,wy+23,36,18)) {
+        file_menu = 1;
         return 1;
     }
+    if (settings_pointer(x, y, BUDO_POINTER_DOWN)) return 1;
 
     if (host_api->point_in_rect(x, y,
                                 list_x, list_y, list_w, list_h)) {
@@ -271,10 +312,22 @@ static int settings_key(int key)
     visible_rows = visible_rows_for_height(wh);
 
     if (key == 27) {
+        if (file_menu) { file_menu = 0; return 1; }
         return host_api->window_close();
     }
-    if (key == 0) {
-        return 0;
+    if (key >= 0x100) {
+        int scan = key & 255;
+        if (scan == 201) top_row -= 3;
+        else if (scan == 202) top_row += 3;
+        else if (scan == 72) --top_row;
+        else if (scan == 80) ++top_row;
+        else if (scan == 73) top_row -= visible_rows;
+        else if (scan == 81) top_row += visible_rows;
+        else if (scan == 71) top_row = 0;
+        else if (scan == 79) top_row = count;
+        else return 0;
+        settings_scroll_configure();
+        return 1;
     }
     if (key == 'u' || key == 'U') {
         if (top_row > 0) --top_row;
@@ -302,11 +355,12 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 {
     if (host == 0 || app == 0 ||
         host->abi_major != BWA_ABI_MAJOR ||
-        host->abi_minor < 5 ||
+        host->abi_minor < 6 ||
         host->get_system_color == 0 ||
         host->draw_standard_button == 0 ||
         host->draw_sunken_panel == 0 ||
         host->window_create == 0 ||
+        host->window_set_min_size == 0 ||
         host->window_get_rect == 0 ||
         host->window_close == 0 ||
         host->get_file_association_count == 0 ||
@@ -330,6 +384,8 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
     app->callbacks.close = 0;
     app->callbacks.draw_icon = settings_draw_icon;
     app->callbacks.open_file = 0;
+    app->callbacks.mouse_move = settings_mouse_move;
+    app->callbacks.mouse_up = settings_mouse_up;
 
     return 1;
 }

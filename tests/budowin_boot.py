@@ -12,6 +12,8 @@ for line in (root / 'config.ini').read_text().splitlines():
     if '=' in line and not line.lstrip().startswith('#'):
         key, value = line.split('=', 1)
         config[key.strip()] = value.split('#')[0].strip()
+# This fixture tests the GUI decision, independently of first-run setup.
+config['VAR_FIRST_BOOT'] = '0'
 source = (root / 'tasks/autoexec.task').read_text()
 for active, answer in [(1, 'y'), (1, 'Y'), (1, 'n'), (0, 'y')]:
     lines = []

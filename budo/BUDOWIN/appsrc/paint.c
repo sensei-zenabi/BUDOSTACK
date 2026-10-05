@@ -1,4 +1,7 @@
-#include "../sdk/budowin.h"
+#include "../sdk/ui.h"
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #define WIN_X 20
 #define WIN_Y 24
 #define WIN_W 600
@@ -35,6 +38,7 @@ static int palette_page, undo_palette_page;
 static int *fill_queue;
 static int undo_valid;
 static int dirty;
+static uint64_t saved_fingerprint;
 static int tool = TOOL_PENCIL;
 static unsigned char fg = 1;
 static unsigned char bg = 4;
@@ -42,9 +46,15 @@ static int drawing;
 static int draw_button;
 static int start_x, start_y, last_x, last_y, preview_x, preview_y;
 static int dialog_mode;
+static int file_owned;
+static int pending_action;
+static char pending_path[4096];
+static int paint_menu;
+static BudoScrollbar canvas_hscroll, canvas_vscroll;
+static int canvas_left, canvas_top;
+static void paint_action(int action);
+static int paint_save(void);
 static char filename[4096] = "PAINT.PCX";
-static char dialog_text[4096];
-static int dialog_len;
 static char status_text[64] = "Ready";
 
 static const char *tool_labels[TOOL_COUNT] = {
@@ -79,15 +89,6 @@ static void bytes_fill(unsigned char *dest,
     for (i = 0; i < count; ++i) dest[i] = value;
 }
 
-static int text_len(const char *text)
-{
-    const volatile char *p = (const volatile char *)text;
-    int len = 0;
-
-    while (p[len] != '\0') ++len;
-    return len;
-}
-
 static void default_palette(void)
 {
     int i;
@@ -117,6 +118,16 @@ static unsigned int canvas_rgb(unsigned char index)
     return ((unsigned int)canvas_palette[index * 3] << 16) |
            ((unsigned int)canvas_palette[index * 3 + 1] << 8) |
            canvas_palette[index * 3 + 2];
+}
+
+static uint64_t paint_content_hash(void)
+{
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (int i = 0; i < PIXELS; ++i)
+        hash = (hash ^ canvas[i]) * UINT64_C(1099511628211);
+    for (int i = 0; i < 768; ++i)
+        hash = (hash ^ canvas_palette[i]) * UINT64_C(1099511628211);
+    return hash;
 }
 
 static int ensure_buffers(void)
@@ -150,6 +161,7 @@ static int ensure_buffers(void)
     bytes_fill(undo_canvas, 4, PIXELS);
     undo_valid = 0;
     dirty = 0;
+    saved_fingerprint = paint_content_hash();
     return 1;
 }
 
@@ -175,8 +187,14 @@ static void copy_name(char *dest, const char *src)
 
 static void refresh_title(void)
 {
+    if (canvas) dirty = paint_content_hash() != saved_fingerprint;
     if (host_api != 0 && host_api->window_set_title != 0) {
-        (void)host_api->window_set_title(dirty ? "Paint *" : "Paint");
+        char title[160];
+        const char *name = strrchr(filename, '/');
+        name = name ? name + 1 : filename;
+        snprintf(title, sizeof(title), "Paint%s - [%.100s]",
+                 dirty ? " *" : "", file_owned ? name : "Untitled");
+        (void)host_api->window_set_title(title);
     }
 }
 
@@ -232,6 +250,7 @@ static void new_canvas(void)
     default_palette();
     bytes_fill(canvas, 4, PIXELS);
     dirty = 0;
+    saved_fingerprint = paint_content_hash();
     refresh_title();
 }
 
@@ -431,6 +450,7 @@ static int load_pcx(const char *path)
     bg = (unsigned char)nearest_color(canvas_palette, 255, 255, 255);
     palette_page = 0;
     dirty = 0;
+    saved_fingerprint = paint_content_hash();
     refresh_title();
     return 1;
 invalid:
@@ -521,31 +541,100 @@ static int save_pcx(const char *path)
     }
 
     dirty = 0;
+    saved_fingerprint = paint_content_hash();
     return 1;
 }
 
 static void begin_dialog(int mode)
 {
-    dialog_mode = mode;
-    copy_name(dialog_text, filename);
-    dialog_len = text_len(dialog_text);
-    set_status(mode == DIALOG_OPEN ? "Open PCX" : "Save PCX As");
+    (void)host_api->file_dialog(mode, filename);
 }
 
-static void finish_dialog(void)
+static void paint_continue(void)
 {
-    int mode = dialog_mode;
-    int ok;
-    if (dialog_text[0] == '\0') { set_status("Filename required"); return; }
-    ok = mode == DIALOG_OPEN ?
-         load_pcx(dialog_text) : save_pcx(dialog_text);
-    if (ok) {
-        copy_name(filename, dialog_text);
-        dialog_mode = DIALOG_NONE;
+    int action = pending_action;
+    pending_action = 0;
+    if (action == 1) {
+        new_canvas();
+        dirty = 0;
+        saved_fingerprint = paint_content_hash();
+        file_owned = 0;
+        canvas_left = canvas_top = 0;
+        copy_name(filename, "PAINT.PCX");
         refresh_title();
-        set_status(mode == DIALOG_OPEN ? "Image loaded" : "Image saved");
-    } else set_status(mode == DIALOG_OPEN ?
-                      "Unable to open PCX" : "Unable to save PCX");
+        set_status("New image");
+    } else if (action == 2) begin_dialog(DIALOG_OPEN);
+    else if (action == 3) (void)host_api->window_close();
+    else if (action == 4) {
+        if (load_pcx(pending_path)) {
+            copy_name(filename, pending_path);
+            file_owned = 1;
+            canvas_left = canvas_top = 0;
+            refresh_title();
+        } else set_status("Unable to open PCX; current image preserved");
+    }
+}
+
+static void paint_action(int action)
+{
+    refresh_title();
+    paint_menu = 0;
+    pending_action = action;
+    if (dirty) {
+        (void)host_api->confirm_dialog(BUDO_CONFIRM_SAVE, "Unsaved changes",
+                                       "Save your image before continuing?");
+    } else paint_continue();
+}
+
+static int paint_save(void)
+{
+    if (!file_owned) {
+        begin_dialog(DIALOG_SAVE_AS);
+        return 0;
+    }
+    int saved = save_pcx(filename);
+    if (saved) refresh_title();
+    set_status(saved ? "Image saved" : "Save failed; original file preserved");
+    return saved;
+}
+
+static int paint_file_selected(int mode, const char *path)
+{
+    int ok = mode == BUDO_FILE_OPEN ? load_pcx(path) : save_pcx(path);
+    if (!ok) return 0;
+    copy_name(filename, path);
+    file_owned = 1;
+    if (mode == BUDO_FILE_OPEN) canvas_left = canvas_top = 0;
+    refresh_title();
+    set_status(mode == BUDO_FILE_OPEN ? "Image loaded" : "Image saved");
+    if (pending_action) paint_continue();
+    return 1;
+}
+
+static int paint_request_close(void)
+{
+    refresh_title();
+    if (!dirty) return 1;
+    paint_action(3);
+    return 0;
+}
+
+static void paint_confirm_result(int kind, int response)
+{
+    (void)kind;
+    if (response == BUDO_RESPONSE_CANCEL) {
+        pending_action = 0;
+        return;
+    }
+    if (response == BUDO_RESPONSE_DISCARD) {
+        if (pending_action == 3) {
+            new_canvas();
+            file_owned = 0;
+            copy_name(filename, "PAINT.PCX");
+            refresh_title();
+        }
+        paint_continue();
+    } else if (paint_save()) paint_continue();
 }
 
 static int layout(int *cx, int *cy, int *cw, int *ch,
@@ -558,8 +647,8 @@ static int layout(int *cx, int *cy, int *cw, int *ch,
     work_y = *cy + 28;
     *palette_y = *cy + *ch - 43;
     *status_y = *cy + *ch - 14;
-    aw = *cx + *cw - 8 - work_x;
-    ah = *palette_y - 6 - work_y;
+    aw = *cx + *cw - 24 - work_x;
+    ah = *palette_y - 22 - work_y;
     *vw = min_i(CANVAS_W, max_i(1, aw));
     *vh = min_i(CANVAS_H, max_i(1, ah));
     *sx = work_x + max_i(0, (aw - *vw) / 2);
@@ -573,8 +662,8 @@ static int to_canvas(int mx, int my, int *px, int *py)
     if (!layout(&cx, &cy, &cw, &ch, &sx, &sy, &vw, &vh, &py0, &st))
         return 0;
     if (!host_api->point_in_rect(mx, my, sx, sy, vw, vh)) return 0;
-    *px = mx - sx;
-    *py = my - sy;
+    *px = mx - sx + canvas_left;
+    *py = my - sy + canvas_top;
     return 1;
 }
 
@@ -586,9 +675,9 @@ static void draw_canvas(int sx, int sy, int vw, int vh)
     for (y = 0; y < vh; ++y) {
         int x = 0;
         while (x < vw) {
-            unsigned char c = canvas[y * CANVAS_W + x];
+            unsigned char c = canvas[(y + canvas_top) * CANVAS_W + x + canvas_left];
             int run = 1;
-            while (x + run < vw && canvas[y * CANVAS_W + x + run] == c)
+            while (x + run < vw && canvas[(y + canvas_top) * CANVAS_W + x + canvas_left + run] == c)
                 ++run;
             host_api->fill_rect_rgb(sx + x, sy + y, run, 1, canvas_rgb(c));
             x += run;
@@ -599,6 +688,8 @@ static void draw_canvas(int sx, int sy, int vw, int vh)
 static void preview_pixel(int sx, int sy, int vw, int vh,
                           int x, int y, unsigned char c)
 {
+    x -= canvas_left;
+    y -= canvas_top;
     if (x >= 0 && x < vw && y >= 0 && y < vh)
         host_api->fill_rect_rgb(sx + x, sy + y, 1, 1, canvas_rgb(c));
 }
@@ -649,42 +740,58 @@ static void draw_preview(int sx, int sy, int vw, int vh, unsigned char c)
     }
 }
 
-static void draw_dialog(int cx, int cy, int cw, int ch)
+static void paint_scroll_layout(int sx, int sy, int vw, int vh)
 {
-    int x = cx + (cw - 330) / 2, y = cy + (ch - 82) / 2;
-    host_api->fill_rect(x, y, 330, 82,
-        host_api->get_system_color(BUDO_SYS_COLOR_FACE));
-    host_api->draw_rect(x, y, 330, 82,
-        host_api->get_system_color(BUDO_SYS_COLOR_SHADOW));
-    host_api->draw_text(x + 10, y + 10,
-        dialog_mode == DIALOG_OPEN ? "Open PCX file:" : "Save PCX file as:",
-        host_api->get_system_color(BUDO_SYS_COLOR_TEXT), 30);
-    host_api->draw_sunken_panel(x + 10, y + 28, 310, 18,
-        host_api->get_system_color(BUDO_SYS_COLOR_HIGHLIGHT));
-    host_api->draw_text(x + 14, y + 33, dialog_text,
-        host_api->get_system_color(BUDO_SYS_COLOR_TEXT), 49);
-    host_api->draw_standard_button(x + 205, y + 56, 52, 18, "OK", 0);
-    host_api->draw_standard_button(x + 266, y + 56, 54, 18, "Cancel", 0);
+    canvas_hscroll.x = sx;
+    canvas_hscroll.y = sy + vh + 2;
+    canvas_hscroll.length = vw;
+    canvas_hscroll.horizontal = 1;
+    canvas_hscroll.total = CANVAS_W;
+    canvas_hscroll.page = vw;
+    canvas_hscroll.position = canvas_left;
+    canvas_vscroll.x = sx + vw + 2;
+    canvas_vscroll.y = sy;
+    canvas_vscroll.length = vh;
+    canvas_vscroll.total = CANVAS_H;
+    canvas_vscroll.page = vh;
+    canvas_vscroll.position = canvas_top;
+    budo_scroll_clamp(&canvas_hscroll);
+    budo_scroll_clamp(&canvas_vscroll);
+    canvas_left = canvas_hscroll.position;
+    canvas_top = canvas_vscroll.position;
+}
+
+static int paint_scroll_pointer(int x, int y, int event)
+{
+    int cx,cy,cw,ch,sx,sy,vw,vh,py,st;
+    if (!layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&py,&st)) return 0;
+    paint_scroll_layout(sx, sy, vw, vh);
+    int handled = budo_scroll_pointer(&canvas_hscroll, x, y, event);
+    handled |= budo_scroll_pointer(&canvas_vscroll, x, y, event);
+    canvas_left = canvas_hscroll.position;
+    canvas_top = canvas_vscroll.position;
+    return handled;
 }
 
 static void paint_draw(void)
 {
     int cx, cy, cw, ch, sx, sy, vw, vh, pal_y, status_y, i;
-    static const char *menu[6] = {"New","Open","Save","SaveAs","Undo","Clear"};
-    static const int widths[6] = {42,46,46,54,46,48};
+    static const char *file_items[5] = {"New   Ctrl+N", "Open... Ctrl+O",
+                                      "Save  Ctrl+S", "Save As...", "Close"};
+    static const char *edit_items[2] = {"Undo  Ctrl+Z", "Clear"};
     int x;
     if (!layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&pal_y,&status_y)) return;
     host_api->fill_rect(cx, cy, cw, ch,
         host_api->get_system_color(BUDO_SYS_COLOR_FACE));
-    x = cx + 4;
-    for (i = 0; i < 6; ++i) {
-        host_api->draw_standard_button(x, cy + 3, widths[i], 18, menu[i], 0);
-        x += widths[i] + 4;
-    }
+    budo_menu_bar_item(host_api, cx + 4, cy + 3, 36, "File", paint_menu == 1);
+    budo_menu_bar_item(host_api, cx + 44, cy + 3, 36, "Edit", paint_menu == 2);
+    paint_scroll_layout(sx, sy, vw, vh);
     for (i = 0; i < TOOL_COUNT; ++i)
         host_api->draw_standard_button(cx + 5 + (i & 1) * 42,
             cy + 30 + (i >> 1) * 24, 38, 20, tool_labels[i], i == tool);
     draw_canvas(sx, sy, vw, vh);
+    budo_scroll_draw(host_api, &canvas_hscroll);
+    budo_scroll_draw(host_api, &canvas_vscroll);
     draw_preview(sx, sy, vw, vh, draw_button == 2 ? bg : fg);
     host_api->draw_text(cx + 6, pal_y - 11, "Colors",
         host_api->get_system_color(BUDO_SYS_COLOR_TEXT), 6);
@@ -711,7 +818,8 @@ static void paint_draw(void)
         host_api->get_system_color(BUDO_SYS_COLOR_SHADOW));
     host_api->draw_text(cx + 6, status_y + 2, status_text,
         host_api->get_system_color(BUDO_SYS_COLOR_TEXT), (cw - 12) / 6);
-    if (dialog_mode != DIALOG_NONE) draw_dialog(cx, cy, cw, ch);
+    if (paint_menu == 1) budo_menu_draw(host_api, cx + 4, cy + 22, 156, file_items, 5);
+    else if (paint_menu == 2) budo_menu_draw(host_api, cx + 44, cy + 22, 156, edit_items, 2);
 }
 
 static void commit_shape(unsigned char c)
@@ -728,40 +836,28 @@ static int paint_mouse_down(int x, int y, int buttons)
     int cx,cy,cw,ch,sx,sy,vw,vh,pal_y,status_y,px,py,i;
     int button = (buttons & 2) ? 2 : 1;
     unsigned char c = button == 2 ? bg : fg;
-    static const int widths[6] = {42,46,46,54,46,48};
     if (!layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&pal_y,&status_y)) return 0;
     (void)status_y;
-    if (dialog_mode != DIALOG_NONE) {
-        int dx = cx + (cw - 330) / 2, dy = cy + (ch - 82) / 2;
-        if (host_api->point_in_rect(x,y,dx+205,dy+56,52,18)) {
-            finish_dialog(); return 1;
-        }
-        if (host_api->point_in_rect(x,y,dx+266,dy+56,54,18)) {
-            dialog_mode = DIALOG_NONE; set_status("Cancelled"); return 1;
+    if (paint_menu) {
+        int item = budo_menu_hit(x, y, cx + (paint_menu == 1 ? 4 : 44), cy + 22,
+                                156, paint_menu == 1 ? 5 : 2);
+        int menu = paint_menu;
+        paint_menu = 0;
+        if (item >= 0 && menu == 1) {
+            if (item == 0) paint_action(1);
+            else if (item == 1) paint_action(2);
+            else if (item == 2) (void)paint_save();
+            else if (item == 3) begin_dialog(DIALOG_SAVE_AS);
+            else paint_action(3);
+        } else if (item >= 0) {
+            if (item == 0) do_undo();
+            else { clear_canvas(bg); refresh_title(); set_status("Canvas cleared"); }
         }
         return 1;
     }
-    {
-        int bx = cx + 4;
-        for (i = 0; i < 6; ++i) {
-            if (host_api->point_in_rect(x,y,bx,cy+3,widths[i],18)) {
-                if (i == 0) {
-                    new_canvas(); copy_name(filename,"PAINT.PCX");
-                    dirty = 0; refresh_title(); set_status("New image");
-                } else if (i == 1) begin_dialog(DIALOG_OPEN);
-                else if (i == 2) {
-                    int saved = save_pcx(filename);
-                    if (saved) refresh_title();
-                    set_status(saved ? "Image saved" : "Save failed");
-                }
-                else if (i == 3) begin_dialog(DIALOG_SAVE_AS);
-                else if (i == 4) do_undo();
-                else { clear_canvas(bg); set_status("Canvas cleared"); }
-                return 1;
-            }
-            bx += widths[i] + 4;
-        }
-    }
+    if (host_api->point_in_rect(x,y,cx+4,cy+3,36,18)) { paint_menu=1; return 1; }
+    if (host_api->point_in_rect(x,y,cx+44,cy+3,36,18)) { paint_menu=2; return 1; }
+    if (paint_scroll_pointer(x, y, BUDO_POINTER_DOWN)) return 1;
     for (i = 0; i < TOOL_COUNT; ++i) {
         int tx = cx + 5 + (i & 1) * 42;
         int ty = cy + 30 + (i >> 1) * 24;
@@ -804,6 +900,8 @@ static int paint_mouse_down(int x, int y, int buttons)
 
 static int paint_mouse_move(int x, int y, int buttons)
 {
+    if (paint_menu) return 1;
+    if (paint_scroll_pointer(x, y, BUDO_POINTER_MOVE)) return 1;
     int px,py;
     unsigned char c;
     if (!drawing || (buttons & draw_button) == 0) return 0;
@@ -823,6 +921,7 @@ static int paint_mouse_move(int x, int y, int buttons)
 
 static int paint_mouse_up(int x, int y, int buttons)
 {
+    if (paint_scroll_pointer(x, y, BUDO_POINTER_UP)) return 1;
     int px,py;
     unsigned char c;
     (void)buttons;
@@ -838,36 +937,21 @@ static int paint_mouse_up(int x, int y, int buttons)
 
 static int paint_key(int key)
 {
-    if (dialog_mode != DIALOG_NONE) {
-        if (key == 27) { dialog_mode=DIALOG_NONE; set_status("Cancelled"); return 1; }
-        if (key == 13) { finish_dialog(); return 1; }
-        if (key == 8) {
-            if (dialog_len > 0) dialog_text[--dialog_len]='\0';
-            return 1;
-        }
-        if (key >= 32 && key <= 126 && dialog_len + 1 < (int)sizeof(dialog_text)) {
-            dialog_text[dialog_len++]=(char)key; dialog_text[dialog_len]='\0';
-        }
-        return 1;
-    }
     if (key == '[' || key == ']') {
         palette_page = (palette_page + (key == '[' ? 15 : 1)) % 16;
         set_status("Palette page changed ([ / ])");
         return 1;
     }
     if (key == 26) { do_undo(); return 1; }
-    if (key == 14) {
-        new_canvas(); dirty=0; refresh_title(); copy_name(filename,"PAINT.PCX");
-        set_status("New image"); return 1;
-    }
-    if (key == 15) { begin_dialog(DIALOG_OPEN); return 1; }
-    if (key == 19) {
-        int saved = save_pcx(filename);
-        if (saved) refresh_title();
-        set_status(saved ? "Image saved" : "Save failed");
+    if (key == 14) { paint_action(1); return 1; }
+    if (key == 15) { paint_action(2); return 1; }
+    if (key == 19) { (void)paint_save(); return 1; }
+    if (key == 0x100 + 73 || key == 0x100 + 81 || key == 0x100 + 201 || key == 0x100 + 202) {
+        canvas_top += (key == 0x100 + 73 || key == 0x100 + 201) ? -32 : 32;
         return 1;
     }
     if (key == 27) {
+        if (paint_menu) { paint_menu = 0; return 1; }
         if (drawing) {
             drawing=0;
             if (undo_valid) { bytes_copy(canvas,undo_canvas,PIXELS); undo_valid=0; }
@@ -896,13 +980,22 @@ static int paint_open(void)
     if (host_api->window_set_min_size != 0) {
         (void)host_api->window_set_min_size(500, 330);
     }
+    refresh_title();
     return 1;
 }
 
 static int paint_open_file(const char *path)
 {
-    if (path == 0 || !ensure_buffers() || !load_pcx(path)) return 0;
-    copy_name(filename,path);
+    if (path == 0 || !ensure_buffers()) return 0;
+    if (dirty) {
+        copy_name(pending_path, path);
+        paint_action(4);
+        return paint_open();
+    }
+    if (!load_pcx(path)) return 0;
+    copy_name(filename, path);
+    file_owned = 1;
+    canvas_left = canvas_top = 0;
     set_status("Image loaded");
     return paint_open();
 }
@@ -923,14 +1016,15 @@ static void paint_draw_icon(int x, int y)
 int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 {
     if (host==0 || app==0 || host->abi_major!=BWA_ABI_MAJOR ||
-        host->abi_minor<9 || host->window_create==0 ||
+        host->abi_minor<10 || host->window_create==0 ||
         host->window_get_client_rect==0 || host->window_close==0 ||
         host->fill_rect==0 || host->draw_rect==0 || host->draw_text==0 ||
         host->draw_standard_button==0 || host->draw_sunken_panel==0 ||
         host->point_in_rect==0 || host->get_system_color==0 ||
         host->window_set_min_size==0 || host->window_set_title==0 ||
         host->file_read_all==0 || host->file_write_all==0 ||
-        host->memory_alloc==0 || host->memory_free==0 || host->fill_rect_rgb==0) return 0;
+        host->memory_alloc==0 || host->memory_free==0 || host->fill_rect_rgb==0 ||
+        host->file_dialog==0 || host->confirm_dialog==0) return 0;
 
     host_api=host;
     canvas=0;
@@ -947,6 +1041,9 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
     app->callbacks.draw=paint_draw;
     app->callbacks.mouse_down=paint_mouse_down;
     app->callbacks.key=paint_key;
+    app->request_close = paint_request_close;
+    app->file_selected = paint_file_selected;
+    app->confirm_result = paint_confirm_result;
     app->callbacks.close=0;
     app->callbacks.draw_icon=paint_draw_icon;
     app->callbacks.open_file=paint_open_file;

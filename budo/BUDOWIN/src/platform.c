@@ -208,7 +208,7 @@ static int pump_one(void) {
         if (event.type == BUDO_GFX_MOUSE_UP) mouse_buttons &= ~mask;
         if (event.type != BUDO_GFX_MOUSE_MOVE) return 2;
     } else if (event.type == BUDO_GFX_WHEEL) {
-        enqueue(0); enqueue(event.y > 0 ? 73 : 81);
+        enqueue(0); enqueue(event.y > 0 ? 201 : 202);
     }
     return 1;
 }

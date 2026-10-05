@@ -1,4 +1,7 @@
-#include "budowin.h"
+#include "ui.h"
+
+/* Use host-managed chrome and semantic colors. Add menus/scrollbars from
+ * ui.h and host file dialogs when extending this starter application. */
 
 static const BwaHostApi *host_api;
 

@@ -44,6 +44,57 @@ RGB value are transparent. Each image has independent colors, so a 256-color
 image does not change the UI or another image's palette. Presentation uses
 RGB composition; the classic UI continues to use its system color indices.
 
+## Editor search and editing
+
+Find (`Ctrl+F`) and Replace (`Ctrl+H` or `Ctrl+R`) open a persistent
+Find / Replace dialog. Search text, replacement text and options remain
+available when it is reopened. Search supports case-sensitive matching,
+whole words and optional wraparound, with visible match highlighting.
+`F3` finds the next occurrence; `Shift+F3` finds the previous occurrence.
+The dialog moves away from a match that would otherwise be hidden.
+
+In the dialog, `Tab` switches fields and selects their text; `Ctrl+A`
+selects the active field. Arrow keys, Home, End, Backspace and Delete edit
+fields in place. `Enter` finds next, `Ctrl+P` finds previous, `Ctrl+R` or
+`Ctrl+Enter` replaces the reviewed match, and `Ctrl+Shift+Enter` replaces
+all. The first Replace action finds a match if none is currently reviewed.
+`Ctrl+L`, `Ctrl+W` and `Ctrl+B` toggle case, whole-word and wrap options.
+Escape or the dialog close button closes the dialog.
+
+`Ctrl+Z` and `Ctrl+Y` undo and redo up to 32 editing steps. Continuous typing is grouped into words. Replace All is
+one undo step and reports its replacement count. Every resulting line is
+checked against the document capacity before Replace All changes anything.
+New documents and file loads start a new history. Search currently matches
+literal text within individual lines; it does not interpret regular
+expressions or search across line breaks.
+
+## Shared File workflows and scrolling
+
+All five bundled applications use the same window, menu, button and
+scrollbar style. Editor and Paint share the desktop file picker and
+Save/Discard/Cancel prompts. New, Open, Close and desktop exit protect
+unsaved documents; Save As confirms replacement. Editor saves text or RTF
+according to the selected filename extension, and exports PostScript.
+Paint prompts for a filename on its first save and supports PCX.
+
+The picker supports full paths, type filters, folder creation, Up,
+keyboard selection and editable filenames. Tab switches the list/name
+field; Ctrl+A selects the name; arrow keys, Home, End, Backspace and Delete
+edit it. Directory listings are allocated dynamically. Failed reads and
+oversized text/RTF documents preserve the editor buffer. Writes use
+checked temporary files and atomic replacement.
+
+Scrollbars support arrow steps, track paging and draggable proportional
+thumbs. Editor supports both axes and rows within wrapped lines; wrapping
+hides the horizontal scrollbar. Paint scrolls its canvas, Settings scrolls
+associations, Explorer scrolls pages, and Terminal scrolls output. Mouse
+wheel scrolling leaves the editor caret in place.
+
+Explorer's File menu exposes Open, Up, New Folder, Rename, Delete and
+Close, with confirmation for deletion. Terminal offers Save Output,
+Clear Output and Close. Settings exposes Close; association edits persist
+through their existing host service rather than a document Save action.
+
 ## Native modules
 
 `APPS/*.BWA` are ELF shared libraries built from `appsrc/`. The five bundled

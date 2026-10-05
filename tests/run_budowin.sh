@@ -14,6 +14,10 @@ printf 'input' > "$BUDOWIN_TEST_DIR/input.txt"
 COMPILER=${CC:-cc}
 FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
 budo/BUDOWIN/build.sh
+"$COMPILER" "${FLAGS[@]}" tests/budowin_editor.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/editor"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_ui.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/ui"
+"$TEST_DIR/ui" "$TEST_DIR"
+"$TEST_DIR/editor"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_background.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/background"
 "$TEST_DIR/background" "$TEST_DIR/background.pcx"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_paint_colors.c -o "$TEST_DIR/paint-colors"

@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
                     if (seen < 5 && (frames == 5 || frames == 7 || frames == 9 || frames == 11)) {
                         struct budo_gfx_event event = {0};
                         event.type = (frames == 5 || frames == 9) ? BUDO_GFX_MOUSE_DOWN : BUDO_GFX_MOUSE_UP;
-                        event.button = 1; event.x = seen == 1 ? 180 : 250; event.y = 95;
+                        event.button = 1; event.x = seen == 1 ? 180 : 250; event.y = 111; /* Icon row follows the harmonized File menu. */
                         budo_gfx_host_event(host, &event);
                     }
                     if (seen == 5 && frames == 5) {

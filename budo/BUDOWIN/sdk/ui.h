@@ -1,6 +1,7 @@
 #ifndef BUDOWIN_UI_H
 #define BUDOWIN_UI_H
 #include "budowin.h"
+#include "selection.h"
 
 #define BUDO_SCROLL_WIDTH 16
 #define BUDO_POINTER_DOWN 1
@@ -150,5 +151,44 @@ static inline int budo_menu_hit(int mx, int my, int x, int y, int width, int cou
     if (mx < x + 2 || mx >= x + width - 2 || my < y + 2 ||
         my >= y + 2 + count * 16) return -1;
     return (my - y - 2) / 16;
+}
+static inline unsigned int budo_selection_modifiers(const BwaHostApi *host)
+{
+    return host->abi_minor >= 11 && host->get_keyboard_modifiers ?
+           host->get_keyboard_modifiers() : 0;
+}
+
+/* Paint only the icon rectangle; labels and grid gutters remain untouched. */
+static inline void budo_selection_icon_draw(const BwaHostApi *host, int x, int y,
+                                           int w, int h, int selected, int focused)
+{
+    if (w <= 0 || h <= 0) return;
+    if (selected) host->fill_rect(x, y, w, h,
+                                  host->get_system_color(BUDO_SYS_COLOR_TITLE_ACTIVE));
+    if (!focused) return;
+    unsigned int color = host->get_system_color(BUDO_SYS_COLOR_SHADOW);
+    for (int edge = 0; edge < w; edge += 2) {
+        host->fill_rect(x + edge, y, 1, 1, color);
+        host->fill_rect(x + edge, y + h - 1, 1, 1, color);
+    }
+    for (int edge = 0; edge < h; edge += 2) {
+        host->fill_rect(x, y + edge, 1, 1, color);
+        host->fill_rect(x + w - 1, y + edge, 1, 1, color);
+    }
+}
+
+static inline void budo_selection_drag_draw(const BwaHostApi *host,
+                                           const BudoSelection *s)
+{
+    if (!s->dragging) return;
+    int x = s->end_x < s->start_x ? s->end_x : s->start_x;
+    int y = s->end_y < s->start_y ? s->end_y : s->start_y;
+    int w = s->end_x < s->start_x ? s->start_x - s->end_x + 1 : s->end_x - s->start_x + 1;
+    int h = s->end_y < s->start_y ? s->start_y - s->end_y + 1 : s->end_y - s->start_y + 1;
+    unsigned int color = host->get_system_color(BUDO_SYS_COLOR_TITLE_ACTIVE);
+    host->fill_rect(x, y, w, 1, color);
+    host->fill_rect(x, y + h - 1, w, 1, color);
+    host->fill_rect(x, y, 1, h, color);
+    host->fill_rect(x + w - 1, y, 1, h, color);
 }
 #endif

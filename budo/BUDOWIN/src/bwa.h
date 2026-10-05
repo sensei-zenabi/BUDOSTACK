@@ -6,11 +6,11 @@
  *
  * In this native port, .BWA files are POSIX ELF shared libraries exposing
  * bwa_entry. Rebuild DOS/DJGPP modules from source for the target platform.
- * The callbacks and host services retain the upstream BWA 1.8 interface with appended RGB services.
+ * Services added after BWA 1.8 are appended to preserve existing field offsets.
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 10
+#define BWA_ABI_MINOR 11
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -136,6 +136,8 @@ typedef struct BwaHostApi {
     int (*file_dialog)(int mode, const char *initial_path);
     int (*confirm_dialog)(int kind, const char *title, const char *message);
     void (*get_pointer_state)(int *x, int *y, int *buttons);
+    /* ABI 1.11: Shift (0x03) and Ctrl (0x04) for shared item selection. */
+    unsigned int (*get_keyboard_modifiers)(void);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

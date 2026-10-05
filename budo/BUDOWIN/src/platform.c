@@ -23,6 +23,7 @@ static int queue[256];
 static unsigned int queue_read, queue_write;
 static int disconnected;
 static int caps_lock;
+static int nordic_keyboard = 1;
 static char user_directory[4096], state_directory[4096];
 static char own_executable[4096];
 static char launch_command[4096], launch_directory[4096];
@@ -44,7 +45,7 @@ int findnext(struct ffblk *entry) {
         if (strcmp(entry->pattern, "*.*") != 0 &&
             fnmatch(entry->pattern, item->d_name, 0) != 0) continue;
         written = snprintf(path, sizeof(path), "%s/%s", entry->directory, item->d_name);
-        if (written < 0 || (size_t)written >= sizeof(path) || stat(path, &st) != 0) continue;
+        if (written < 0 || (size_t)written >= sizeof(path) || (stat(path, &st) != 0 && lstat(path, &st) != 0)) continue;
         if (S_ISDIR(st.st_mode) && !(entry->attributes & FA_DIREC)) continue;
         strcpy(chosen, item->d_name);
         attrib = S_ISDIR(st.st_mode) ? FA_DIREC : FA_ARCH;
@@ -147,6 +148,33 @@ static void enqueue(int key) {
 unsigned int bw_modifiers(void) {
     return ((keys[225] || keys[229]) ? 3u : 0u) | ((keys[224] || keys[228]) ? 4u : 0u);
 }
+int bw_get_keyboard_layout(void) { return nordic_keyboard; }
+void bw_load_keyboard_layout(void) {
+    FILE *file = fopen(bw_state_file("keyboard.state"), "r");
+    int value;
+    nordic_keyboard = 1;
+    if (file) {
+        if (fscanf(file, "%d", &value) == 1 && (value == 0 || value == 1)) nordic_keyboard = value;
+        fclose(file);
+    }
+}
+int bw_set_keyboard_layout(int nordic) {
+    char path[4096], temporary[4096];
+    if (nordic != 0 && nordic != 1) return 0;
+    if (!copy_path(path, sizeof(path), bw_state_file("keyboard.state")) ||
+        !copy_path(temporary, sizeof(temporary), bw_state_file("keyboard.tmp"))) return 0;
+    FILE *file = fopen(temporary, "w");
+    if (!file) { perror("Save keyboard layout"); return 0; }
+    int ok = fprintf(file, "%d\n", nordic) > 0;
+    if (fclose(file) != 0) ok = 0;
+    if (!ok || rename(temporary, path) != 0) {
+        perror("Save keyboard layout");
+        (void)remove(temporary);
+        return 0;
+    }
+    nordic_keyboard = nordic;
+    return 1;
+}
 static void translate_key(const struct budo_gfx_event *event) {
     int key = event->key;
     int code = event->scancode;
@@ -165,6 +193,57 @@ static void translate_key(const struct budo_gfx_event *event) {
     }
     if (code >= 224 && code <= 231) return;
     if (code == 57) { if (!event->repeat) caps_lock = !caps_lock; return; }
+    /* Physical SDL scancodes make the selected layout independent of the
+     * host desktop layout. NORD uses the Finnish/Swedish key positions. */
+    int shift_down = (bw_modifiers() & 3u) != 0;
+    int altgr = keys[230] != 0;
+    if (code >= 4 && code <= 29) key = 'a' + code - 4;
+    if (code >= 30 && code <= 39) key = "1234567890"[code - 30];
+    if (nordic_keyboard && (altgr || !(bw_modifiers() & 4u))) {
+        if (altgr) {
+            switch (code) {
+                case 31: key = '@'; break;
+                case 32: key = 156; break;
+                case 33: key = '$'; break;
+                case 36: key = '{'; break;
+                case 37: key = '['; break;
+                case 38: key = ']'; break;
+                case 39: key = '}'; break;
+                case 45: key = '\\'; break;
+                case 100: key = '|'; break;
+                default: return;
+            }
+            enqueue(key);
+            return;
+        }
+        int upper = shift_down != (caps_lock != 0);
+        if (code == 47 || code == 51 || code == 52) {
+            key = code == 47 ? (upper ? 143 : 134) :
+                  code == 51 ? (upper ? 153 : 148) : (upper ? 142 : 132);
+            enqueue(key);
+            return;
+        }
+        if (shift_down && code >= 30 && code <= 39) {
+            enqueue((unsigned char)"!\"#\244%&/()="[code - 30]);
+            return;
+        }
+        switch (code) {
+            case 45: key = shift_down ? '?' : '+'; break;
+            case 46: key = shift_down ? '`' : '\''; break;
+            case 48: key = shift_down ? '^' : '~'; break;
+            case 49: case 50: key = shift_down ? '*' : '\''; break;
+            case 53: key = shift_down ? 171 : 245; break;
+            case 54: key = shift_down ? ';' : ','; break;
+            case 55: key = shift_down ? ':' : '.'; break;
+            case 56: key = shift_down ? '_' : '-'; break;
+            case 100: key = shift_down ? '>' : '<'; break;
+            default: break;
+        }
+        if (code >= 45 && code <= 56 && code != 57) { enqueue(key); return; }
+        if (code == 100) { enqueue(key); return; }
+    } else if (code >= 45 && code <= 56) {
+        key = "-=[]\\\\;'`,./"[code - 45];
+    }
     if (code == 88) key = 13;
     if (code >= 89 && code <= 97) key = '1' + code - 89;
     if (code == 98) key = '0';

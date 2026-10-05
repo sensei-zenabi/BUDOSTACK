@@ -30,6 +30,9 @@ int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t lengt
                    const uint32_t *background, const unsigned char *mask);
 void bw_mouse_state(int *x, int *y, int *buttons);
 unsigned int bw_modifiers(void);
+int bw_get_keyboard_layout(void);
+int bw_set_keyboard_layout(int nordic);
+void bw_load_keyboard_layout(void);
 clock_t bw_clock(void);
 int bw_begin_frame(void);
 int bw_end_frame(void);

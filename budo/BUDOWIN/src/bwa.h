@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 12
+#define BWA_ABI_MINOR 13
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -159,6 +159,12 @@ typedef struct BwaHostApi {
     void (*pointer_region)(int x, int y, int w, int h, int cursor,
                             const char *tooltip);
     unsigned long long (*get_time_ms)(void);
+    /* ABI 1.13: persistent keyboard layout and association removal.
+     * Layout: 0 = ENG, 1 = Finnish/Swedish NORD (default).
+     * set_file_association also creates new extensions. */
+    int (*get_keyboard_layout)(void);
+    int (*set_keyboard_layout)(int nordic);
+    int (*delete_file_association)(const char *extension);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

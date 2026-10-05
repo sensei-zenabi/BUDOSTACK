@@ -1,6 +1,6 @@
 # Native BWA modules
 
-BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.12 (`src/bwa.h`). Modules use
+BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.13 (`src/bwa.h`). Modules use
 `BwaHostApi` for drawing, managed windows, binary file access and allocation.
 The built-in Explorer, Editor and Terminal launcher modules delegate to
 host-managed application implementations; Paint and Settings own their
@@ -199,3 +199,21 @@ capture. Menu popup regions deliberately use this behavior.
 `budo_scroll_pointer_at(bar, x, y, event, now_ms)` for deterministic timing tests.
 Reconfigure geometry/content without clearing the scrollbar's held/drag state;
 clear that state when reopening an application after closing during a gesture.
+
+## Keyboard and editable associations (ABI 1.13)
+
+Appended host services preserve the offsets of all earlier services:
+
+- `get_keyboard_layout()` returns `0` for ENG or `1` for Finnish/Swedish NORD.
+- `set_keyboard_layout(int nordic)` persists a layout; zero indicates failure
+  and preserves the previous layout. NORD is the default without saved state.
+- `delete_file_association(const char *extension)` removes and persists a row;
+  zero preserves the previous table on failure.
+
+`set_file_association()` now also creates missing extensions. Extensions must
+start with a dot and contain 1–7 alphanumeric characters; application IDs may
+contain alphanumeric characters, underscores and hyphens. IDs can reference an
+application that is temporarily unavailable. An empty ID leaves a row unassigned.
+The saved table is authoritative, so removed default associations stay removed.
+Keyboard events retain the one-byte CP850 Nordic repertoire; host text drawing
+also understands its UTF-8 equivalents in POSIX filenames.

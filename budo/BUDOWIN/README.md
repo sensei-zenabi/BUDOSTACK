@@ -25,7 +25,8 @@ minimize, and maximize individual applications.
 - Paint: drawing tools, all 256 palette entries, palette-aware undo, and
   exact indexed PCX load/save. Use the palette arrow buttons or `[` / `]`
   to browse 16 colors at a time.
-- Settings: native application associations and the original settings UI.
+- Settings: separate User Interface and File Associations tabs; persistent
+  ENG/NORD keyboard selection, application changes, and association creation/deletion.
 - Terminal: command editing/history, persistent cd, output capture and
   scrollback. BUDOSTACK applications release the desktop transport before
   launch and resume BUDOWIN afterwards. Ordinary commands run through
@@ -171,3 +172,36 @@ wrap long names, and disappear on movement or button press. Scroll arrows
 and tracks repeat after a 350 ms initial delay, then at 60 ms intervals while
 held over their original target. Leaving suspends repeat; returning restarts
 the initial delay. Releasing stops repeat.
+
+## Keyboard, filenames and desktop folders
+
+The default NORD keyboard uses Finnish/Swedish physical key positions, including
+ä/ö/å, Shift/Caps Lock, and AltGr symbols. Settings → User Interface switches
+between ENG and NORD and saves the choice. Nordic letters äöåæø and their capitals
+render in the bitmap font, UTF-8 filenames, and UTF-8 plain-text documents.
+The editor retains its cell-based CP850 representation internally; RTF retains
+its existing CP850 encoding. Forward Delete removes the next character or joins
+lines, with Undo/Redo support. The title shows the document name and modified
+state; hovering over it shows the complete filename.
+
+File pickers use the available row width for long names. Hover over a name to
+see its complete spelling; the filename input scrolls with its caret.
+Explorer's View menu selects Icons or List / Details. Details show the long
+filename, byte size (or `<DIR>`), local modification date/time, and attributes:
+`R` read-only (no write permission bits), `H` dotfile, `L` symbolic link,
+`D` directory, or `A` ordinary file. POSIX has no DOS system/archive flags;
+these indicators describe the corresponding file type. The view is saved.
+Folder deletion includes hidden entries and broken links and never follows a
+symlink to delete its target. Permission failures appear in Explorer's status.
+
+Right-click empty desktop space and choose New Folder. Double-click the folder
+to show its shortcuts on the desktop; use Up / Desktop or Backspace to return.
+Drag a shortcut onto a folder, or select shortcuts and choose Move to Folder,
+navigate to the destination, and press Move. Desktop folders organize shortcut
+references; moving them leaves the original files in place. Deleting a desktop
+folder returns its contents to its parent when there is room.
+Right-click a shortcut and choose Choose Icon to browse for a **32 × 32 PCX**.
+Its top-left color is transparent, matching the existing PCX icon convention.
+Folder membership and custom icon paths are saved with desktop shortcuts;
+version 1 shortcut files are still accepted. If an icon disappears, the default
+icon is used. Built-in application launchers remain on the root desktop.

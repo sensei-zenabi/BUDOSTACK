@@ -21,6 +21,8 @@ budo/BUDOWIN/build.sh
 "$TEST_DIR/shortcuts" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_selection.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/selection"
 "$TEST_DIR/selection"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_improvements.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/improvements"
+"$TEST_DIR/improvements" "$TEST_DIR"
 "$TEST_DIR/editor"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_background.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/background"
 "$TEST_DIR/background" "$TEST_DIR/background.pcx"

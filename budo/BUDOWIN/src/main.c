@@ -45,6 +45,12 @@
 #define WINDOW_FRAME_COLOR 2U
 #define TITLE_COLOR 6U
 #define TITLE_TEXT_COLOR 4U
+#define TITLE_INACTIVE_COLOR WINDOW_CHROME_COLOR
+#define CONTROL_HOVER_COLOR 7U
+#define CONTROL_PRESSED_COLOR TITLE_COLOR
+#define TEXT_CELL_WIDTH 6
+#define TEXT_CELL_HEIGHT 9
+#define CONTEXT_CURSOR_HOTSPOT 6
 #define DESKTOP_TEXT_COLOR 4U
 #define TERMINAL_BG_COLOR 1U
 #define TERMINAL_TEXT_COLOR 5U
@@ -923,20 +929,20 @@ static int ui_cursor_kind(int x, int y)
 
 static int ui_cursor_ink(int kind, int x, int y)
 {
-    int ink = 0;
     if (kind == BUDO_CURSOR_TEXT)
-        ink = (x == 8 && y >= 1 && y <= 15) ||
-              ((y == 1 || y == 15) && x >= 5 && x <= 11);
-    else if (kind == BUDO_CURSOR_CROSSHAIR)
-        ink = (x == 8 && y >= 1 && y <= 15) || (y == 8 && x >= 1 && x <= 15);
-    else if (kind == BUDO_CURSOR_RESIZE)
-        ink = (x == y && x >= 2 && x <= 14) ||
-              (x == 2 && y >= 2 && y <= 7) || (y == 2 && x >= 2 && x <= 7) ||
-              (x == 14 && y >= 9 && y <= 14) || (y == 14 && x >= 9 && x <= 14);
-    else if (kind == BUDO_CURSOR_BUSY)
-        ink = ((y == 2 || y == 14) && x >= 3 && x <= 13) ||
-              (y >= 3 && y <= 13 && (x == y || x == 16 - y));
-    return ink;
+        return (x == CONTEXT_CURSOR_HOTSPOT && y >= 2 && y <= 10) ||
+               ((y == 2 || y == 10) && x >= 4 && x <= 8);
+    if (kind == BUDO_CURSOR_CROSSHAIR)
+        return (x == CONTEXT_CURSOR_HOTSPOT && y >= 2 && y <= 10) ||
+               (y == CONTEXT_CURSOR_HOTSPOT && x >= 2 && x <= 10);
+    if (kind == BUDO_CURSOR_RESIZE)
+        return (x == y && x >= 2 && x <= 10) ||
+               (x == 2 && y >= 2 && y <= 5) || (y == 2 && x >= 2 && x <= 5) ||
+               (x == 10 && y >= 7 && y <= 10) || (y == 10 && x >= 7 && x <= 10);
+    if (kind == BUDO_CURSOR_BUSY)
+        return ((y == 2 || y == 10) && x >= 3 && x <= 9) ||
+               (y >= 3 && y <= 9 && (x == y || x == 12 - y));
+    return 0;
 }
 
 static unsigned char ui_cursor_pixel(int kind, int x, int y)
@@ -968,6 +974,11 @@ static void ui_tooltip_draw(void)
     draw_rect(x, y, w, h, TEXT_COLOR);
     for (int row = 0; row < rows; ++row)
         draw_text(x + 5, y + 5 + row * 9, tip + row * cols, TEXT_COLOR, cols);
+}
+
+static unsigned char window_title_text_color(void)
+{
+    return ui_draw_owner == active_window || ui_draw_scope ? TITLE_TEXT_COLOR : TEXT_COLOR;
 }
 
 static void draw_window_chrome(const AppWindow *window)
@@ -1010,7 +1021,7 @@ static void draw_window_chrome(const AppWindow *window)
               window->y + WINDOW_BORDER,
               window->w - WINDOW_BORDER * 2,
               WINDOW_TITLE_H - WINDOW_BORDER,
-              ui_draw_owner == active_window || ui_draw_scope ? TITLE_COLOR : 14U);
+              ui_draw_owner == active_window || ui_draw_scope ? TITLE_COLOR : TITLE_INACTIVE_COLOR);
 }
 
 static int window_close_button_x(const AppWindow *window)
@@ -1785,7 +1796,7 @@ static void draw_text(int x, int y, const char *text, unsigned char color, int m
     int i;
 
     for (i = 0; text[i] != '\0' && i < max_chars; ++i) {
-        draw_char(x + i * 6, y, text[i], color);
+        draw_char(x + i * TEXT_CELL_WIDTH, y, text[i], color);
     }
 }
 
@@ -1846,8 +1857,8 @@ static void draw_cursor_vga(int x, int y)
     int kind = ui_cursor_kind(x, y);
     if (kind != BUDO_CURSOR_ARROW) {
         cursor_rgb = NULL;
-        x -= 8;
-        y -= 8;
+        x -= CONTEXT_CURSOR_HOTSPOT;
+        y -= CONTEXT_CURSOR_HOTSPOT;
     }
 
     if (!cursor_pcx_icon_loaded) {
@@ -2049,11 +2060,12 @@ static void restore_text_caret_vga(void)
     int row;
 
     if (!text_caret_rect(&x, &y)) return;
+    --y;
 
-    for (row = 0; row < 7; ++row) {
+    for (row = 0; row < TEXT_CELL_HEIGHT; ++row) {
         int sy = y + row;
         int start_x = x;
-        int end_x = x + 5;
+        int end_x = x + TEXT_CELL_WIDTH;
         int offset;
         int length;
 
@@ -2073,7 +2085,7 @@ static void restore_text_caret_vga(void)
 
 static void draw_text_caret_vga(void)
 {
-    unsigned char rowbuf[5];
+    unsigned char rowbuf[TEXT_CELL_WIDTH];
     unsigned char color =
         active_window == APP_TERMINAL ?
         TERMINAL_TEXT_COLOR : CURSOR_COLOR;
@@ -2083,15 +2095,12 @@ static void draw_text_caret_vga(void)
     int col;
 
     if (!text_caret_rect(&x, &y)) return;
+    --y;
 
-    for (col = 0; col < 5; ++col) {
-        rowbuf[col] = color;
-    }
-
-    for (row = 0; row < 7; ++row) {
+    for (row = 0; row < TEXT_CELL_HEIGHT; ++row) {
         int sy = y + row;
         int start_x = x;
-        int end_x = x + 5;
+        int end_x = x + TEXT_CELL_WIDTH;
         int offset;
         int length;
 
@@ -2103,6 +2112,12 @@ static void draw_text_caret_vga(void)
         if (length <= 0) continue;
 
         offset = sy * SCREEN_WIDTH + start_x;
+        for (col = 0; col < length; ++col) {
+            unsigned char underlying = framebuffer[offset + col];
+            rowbuf[start_x - x + col] = active_window == APP_TERMINAL ?
+                (underlying == color ? TERMINAL_BG_COLOR : color) :
+                (underlying == FILE_COLOR ? TEXT_COLOR : FILE_COLOR);
+        }
         (void)vesa_copy_to_screen((unsigned long)offset,
                                   rowbuf + (start_x - x),
                                   (size_t)length, NULL);
@@ -2646,19 +2661,21 @@ static void draw_window_button(int x, int y, int kind)
                 ui_region_visible(&region, ui_pointer_x, ui_pointer_y);
     int pressed = hover && ui_captured &&
                   ui_same_control(&region, &ui_capture);
-    fill_rect(x, y, 14, 14, hover ? 3U : WINDOW_CHROME_COLOR);
+    unsigned char ink = hover ? TITLE_TEXT_COLOR : WINDOW_FRAME_COLOR;
+    fill_rect(x, y, 14, 14, pressed ? CONTROL_PRESSED_COLOR :
+              hover ? CONTROL_HOVER_COLOR : WINDOW_CHROME_COLOR);
     draw_bevel(x, y, 14, 14, !pressed);
 
     if (kind == 0) {
-        fill_rect(x + 3, y + 9, 8, 2, WINDOW_FRAME_COLOR);
+        fill_rect(x + 3, y + 9, 8, 2, ink);
     } else if (kind == 1) {
-        draw_rect(x + 3, y + 3, 8, 8, WINDOW_FRAME_COLOR);
-        fill_rect(x + 4, y + 4, 6, 1, WINDOW_FRAME_COLOR);
+        draw_rect(x + 3, y + 3, 8, 8, ink);
+        fill_rect(x + 4, y + 4, 6, 1, ink);
     } else {
         int i;
         for (i = 0; i < 8; ++i) {
-            put_pixel(x + 3 + i, y + 3 + i, WINDOW_FRAME_COLOR);
-            put_pixel(x + 10 - i, y + 3 + i, WINDOW_FRAME_COLOR);
+            put_pixel(x + 3 + i, y + 3 + i, ink);
+            put_pixel(x + 10 - i, y + 3 + i, ink);
         }
     }
 }
@@ -2669,18 +2686,20 @@ static void draw_checkbox(int x, int y, int checked)
                 ui_draw_scope == ui_scope() &&
                 (ui_draw_scope || ui_draw_owner == desktop_point_owner(ui_pointer_x, ui_pointer_y));
     int pressed = ui_captured && hover && ui_region_contains(&ui_capture, x, y);
-    fill_rect(x, y, 10, 10, hover ? 3U : FILE_COLOR);
+    unsigned char ink = hover ? TITLE_TEXT_COLOR : WINDOW_FRAME_COLOR;
+    fill_rect(x, y, 10, 10, pressed ? CONTROL_PRESSED_COLOR :
+              hover ? CONTROL_HOVER_COLOR : FILE_COLOR);
     if (pressed) draw_rect(x + 1, y + 1, 8, 8, WINDOW_SHADOW_COLOR);
     draw_bevel(x, y, 10, 10, 0);
 
     if (checked) {
-        put_pixel(x + 2, y + 5, WINDOW_FRAME_COLOR);
-        put_pixel(x + 3, y + 6, WINDOW_FRAME_COLOR);
-        put_pixel(x + 4, y + 7, WINDOW_FRAME_COLOR);
-        put_pixel(x + 5, y + 6, WINDOW_FRAME_COLOR);
-        put_pixel(x + 6, y + 5, WINDOW_FRAME_COLOR);
-        put_pixel(x + 7, y + 4, WINDOW_FRAME_COLOR);
-        put_pixel(x + 8, y + 3, WINDOW_FRAME_COLOR);
+        put_pixel(x + 2, y + 5, ink);
+        put_pixel(x + 3, y + 6, ink);
+        put_pixel(x + 4, y + 7, ink);
+        put_pixel(x + 5, y + 6, ink);
+        put_pixel(x + 6, y + 5, ink);
+        put_pixel(x + 7, y + 4, ink);
+        put_pixel(x + 8, y + 3, ink);
     }
 }
 
@@ -2701,12 +2720,12 @@ static void draw_file_explorer_window(int page)
 
     draw_window_chrome(&explorer_window);
     draw_text(explorer_window.x + 7, title_y + 6,
-              "File Explorer", TITLE_TEXT_COLOR, 13);
+              "File Explorer", window_title_text_color(), 13);
 
     ui_register(filter_x, filter_y, 112, 12, BUDO_CURSOR_ARROW, "Only Executables", 1, 0);
     draw_checkbox(filter_x, filter_y, only_executables);
     draw_text(filter_x + 14, title_y + 6,
-              "Only Executables", TITLE_TEXT_COLOR, 16);
+              "Only Executables", window_title_text_color(), 16);
 
     draw_window_button(min_x, title_y + WINDOW_BORDER, 0);
     draw_window_button(max_x, title_y + WINDOW_BORDER, 1);
@@ -4374,7 +4393,7 @@ static void editor_draw_search_dialog(void)
                   TITLE_TEXT_COLOR : TEXT_COLOR, cols);
         if (editor_search_field == i && !editor_search_selected && text_caret_visible)
             fill_rect(x + 74 + (editor_search_caret - offset) * 6,
-                      y + 28 + i * 24, 1, 9, TEXT_COLOR);
+                      y + 28 + i * 24, 2, TEXT_CELL_HEIGHT, TEXT_COLOR);
     }
     bwa_draw_standard_button(x + 8, y + 73, 60, 16, "Case", editor_search_case);
     bwa_draw_standard_button(x + 76, y + 73, 60, 16, "Word", editor_search_word);
@@ -4539,10 +4558,10 @@ static void draw_editor_window(void)
         if (max_title_chars < 5) max_title_chars = 5;
         snprintf(title, sizeof(title), "Write%s - [%.60s]", editor_modified() ? " *" : "", name);
         draw_text(editor_window.x + 7, editor_window.y + 6,
-                  title, TITLE_TEXT_COLOR, max_title_chars);
+                  title, window_title_text_color(), max_title_chars);
     } else {
         draw_text(editor_window.x + 7, editor_window.y + 6,
-                  editor_modified() ? "Editor *" : "Editor", TITLE_TEXT_COLOR, 8);
+                  editor_modified() ? "Editor *" : "Editor", window_title_text_color(), 8);
     }
 
     /*
@@ -4555,18 +4574,18 @@ static void draw_editor_window(void)
         draw_checkbox(wrap_x, editor_window.y + 6,
                       editor_wrap_enabled());
         draw_text(wrap_x + 14, editor_window.y + 6,
-                  "Wrap", TITLE_TEXT_COLOR, 4);
+                  "Wrap", window_title_text_color(), 4);
         ui_register(rows_x, editor_window.y + 6, 44, 12, BUDO_CURSOR_ARROW, "Show row numbers", 1, 0);
         draw_checkbox(rows_x, editor_window.y + 6,
                       editor_rows_enabled());
         draw_text(rows_x + 14, editor_window.y + 6,
-                  "Rows", TITLE_TEXT_COLOR, 4);
+                  "Rows", window_title_text_color(), 4);
     }
     ui_register(writer_x, editor_window.y + 6, 56, 12, BUDO_CURSOR_ARROW, "Writer mode", 1, 0);
     draw_checkbox(writer_x, editor_window.y + 6,
                   editor_writer_mode);
     draw_text(writer_x + 14, editor_window.y + 6,
-              "Writer", TITLE_TEXT_COLOR, 6);
+              "Writer", window_title_text_color(), 6);
 
     draw_window_button(min_x, editor_window.y + WINDOW_BORDER, 0);
     draw_window_button(max_x, editor_window.y + WINDOW_BORDER, 1);
@@ -5680,7 +5699,7 @@ static void draw_terminal_window(void)
 
     draw_window_chrome(&terminal_window);
     draw_text(terminal_window.x + 7, terminal_window.y + 6,
-              "BUDOSTACK Terminal", TITLE_TEXT_COLOR, 19);
+              "BUDOSTACK Terminal", window_title_text_color(), 19);
     draw_window_button(min_x, terminal_window.y + WINDOW_BORDER, 0);
     draw_window_button(max_x, terminal_window.y + WINDOW_BORDER, 1);
     draw_window_button(close_x, terminal_window.y + WINDOW_BORDER, 2);
@@ -5967,13 +5986,13 @@ static void bwa_draw_explorer(void)
 
 static void bwa_draw_editor(void)
 {
-    draw_editor_window();
     if (editor_window.open && !editor_window.minimized && !editor_search_dialog_active()) {
         int y = editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H +
                 ((editor_writer_mode && editor_writer_ruler) ? EDITOR_RULER_H : 0) + 5;
         bwa_pointer_region(editor_text_x(), y, editor_visible_cols() * 6,
-                            editor_visible_rows() * 9, BUDO_CURSOR_TEXT, NULL);
+                            editor_visible_rows() * TEXT_CELL_HEIGHT, BUDO_CURSOR_TEXT, NULL);
     }
+    draw_editor_window();
 }
 
 static int bwa_open_editor_file(const char *path)
@@ -5986,11 +6005,11 @@ static int bwa_open_editor_file(const char *path)
 
 static void bwa_draw_terminal(void)
 {
-    draw_terminal_window();
     if (terminal_window.open && !terminal_window.minimized && !terminal_paging)
         bwa_pointer_region(terminal_window.x + 7,
                             terminal_window.y + terminal_window.h - 19,
                             terminal_window.w - 30, 12, BUDO_CURSOR_TEXT, NULL);
+    draw_terminal_window();
 }
 
 static BwaAppDefinition bwa_builtin_apps[] = {
@@ -6084,7 +6103,7 @@ static unsigned char bwa_get_system_color(int role)
         case BUDO_SYS_COLOR_TITLE_ACTIVE: return TITLE_COLOR;
         case BUDO_SYS_COLOR_TITLE_TEXT:   return TITLE_TEXT_COLOR;
         case BUDO_SYS_COLOR_ACCENT:       return 7U;
-        case BUDO_SYS_COLOR_TITLE_INACTIVE: return 14U;
+        case BUDO_SYS_COLOR_TITLE_INACTIVE: return TITLE_INACTIVE_COLOR;
         default:                          return TEXT_COLOR;
     }
 }
@@ -6099,8 +6118,8 @@ static int bwa_get_system_metric(int metric)
         case BUDO_SYS_METRIC_TITLE_BUTTON_H: return 14;
         case BUDO_SYS_METRIC_MENU_HEIGHT:    return EDITOR_MENU_H;
         case BUDO_SYS_METRIC_STATUS_HEIGHT:  return EDITOR_STATUS_H;
-        case BUDO_SYS_METRIC_CHAR_WIDTH:     return 6;
-        case BUDO_SYS_METRIC_LINE_HEIGHT:    return 9;
+        case BUDO_SYS_METRIC_CHAR_WIDTH:     return TEXT_CELL_WIDTH;
+        case BUDO_SYS_METRIC_LINE_HEIGHT:    return TEXT_CELL_HEIGHT;
         default:                             return 0;
     }
 }
@@ -6123,7 +6142,7 @@ static void bwa_draw_standard_window(int x, int y, int w, int h,
 
     draw_window_chrome(&window);
     if (title != NULL) {
-        draw_text(x + 7, y + 6, title, TITLE_TEXT_COLOR,
+        draw_text(x + 7, y + 6, title, window_title_text_color(),
                   (w - 62) / 6);
     }
 
@@ -6153,20 +6172,27 @@ static void bwa_draw_button_state(int x, int y, int w, int h,
     snprintf(candidate.tip, sizeof(candidate.tip), "%s", label ? label : "");
     int depressed = !disabled && ((state & BUDO_BUTTON_PRESSED) != 0 ||
                     (hover && ui_captured && ui_same_control(&candidate, &ui_capture)));
-    unsigned char face = hover && !disabled ? 3U : WINDOW_CHROME_COLOR;
+    hover = hover && label && label[0];
+    unsigned char face = disabled ? 3U : depressed ? CONTROL_PRESSED_COLOR :
+                         hover ? CONTROL_HOVER_COLOR : WINDOW_CHROME_COLOR;
+    unsigned char ink = !disabled && (depressed || hover) ? TITLE_TEXT_COLOR : TEXT_COLOR;
     if (label && label[0]) ui_register(x, y, w, h, BUDO_CURSOR_ARROW,
                                       label, command, state);
     fill_rect(x, y, w, h, face);
-    draw_bevel(x, y, w, h, !depressed);
-    if (state & BUDO_BUTTON_DEFAULT) draw_rect(x + 2, y + 2, w - 4, h - 4, TEXT_COLOR);
+    if (disabled) draw_rect(x, y, w, h, WINDOW_SHADOW_COLOR);
+    else draw_bevel(x, y, w, h, !depressed);
+    if (state & BUDO_BUTTON_DEFAULT) {
+        draw_rect(x + 1, y + 1, w - 2, h - 2, ink);
+        draw_rect(x + 2, y + 2, w - 4, h - 4, ink);
+    }
     if (state & BUDO_BUTTON_FOCUSED) {
         for (int i = 3; i < w - 3; i += 2) {
-            put_pixel(x + i, y + 3, TEXT_COLOR);
-            put_pixel(x + i, y + h - 4, TEXT_COLOR);
+            put_pixel(x + i, y + 3, ink);
+            put_pixel(x + i, y + h - 4, ink);
         }
         for (int i = 3; i < h - 3; i += 2) {
-            put_pixel(x + 3, y + i, TEXT_COLOR);
-            put_pixel(x + w - 4, y + i, TEXT_COLOR);
+            put_pixel(x + 3, y + i, ink);
+            put_pixel(x + w - 4, y + i, ink);
         }
     }
     if (!label) return;
@@ -6175,7 +6201,7 @@ static void bwa_draw_button_state(int x, int y, int w, int h,
     if (shown > cols) shown = cols;
     draw_text(x + (w - shown * 6) / 2 + depressed,
               y + (h - 7) / 2 + depressed, label,
-              disabled ? WINDOW_SHADOW_COLOR : TEXT_COLOR, cols);
+              ink, cols);
 }
 
 static void bwa_draw_standard_button(int x, int y, int w, int h,
@@ -7655,7 +7681,7 @@ static void editor_draw_file_dialog(void)
                   picker_focus && picker_name_selected ? TITLE_TEXT_COLOR : TEXT_COLOR, cols);
         if (picker_focus && !picker_name_selected && text_caret_visible)
             fill_rect(dialog_x + 77 + (picker_name_cursor - offset) * 6,
-                      dialog_y + dialog_h - 49, 1, 9, TEXT_COLOR);
+                      dialog_y + dialog_h - 49, 2, TEXT_CELL_HEIGHT, TEXT_COLOR);
     }
     {
         const char *types[4] = {"All files", "Text (.txt/.md)", "RTF (.rtf)", "PCX (.pcx)"};

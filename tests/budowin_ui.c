@@ -45,11 +45,13 @@ static void test_polish(void)
     ui_pointer_x = x + 5;
     ui_pointer_y = y + 5;
     bwa_draw_standard_button(x, y, 80, 20, "Test", 0);
-    assert(framebuffer[(y + 2) * SCREEN_WIDTH + x + 2] == 3U);
+    assert(framebuffer[(y + 2) * SCREEN_WIDTH + x + 2] == CONTROL_HOVER_COLOR);
+    assert(framebuffer[(y + 6) * SCREEN_WIDTH + x + 28] == TITLE_TEXT_COLOR);
     assert(!ui_button_event(x + 5, y + 5, 1, 0));
     assert(ui_captured);
     bwa_draw_standard_button(x, y, 80, 20, "Test", 0);
     assert(framebuffer[y * SCREEN_WIDTH + x] == WINDOW_SHADOW_COLOR);
+    assert(framebuffer[(y + 2) * SCREEN_WIDTH + x + 2] == CONTROL_PRESSED_COLOR);
     assert(!ui_button_event(x - 5, y, 0, 1));
     assert(!ui_captured);
     assert(!ui_button_event(x + 5, y + 5, 1, 0));
@@ -60,7 +62,8 @@ static void test_polish(void)
     bwa_draw_button_state(x, y, 80, 20, "Disabled", BUDO_BUTTON_DISABLED);
     assert(!ui_button_event(x + 5, y + 5, 1, 0));
     bwa_draw_button_state(x, y, 80, 20, "Disabled", BUDO_BUTTON_DISABLED);
-    assert(framebuffer[y * SCREEN_WIDTH + x] == WINDOW_HIGHLIGHT_COLOR);
+    assert(framebuffer[y * SCREEN_WIDTH + x] == WINDOW_SHADOW_COLOR);
+    ui_pointer_x = ui_pointer_y = -1;
     assert(!ui_button_event(x + 5, y + 5, 0, 1));
     bwa_draw_button_state(x, y, 80, 20, "Focus", BUDO_BUTTON_FOCUSED | BUDO_BUTTON_DEFAULT);
     assert(framebuffer[(y + 3) * SCREEN_WIDTH + x + 3] == TEXT_COLOR);
@@ -85,16 +88,52 @@ static void test_polish(void)
     assert(!ui_button_event(x + 5, y + 5, 0, 1));
     confirm_kind = 0;
     ui_draw_owner = APP_EXPLORER;
+    assert(window_title_text_color() == TEXT_COLOR);
     draw_window_chrome(&editor_window);
-    assert(framebuffer[(editor_window.y + 4) * SCREEN_WIDTH + editor_window.x + 4] == 14U);
+    assert(framebuffer[(editor_window.y + 4) * SCREEN_WIDTH + editor_window.x + 4] == TITLE_INACTIVE_COLOR);
     ui_draw_owner = APP_EDITOR;
+    assert(window_title_text_color() == TITLE_TEXT_COLOR);
     draw_window_chrome(&editor_window);
     assert(framebuffer[(editor_window.y + 4) * SCREEN_WIDTH + editor_window.x + 4] == TITLE_COLOR);
     ui_region_count = 0;
     bwa_pointer_region(x, y, 100, 30, BUDO_CURSOR_TEXT, NULL);
     assert(ui_cursor_kind(x + 5, y + 5) == BUDO_CURSOR_TEXT);
-    assert(ui_cursor_pixel(BUDO_CURSOR_TEXT, 8, 8) == TEXT_COLOR);
-    assert(ui_cursor_pixel(BUDO_CURSOR_TEXT, 7, 8) == WINDOW_HIGHLIGHT_COLOR);
+    assert(ui_cursor_pixel(BUDO_CURSOR_TEXT, CONTEXT_CURSOR_HOTSPOT, CONTEXT_CURSOR_HOTSPOT) == TEXT_COLOR);
+    assert(ui_cursor_pixel(BUDO_CURSOR_TEXT, CONTEXT_CURSOR_HOTSPOT - 1, CONTEXT_CURSOR_HOTSPOT) == WINDOW_HIGHLIGHT_COLOR);
+    for (int kind = BUDO_CURSOR_TEXT; kind <= BUDO_CURSOR_BUSY; ++kind) {
+        for (int cy = 0; cy < 32; ++cy)
+            for (int cx = 0; cx < 32; ++cx)
+                if (cx > 11 || cy > 11)
+                    assert(ui_cursor_pixel(kind, cx, cy) == PCX_TRANSPARENT);
+    }
+    /* Editor popups must take precedence over the text pointer underneath. */
+    editor_reset_document();
+    editor_menu = EDITOR_MENU_FILE;
+    draw_desktop(0);
+    int menu_x = editor_text_x() + 12;
+    int menu_y = editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 8;
+    assert(ui_cursor_kind(menu_x, menu_y) == BUDO_CURSOR_ARROW);
+    editor_menu = EDITOR_MENU_NONE;
+    draw_desktop(0);
+    assert(ui_cursor_kind(menu_x, menu_y) == BUDO_CURSOR_TEXT);
+    /* Full-cell caret inverts glyph pixels and restores its entire extent. */
+    int caret_x, caret_y;
+    assert(text_caret_rect(&caret_x, &caret_y));
+    fill_rect(caret_x, caret_y - 1, TEXT_CELL_WIDTH, TEXT_CELL_HEIGHT, FILE_COLOR);
+    put_pixel(caret_x, caret_y, TEXT_COLOR);
+    put_pixel(caret_x + 1, caret_y, TITLE_COLOR);
+    put_pixel(caret_x + 2, caret_y, TITLE_TEXT_COLOR);
+    draw_text_caret_vga();
+    assert(pixels[caret_y * SCREEN_WIDTH + caret_x] == palette[FILE_COLOR]);
+    assert(pixels[caret_y * SCREEN_WIDTH + caret_x + 1] == palette[FILE_COLOR]);
+    assert(pixels[caret_y * SCREEN_WIDTH + caret_x + 2] == palette[TEXT_COLOR]);
+    assert(pixels[(caret_y + TEXT_CELL_HEIGHT - 2) * SCREEN_WIDTH +
+                  caret_x + TEXT_CELL_WIDTH - 1] == palette[TEXT_COLOR]);
+    restore_text_caret_vga();
+    assert(pixels[caret_y * SCREEN_WIDTH + caret_x] == palette[TEXT_COLOR]);
+    assert(pixels[caret_y * SCREEN_WIDTH + caret_x + 1] == palette[TITLE_COLOR]);
+    assert(pixels[(caret_y + TEXT_CELL_HEIGHT - 2) * SCREEN_WIDTH +
+                  caret_x + TEXT_CELL_WIDTH - 1] == palette[FILE_COLOR]);
     ui_busy = 1;
     assert(ui_cursor_kind(x + 5, y + 5) == BUDO_CURSOR_BUSY);
     ui_busy = 0;

@@ -151,12 +151,19 @@ start on press. Disabled command buttons ignore clicks. Native apps can
 request disabled, focused and default button rendering through ABI 1.12.
 Full keyboard focus traversal is a separate feature.
 
-Active windows have blue title bars; inactive windows have gray title bars.
+Active windows have blue title bars with white text; inactive windows have
+light gray title bars with black text. Hovered controls use bright blue with
+white labels; pressed/selected controls use dark blue. Disabled controls are
+flat gray; default buttons have a double outline.
 The pointer changes to an I-beam over Editor/search/file-name/Terminal input,
 a crosshair over Paint's canvas, and a diagonal resize arrow over the existing
 bottom-right resize grip. Blocking document reads/writes and Explorer paste
 show an hourglass; this feedback does not make file operations asynchronous.
-Custom arrow artwork remains available outside these contexts.
+Custom arrow artwork remains available outside these contexts. Contextual
+pointers occupy at most 11x11 pixels around their hotspot, sized against the
+5x7 font in its 6x9 text cell. The blinking edit caret now fills that cell and
+inverts the glyph beneath it; search/file-name insertion bars are 2x9 pixels.
+Dropdown menus keep the arrow pointer above the underlying edit area.
 
 Hover for 600 ms to see tips for command/frame buttons, Paint tools, scroll
 arrows, resize grips and truncated file/shortcut names. Tips stay on screen,

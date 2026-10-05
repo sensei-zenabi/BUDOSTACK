@@ -166,7 +166,7 @@ static inline void budo_menu_bar_item(const BwaHostApi *host, int x, int y,
     int height = host->get_system_metric(BUDO_SYS_METRIC_MENU_HEIGHT);
     if (active) host->draw_standard_button(x, y, width, height, "", 1);
     host->draw_text(x + 4, y + 4, label,
-                   host->get_system_color(BUDO_SYS_COLOR_TEXT), (width - 8) / 6);
+                   host->get_system_color(active ? BUDO_SYS_COLOR_TITLE_TEXT : BUDO_SYS_COLOR_TEXT), (width - 8) / 6);
 }
 
 static inline void budo_menu_row_draw(const BwaHostApi *host, int x, int y,

@@ -46,6 +46,58 @@ viewport. Controls use semantic colors and host drawing services.
 feedback with the host-backed applications. `get_pointer_state` provides
 current logical pointer coordinates for rendering hover states.
 
+## Shared item selection (ABI 1.11)
+
+`sdk/selection.h` implements the selection model used by Desktop, File
+Explorer and the single-file picker. Each view owns a `BudoSelection`,
+selection bytes and an optional drag snapshot. IDs index this storage;
+pass visible IDs in display order so ranges and Ctrl+A exclude filtered
+items. A null order means consecutive IDs starting at zero. The model
+supports arbitrary capacities, including dynamic lists larger than 256.
+Clear selection after changing item IDs to avoid stale focus or anchors.
+
+```c
+static unsigned char selected[100], snapshot[100];
+static BudoSelection selection;
+/* Once, when creating the view: */
+budo_selection_init(&selection, selected, snapshot, 100);
+/* On pointer down, after mapping the pointer to an item ID: */
+budo_selection_click(&selection, visible_ids, visible_count, hit_id,
+                      budo_selection_modifiers(host), buttons == 2);
+```
+
+Plain click selects one item, Ctrl-click toggles, Shift-click selects a
+range and Ctrl+Shift-click adds a range. Context clicks retain a selected
+group or select an unselected item alone. Use `budo_selection_all`,
+`budo_selection_space` and `budo_selection_move` for Ctrl+A, Space and DOS
+navigation scan codes. Supply the view's column count and page size.
+Ctrl-navigation moves focus, Shift extends from the anchor, and
+Ctrl+Shift extends without clearing previous selection.
+
+For rectangles, call `budo_selection_drag_begin` on empty-space pointer
+down, then `budo_selection_drag_update` with visible item rectangles on
+move/up. Clip pointer coordinates to the view. Set `dragging = 0` after
+the final update. Updates restore the initial snapshot before applying
+the rectangle, so shrinking it removes earlier intersections. Shift
+adds, and Ctrl toggles against the original snapshot.
+
+`sdk/ui.h` supplies `budo_selection_icon_draw` and
+`budo_selection_drag_draw`. Paint the icon background before artwork and
+its focus outline afterwards. Desktop and Explorer pass 32x32 icon bounds;
+labels and grid gutters are outside these bounds. List views can use the
+same model with their own row renderer and single-file contexts pass zero
+modifiers to keep one selected item.
+
+`BwaHostApi.get_keyboard_modifiers()` is appended in ABI 1.11. It returns
+Shift (`0x03`) and Ctrl (`0x04`) using the host's current keyboard state.
+`budo_selection_modifiers(host)` checks the ABI version and returns zero
+on earlier hosts. Applications requiring modified selection should check
+`host->abi_minor >= 11` at entry. Existing ABI 1.x field offsets remain
+unchanged. Opening, dragging items and deleting are application actions;
+selection itself does not mutate files or invoke application callbacks.
+
+## Shared file dialogs
+
 `file_dialog(BUDO_FILE_OPEN | BUDO_FILE_SAVE_AS, initial_path)` opens the
 host-owned picker. Set `BwaAppDefinition.file_selected(mode, path)` to
 handle the result. Return nonzero after a successful load/save; return

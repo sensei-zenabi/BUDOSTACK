@@ -44,6 +44,38 @@ RGB value are transparent. Each image has independent colors, so a 256-color
 image does not change the UI or another image's palette. Presentation uses
 RGB composition; the classic UI continues to use its system color indices.
 
+## Shared selection and desktop shortcuts
+
+Desktop launchers, shortcuts and File Explorer share the same selection rules.
+Click an entry to select it. Only its 32x32 icon background changes; labels
+and grid spacing retain their colors. A focus outline stays inside the icon.
+Ctrl-click toggles individual entries. Shift-click selects a range from the
+selection anchor; Ctrl+Shift-click adds a range. Ctrl+A selects all entries
+matching the current filter, including entries on other pages. Click empty
+space or press Escape to clear selection. Drag from empty space to select a
+rectangle; Ctrl-drag toggles entries and Shift-drag adds them.
+
+Arrow keys move selection. Home/End select the first/last entry; Page Up/Down
+move by a page. Hold Shift to extend selection, Ctrl to move focus without
+changing selection, or Ctrl+Shift to add a range. Space selects the focused
+entry; Ctrl+Space toggles it. Enter opens it, F2 renames it, and Delete uses
+the existing permanent-deletion confirmation.
+
+Right-click an entry to open its context menu. Right-clicking a selected
+entry preserves the group; an unselected entry becomes the sole selection.
+Choose **Create Shortcut** (also available in the File menu) to place shortcuts
+for selected documents and executables on the desktop. Folders are skipped;
+duplicate targets are skipped. Shortcuts occupy free desktop grid slots and
+persist in `$HOME/.budowin/shortcuts.state`.
+
+Use the same click, Ctrl/Shift, Ctrl+A, keyboard and rectangle selection on
+the desktop, including application launchers. Right-click to choose **Delete**
+for selected shortcuts; application launchers are retained. This removes only shortcuts, preserving
+the original files. Double-click or choose **Open** to open a document with
+its configured association or run an executable from its own directory.
+Shortcuts retain absolute target paths; moving or deleting a target does not
+update its shortcut automatically.
+
 ## Editor search and editing
 
 Find (`Ctrl+F`) and Replace (`Ctrl+H` or `Ctrl+R`) open a persistent
@@ -90,10 +122,13 @@ hides the horizontal scrollbar. Paint scrolls its canvas, Settings scrolls
 associations, Explorer scrolls pages, and Terminal scrolls output. Mouse
 wheel scrolling leaves the editor caret in place.
 
-Explorer's File menu exposes Open, Up, New Folder, Rename, Delete and
-Close, with confirmation for deletion. Terminal offers Save Output,
+Explorer's File menu exposes Open, Up, New Folder, Rename, Delete, Create
+Shortcut and Close, with confirmation for deletion. Terminal offers Save Output,
 Clear Output and Close. Settings exposes Close; association edits persist
 through their existing host service rather than a document Save action.
+The host file picker uses the shared selection engine for its single-file
+list. Native applications can reuse `sdk/selection.h` and `sdk/ui.h` for
+selectable lists and grids; see `docs/BWA.md`.
 
 ## Native modules
 

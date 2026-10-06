@@ -1489,8 +1489,10 @@ int main(int argc, char *argv[]) {
         snprintf(auto_command, len, "runtask %s.task", argv[1]);
     }
 
-    /* Run autoexec before announcing readiness */
-    {
+    /* The embedded terminal already lives in the configured desktop. */
+    const char *embedded_terminal = getenv("BUDOSTACK_EMBEDDED_TERMINAL");
+    /* Run autoexec before announcing readiness for standalone terminals. */
+    if (!embedded_terminal || strcmp(embedded_terminal, "1") != 0) {
         CommandStruct aut;
         init_command_struct(&aut);
         char *autoexec_cmd = strdup("runtask autoexec.task");

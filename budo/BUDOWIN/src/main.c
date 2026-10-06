@@ -1,4 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 700
+#endif
 #include "platform.h"
 #include "text_encoding.h"
 #include <ctype.h>
@@ -16,6 +19,10 @@
 #include "../sdk/ui.h"
 #include <time.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include "../../../lib/budo_gfx.h"
 
 #define VGA_MEMORY 0xA0000UL
 #define VESA_MODE 0x0101
@@ -151,6 +158,7 @@
 
 #define KEYMOD_SHIFT 0x03
 #define KEYMOD_CTRL  0x04
+#define KEYMOD_ALT   0x08
 
 typedef struct DesktopItem {
     char name[MAX_NAME];
@@ -276,6 +284,8 @@ typedef struct ShortcutDetails {
 } ShortcutDetails;
 static ShortcutDetails shortcut_details[DESKTOP_SHORTCUT_MAX];
 static char desktop_folder[MAX_PATH];
+static char explorer_shortcut_folder[MAX_PATH];
+static int shortcuts_delete_selected(void);
 static int desktop_picker_action;
 static int desktop_picker_shortcut = -1;
 static unsigned char desktop_selection_marks[DESKTOP_SELECTION_MAX];
@@ -303,6 +313,8 @@ static int editor_desktop_slot = 1;
 static int desktop_drag_app = APP_NONE;
 static int desktop_icon_pressed = 0;
 static int desktop_icon_dragging = 0;
+static int explorer_drag_shortcut = -1, explorer_shortcut_dragging;
+static int explorer_drag_press_x, explorer_drag_press_y, explorer_drag_x, explorer_drag_y;
 static int desktop_press_x = 0;
 static int desktop_press_y = 0;
 static int desktop_drag_x = 0;
@@ -318,6 +330,13 @@ static char editor_lines[EDITOR_MAX_LINES][EDITOR_MAX_COLS];
 static int editor_line_count = 1;
 static int editor_cursor_line = 0;
 static int editor_cursor_col = 0;
+static int editor_anchor_line, editor_anchor_col, editor_selection_active;
+static int editor_selecting;
+static char *editor_clipboard;
+static int explorer_up_selected;
+static clock_t app_switch_until;
+static void editor_selection_clear(void);
+static int editor_selection_delete(void);
 static int editor_top_line = 0;
 static int editor_top_segment = 0;
 static int editor_left_col = 0;
@@ -325,6 +344,7 @@ static int editor_menu = EDITOR_MENU_NONE;
 static int explorer_file_menu = 0;
 static int explorer_list_view;
 static const char *explorer_status;
+static char explorer_error[160];
 static int explorer_view_menu;
 static int terminal_file_menu = 0;
 static int explorer_creating_folder = 0;
@@ -462,9 +482,6 @@ static int terminal_completion_start = 0;
 static int terminal_completion_end = 0;
 static char terminal_completion_prefix[MAX_PATH] = "";
 static char terminal_cwd[MAX_PATH] = "";
-static int terminal_native_launch_requested = 0;
-static char terminal_native_command[TERMINAL_INPUT_LEN] = "";
-static int terminal_native_is_batch = 0;
 
 static int window_contains(const AppWindow *window, int x, int y);
 static int point_in_rect(int px, int py, int x, int y, int w, int h);
@@ -478,6 +495,10 @@ static int shortcut_icon_load(int index);
 static int desktop_picker_accept(const char *path);
 static void desktop_begin_picker(int action);
 static int shortcut_move(int index, const char *parent);
+static const char *shortcut_drop_parent(int x, int y);
+static void explorer_shortcut_drag_begin(int item, int x, int y);
+static int explorer_shortcut_drag_update(int x, int y, int down);
+static int explorer_shortcut_drag_drop(int x, int y);
 static void desktop_folder_up(void);
 static int desktop_free_slot(const char *parent, int ignore);
 static void shortcuts_load(void);
@@ -584,13 +605,8 @@ static void open_explorer(void);
 static void open_editor(void);
 static void open_terminal(void);
 static int terminal_visible_rows(void);
-static int terminal_command_resolves_executable(const char *command,
-                                                int *is_batch);
-static int terminal_save_resume_state(void);
+static int session_caret(int *x, int *y);
 static void terminal_load_resume_state(void);
-static int terminal_request_native_launch(const char *command,
-                                          int is_batch,
-                                          int page);
 static int copy_text(char *dest, size_t dest_size,
                      const char *src);
 static int join_path(char *dest, size_t dest_size,
@@ -1095,9 +1111,9 @@ static void window_toggle_maximize_state(AppWindow *window)
         window->restore_w = window->w;
         window->restore_h = window->h;
         window->x = 0;
-        window->y = 0;
+        window->y = 21;
         window->w = SCREEN_WIDTH;
-        window->h = SCREEN_HEIGHT;
+        window->h = SCREEN_HEIGHT - 21;
         window->maximized = 1;
     } else {
         window->x = window->restore_x;
@@ -1170,7 +1186,7 @@ static int window_update_pointer(AppWindow *window,
         int new_y = mouse_y - window->drag_dy;
 
         if (new_x < 0) new_x = 0;
-        if (new_y < 0) new_y = 0;
+        if (new_y < 21) new_y = 21;
         if (new_x + window->w > SCREEN_WIDTH)
             new_x = SCREEN_WIDTH - window->w;
         if (new_y + window->h > SCREEN_HEIGHT)
@@ -2065,6 +2081,8 @@ static int text_caret_rect(int *x, int *y)
         terminal_window.open &&
         !terminal_window.minimized &&
         !terminal_paging) {
+        int caret = session_caret(x, y);
+        if (caret >= 0) return caret;
         char prompt[MAX_PATH + TERMINAL_INPUT_LEN + 2];
         int text_x = terminal_window.x + 7;
         int cols = (terminal_window.w - 30) / 6;
@@ -2617,7 +2635,7 @@ static void draw_labeled_icon(int x, int y, const char *name, int type,
     if (pcx) {
         label_x = x + DESKTOP_ICON_W / 2 - label_width / 2;
         draw_pcx_icon(x, y, pixels);
-        draw_text(label_x, y + DESKTOP_ICON_H + 2,
+        draw_text_elided(label_x, y + DESKTOP_ICON_H + 2,
                   name, label_color, shown);
         return;
     }
@@ -2635,7 +2653,7 @@ static void draw_labeled_icon(int x, int y, const char *name, int type,
         draw_file(x, y);
     }
 
-    draw_text(label_x, y + DESKTOP_ICON_H + 2, name, label_color, shown);
+    draw_text_elided(label_x, y + DESKTOP_ICON_H + 2, name, label_color, shown);
 }
 
 static void draw_back_icon(int x, int y)
@@ -2646,14 +2664,14 @@ static void draw_back_icon(int x, int y)
     if (back_pcx_icon_loaded) {
         label_x = x + DESKTOP_ICON_W / 2 - label_width / 2;
         draw_pcx_icon(x, y, back_pcx_icon);
-        draw_text(label_x, y + DESKTOP_ICON_H + 2,
+        draw_text_elided(label_x, y + DESKTOP_ICON_H + 2,
                   "BACK", TEXT_COLOR, 4);
         return;
     }
 
     label_x = x + ICON_W / 2 - label_width / 2;
     draw_back(x, y);
-    draw_text(label_x, y + DESKTOP_ICON_H + 2, "BACK", TEXT_COLOR, 4);
+    draw_text_elided(label_x, y + DESKTOP_ICON_H + 2, "BACK", TEXT_COLOR, 4);
 }
 
 static void draw_explorer_app_icon(int x, int y)
@@ -2754,7 +2772,7 @@ static void draw_explorer_list_entry(int index, int x, int y)
     int width = explorer_client_w();
     int name_w = width - 246;
     if (name_w < 60) name_w = 60;
-    int selected = index >= 0 && explorer_selection[index];
+    int selected = index == -2 ? explorer_up_selected : index >= 0 && explorer_selection[index];
     unsigned char ink = selected ? TITLE_TEXT_COLOR : TEXT_COLOR;
     fill_rect(x, y, width, 12, selected ? TITLE_COLOR : WINDOW_FACE_COLOR);
     const char *name = index == -2 ? ".. (Up)" : items[index].name;
@@ -2829,6 +2847,7 @@ static void draw_file_explorer_window(int page)
         if (explorer_list_view && item_index != -1) {
             draw_explorer_list_entry(item_index, x, y);
         } else if (item_index == -2) {
+            budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W, DESKTOP_ICON_H, explorer_up_selected, 0);
             draw_back_icon(x, y);
         } else if (item_index >= 0) {
             draw_labeled_icon(x, y,
@@ -2918,6 +2937,7 @@ static void editor_set_status(const char *text)
 
 static void editor_reset_document(void)
 {
+    editor_selection_clear();
     editor_match_line = -1;
     editor_history_reset();
     memset(editor_lines, 0, sizeof(editor_lines));
@@ -3365,6 +3385,7 @@ static int editor_export_postscript(const char *path)
 static int editor_load_file_impl(const char *path);
 static int editor_load_file(const char *path)
 {
+    editor_selection_clear();
     int previous = ui_busy_begin();
     int result = editor_load_file_impl(path);
     ui_busy_end(previous);
@@ -3543,6 +3564,7 @@ static int editor_history_before_edit(void)
 
 static void editor_history_restore(int redo)
 {
+    editor_selection_clear();
     editor_typing_line = -1;
     struct EditorSnapshot *source = redo ? editor_redo : editor_undo;
     struct EditorSnapshot *dest = redo ? editor_undo : editor_redo;
@@ -4092,13 +4114,12 @@ static int editor_cursor_screen_row(void)
         return editor_cursor_line - editor_top_line;
     }
 
-    for (line = editor_top_line; line < editor_cursor_line; ++line) {
+    for (line = 0; line < editor_cursor_line; ++line)
         row += editor_wrapped_rows_for_line(line, cols);
-    }
-
+    for (line = 0; line < editor_top_line; ++line)
+        row -= editor_wrapped_rows_for_line(line, cols);
     editor_cursor_wrap_position(&local_row, &local_col);
-    row += local_row;
-    return row - editor_top_segment;
+    return row + local_row - editor_top_segment;
 }
 
 static int editor_cursor_screen_col(void)
@@ -4255,7 +4276,7 @@ static void editor_place_cursor_from_point(int x, int y)
         for (line = 0; line < editor_top_line; ++line) {
             top_abs_row += editor_wrapped_rows_for_line(line, cols);
         }
-        (void)editor_set_cursor_from_visual_row(top_abs_row + row, col);
+        (void)editor_set_cursor_from_visual_row(top_abs_row + editor_top_segment + row, col);
     } else {
         line = editor_top_line + row;
         if (line >= editor_line_count) {
@@ -4307,8 +4328,201 @@ static void editor_ensure_cursor_visible(void)
     if (editor_left_col < 0) editor_left_col = 0;
 }
 
+/* Positions are byte columns in the internal CP850 document. */
+static void editor_selection_clear(void)
+{
+    editor_selection_active = editor_selecting = 0;
+}
+
+static void editor_selection_begin(void)
+{
+    if (!editor_selection_active) {
+        editor_anchor_line = editor_cursor_line;
+        editor_anchor_col = editor_cursor_col;
+        editor_selection_active = 1;
+    }
+}
+
+static int editor_selection_bounds(int *first, int *fc, int *last, int *lc)
+{
+    if (!editor_selection_active) return 0;
+    *first = editor_anchor_line;
+    *fc = editor_anchor_col;
+    *last = editor_cursor_line;
+    *lc = editor_cursor_col;
+    if (*first > *last || (*first == *last && *fc > *lc)) {
+        int t = *first; *first = *last; *last = t;
+        t = *fc; *fc = *lc; *lc = t;
+    }
+    return *first != *last || *fc != *lc;
+}
+
+static int editor_selection_contains(int row, int col)
+{
+    int first, fc, last, lc;
+    return editor_selection_bounds(&first, &fc, &last, &lc) &&
+        (row > first || (row == first && col >= fc)) &&
+        (row < last || (row == last && col < lc));
+}
+
+static int editor_selection_delete(void)
+{
+    int first, fc, last, lc;
+    if (!editor_selection_bounds(&first, &fc, &last, &lc)) return 0;
+    size_t tail = strlen(editor_lines[last] + lc);
+    if ((size_t)fc + tail >= EDITOR_MAX_COLS) {
+        editor_set_status("Selection join exceeds line capacity");
+        return 0;
+    }
+    if (!editor_history_before_edit()) return 0;
+    memmove(editor_lines[first] + fc, editor_lines[last] + lc, tail + 1);
+    memmove(editor_lines + first + 1, editor_lines + last + 1,
+            (size_t)(editor_line_count - last - 1) * sizeof(editor_lines[0]));
+    editor_line_count -= last - first;
+    editor_cursor_line = first;
+    editor_cursor_col = fc;
+    editor_selection_clear();
+    editor_typing_line = -1;
+    editor_ensure_cursor_visible();
+    return 1;
+}
+
+static void editor_selection_copy(int cut)
+{
+    int first, fc, last, lc;
+    if (!editor_selection_bounds(&first, &fc, &last, &lc)) return;
+    size_t size = 1;
+    for (int row = first; row <= last; ++row)
+        size += (size_t)((row == last ? lc : (int)strlen(editor_lines[row])) -
+                        (row == first ? fc : 0)) + (row < last);
+    char *copy = malloc(size);
+    if (!copy) { perror("Editor clipboard"); return; }
+    size_t offset = 0;
+    for (int row = first; row <= last; ++row) {
+        int start = row == first ? fc : 0;
+        int end = row == last ? lc : (int)strlen(editor_lines[row]);
+        memcpy(copy + offset, editor_lines[row] + start, (size_t)(end - start));
+        offset += (size_t)(end - start);
+        if (row < last) copy[offset++] = '\n';
+    }
+    copy[offset] = 0;
+    free(editor_clipboard);
+    editor_clipboard = copy;
+    if (cut) (void)editor_selection_delete();
+}
+
+static void editor_paste(void)
+{
+    if (!editor_clipboard) return;
+    int first = editor_cursor_line, fc = editor_cursor_col;
+    int last = first, lc = fc;
+    (void)editor_selection_bounds(&first, &fc, &last, &lc);
+    char (*replacement)[EDITOR_MAX_COLS] = calloc(EDITOR_MAX_LINES, sizeof(editor_lines[0]));
+    if (!replacement) { perror("Editor paste"); return; }
+    memcpy(replacement, editor_lines, (size_t)first * sizeof(editor_lines[0]));
+    memcpy(replacement[first], editor_lines[first], (size_t)fc);
+    int row = first, col = fc;
+    for (const char *c = editor_clipboard; *c; ++c) {
+        if (*c == '\n') { ++row; col = 0; }
+        else {
+            if (row >= EDITOR_MAX_LINES || col >= EDITOR_MAX_COLS - 1) goto full;
+            replacement[row][col++] = *c;
+        }
+        if (row >= EDITOR_MAX_LINES) goto full;
+    }
+    int end_col = col;
+    size_t tail = strlen(editor_lines[last] + lc);
+    int remaining = editor_line_count - last - 1;
+    if ((size_t)col + tail >= EDITOR_MAX_COLS || row + 1 + remaining > EDITOR_MAX_LINES) goto full;
+    memcpy(replacement[row] + col, editor_lines[last] + lc, tail + 1);
+    memcpy(replacement + row + 1, editor_lines + last + 1, (size_t)remaining * sizeof(editor_lines[0]));
+    if (editor_history_before_edit()) {
+        memcpy(editor_lines, replacement, sizeof(editor_lines));
+        editor_line_count = row + 1 + remaining;
+        editor_cursor_line = row;
+        editor_cursor_col = end_col;
+        editor_selection_clear();
+        editor_typing_line = -1;
+        editor_ensure_cursor_visible();
+    }
+    free(replacement);
+    return;
+full:
+    free(replacement);
+    editor_set_status("Paste exceeds document capacity");
+}
+
+static int editor_navigation(int scan, unsigned int modifiers)
+{
+    if (scan != 71 && scan != 72 && scan != 73 && scan != 75 &&
+        scan != 77 && scan != 79 && scan != 80 && scan != 81) return 0;
+    int shift = (modifiers & KEYMOD_SHIFT) != 0;
+    int ctrl = (modifiers & KEYMOD_CTRL) != 0;
+    int first, fc, last, lc;
+    if (!shift && (scan == 75 || scan == 77) &&
+        editor_selection_bounds(&first, &fc, &last, &lc)) {
+        editor_cursor_line = scan == 75 ? first : last;
+        editor_cursor_col = scan == 75 ? fc : lc;
+        editor_selection_clear();
+    } else {
+        if (shift) editor_selection_begin();
+        else editor_selection_clear();
+        if (scan == 75 || scan == 77) {
+            int direction = scan == 75 ? -1 : 1;
+            int moved = 0;
+            do {
+                int length = (int)strlen(editor_lines[editor_cursor_line]);
+                if (direction < 0) {
+                    if (editor_cursor_col > 0) --editor_cursor_col;
+                    else if (editor_cursor_line > 0) {
+                        --editor_cursor_line;
+                        editor_cursor_col = (int)strlen(editor_lines[editor_cursor_line]);
+                    } else break;
+                } else {
+                    if (editor_cursor_col < length) ++editor_cursor_col;
+                    else if (editor_cursor_line + 1 < editor_line_count) {
+                        ++editor_cursor_line;
+                        editor_cursor_col = 0;
+                    } else break;
+                }
+                ++moved;
+                if (!ctrl) break;
+                const char *line = editor_lines[editor_cursor_line];
+                int col = editor_cursor_col;
+                if (direction < 0 && col && !isspace((unsigned char)line[col-1]) &&
+                    (col == (int)strlen(line) || isspace((unsigned char)line[col]))) break;
+                if (direction > 0 && line[col] && !isspace((unsigned char)line[col]) &&
+                    (!col || isspace((unsigned char)line[col-1]))) break;
+            } while (moved < EDITOR_MAX_LINES * EDITOR_MAX_COLS);
+            editor_preferred_visual_col = -1;
+        } else if (scan == 71 || scan == 79) {
+            if (ctrl) editor_cursor_line = scan == 71 ? 0 : editor_line_count - 1;
+            editor_cursor_col = scan == 71 ? 0 : (int)strlen(editor_lines[editor_cursor_line]);
+            editor_preferred_visual_col = -1;
+        } else {
+            int delta = scan == 72 || scan == 73 ? -1 : 1;
+            if (scan == 73 || scan == 81) delta *= editor_visible_rows();
+            editor_move_visual_row(delta);
+        }
+    }
+    editor_match_line = -1;
+    editor_typing_line = -1;
+    editor_ensure_cursor_visible();
+    return 1;
+}
+
 static void editor_insert_char(char ch)
 {
+    int first, fc, last, lc;
+    if (editor_selection_bounds(&first, &fc, &last, &lc)) {
+        char replacement[2] = {ch, 0};
+        char *previous = editor_clipboard;
+        editor_clipboard = replacement;
+        editor_paste();
+        editor_clipboard = previous;
+        return;
+    }
+    editor_selection_clear();
     editor_match_line = -1;
     if (editor_cursor_line < 0 || editor_cursor_line >= EDITOR_MAX_LINES ||
         editor_cursor_col < 0) return;
@@ -4344,6 +4558,16 @@ static void editor_insert_char(char ch)
 
 static void editor_newline(void)
 {
+    int first, fc, last, lc;
+    if (editor_selection_bounds(&first, &fc, &last, &lc)) {
+        char replacement[] = "\n";
+        char *previous = editor_clipboard;
+        editor_clipboard = replacement;
+        editor_paste();
+        editor_clipboard = previous;
+        return;
+    }
+    editor_selection_clear();
     editor_match_line = -1;
     char *line;
     int len;
@@ -4382,6 +4606,7 @@ static void editor_newline(void)
 
 static void editor_delete_forward(void)
 {
+    if (editor_selection_delete()) return;
     char *line = editor_lines[editor_cursor_line];
     int len = (int)strlen(line);
     editor_match_line = -1;
@@ -4404,6 +4629,11 @@ static void editor_delete_forward(void)
 
 static void editor_backspace(void)
 {
+    int first, fc, last, lc;
+    if (editor_selection_bounds(&first, &fc, &last, &lc)) {
+        (void)editor_selection_delete();
+        return;
+    }
     editor_match_line = -1;
     char *line = editor_lines[editor_cursor_line];
     int len = (int)strlen(line);
@@ -4631,9 +4861,9 @@ static void editor_draw_text(int x, int y, int line, int start, int count)
     int len = (int)strlen(editor_lines[line]);
     for (i = 0; i < count && start + i < len; ++i) {
         char character[2] = {editor_lines[line][start + i], '\0'};
-        int matched = editor_match_line == line &&
+        int matched = editor_selection_contains(line, start + i) || (editor_match_line == line &&
                       start + i >= editor_match_col &&
-                      start + i < editor_match_col + editor_match_len;
+                      start + i < editor_match_col + editor_match_len);
         if (matched) fill_rect(x + i * 6, y, 6, 9, TITLE_COLOR);
         draw_text(x + i * 6, y, character, matched ? TITLE_TEXT_COLOR : TEXT_COLOR, 1);
     }
@@ -4915,11 +5145,15 @@ static void draw_editor_window(void)
             {"Export...", 1, 0},
             {"Close", 1, 0}
         };
-        BudoMenuItem edit_items[4] = {
+        BudoMenuItem edit_items[8] = {
             {"Undo  Ctrl+Z", editor_undo_count > 0, 0},
             {"Redo  Ctrl+Y", editor_redo_count > 0, 0},
             {"Delete Line", 1, 0},
-            {"Clear All", 1, 0}
+            {"Clear All", 1, 0},
+            {"Cut  Ctrl+X", editor_selection_active, 0},
+            {"Copy Ctrl+C", editor_selection_active, 0},
+            {"Paste Ctrl+V", editor_clipboard != NULL, 0},
+            {"Select All Ctrl+A", 1, 0}
         };
         BudoMenuItem search_items[4] = {
             {"Find... Ctrl+F", 1, 0},
@@ -4941,7 +5175,7 @@ static void draw_editor_window(void)
             }
         } else if (editor_menu == EDITOR_MENU_EDIT) {
             draw_popup_menu(menu_x + 36, menu_y, 156,
-                            edit_items, 4);
+                            edit_items, 8);
         } else if (editor_menu == EDITOR_MENU_SEARCH) {
             draw_popup_menu(menu_x + 72, menu_y, 156,
                             search_items, 4);
@@ -5572,118 +5806,7 @@ static void terminal_apply_completion(int direction)
     terminal_completion_end = terminal_cursor;
 }
 
-static int terminal_extract_command_name(const char *command,
-                                         char *name,
-                                         size_t name_size)
-{
-    const char *p = command;
-    size_t len = 0;
-    int quoted = 0;
-
-    while (isspace((unsigned char)*p)) {
-        ++p;
-    }
-
-    if (*p == '"') {
-        quoted = 1;
-        ++p;
-    }
-
-    while (*p != '\0') {
-        if (quoted) {
-            if (*p == '"') break;
-        } else if (isspace((unsigned char)*p)) {
-            break;
-        }
-
-        if (len + 1 >= name_size) {
-            return 0;
-        }
-        name[len++] = *p++;
-    }
-
-    name[len] = '\0';
-    return len > 0;
-}
-
-static int terminal_try_executable_path(const char *base, char *resolved,
-                                        size_t resolved_size, int *is_batch)
-{
-    struct stat st;
-    *is_batch = 0;
-    return stat(base, &st) == 0 && S_ISREG(st.st_mode) &&
-           access(base, X_OK) == 0 && copy_text(resolved, resolved_size, base);
-}
-
-static int terminal_command_resolves_executable(const char *command,
-                                                int *is_batch)
-{
-    char name[MAX_PATH];
-    char candidate[MAX_PATH];
-    char saved[MAX_PATH];
-    const char *path_env;
-
-    *is_batch = 0;
-
-    if (!terminal_extract_command_name(command, name, sizeof(name))) {
-        return 0;
-    }
-
-    if (getcwd(saved, sizeof(saved)) == NULL) {
-        return 0;
-    }
-
-    if (chdir(terminal_cwd) != 0) {
-        return 0;
-    }
-
-    if (strchr(name, '/') != NULL ||
-        strchr(name, '/') != NULL ||
-        (name[0] != '\0' && name[1] == ':')) {
-        int found = terminal_try_executable_path(name, candidate,
-                                                 sizeof(candidate),
-                                                 is_batch);
-        bw_restore_directory(saved);
-        return found;
-    }
-
-    if (terminal_try_executable_path(name, candidate,
-                                     sizeof(candidate), is_batch)) {
-        bw_restore_directory(saved);
-        return 1;
-    }
-
-    path_env = getenv("PATH");
-    if (path_env != NULL) {
-        const char *p = path_env;
-
-        while (*p != '\0') {
-            char dir[MAX_PATH];
-            size_t len = 0;
-
-            while (*p != '\0' && *p != ':') {
-                if (len + 1 < sizeof(dir)) {
-                    dir[len++] = *p;
-                }
-                ++p;
-            }
-            if (*p == ':') ++p;
-            dir[len] = '\0';
-
-            if (len > 0 &&
-                join_path(candidate, sizeof(candidate), dir, name) &&
-                terminal_try_executable_path(candidate, candidate,
-                                             sizeof(candidate),
-                                             is_batch)) {
-                bw_restore_directory(saved);
-                return 1;
-            }
-        }
-    }
-
-    bw_restore_directory(saved);
-    return 0;
-}
+#include "terminal_session.h"
 
 static void terminal_execute(void)
 {
@@ -5764,21 +5887,6 @@ static void terminal_execute(void)
         return;
     }
 
-    {
-        int is_batch = 0;
-
-        if (bw_command_needs_handoff(p) &&
-            terminal_command_resolves_executable(p, &is_batch)) {
-            if (copy_text(terminal_native_command,
-                          sizeof(terminal_native_command), p)) {
-                terminal_native_is_batch = is_batch;
-                terminal_native_launch_requested = 1;
-            } else {
-                terminal_add_line("Command line is too long.");
-            }
-            return;
-        }
-    }
 
     terminal_run_external(p);
 }
@@ -5830,6 +5938,7 @@ static void draw_terminal_window(void)
                terminal_window.w - (WINDOW_BORDER - 1) * 2,
                terminal_window.h - WINDOW_TITLE_H - WINDOW_BORDER + 1, 0);
 
+    if (session_fd >= 0) { session_draw(); return; }
     for (i = 0; i < rows &&
                 start + i < terminal_line_count; ++i) {
         draw_text(text_x, text_y + i * 9,
@@ -5885,10 +5994,13 @@ static void open_terminal(void)
     terminal_window.open = 1;
     terminal_window.minimized = 0;
     active_window = APP_TERMINAL;
+    if (!session_start()) terminal_add_line("Unable to start BUDOSTACK PTY; using command capture.");
+    bw_set_event_filter(session_forward_event);
 }
 
 static void minimize_terminal(void)
 {
+    session_reset_input();
     window_minimize_state(&terminal_window);
     if (active_window == APP_TERMINAL) {
         active_window = explorer_window.open && !explorer_window.minimized ?
@@ -5900,6 +6012,7 @@ static void minimize_terminal(void)
 
 static void close_terminal(void)
 {
+    session_stop();
     window_close_state(&terminal_window);
     terminal_paging = 0;
     terminal_scroll = 0;
@@ -5969,6 +6082,7 @@ static void terminal_history_move(int direction)
 
 static int terminal_handle_key(int key)
 {
+    if (session_key(key)) return 1;
     if (terminal_paging) {
         int rows = terminal_visible_rows();
 
@@ -6920,6 +7034,94 @@ static void bwa_draw_external_nonactive(void)
     }
 }
 
+static int desktop_running_apps(int *ids, AppWindow **windows, const char **names)
+{
+    int count = 0;
+    AppWindow *builtin[] = {&explorer_window, &editor_window, &terminal_window};
+    const char *labels[] = {"File Explorer", "Editor", "Terminal"};
+    for (int i = 0; i < 3; ++i) {
+        if (!builtin[i]->open) continue;
+        ids[count] = i + 1; windows[count] = builtin[i]; names[count++] = labels[i];
+    }
+    for (int i = 0; i < bwa_external_app_count; ++i) {
+        BwaLoadedApp *app = &bwa_external_apps[i];
+        if (!app->open) continue;
+        ids[count] = app->definition.runtime_id;
+        windows[count] = &app->window;
+        names[count++] = app->definition.name;
+    }
+    return count;
+}
+
+static void desktop_switch_app(int reverse)
+{
+    session_reset_input();
+    int ids[3 + BWA_MAX_EXTERNAL];
+    AppWindow *windows[3 + BWA_MAX_EXTERNAL];
+    const char *names[3 + BWA_MAX_EXTERNAL];
+    int count = desktop_running_apps(ids, windows, names), current = -1;
+    if (!count) return;
+    for (int i = 0; i < count; ++i) if (ids[i] == active_window) current = i;
+    current = (current + (reverse ? count - 1 : 1)) % count;
+    windows[current]->minimized = 0;
+    active_window = ids[current];
+    app_switch_until = bw_clock() + CLOCKS_PER_SEC * 2;
+}
+
+static int desktop_switch_key(int key, unsigned int modifiers)
+{
+    if (key != 9 || !(modifiers & KEYMOD_ALT)) return 0;
+    desktop_switch_app((modifiers & KEYMOD_SHIFT) != 0);
+    return 1;
+}
+
+static int desktop_minimized_click(int x, int y)
+{
+    int ids[3 + BWA_MAX_EXTERNAL];
+    AppWindow *windows[3 + BWA_MAX_EXTERNAL];
+    const char *names[3 + BWA_MAX_EXTERNAL];
+    int count = desktop_running_apps(ids, windows, names), slot = 0;
+    for (int i = 0; i < count; ++i) {
+        if (!windows[i]->minimized) continue;
+        int bx = 4 + (slot % 5) * 126, by = SCREEN_HEIGHT - 24 - (slot / 5) * 22;
+        ++slot;
+        if (point_in_rect(x, y, bx, by, 122, 20)) {
+            windows[i]->minimized = 0;
+            active_window = ids[i];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void desktop_running_draw(void)
+{
+    int ids[3 + BWA_MAX_EXTERNAL];
+    AppWindow *windows[3 + BWA_MAX_EXTERNAL];
+    const char *names[3 + BWA_MAX_EXTERNAL];
+    int count = desktop_running_apps(ids, windows, names), slot = 0;
+    for (int i = 0; i < count; ++i) {
+        if (!windows[i]->minimized) continue;
+        int x = 4 + (slot % 5) * 126, y = SCREEN_HEIGHT - 24 - (slot / 5) * 22;
+        ++slot;
+        int owner = ui_draw_owner;
+        ui_draw_owner = UI_OVERLAY_OWNER;
+        bwa_draw_standard_button(x, y, 122, 20, "", 0);
+        ui_draw_owner = owner;
+        draw_text_elided(x + 4, y + 6, names[i], TEXT_COLOR, 19);
+    }
+    if (app_switch_until && count) {
+        int height = 26 + count * 18, y = (SCREEN_HEIGHT - height) / 2;
+        fill_rect(208, y, 224, height, WINDOW_CHROME_COLOR);
+        draw_bevel(208, y, 224, height, 1);
+        draw_text(218, y + 7, "Running applications", TEXT_COLOR, 32);
+        for (int i = 0; i < count; ++i) {
+            if (ids[i] == active_window) fill_rect(214, y + 22 + i * 18, 212, 18, TITLE_COLOR);
+            draw_text_elided(220, y + 27 + i * 18, names[i], ids[i] == active_window ? TITLE_TEXT_COLOR : TEXT_COLOR, 33);
+        }
+    }
+}
+
 static void draw_desktop(int page)
 {
     int explorer_x;
@@ -6938,7 +7140,18 @@ static void draw_desktop(int page)
         memset(framebuffer, DESKTOP_COLOR, sizeof(framebuffer));
         memset(rgb_mask, 0, sizeof(rgb_mask));
     }
-    draw_text_centered(8, "BUDOWIN by BUDOSTACK", DESKTOP_TEXT_COLOR);
+    fill_rect(0, 0, SCREEN_WIDTH, 21, WINDOW_CHROME_COLOR);
+    fill_rect(0, 20, SCREEN_WIDTH, 1, WINDOW_SHADOW_COLOR);
+    draw_text_centered(7, "BUDOWIN by BUDOSTACK", TEXT_COLOR);
+    time_t now = time(NULL);
+    struct tm date;
+    if (localtime_r(&now, &date)) {
+        char clock_text[32];
+        static const char *weekdays[] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+        strftime(clock_text, sizeof(clock_text), "%Y-%m-%d %H:%M:%S", &date);
+        draw_text(6, 7, weekdays[date.tm_wday], TEXT_COLOR, 9);
+        draw_text(SCREEN_WIDTH - 120, 7, clock_text, TEXT_COLOR, 19);
+    }
     if (desktop_folder[0]) {
         const char *name = strrchr(desktop_folder, '/');
         draw_text(110, 28, name ? name + 1 : desktop_folder, DESKTOP_TEXT_COLOR, 70);
@@ -7081,11 +7294,16 @@ static void draw_desktop(int page)
             budo_menu_draw(&bwa_host_api, context_x, context_y, 156, file_items, 4);
         else budo_menu_items_draw(&bwa_host_api, context_x, context_y, 156, shortcut_items, 6);
     }
+    if (explorer_shortcut_dragging && explorer_drag_shortcut >= 0 && explorer_drag_shortcut < shortcut_count) {
+        DesktopItem *entry = &desktop_shortcuts[explorer_drag_shortcut];
+        draw_labeled_icon(explorer_drag_x, explorer_drag_y, entry->name, entry->type, 1, entry->path);
+    }
     if (confirm_kind) {
         ui_region_count = 0;
         ui_draw_scope = ui_scope();
         desktop_confirm_draw();
     }
+    desktop_running_draw();
     ui_tooltip_draw();
 }
 
@@ -7192,7 +7410,21 @@ static int load_directory(const char *path)
         done = findnext(&entry);
     }
 
+    explorer_shortcut_folder[0] = 0;
+    for (int i = 0; i < shortcut_count; ++i)
+        if (desktop_shortcuts[i].type == TYPE_FOLDER && !strcmp(desktop_shortcuts[i].path, current_path))
+            (void)copy_text(explorer_shortcut_folder, sizeof(explorer_shortcut_folder), current_path);
+    if (explorer_shortcut_folder[0]) {
+        for (int i = 0; i < shortcut_count && item_count < MAX_ITEMS; ++i) {
+            if (strcmp(shortcut_details[i].parent, current_path)) continue;
+            int duplicate = 0;
+            for (int j = 0; j < item_count; ++j)
+                if (!strcmp(items[j].path, desktop_shortcuts[i].path)) duplicate = 1;
+            if (!duplicate) items[item_count++] = desktop_shortcuts[i];
+        }
+    }
     qsort(items, (size_t)item_count, sizeof(items[0]), compare_items);
+    explorer_up_selected = 0;
     budo_selection_clear(&explorer_select);
     return 1;
 }
@@ -7204,6 +7436,13 @@ static int parent_path(char *dest, size_t dest_size)
 
     if (is_root_path()) {
         return 0;
+    }
+    if (explorer_shortcut_folder[0]) {
+        for (int i = 0; i < shortcut_count; ++i)
+            if (desktop_shortcuts[i].type == TYPE_FOLDER && !strcmp(desktop_shortcuts[i].path, current_path)) {
+                const char *parent = shortcut_details[i].parent;
+                return copy_text(dest, dest_size, parent[0] ? parent : bw_user_directory());
+            }
     }
 
     if (!copy_text(temp, sizeof(temp), current_path)) {
@@ -7561,6 +7800,19 @@ static int editor_file_accept(void)
         if (!file) { editor_set_status("Save failed"); return 0; }
         for (int i = 0; i < terminal_line_count; ++i)
             fprintf(file, "%s\n", terminal_lines[i]);
+        if (session_fd >= 0) {
+            for (int row = 0; row < session_rows; ++row) {
+                int length = session_cols;
+                while (length > 0 && session_cells[row][length - 1].ch == ' ') --length;
+                if (!length && row > session_y) break;
+                for (int col = 0; col < length; ++col) {
+                    char encoded[8];
+                    char cell[2] = {(char)session_cells[row][col].ch, 0};
+                    if (bw_text_encode(encoded, sizeof(encoded), cell)) fputs(encoded, file);
+                }
+                fputc('\n', file);
+            }
+        }
         if (!desktop_file_finish(file, full_path, temporary)) {
             editor_set_status("Write failed; original file preserved");
             return 0;
@@ -8124,31 +8376,6 @@ static int bwa_delete_file_association(const char *extension)
 
 static void normalize_slashes(char *path) { (void)path; }
 
-static int terminal_save_resume_state(void)
-{
-    FILE *file = fopen(TERMINAL_STATE_FILE, "wt");
-
-    if (file == NULL) {
-        return 0;
-    }
-
-    fprintf(file, "%s\n", terminal_cwd);
-    fprintf(file, "%d %d %d %d %d %d %d %d %d %d %d\n",
-            terminal_window.x,
-            terminal_window.y,
-            terminal_window.w,
-            terminal_window.h,
-            terminal_window.restore_x,
-            terminal_window.restore_y,
-            terminal_window.restore_w,
-            terminal_window.restore_h,
-            terminal_window.minimized,
-            terminal_window.maximized,
-            terminal_scroll);
-    fclose(file);
-    return 1;
-}
-
 static void terminal_load_resume_state(void)
 {
     FILE *file = fopen(TERMINAL_STATE_FILE, "rt");
@@ -8230,13 +8457,6 @@ static int request_launch(const DesktopItem *item, int page)
     if (!save_session_state(page)) return 0;
     return bw_request_launch(item->path, current_path, 0);
 }
-static int terminal_request_native_launch(const char *command, int is_batch, int page)
-{
-    (void)is_batch;
-    if (!save_session_state(page) || !terminal_save_resume_state()) return 0;
-    return bw_request_launch(command, terminal_cwd, 1);
-}
-
 static int load_initial_directory(int *page)
 {
     FILE *file = fopen(STATE_FILE, "rt");
@@ -8358,6 +8578,7 @@ static int explorer_order(int *order)
 
 static void explorer_clear_selection(void)
 {
+    explorer_up_selected = 0;
     budo_selection_clear(&explorer_select);
 }
 
@@ -8370,6 +8591,7 @@ static void explorer_select_all_visible(void)
 
 static void explorer_select_item(int target, unsigned int modifiers)
 {
+    explorer_up_selected = 0;
     int order[MAX_ITEMS];
     int count = explorer_order(order);
     budo_selection_click(&explorer_select, order, count, target, modifiers, 0);
@@ -8867,15 +9089,33 @@ static int explorer_delete_selection(void)
         return 0;
     }
 
+    if (explorer_shortcut_folder[0]) {
+        memset(shortcut_selection, 0, DESKTOP_SHORTCUT_MAX);
+        for (i = 0; i < item_count; ++i)
+            if (explorer_selection[i])
+                for (int j = 0; j < shortcut_count; ++j)
+                    if (!strcmp(shortcut_details[j].parent, current_path) &&
+                        !strcmp(desktop_shortcuts[j].path, items[i].path)) shortcut_selection[j] = 1;
+        changed = shortcuts_delete_selected();
+        (void)load_directory(refresh_path);
+        explorer_status = changed ? "Shortcuts removed; target files preserved." : "No shortcut removed.";
+        return changed;
+    }
+    int selected = 0;
     for (i = 0; i < item_count; ++i) {
         if (explorer_selection[i]) {
+            ++selected;
             if (explorer_delete_path(items[i].path, items[i].type)) changed = 1;
-            else failed = 1;
+            else {
+                snprintf(explorer_error, sizeof(explorer_error), "Delete failed: %.90s: %.40s",
+                         items[i].name, strerror(errno));
+                failed = 1;
+            }
         }
     }
 
     (void)load_directory(refresh_path);
-    explorer_status = failed ? "Some entries could not be deleted; check permissions." : "Selected entries deleted.";
+    explorer_status = failed ? explorer_error : selected ? "Selected entries deleted." : "No entries selected; nothing deleted.";
     return changed;
 }
 
@@ -8892,38 +9132,19 @@ static int entries_per_page(void)
 
 static int page_count(void)
 {
-    int per_page = entries_per_page();
-
-    int visible_count = visible_item_count();
-
-    if (visible_count == 0) {
-        return 1;
-    }
-
-    return (visible_count + per_page - 1) / per_page;
+    int count = visible_item_count() + !is_root_path();
+    int rows = (count + explorer_cols() - 1) / explorer_cols();
+    return rows > explorer_rows() ? rows - explorer_rows() + 1 : 1;
 }
 
 static int item_for_slot(int page, int slot)
 {
-    int first_slot = is_root_path() ? 0 : 1;
-    int per_page = entries_per_page();
-    int index;
-
-    if (!is_root_path() && slot == 0) {
-        return -2;
+    int index = page * explorer_cols() + slot;
+    if (!is_root_path()) {
+        if (!index) return -2;
+        --index;
     }
-
-    if (slot < first_slot) {
-        return -1;
-    }
-
-    index = page * per_page + (slot - first_slot);
-
-    if (index < 0 || index >= visible_item_count()) {
-        return -1;
-    }
-
-    return visible_item_at(index);
+    return index >= 0 && index < visible_item_count() ? visible_item_at(index) : -1;
 }
 
 static void clamp_page(int *page)
@@ -9025,6 +9246,7 @@ static int desktop_file_menu_click(int x, int y, int *page)
                 terminal_line_count = 0;
                 terminal_scroll = 0;
                 terminal_paging = 0;
+                if (session_fd >= 0) session_clear();
             } else close_terminal();
         } else if (item == 0 && explorer_selected_item >= 0) {
             DesktopItem *entry = &items[explorer_selected_item];
@@ -9311,15 +9533,16 @@ static void desktop_scroll_configure(int app, int page)
         scrollbar_configure(&explorer_scroll,
             explorer_window.x + explorer_window.w - 20,
             explorer_client_y(), explorer_client_h() - 12,
-            0, page_count(), 1, page);
+            0, page_count() + explorer_rows() - 1, explorer_rows(), page);
     } else if (app == APP_TERMINAL) {
-        int rows = terminal_visible_rows();
-        int top = terminal_paging ? terminal_page_top : terminal_line_count - rows - terminal_scroll;
+        int rows = session_fd >= 0 ? session_rows : terminal_visible_rows();
+        int top = session_fd >= 0 ? terminal_line_count - terminal_scroll :
+            terminal_paging ? terminal_page_top : terminal_line_count - rows - terminal_scroll;
         scrollbar_configure(&terminal_scrollbar,
             terminal_window.x + terminal_window.w - 20,
             terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 4,
             terminal_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 20,
-            0, terminal_line_count, rows, top);
+            0, terminal_line_count + (session_fd >= 0 ? rows : 0), rows, top);
     }
 }
 
@@ -9366,7 +9589,7 @@ static int desktop_scroll_pointer(int x, int y, int event, int *page)
         handled = budo_scroll_pointer_host(&bwa_host_api, &terminal_scrollbar, x, y, event);
         if (handled) {
             if (terminal_paging) terminal_page_top = terminal_scrollbar.position;
-            else terminal_scroll = terminal_line_count - terminal_visible_rows() - terminal_scrollbar.position;
+            else terminal_scroll = terminal_line_count - (session_fd >= 0 ? 0 : terminal_visible_rows()) - terminal_scrollbar.position;
             if (terminal_scroll < 0) terminal_scroll = 0;
         }
     }
@@ -9466,8 +9689,11 @@ static void shortcut_open(int index, int page)
 {
     DesktopItem *entry = &desktop_shortcuts[index];
     if (entry->type == TYPE_FOLDER) {
-        (void)copy_text(desktop_folder, sizeof(desktop_folder), entry->path);
-        budo_selection_clear(&desktop_select);
+        if (load_directory(entry->path)) {
+            open_explorer();
+            active_window = APP_EXPLORER;
+            budo_selection_clear(&desktop_select);
+        }
         return;
     }
     if (executable_path(entry->path)) {
@@ -9611,6 +9837,66 @@ static int shortcut_move_impl(int index, const char *parent, int persist)
 static int shortcut_move(int index, const char *parent)
 {
     return shortcut_move_impl(index, parent, 1);
+}
+
+static const char *shortcut_drop_parent(int x, int y)
+{
+    int owner = desktop_point_owner(x, y);
+    if (owner == APP_EXPLORER && explorer_shortcut_folder[0] &&
+        point_in_rect(x, y, explorer_client_x(), explorer_client_y(),
+                      explorer_client_w(), explorer_client_h() - BUDO_SCROLL_WIDTH))
+        return explorer_shortcut_folder;
+    if (owner != APP_NONE) return NULL;
+    int folder = shortcut_hit(x, y);
+    return folder >= 0 && desktop_shortcuts[folder].type == TYPE_FOLDER ?
+        desktop_shortcuts[folder].path : desktop_folder;
+}
+
+static void explorer_shortcut_drag_begin(int item, int x, int y)
+{
+    explorer_drag_shortcut = -1;
+    explorer_shortcut_dragging = 0;
+    if (item < 0 || item >= item_count || !explorer_shortcut_folder[0]) return;
+    for (int i = 0; i < shortcut_count; ++i) {
+        if (strcmp(shortcut_details[i].parent, current_path) ||
+            strcmp(desktop_shortcuts[i].path, items[item].path)) continue;
+        explorer_drag_shortcut = i;
+        explorer_drag_press_x = x;
+        explorer_drag_press_y = y;
+        explorer_drag_x = x - DESKTOP_ICON_W / 2;
+        explorer_drag_y = y - DESKTOP_ICON_H / 2;
+        return;
+    }
+}
+
+static int explorer_shortcut_drag_update(int x, int y, int down)
+{
+    if (!down || explorer_drag_shortcut < 0) return 0;
+    int dx = x - explorer_drag_press_x, dy = y - explorer_drag_press_y;
+    if (!explorer_shortcut_dragging && dx <= 3 && dx >= -3 && dy <= 3 && dy >= -3) return 0;
+    explorer_shortcut_dragging = 1;
+    explorer_drag_x = x - DESKTOP_ICON_W / 2;
+    explorer_drag_y = y - DESKTOP_ICON_H / 2;
+    return 1;
+}
+
+static int explorer_shortcut_drag_drop(int x, int y)
+{
+    int index = explorer_drag_shortcut;
+    int dragging = explorer_shortcut_dragging;
+    explorer_drag_shortcut = -1;
+    explorer_shortcut_dragging = 0;
+    if (!dragging || index < 0 || index >= shortcut_count) return 0;
+    const char *parent = shortcut_drop_parent(x, y);
+    if (!parent || !strcmp(shortcut_details[index].parent, parent)) return 0;
+    if (!shortcut_move(index, parent)) {
+        explorer_status = "Unable to move shortcut; check free desktop slots and settings permissions.";
+        return 0;
+    }
+    char refresh[MAX_PATH];
+    if (copy_text(refresh, sizeof(refresh), current_path)) (void)load_directory(refresh);
+    explorer_status = "Shortcut moved; target file preserved.";
+    return 1;
 }
 
 static void desktop_folder_up(void)
@@ -9923,6 +10209,7 @@ static int shortcuts_delete_selected(void)
 
 static int desktop_selection_pointer(int x, int y, int buttons, int *page)
 {
+    if (confirm_kind || editor_file_dialog != EDITOR_FILE_DIALOG_NONE) return 0;
     if (context_menu && buttons == 1) {
         int menu = context_menu;
         int choice = budo_menu_hit(x, y, context_x, context_y, 156, menu == 1 ? 4 : 6);
@@ -10077,9 +10364,28 @@ static void explorer_navigate(int scan, int *page)
 {
     int order[MAX_ITEMS];
     int count = explorer_order(order);
+    if (!is_root_path() && scan == 72 && !(bw_modifiers() & KEYMOD_SHIFT) &&
+        (explorer_up_selected || (explorer_selected_item >= 0 &&
+         budo_selection_position(order, count, explorer_selected_item) < explorer_cols()))) {
+        explorer_clear_selection();
+        explorer_up_selected = 1;
+        *page = 0;
+        return;
+    }
+    if (explorer_up_selected) {
+        explorer_up_selected = 0;
+        if (count) explorer_select_item(order[0], 0);
+        *page = 0;
+        return;
+    }
     int position = budo_selection_move(&explorer_select, order, count, scan,
                                        explorer_cols(), entries_per_page(), keyboard_modifiers());
-    if (position >= 0) *page = position / entries_per_page();
+    if (position >= 0) {
+        int row = (position + !is_root_path()) / explorer_cols();
+        if (row < *page) *page = row;
+        if (row >= *page + explorer_rows()) *page = row - explorer_rows() + 1;
+        explorer_up_selected = 0;
+    }
 }
 
 int main(int argc, char **argv)
@@ -10093,6 +10399,8 @@ int main(int argc, char **argv)
     int page = 0;
     int last_target = -99;
     int screen_dirty = 1;
+    int exit_status = 0;
+    time_t desktop_second = 0;
     int caret_dirty = 0;
     int caret_drawn = 0;
     int cursor_drawn = 0;
@@ -10156,8 +10464,16 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    if (terminal_window.open) open_terminal();
     for (;;) {
         if (!bw_begin_frame()) break;
+        if (session_poll()) screen_dirty = 1;
+        time_t second = time(NULL);
+        if (second != desktop_second) { desktop_second = second; screen_dirty = 1; }
+        if (app_switch_until && bw_clock() >= app_switch_until) {
+            app_switch_until = 0;
+            screen_dirty = 1;
+        }
         mouse_get_state(&mouse_x, &mouse_y, &buttons);
 
         ui_pointer_x = mouse_x;
@@ -10165,7 +10481,8 @@ int main(int argc, char **argv)
         ui_pointer_buttons = buttons;
         int down = (buttons & 1) && !(previous_buttons & 1);
         int up = !(buttons & 1) && (previous_buttons & 1);
-        int command_down = ui_button_event(mouse_x, mouse_y, down, up);
+        int graphics_pointer = session_pointer(mouse_x, mouse_y, buttons, previous_buttons);
+        int command_down = graphics_pointer ? 0 : ui_button_event(mouse_x, mouse_y, down, up);
         if (down || up || mouse_x != previous_mouse_x || mouse_y != previous_mouse_y)
             screen_dirty = 1;
         if (mouse_x != ui_tip_x || mouse_y != ui_tip_y || buttons ||
@@ -10184,7 +10501,10 @@ int main(int argc, char **argv)
         if (command_down) {
             clock_t now = bw_clock();
             int handled = 0;
-            if (!confirm_kind && editor_file_dialog == EDITOR_FILE_DIALOG_NONE &&
+            if (!confirm_kind && editor_file_dialog == EDITOR_FILE_DIALOG_NONE && desktop_minimized_click(mouse_x, mouse_y)) {
+                handled = 1;
+                screen_dirty = 1;
+            } else if (!confirm_kind && editor_file_dialog == EDITOR_FILE_DIALOG_NONE &&
                 desktop_selection_pointer(mouse_x, mouse_y, 1, &page)) {
                 last_target = -99;
                 last_click_time = 0;
@@ -10342,7 +10662,7 @@ int main(int argc, char **argv)
                            point_in_rect(mouse_x, mouse_y,
                                          editor_window.x + 41,
                                          menu_y + EDITOR_MENU_H,
-                                         156, 68)) {
+                                         156, 132)) {
                     int item = (mouse_y -
                                 (menu_y + EDITOR_MENU_H + 2)) / 16;
                     editor_menu = EDITOR_MENU_NONE;
@@ -10353,6 +10673,7 @@ int main(int argc, char **argv)
                     else if (item == 2)
                         editor_delete_line();
                     else if (item == 3 && editor_history_before_edit()) {
+                        editor_selection_clear();
                         memset(editor_lines, 0, sizeof(editor_lines));
                         editor_line_count = 1;
                         editor_cursor_line = 0;
@@ -10361,6 +10682,15 @@ int main(int argc, char **argv)
                         editor_top_segment = 0;
                         editor_left_col = 0;
                         editor_set_status("Document cleared");
+                    }
+                    if (item == 4 || item == 5) editor_selection_copy(item == 4);
+                    else if (item == 6) editor_paste();
+                    else if (item == 7) {
+                        editor_anchor_line = editor_anchor_col = 0;
+                        editor_cursor_line = editor_line_count - 1;
+                        editor_cursor_col = (int)strlen(editor_lines[editor_cursor_line]);
+                        editor_selection_active = 1;
+                        editor_ensure_cursor_visible();
                     }
                     screen_dirty = 1;
                     handled = 1;
@@ -10445,7 +10775,11 @@ int main(int argc, char **argv)
                                          EDITOR_MENU_H - EDITOR_STATUS_H -
                                          ((editor_writer_mode &&
                                            editor_writer_ruler) ? EDITOR_RULER_H : 0) - 8)) {
+                    if (bw_modifiers() & 3u) editor_selection_begin();
+                    else editor_selection_clear();
                     editor_place_cursor_from_point(mouse_x, mouse_y);
+                    editor_selection_begin();
+                    editor_selecting = 1;
                     text_caret_visible = 1;
                     text_caret_last_toggle = now;
                     screen_dirty = 1;
@@ -10483,7 +10817,7 @@ int main(int argc, char **argv)
                     editor_window.drag_dy = mouse_y - editor_window.y;
                 }
                 handled = 1;
-            } else if (active_window == APP_EXPLORER &&
+            } else if (!handled && active_window == APP_EXPLORER &&
                        window_contains(&explorer_window, mouse_x, mouse_y)) {
                 int min_x = window_min_button_x(&explorer_window);
                 int max_x = window_max_button_x(&explorer_window);
@@ -10579,6 +10913,7 @@ int main(int argc, char **argv)
                         last_click_time = 0;
                     } else if (target >= 0) {
                         explorer_select_item(target, modifiers);
+                        if (!ctrl_down && !shift_down) explorer_shortcut_drag_begin(target, mouse_x, mouse_y);
 
                         screen_dirty = 1;
                         last_target =
@@ -10595,6 +10930,7 @@ int main(int argc, char **argv)
                             explorer_clear_selection();
                             screen_dirty = 1;
                         }
+                        if (target == -2) { explorer_up_selected = 1; screen_dirty = 1; }
                         last_target = target == -2 ? -2 : -99;
                         last_click_time = now;
                     }
@@ -10709,6 +11045,12 @@ int main(int argc, char **argv)
             }
         }
 
+        if (explorer_shortcut_drag_update(mouse_x, mouse_y, buttons & 1)) {
+            last_target = -99;
+            last_click_time = 0;
+            screen_dirty = 1;
+        }
+
         if ((buttons & 1) &&
             desktop_icon_pressed &&
             desktop_drag_app != APP_NONE) {
@@ -10747,6 +11089,23 @@ int main(int argc, char **argv)
                 last_click_time = 0;
                 screen_dirty = 1;
             }
+        }
+        if (editor_selecting) {
+            if (buttons & 1) {
+                int ty = editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H +
+                    ((editor_writer_mode && editor_writer_ruler) ? EDITOR_RULER_H : 0) + 5;
+                int bottom = ty + editor_visible_rows() * 9 - 1;
+                if (mouse_y < ty || mouse_y > bottom) {
+                    desktop_scroll_configure(APP_EDITOR, page);
+                    int top = editor_vscroll.position + (mouse_y < ty ? -1 : 1);
+                    if (top > budo_scroll_limit(&editor_vscroll)) top = budo_scroll_limit(&editor_vscroll);
+                    editor_set_top_visual_row(top);
+                }
+                int y = mouse_y < ty ? ty : mouse_y > bottom ? bottom : mouse_y;
+                int x = mouse_x < editor_text_x() ? editor_text_x() : mouse_x;
+                editor_place_cursor_from_point(x, y);
+                screen_dirty = 1;
+            } else editor_selecting = 0;
         }
         if (explorer_select.dragging && (buttons & 1)) {
             explorer_rubber_update(mouse_x, mouse_y, page);
@@ -10915,6 +11274,10 @@ int main(int argc, char **argv)
         }
 
         if (!(buttons & 1) && (previous_buttons & 1)) {
+            if (explorer_drag_shortcut >= 0) {
+                (void)explorer_shortcut_drag_drop(mouse_x, mouse_y);
+                screen_dirty = 1;
+            }
             if (active_window >= APP_BWA_BASE) {
                 BwaLoadedApp *app =
                     bwa_find_external_app(active_window);
@@ -10945,10 +11308,13 @@ int main(int argc, char **argv)
                 } else if (desktop_drag_app >= APP_SHORTCUT_BASE) {
                     int index = desktop_drag_app - APP_SHORTCUT_BASE;
                     if (index < shortcut_count) {
-                        int folder = shortcut_hit(mouse_x, mouse_y);
-                        if (folder >= 0 && folder != index && desktop_shortcuts[folder].type == TYPE_FOLDER) {
-                            (void)shortcut_move(index, desktop_shortcuts[folder].path);
-                        } else {
+                        const char *parent = shortcut_drop_parent(mouse_x, mouse_y);
+                        if (parent && strcmp(parent, shortcut_details[index].parent)) {
+                            if (shortcut_move(index, parent) && explorer_window.open && explorer_shortcut_folder[0]) {
+                                char refresh[MAX_PATH];
+                                if (copy_text(refresh, sizeof(refresh), current_path)) (void)load_directory(refresh);
+                            }
+                        } else if (parent) {
                             int previous_slot = shortcut_slots[index];
                             shortcut_slots[index] = slot;
                             if (!shortcuts_save()) shortcut_slots[index] = previous_slot;
@@ -11007,6 +11373,8 @@ int main(int argc, char **argv)
             } else if (editor_file_dialog != EDITOR_FILE_DIALOG_NONE) {
                 editor_file_dialog_key(key);
                 screen_dirty = 1;
+            } else if (desktop_switch_key(key, bw_key_modifiers())) {
+                screen_dirty = 1;
             } else if (key == 27 && context_menu) {
                 context_menu = 0;
                 screen_dirty = 1;
@@ -11020,20 +11388,6 @@ int main(int argc, char **argv)
                     screen_dirty = 1;
                 }
 
-                if (terminal_native_launch_requested) {
-                    terminal_native_launch_requested = 0;
-
-                    if (terminal_request_native_launch(
-                            terminal_native_command,
-                            terminal_native_is_batch,
-                            page)) {
-                        goto application_exit;
-                    }
-
-                    terminal_add_line("Unable to launch program.");
-                    terminal_native_command[0] = '\0';
-                    screen_dirty = 1;
-                }
             } else if (active_window == APP_EDITOR &&
                 editor_window.open &&
                 !editor_window.minimized &&
@@ -11110,9 +11464,6 @@ int main(int argc, char **argv)
                 !editor_window.minimized) {
                 if (key == 0) {
                     int extended = getch();
-                    int line_len =
-                        (int)strlen(editor_lines[editor_cursor_line]);
-
                     if (extended == 201 || extended == 202) {
                         desktop_scroll_configure(APP_EDITOR, page);
                         int top = editor_vscroll.position + (extended == 201 ? -3 : 3);
@@ -11122,65 +11473,30 @@ int main(int argc, char **argv)
                     } else if (extended == 83) {
                         editor_delete_forward();
                     } else if (extended == 61) {
-                        editor_search_action((bw_modifiers() & 3u) ? 1 : 0);
-                    } else if (extended == 75) {
-                        editor_match_line = -1;
-                        editor_preferred_visual_col = -1;
-                        if (editor_cursor_col > 0) {
-                            --editor_cursor_col;
-                        } else if (editor_cursor_line > 0) {
-                            --editor_cursor_line;
-                            editor_cursor_col =
-                                (int)strlen(editor_lines[editor_cursor_line]);
-                        }
-                        editor_ensure_cursor_visible();
-                    } else if (extended == 77) {
-                        editor_preferred_visual_col = -1;
-                        if (editor_cursor_col < line_len) {
-                            ++editor_cursor_col;
-                        } else if (editor_cursor_line + 1 < editor_line_count) {
-                            ++editor_cursor_line;
-                            editor_cursor_col = 0;
-                        }
-                        editor_ensure_cursor_visible();
-                    } else if (extended == 72) {
-                        editor_move_visual_row(-1);
-                    } else if (extended == 80) {
-                        editor_move_visual_row(1);
-                    } else if (extended == 71) {
-                        editor_preferred_visual_col = -1;
-                        editor_cursor_col = 0;
-                        editor_ensure_cursor_visible();
-                    } else if (extended == 79) {
-                        editor_preferred_visual_col = -1;
-                        editor_cursor_col = line_len;
-                        editor_ensure_cursor_visible();
-                    } else if (extended == 73) {
-                        int i;
-                        for (i = 0; i < editor_visible_rows(); ++i)
-                            editor_move_visual_row(-1);
-                    } else if (extended == 81) {
-                        int i;
-                        for (i = 0; i < editor_visible_rows(); ++i)
-                            editor_move_visual_row(1);
+                        editor_search_action((bw_key_modifiers() & 3u) ? 1 : 0);
+                    } else {
+                        (void)editor_navigation(extended, bw_key_modifiers());
                     }
 
                     if (extended != 61) {
                         editor_match_line = -1;
                         editor_typing_line = -1;
                     }
-                    if (extended == 72 || extended == 75 ||
-                        extended == 77 || extended == 80 ||
-                        extended == 71 || extended == 79 ||
-                        extended == 73 || extended == 81) {
-                        while (kbhit()) {
-                            int queued = getch();
-                            if (queued == 0 && kbhit()) {
-                                (void)getch();
-                            }
-                        }
-                    }
 
+
+                    screen_dirty = 1;
+                } else if (key == 1) {
+                    editor_anchor_line = editor_anchor_col = 0;
+                    editor_cursor_line = editor_line_count - 1;
+                    editor_cursor_col = (int)strlen(editor_lines[editor_cursor_line]);
+                    editor_selection_active = 1;
+                    editor_ensure_cursor_visible();
+                    screen_dirty = 1;
+                } else if (key == 3 || key == 24) {
+                    editor_selection_copy(key == 24);
+                    screen_dirty = 1;
+                } else if (key == 22) {
+                    editor_paste();
                     screen_dirty = 1;
                 } else if (key == 14 || key == 15) {
                     editor_request_action(key == 14 ? 1 : 2, NULL);
@@ -11195,7 +11511,7 @@ int main(int argc, char **argv)
                 } else if (key == 6) {
                     editor_begin_dialog(EDITOR_DIALOG_FIND, "");
                     screen_dirty = 1;
-                } else if (key == 18 || (key == 8 && (bw_modifiers() & 4u))) {
+                } else if (key == 18 || (key == 8 && (bw_key_modifiers() & 4u))) {
                     editor_begin_dialog(EDITOR_DIALOG_REPLACE_FIND, "");
                     screen_dirty = 1;
                 } else if (key == 8) {
@@ -11256,6 +11572,10 @@ int main(int argc, char **argv)
                     int order[MAX_ITEMS];
                     int count = explorer_order(order);
                     budo_selection_space(&explorer_select, order, count, keyboard_modifiers());
+                    screen_dirty = 1;
+                } else if (key == 13 && explorer_up_selected) {
+                    char parent[MAX_PATH];
+                    if (parent_path(parent, sizeof(parent)) && load_directory(parent)) page = 0;
                     screen_dirty = 1;
                 } else if (key == 13 && explorer_selected_item >= 0) {
                     DesktopItem *entry = &items[explorer_selected_item];
@@ -11341,11 +11661,12 @@ int main(int argc, char **argv)
         if (caret_dirty && (editor_search_dialog_active() ||
                             editor_file_dialog != EDITOR_FILE_DIALOG_NONE)) screen_dirty = 1;
         if (screen_dirty) {
+            clamp_page(&page);
             draw_desktop(page);
 
             if (!present_framebuffer()) {
-                set_text_mode();
-                return 1;
+                exit_status = 1;
+                goto application_exit;
             }
 
             caret_drawn = 0;
@@ -11410,12 +11731,14 @@ int main(int argc, char **argv)
     }
 
 application_exit:
+    session_stop();
     free(picker_selection.selected);
     picker_selection.selected = NULL;
     free(editor_file_items);
     editor_file_items = NULL;
     editor_history_reset();
+    free(editor_clipboard);
     set_text_mode();
     bw_finish();
-    return 0;
+    return exit_status;
 }

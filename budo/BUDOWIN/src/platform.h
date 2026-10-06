@@ -20,6 +20,8 @@ struct ffblk {
 };
 int findfirst(const char *pattern, struct ffblk *entry, int attributes);
 int findnext(struct ffblk *entry);
+struct budo_gfx_event;
+void bw_set_event_filter(int (*filter)(const struct budo_gfx_event *));
 int kbhit(void);
 int getch(void);
 int bw_initialize(int argc, char **argv);
@@ -30,6 +32,7 @@ int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t lengt
                    const uint32_t *background, const unsigned char *mask);
 void bw_mouse_state(int *x, int *y, int *buttons);
 unsigned int bw_modifiers(void);
+unsigned int bw_key_modifiers(void);
 int bw_get_keyboard_layout(void);
 int bw_set_keyboard_layout(int nordic);
 void bw_load_keyboard_layout(void);

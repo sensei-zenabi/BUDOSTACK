@@ -14,7 +14,13 @@ printf 'input' > "$BUDOWIN_TEST_DIR/input.txt"
 COMPILER=${CC:-cc}
 FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
 budo/BUDOWIN/build.sh
+python3 tests/terminal_gfx_text.py
+make budostack apps/cmath apps/edit commands/_CALC utilities/do
 "$COMPILER" "${FLAGS[@]}" tests/budowin_editor.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/editor"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_document.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/document"
+"$TEST_DIR/document" "$TEST_DIR"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_terminal_session.c -ldl -lm -o "$TEST_DIR/terminal-session"
+"$TEST_DIR/terminal-session" "$ROOT_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_ui.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/ui"
 "$TEST_DIR/ui" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_shortcuts.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/shortcuts"
@@ -33,6 +39,8 @@ budo/BUDOWIN/build.sh
 "$COMPILER" "${FLAGS[@]}" -shared -fPIC tests/gfx_socket_preload.c -o "$TEST_DIR/socket.so"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_graphics.c -o "$TEST_DIR/graphics"
 "$TEST_DIR/graphics" "$ROOT_DIR/budo/budowin" "$TEST_DIR/socket.so" "$TEST_DIR/desktop.ppm"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_delete_workflow.c -o "$TEST_DIR/delete-workflow"
+"$TEST_DIR/delete-workflow" "$ROOT_DIR/budo/budowin" "$TEST_DIR/socket.so" "$TEST_DIR" "$ROOT_DIR/utilities/do"
 
 if [[ -x apps/runtask ]]; then python3 tests/budowin_boot.py; fi
 

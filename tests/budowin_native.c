@@ -91,6 +91,22 @@ int main(int argc, char **argv) {
     assert(bwa_file_read_all("PAINT.PCX", data, sizeof(data), &size));
     assert(size == before_size && memcmp(data, before, size) == 0);
     assert(paint->definition.callbacks.open_file("PAINT.PCX"));
+    /* Render the native Paint View menu: grid check mark follows the toggle. */
+    int cx,cy,cw,ch;
+    assert(bwa_window_get_client_rect(&cx,&cy,&cw,&ch));
+    for (int pass = 0; pass < 3; ++pass) {
+        assert(paint->definition.callbacks.mouse_down(cx+90,cy+8,1));
+        bwa_callback_app = NULL;
+        draw_desktop(0);
+        int marks = 0;
+        for (int py = 0; py < 7; ++py)
+            for (int px = 0; px < 5; ++px)
+                if (framebuffer[(cy+22+6*16+4+py)*SCREEN_WIDTH+cx+84+5+px] == TEXT_COLOR) ++marks;
+        assert(pass == 1 ? marks == 0 : marks > 0);
+        bwa_callback_app = paint;
+        assert(paint->definition.callbacks.mouse_down(cx+108,cy+22+6*16+8,1));
+    }
+    assert(paint->definition.callbacks.key(27));
     bwa_callback_app = NULL;
     assert(bwa_file_write_all("exact.bin", (const unsigned char *)"abc", 3));
     assert(bwa_file_read_all("exact.bin", data, 3, &size) && size == 3);

@@ -27,10 +27,10 @@ minimize, and maximize individual applications.
   to browse 16 colors at a time.
 - Settings: separate User Interface and File Associations tabs; persistent
   ENG/NORD keyboard selection, application changes, and association creation/deletion.
-- Terminal: command editing/history, persistent cd, output capture and
-  scrollback. BUDOSTACK applications release the desktop transport before
-  launch and resume BUDOWIN afterwards. Ordinary commands run through
-  `/bin/sh` with captured output and no interactive stdin.
+- Terminal: a real BUDOSTACK PTY session with command editing/history,
+  interactive applications, scrolling output and a prompt following output.
+  Native Budo graphics and TASK pixel/sprite/text commands render inside the
+  terminal window. SDL sound/shader settings remain handled by the outer host.
 
 Assets/modules resolve relative to the executable. Explorer and Editor
 start in the BUDOSTACK user directory when BUDOSTACK_BASE is supplied,
@@ -120,7 +120,7 @@ checked temporary files and atomic replacement.
 Scrollbars support arrow steps, track paging and draggable proportional
 thumbs. Editor supports both axes and rows within wrapped lines; wrapping
 hides the horizontal scrollbar. Paint scrolls its canvas, Settings scrolls
-associations, Explorer scrolls pages, and Terminal scrolls output. Mouse
+associations, Explorer scrolls rows, and Terminal scrolls output. Mouse
 wheel scrolling leaves the editor caret in place.
 
 Explorer's File menu exposes Open, Up, New Folder, Rename, Delete, Create
@@ -195,7 +195,7 @@ Folder deletion includes hidden entries and broken links and never follows a
 symlink to delete its target. Permission failures appear in Explorer's status.
 
 Right-click empty desktop space and choose New Folder. Double-click the folder
-to show its shortcuts on the desktop; use Up / Desktop or Backspace to return.
+to open its shortcuts in an Explorer window; use Up or Backspace to return.
 Drag a shortcut onto a folder, or select shortcuts and choose Move to Folder,
 navigate to the destination, and press Move. Desktop folders organize shortcut
 references; moving them leaves the original files in place. Deleting a desktop
@@ -205,3 +205,26 @@ Its top-left color is transparent, matching the existing PCX icon convention.
 Folder membership and custom icon paths are saved with desktop shortcuts;
 version 1 shortcut files are still accepted. If an icon disappears, the default
 icon is used. Built-in application launchers remain on the root desktop.
+
+
+## Window and editing controls
+
+Alt+Tab cycles open
+applications with a visible list; Alt+Shift+Tab reverses direction. Minimized
+applications appear as clickable buttons along the bottom of the desktop.
+The top bar shows the weekday, desktop title and local date/time with seconds.
+The SDL host captures Alt+Tab for BUDOWIN (SDL2 2.0.16 or newer); Ctrl+Alt+G
+releases/restores capture when you want to switch between host desktop windows.
+Shortcuts can be dropped into an open desktop-folder Explorer client area.
+
+Editor supports Shift+arrows, Shift+Home/End/Page Up/Page Down, Ctrl+word
+navigation, Shift+click, drag selection, Ctrl+A/C/X/V and selection replacement
+with Undo/Redo. Plain text continues to use UTF-8 with Nordic character support.
+
+Paint's View menu provides 100%, 200%, 400%, 800%, 1600% and 3200% zoom and a
+pixel grid. Image → Image Size scales artwork with nearest-neighbor sampling;
+Image → Canvas Size preserves pixel positions and crops or extends the bottom
+and right edges using the background color. Both operations support Undo/Redo.
+PCX images retain their original dimensions and indexed palette, up to
+2048 × 2048 pixels. The editor supports the repository's 8-bit, one-plane PCX
+format; new canvases fill the available drawing workspace at 100% zoom.

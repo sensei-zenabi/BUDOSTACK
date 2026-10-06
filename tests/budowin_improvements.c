@@ -181,14 +181,47 @@ int main(int argc, char **argv)
     assert(shortcut_move(0, folder));
     assert(!shortcut_move(1, folder));
     shortcut_open(1, 0);
-    assert(!strcmp(desktop_folder, folder));
-    assert(desktop_item_visible(DESKTOP_SHORTCUT_BASE) && !desktop_item_visible(0));
-    assert(!desktop_item_visible(DESKTOP_SHORTCUT_BASE + 1));
-    desktop_folder_up();
+    assert(!strcmp(current_path, folder) && explorer_window.open && active_window == APP_EXPLORER);
     assert(!desktop_folder[0]);
+    assert(item_count == 1 && !strcmp(items[0].path, path));
+    assert(!desktop_item_visible(DESKTOP_SHORTCUT_BASE));
+    assert(desktop_item_visible(DESKTOP_SHORTCUT_BASE + 1));
+    /* Drag virtual shortcut references out of Explorer into the desktop. */
+    explorer_shortcut_drag_begin(0,250,180);
+    assert(explorer_drag_shortcut == 0);
+    assert(!explorer_shortcut_drag_update(251,181,1));
+    assert(explorer_shortcut_drag_update(620,445,1));
+    assert(explorer_shortcut_drag_drop(620,445));
+    assert(!shortcut_details[0].parent[0] && item_count == 0);
+    assert(access(path,F_OK) == 0 && desktop_item_visible(DESKTOP_SHORTCUT_BASE));
+    shortcuts_load();
+    assert(!shortcut_details[0].parent[0]);
+    assert(shortcut_move(0,folder) && load_directory(folder));
+    explorer_shortcut_drag_begin(0,250,180);
+    assert(explorer_shortcut_drag_update(255,180,1));
+    assert(!explorer_shortcut_drag_drop(explorer_window.x+10,explorer_window.y+10));
+    assert(!strcmp(shortcut_details[0].parent,folder));
+
+    /* The same open folder client is a valid drop target in both views. */
+    for (int view = 0; view < 2; ++view) {
+        explorer_list_view = view;
+        assert(shortcut_move(0, "") && load_directory(folder));
+        int drop_x = explorer_client_x() + 180;
+        int drop_y = explorer_client_y() + 50;
+        const char *parent = shortcut_drop_parent(drop_x, drop_y);
+        assert(parent && !strcmp(parent, folder));
+        assert(shortcut_move(0, parent) && load_directory(folder));
+        assert(item_count == 1 && !strcmp(items[0].path,path));
+        assert(!shortcut_drop_parent(explorer_window.x+10,explorer_window.y+10));
+        shortcuts_load();
+        assert(!strcmp(shortcut_details[0].parent, folder));
+    }
+    explorer_list_view = 0;
+
     /* Nested folders use virtual membership after relocation. */
     shortcut_open(1, 0);
     desktop_begin_picker(1);
+    assert(editor_file_load_directory(folder));
     editor_set_file_name("Nested");
     assert(editor_file_accept() && shortcut_count == 3);
     char nested[MAX_PATH];

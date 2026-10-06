@@ -43,6 +43,7 @@ struct budo_gfx {
     size_t frame_bytes;
     unsigned int slot;
     unsigned int format;
+    int keyboard_grab;
     struct budo_gfx_event events[GFX_QUEUE];
     size_t head;
     size_t count;
@@ -63,6 +64,7 @@ struct budo_gfx_host {
     uint32_t height;
     uint32_t format;
     int dirty;
+    int keyboard_grab;
     int64_t handshake_started;
 };
 
@@ -324,6 +326,15 @@ int budo_gfx_open(struct budo_gfx **out, unsigned int width,
     return 0;
 }
 
+int budo_gfx_set_keyboard_grab(struct budo_gfx *gfx, int enabled) {
+    if (!gfx || (enabled != 0 && enabled != 1)) {
+        errno = EINVAL;
+        return -1;
+    }
+    gfx->keyboard_grab = enabled;
+    return 0;
+}
+
 int budo_gfx_present(struct budo_gfx *gfx, const void *pixels,
                      const uint32_t palette[256]) {
     if (!gfx || !pixels || (gfx->format == BUDO_GFX_INDEX8 && !palette)) {
@@ -336,6 +347,8 @@ int budo_gfx_present(struct budo_gfx *gfx, const void *pixels,
     }
     memcpy(slot + 1024u, pixels, gfx->frame_bytes);
     struct gfx_packet packet = gfx_packet(GFX_FRAME);
+    /* FRAME width was reserved/zero in v1; older hosts safely ignore it. */
+    packet.width = (uint32_t)gfx->keyboard_grab;
     packet.slot = gfx->slot;
     if (gfx_send(gfx->fd, &packet) < 0 || gfx_wait_ack(gfx) < 0) {
         return -1;
@@ -389,6 +402,7 @@ static void gfx_host_disconnect(struct budo_gfx_host *host) {
     host->fd = -1;
     host->mapping = NULL;
     host->rgba = NULL;
+    host->keyboard_grab = 0;
     host->dirty = 1;
 }
 
@@ -504,6 +518,7 @@ void budo_gfx_host_poll(struct budo_gfx_host *host) {
             }
             host->dirty = 1;
         } else if (packet.type == GFX_FRAME && host->mapping && packet.slot < 2u && shared_fd < 0) {
+            host->keyboard_grab = packet.width == 1u;
             const uint8_t *slot = host->mapping + packet.slot * (host->frame_bytes + 1024u);
             const uint8_t *pixels = slot + 1024u;
             size_t count = (size_t)host->width * host->height;
@@ -536,6 +551,10 @@ void budo_gfx_host_poll(struct budo_gfx_host *host) {
 
 int budo_gfx_host_active(const struct budo_gfx_host *host) {
     return host && host->mapping != NULL;
+}
+
+int budo_gfx_host_keyboard_grab(const struct budo_gfx_host *host) {
+    return budo_gfx_host_active(host) && host->keyboard_grab;
 }
 
 const uint8_t *budo_gfx_host_pixels(struct budo_gfx_host *host,

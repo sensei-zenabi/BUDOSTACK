@@ -4,7 +4,7 @@
 #include "selection.h"
 #include <time.h>
 
-#define BUDO_SCROLL_WIDTH 16
+#define BUDO_SCROLL_WIDTH 12
 #define BUDO_POINTER_DOWN 1
 #define BUDO_POINTER_MOVE 2
 #define BUDO_POINTER_UP 3
@@ -31,14 +31,14 @@ static inline void budo_scroll_clamp(BudoScrollbar *bar)
 
 static inline void budo_scroll_thumb(BudoScrollbar *bar, int *start, int *size)
 {
-    int track = bar->length - 32;
+    int track = bar->length - (2 * BUDO_SCROLL_WIDTH);
     int limit = budo_scroll_limit(bar);
     budo_scroll_clamp(bar);
     if (track < 1) track = 1;
     *size = bar->total > 0 ? (int)((long long)track * bar->page / bar->total) : track;
     if (*size < 12) *size = 12;
     if (*size > track) *size = track;
-    *start = 16 + (limit ? (int)((long long)(track - *size) * bar->position / limit) : 0);
+    *start = BUDO_SCROLL_WIDTH + (limit ? (int)((long long)(track - *size) * bar->position / limit) : 0);
 }
 
 static inline void budo_button_draw(const BwaHostApi *host, int x, int y,
@@ -55,30 +55,30 @@ static inline void budo_scroll_draw(const BwaHostApi *host, BudoScrollbar *bar)
 {
     int start, size;
     int horizontal = bar->horizontal;
-    int w = horizontal ? bar->length : 16;
-    int h = horizontal ? 16 : bar->length;
+    int w = horizontal ? bar->length : BUDO_SCROLL_WIDTH;
+    int h = horizontal ? BUDO_SCROLL_WIDTH : bar->length;
     budo_scroll_thumb(bar, &start, &size);
     host->draw_sunken_panel(bar->x, bar->y, w, h,
                             host->get_system_color(BUDO_SYS_COLOR_MIDGRAY));
     unsigned int state = BUDO_BUTTON_IMMEDIATE |
         (budo_scroll_limit(bar) ? 0U : BUDO_BUTTON_DISABLED);
-    budo_button_draw(host, bar->x, bar->y, 16, 16,
+    budo_button_draw(host, bar->x, bar->y, BUDO_SCROLL_WIDTH, BUDO_SCROLL_WIDTH,
                       horizontal ? "<" : "^", state |
                       (bar->held == -1 && bar->armed ? BUDO_BUTTON_PRESSED : 0U));
-    budo_button_draw(host, bar->x + (horizontal ? bar->length - 16 : 0),
-                               bar->y + (horizontal ? 0 : bar->length - 16),
-                               16, 16, horizontal ? ">" : "v", state |
+    budo_button_draw(host, bar->x + (horizontal ? bar->length - BUDO_SCROLL_WIDTH : 0),
+                               bar->y + (horizontal ? 0 : bar->length - BUDO_SCROLL_WIDTH),
+                               BUDO_SCROLL_WIDTH, BUDO_SCROLL_WIDTH, horizontal ? ">" : "v", state |
                       (bar->held == 1 && bar->armed ? BUDO_BUTTON_PRESSED : 0U));
     host->draw_standard_button(bar->x + (horizontal ? start : 0),
                                bar->y + (horizontal ? 0 : start),
-                               horizontal ? size : 16,
-                               horizontal ? 16 : size, "", bar->dragging);
+                               horizontal ? size : BUDO_SCROLL_WIDTH,
+                               horizontal ? BUDO_SCROLL_WIDTH : size, "", bar->dragging);
     if (host->abi_minor >= 12 && host->pointer_region) {
-        host->pointer_region(bar->x, bar->y, 16, 16, BUDO_CURSOR_ARROW,
+        host->pointer_region(bar->x, bar->y, BUDO_SCROLL_WIDTH, BUDO_SCROLL_WIDTH, BUDO_CURSOR_ARROW,
                               horizontal ? "Scroll left" : "Scroll up");
-        host->pointer_region(bar->x + (horizontal ? bar->length - 16 : 0),
-                              bar->y + (horizontal ? 0 : bar->length - 16),
-                              16, 16, BUDO_CURSOR_ARROW,
+        host->pointer_region(bar->x + (horizontal ? bar->length - BUDO_SCROLL_WIDTH : 0),
+                              bar->y + (horizontal ? 0 : bar->length - BUDO_SCROLL_WIDTH),
+                              BUDO_SCROLL_WIDTH, BUDO_SCROLL_WIDTH, BUDO_CURSOR_ARROW,
                               horizontal ? "Scroll right" : "Scroll down");
     }
 }
@@ -97,10 +97,10 @@ static inline int budo_scroll_pointer_at(BudoScrollbar *bar, int mx, int my,
         return handled;
     }
     if (bar->held && event == BUDO_POINTER_MOVE) {
-        int inside = cross >= 0 && cross < 16 && coordinate >= 0 &&
+        int inside = cross >= 0 && cross < BUDO_SCROLL_WIDTH && coordinate >= 0 &&
                      coordinate < bar->length;
-        int armed = inside && (bar->held == -1 ? coordinate < 16 :
-                     bar->held == 1 ? coordinate >= bar->length - 16 :
+        int armed = inside && (bar->held == -1 ? coordinate < BUDO_SCROLL_WIDTH :
+                     bar->held == 1 ? coordinate >= bar->length - BUDO_SCROLL_WIDTH :
                      bar->held == -2 ? coordinate < start : coordinate >= start + size);
         if (!armed || !bar->armed) bar->repeat_at = now + 350;
         bar->armed = armed;
@@ -113,19 +113,19 @@ static inline int budo_scroll_pointer_at(BudoScrollbar *bar, int mx, int my,
         return 1;
     }
     if (bar->dragging && event == BUDO_POINTER_MOVE) {
-        int travel = bar->length - 32 - size;
-        int offset = coordinate - 16 - bar->grab;
+        int travel = bar->length - (2 * BUDO_SCROLL_WIDTH) - size;
+        int offset = coordinate - BUDO_SCROLL_WIDTH - bar->grab;
         if (offset < 0) offset = 0;
         if (offset > travel) offset = travel;
         bar->position = travel > 0 ? (int)((long long)offset * limit / travel) : 0;
         return 1;
     }
     if (event != BUDO_POINTER_DOWN || coordinate < 0 ||
-        coordinate >= bar->length || cross < 0 || cross >= 16) return 0;
+        coordinate >= bar->length || cross < 0 || cross >= BUDO_SCROLL_WIDTH) return 0;
     if (!limit) return 1;
     bar->held = bar->armed = 0;
-    if (coordinate < 16) { --bar->position; bar->held = -1; }
-    else if (coordinate >= bar->length - 16) { ++bar->position; bar->held = 1; }
+    if (coordinate < BUDO_SCROLL_WIDTH) { --bar->position; bar->held = -1; }
+    else if (coordinate >= bar->length - BUDO_SCROLL_WIDTH) { ++bar->position; bar->held = 1; }
     else if (coordinate >= start && coordinate < start + size) {
         bar->dragging = 1;
         bar->grab = coordinate - start;

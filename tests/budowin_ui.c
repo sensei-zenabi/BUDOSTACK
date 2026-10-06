@@ -203,7 +203,7 @@ int main(int argc, char **argv)
     BudoScrollbar bar = {.x=10, .y=20, .length=200, .total=100, .page=10};
     int start, size;
     budo_scroll_thumb(&bar, &start, &size);
-    assert(start == 16 && size >= 12);
+    assert(start == BUDO_SCROLL_WIDTH && size >= 12);
     assert(budo_scroll_pointer(&bar, 14, 215, BUDO_POINTER_DOWN));
     assert(bar.position == 1);
     assert(budo_scroll_pointer(&bar, 14, 140, BUDO_POINTER_DOWN));

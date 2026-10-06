@@ -21,6 +21,8 @@
 #define BUDO_GFX_RESET 6u
 #define BUDO_GFX_QUIT 7u
 #define BUDO_GFX_WHEEL 8u
+/* Unicode codepoint in key; supplements key events for text-only input. */
+#define BUDO_GFX_TEXT_INPUT 9u
 
 struct budo_gfx_event {
     uint32_t type;
@@ -47,12 +49,15 @@ int budo_gfx_present(struct budo_gfx *gfx, const void *pixels,
 /* 1 = event, 0 = no event, -1 = disconnected. */
 int budo_gfx_poll_event(struct budo_gfx *gfx, struct budo_gfx_event *event);
 void budo_gfx_close(struct budo_gfx *gfx);
+/* Request host keyboard capture on subsequent frames; default is disabled. */
+int budo_gfx_set_keyboard_grab(struct budo_gfx *gfx, int enabled);
 
 /* Host API used by terminal. All calls run on its UI thread. */
 int budo_gfx_host_open(struct budo_gfx_host **out);
 const char *budo_gfx_host_path(const struct budo_gfx_host *host);
 void budo_gfx_host_poll(struct budo_gfx_host *host);
 int budo_gfx_host_active(const struct budo_gfx_host *host);
+int budo_gfx_host_keyboard_grab(const struct budo_gfx_host *host);
 /* The returned RGBA byte buffer remains owned by the host. */
 const uint8_t *budo_gfx_host_pixels(struct budo_gfx_host *host,
                                    int *width, int *height, int *dirty);

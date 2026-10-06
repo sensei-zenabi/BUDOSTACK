@@ -21,6 +21,8 @@
 #define BUDO_GFX_RESET 6u
 #define BUDO_GFX_QUIT 7u
 #define BUDO_GFX_WHEEL 8u
+/* Unicode codepoint in key; supplements key events for text-only input. */
+#define BUDO_GFX_TEXT_INPUT 9u
 
 struct budo_gfx_event {
     uint32_t type;

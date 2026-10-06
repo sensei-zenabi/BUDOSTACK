@@ -312,6 +312,8 @@ static int editor_desktop_slot = 1;
 static int desktop_drag_app = APP_NONE;
 static int desktop_icon_pressed = 0;
 static int desktop_icon_dragging = 0;
+static int explorer_drag_shortcut = -1, explorer_shortcut_dragging;
+static int explorer_drag_press_x, explorer_drag_press_y, explorer_drag_x, explorer_drag_y;
 static int desktop_press_x = 0;
 static int desktop_press_y = 0;
 static int desktop_drag_x = 0;
@@ -492,6 +494,9 @@ static int shortcut_icon_load(int index);
 static int desktop_picker_accept(const char *path);
 static void desktop_begin_picker(int action);
 static int shortcut_move(int index, const char *parent);
+static void explorer_shortcut_drag_begin(int item, int x, int y);
+static int explorer_shortcut_drag_update(int x, int y, int down);
+static int explorer_shortcut_drag_drop(int x, int y);
 static void desktop_folder_up(void);
 static int desktop_free_slot(const char *parent, int ignore);
 static void shortcuts_load(void);
@@ -7280,6 +7285,10 @@ static void draw_desktop(int page)
             budo_menu_draw(&bwa_host_api, context_x, context_y, 156, file_items, 4);
         else budo_menu_items_draw(&bwa_host_api, context_x, context_y, 156, shortcut_items, 6);
     }
+    if (explorer_shortcut_dragging && explorer_drag_shortcut >= 0 && explorer_drag_shortcut < shortcut_count) {
+        DesktopItem *entry = &desktop_shortcuts[explorer_drag_shortcut];
+        draw_labeled_icon(explorer_drag_x, explorer_drag_y, entry->name, entry->type, 1, entry->path);
+    }
     if (confirm_kind) {
         ui_region_count = 0;
         ui_draw_scope = ui_scope();
@@ -9819,6 +9828,55 @@ static int shortcut_move(int index, const char *parent)
     return shortcut_move_impl(index, parent, 1);
 }
 
+static void explorer_shortcut_drag_begin(int item, int x, int y)
+{
+    explorer_drag_shortcut = -1;
+    explorer_shortcut_dragging = 0;
+    if (item < 0 || item >= item_count || !explorer_shortcut_folder[0]) return;
+    for (int i = 0; i < shortcut_count; ++i) {
+        if (strcmp(shortcut_details[i].parent, current_path) ||
+            strcmp(desktop_shortcuts[i].path, items[item].path)) continue;
+        explorer_drag_shortcut = i;
+        explorer_drag_press_x = x;
+        explorer_drag_press_y = y;
+        explorer_drag_x = x - DESKTOP_ICON_W / 2;
+        explorer_drag_y = y - DESKTOP_ICON_H / 2;
+        return;
+    }
+}
+
+static int explorer_shortcut_drag_update(int x, int y, int down)
+{
+    if (!down || explorer_drag_shortcut < 0) return 0;
+    int dx = x - explorer_drag_press_x, dy = y - explorer_drag_press_y;
+    if (!explorer_shortcut_dragging && dx <= 3 && dx >= -3 && dy <= 3 && dy >= -3) return 0;
+    explorer_shortcut_dragging = 1;
+    explorer_drag_x = x - DESKTOP_ICON_W / 2;
+    explorer_drag_y = y - DESKTOP_ICON_H / 2;
+    return 1;
+}
+
+static int explorer_shortcut_drag_drop(int x, int y)
+{
+    int index = explorer_drag_shortcut;
+    int dragging = explorer_shortcut_dragging;
+    explorer_drag_shortcut = -1;
+    explorer_shortcut_dragging = 0;
+    if (!dragging || index < 0 || index >= shortcut_count ||
+        desktop_point_owner(x, y) != APP_NONE) return 0;
+    int folder = shortcut_hit(x, y);
+    const char *parent = folder >= 0 && desktop_shortcuts[folder].type == TYPE_FOLDER ?
+        desktop_shortcuts[folder].path : desktop_folder;
+    if (!shortcut_move(index, parent)) {
+        explorer_status = "Unable to move shortcut; check free desktop slots and settings permissions.";
+        return 0;
+    }
+    char refresh[MAX_PATH];
+    if (copy_text(refresh, sizeof(refresh), current_path)) (void)load_directory(refresh);
+    explorer_status = "Shortcut moved; target file preserved.";
+    return 1;
+}
+
 static void desktop_folder_up(void)
 {
     for (int i = 0; i < shortcut_count; ++i) {
@@ -10129,6 +10187,7 @@ static int shortcuts_delete_selected(void)
 
 static int desktop_selection_pointer(int x, int y, int buttons, int *page)
 {
+    if (confirm_kind || editor_file_dialog != EDITOR_FILE_DIALOG_NONE) return 0;
     if (context_menu && buttons == 1) {
         int menu = context_menu;
         int choice = budo_menu_hit(x, y, context_x, context_y, 156, menu == 1 ? 4 : 6);
@@ -10389,7 +10448,7 @@ int main(int argc, char **argv)
         if (session_poll()) screen_dirty = 1;
         time_t second = time(NULL);
         if (second != desktop_second) { desktop_second = second; screen_dirty = 1; }
-        if (app_switch_until && (!(bw_modifiers() & 4u) || bw_clock() >= app_switch_until)) {
+        if (app_switch_until && bw_clock() >= app_switch_until) {
             app_switch_until = 0;
             screen_dirty = 1;
         }
@@ -10832,6 +10891,7 @@ int main(int argc, char **argv)
                         last_click_time = 0;
                     } else if (target >= 0) {
                         explorer_select_item(target, modifiers);
+                        if (!ctrl_down && !shift_down) explorer_shortcut_drag_begin(target, mouse_x, mouse_y);
 
                         screen_dirty = 1;
                         last_target =
@@ -10961,6 +11021,12 @@ int main(int argc, char **argv)
                 (void)desktop_selection_pointer(mouse_x, mouse_y, 1, &page);
                 screen_dirty = 1;
             }
+        }
+
+        if (explorer_shortcut_drag_update(mouse_x, mouse_y, buttons & 1)) {
+            last_target = -99;
+            last_click_time = 0;
+            screen_dirty = 1;
         }
 
         if ((buttons & 1) &&
@@ -11186,6 +11252,10 @@ int main(int argc, char **argv)
         }
 
         if (!(buttons & 1) && (previous_buttons & 1)) {
+            if (explorer_drag_shortcut >= 0) {
+                (void)explorer_shortcut_drag_drop(mouse_x, mouse_y);
+                screen_dirty = 1;
+            }
             if (active_window >= APP_BWA_BASE) {
                 BwaLoadedApp *app =
                     bwa_find_external_app(active_window);
@@ -11278,8 +11348,8 @@ int main(int argc, char **argv)
             } else if (editor_file_dialog != EDITOR_FILE_DIALOG_NONE) {
                 editor_file_dialog_key(key);
                 screen_dirty = 1;
-            } else if (key == 9 && (bw_modifiers() & 4u)) {
-                desktop_switch_app((bw_modifiers() & 3u) != 0);
+            } else if (key == 9 && (bw_key_modifiers() & 4u)) {
+                desktop_switch_app((bw_key_modifiers() & 3u) != 0);
                 screen_dirty = 1;
             } else if (key == 27 && context_menu) {
                 context_menu = 0;
@@ -11379,9 +11449,9 @@ int main(int argc, char **argv)
                     } else if (extended == 83) {
                         editor_delete_forward();
                     } else if (extended == 61) {
-                        editor_search_action((bw_modifiers() & 3u) ? 1 : 0);
+                        editor_search_action((bw_key_modifiers() & 3u) ? 1 : 0);
                     } else {
-                        (void)editor_navigation(extended, bw_modifiers());
+                        (void)editor_navigation(extended, bw_key_modifiers());
                     }
 
                     if (extended != 61) {
@@ -11417,7 +11487,7 @@ int main(int argc, char **argv)
                 } else if (key == 6) {
                     editor_begin_dialog(EDITOR_DIALOG_FIND, "");
                     screen_dirty = 1;
-                } else if (key == 18 || (key == 8 && (bw_modifiers() & 4u))) {
+                } else if (key == 18 || (key == 8 && (bw_key_modifiers() & 4u))) {
                     editor_begin_dialog(EDITOR_DIALOG_REPLACE_FIND, "");
                     screen_dirty = 1;
                 } else if (key == 8) {

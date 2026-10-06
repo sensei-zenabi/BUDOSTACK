@@ -7,7 +7,8 @@
 #define SESSION_ROWS 48
 
 typedef struct TerminalCell {
-    unsigned char ch, fg, bg;
+    unsigned char ch;
+    uint32_t fg, bg;
 } TerminalCell;
 
 static TerminalCell session_cells[SESSION_ROWS][SESSION_COLS];
@@ -17,7 +18,8 @@ static pid_t session_pid;
 static struct budo_gfx_host *session_gfx;
 static int session_cols = 80, session_rows = 24;
 static int session_x, session_y, session_saved_x, session_saved_y;
-static int session_fg = 5, session_bg = 1, session_bold, session_inverse;
+static uint32_t session_fg = 5, session_bg = 1;
+static int session_bold, session_inverse;
 static int session_cursor_visible = 1, session_alternate_active;
 static int session_state, session_params[16], session_param_count, session_private;
 static unsigned int session_utf8, session_utf8_left;
@@ -28,7 +30,7 @@ static void desktop_file_menu_draw(int app);
 
 static TerminalCell session_blank(void)
 {
-    return (TerminalCell){' ', (unsigned char)session_fg, (unsigned char)session_bg};
+    return (TerminalCell){' ', session_fg, session_bg};
 }
 
 static void session_clear(void)
@@ -83,6 +85,22 @@ static unsigned char session_ansi_color(int color)
 }
 
 #include "terminal_graphics.h"
+
+/* Bit 24 distinguishes exact RGB from the desktop's indexed colors. */
+#define SESSION_RGB 0x01000000u
+
+static uint32_t session_extended_color(int index)
+{
+    if (index < 16) return session_ansi_color(index);
+    if (index < 232) {
+        static const unsigned int levels[] = {0, 95, 135, 175, 215, 255};
+        int value = index - 16;
+        return SESSION_RGB | (levels[value / 36] << 16) |
+            (levels[(value / 6) % 6] << 8) | levels[value % 6];
+    }
+    unsigned int gray = 8 + (unsigned int)(index - 232) * 10;
+    return SESSION_RGB | (gray << 16) | (gray << 8) | gray;
+}
 
 static void session_csi(int command)
 {
@@ -154,10 +172,30 @@ static void session_csi(int command)
                 else if (p >= 40 && p <= 47) session_bg = session_ansi_color(p - 40);
                 else if (p >= 90 && p <= 97) session_fg = session_ansi_color(p - 90 + 8);
                 else if (p >= 100 && p <= 107) session_bg = session_ansi_color(p - 100 + 8);
-                else if ((p == 38 || p == 48) && i + 2 < session_param_count && session_params[i + 1] == 5) {
-                    unsigned char color = session_ansi_color(session_params[i + 2]);
-                    if (p == 38) session_fg = color; else session_bg = color;
-                    i += 2;
+                else if ((p == 38 || p == 48) && i + 1 < session_param_count) {
+                    uint32_t color = 0;
+                    int valid = 0;
+                    int mode = session_params[++i];
+                    if (mode == 2) {
+                        if (i + 3 < session_param_count) {
+                            int r = session_params[i + 1];
+                            int g = session_params[i + 2];
+                            int b = session_params[i + 3];
+                            valid = r <= 255 && g <= 255 && b <= 255;
+                            color = SESSION_RGB | ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b;
+                            i += 3;
+                        } else i = session_param_count;
+                    } else if (mode == 5) {
+                        if (i + 1 < session_param_count) {
+                            int index = session_params[++i];
+                            valid = index <= 255;
+                            if (valid) color = session_extended_color(index);
+                        }
+                    }
+                    if (valid) {
+                        if (p == 38) session_fg = color;
+                        else session_bg = color;
+                    }
                 }
             }
             break;
@@ -219,10 +257,10 @@ static void session_character(unsigned int ch)
     if (session_wrap_pending) { session_x = 0; session_linefeed(); }
     unsigned char glyph = ch < 128 ? (unsigned char)ch : session_glyph(ch);
     if (!glyph) glyph = '?';
-    int fg_color = session_bold && session_fg == 5 ? 4 : session_fg;
+    uint32_t fg_color = session_bold && session_fg == 5 ? 4 : session_fg;
     session_cells[session_y][session_x] = (TerminalCell){glyph,
-        (unsigned char)(session_inverse ? session_bg : fg_color),
-        (unsigned char)(session_inverse ? fg_color : session_bg)};
+        (session_inverse ? session_bg : fg_color),
+        (session_inverse ? fg_color : session_bg)};
     if (++session_x >= session_cols) { session_x = session_cols - 1; session_wrap_pending = 1; }
 }
 
@@ -463,7 +501,8 @@ static int session_forward_event(const struct budo_gfx_event *event)
     if (!session_gfx || !budo_gfx_host_active(session_gfx) || active_window != APP_TERMINAL ||
         terminal_window.minimized || confirm_kind || editor_file_dialog) return 0;
     struct budo_gfx_event input = *event;
-    if (event->type == BUDO_GFX_KEY_DOWN || event->type == BUDO_GFX_KEY_UP) {
+    if (event->type == BUDO_GFX_KEY_DOWN || event->type == BUDO_GFX_KEY_UP ||
+        event->type == BUDO_GFX_TEXT_INPUT) {
         if (event->scancode == 43 && (bw_modifiers() & 4u)) return 0;
         budo_gfx_host_event(session_gfx,&input);
         return 1;
@@ -533,9 +572,15 @@ static void session_draw(void)
             }
             for (int col = 0; col < session_cols; ++col) {
                 TerminalCell cell = session_cells[logical][col];
-                fill_rect(x+col*6,y+row*9,6,9,cell.bg);
-                char glyph[2] = {(char)cell.ch,0};
-                draw_text(x+col*6,y+row*9,glyph,cell.fg,1);
+                int cx = x + col * 6, cy = y + row * 9;
+                if (cell.bg & SESSION_RGB) fill_rect_rgb(cx, cy, 6, 9, cell.bg & 0xffffffu);
+                else fill_rect(cx, cy, 6, 9, (unsigned char)cell.bg);
+                if (cell.fg & SESSION_RGB) {
+                    const unsigned char *glyph = glyph_for((char)cell.ch);
+                    for (int gy = 0; gy < 7; ++gy)
+                        for (int gx = 0; gx < 5; ++gx)
+                            if (glyph[gy] & (0x10 >> gx)) put_rgb_pixel(cx + gx, cy + gy, cell.fg & 0xffffffu);
+                } else draw_char(cx, cy, (char)cell.ch, (unsigned char)cell.fg);
             }
         }
         session_art_draw();

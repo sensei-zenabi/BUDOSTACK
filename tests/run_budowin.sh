@@ -14,7 +14,8 @@ printf 'input' > "$BUDOWIN_TEST_DIR/input.txt"
 COMPILER=${CC:-cc}
 FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
 budo/BUDOWIN/build.sh
-make budostack apps/cmath commands/_CALC
+python3 tests/terminal_gfx_text.py
+make budostack apps/cmath apps/edit commands/_CALC
 "$COMPILER" "${FLAGS[@]}" tests/budowin_editor.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/editor"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_document.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/document"
 "$TEST_DIR/document" "$TEST_DIR"

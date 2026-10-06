@@ -70,6 +70,33 @@ int main(int argc, char **argv)
     assert((unsigned char)editor_lines[0][1] == 148);
     assert((unsigned char)editor_lines[0][2] == 134);
 
+    /* Run the actual event dispatch, including Unicode-only text and releases. */
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_RESET});
+    nordic_keyboard = 1;
+    editor_reset_document();
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_DOWN,.scancode=52,.key=0xe4});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_TEXT_INPUT,.key=0xe4});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_UP,.scancode=52,.key=0xe4});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_TEXT_INPUT,.key=0xf6});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_DOWN,.key=0xe5});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_TEXT_INPUT,.key=0xe5});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_TEXT_INPUT,.key=0xc4});
+    while (kbhit()) {
+        int key = getch();
+        assert(key >= 32);
+        editor_insert_char((char)key);
+    }
+    assert(editor_cursor_col == 4);
+    assert(!memcmp(editor_lines[0], "\204\224\206\216", 4));
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_DOWN,.scancode=224});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_DOWN,.scancode=225});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_DOWN,.scancode=43,.key=9});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_UP,.scancode=43,.key=9});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_UP,.scancode=225});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_UP,.scancode=224});
+    assert(bw_modifiers() == 0 && getch() == 9);
+    assert((bw_key_modifiers() & (KEYMOD_CTRL | KEYMOD_SHIFT)) == (KEYMOD_CTRL | KEYMOD_SHIFT));
+
     /* Hit testing starts at the visible segment, and scrolling upwards
      * works even when the cursor is several physical lines above the view. */
     editor_reset_document();
@@ -141,6 +168,16 @@ int main(int argc, char **argv)
     active_window = APP_EXPLORER;
     assert(copy_text(path,sizeof(path),items[0].path));
     assert(desktop_confirm(APP_EXPLORER,3,"Delete?","Delete selected file?"));
+    /* The modal sits outside a small Explorer: underlying desktop must not consume it. */
+    editor_window.open = 0;
+    explorer_window.x = 10;
+    explorer_window.y = 30;
+    explorer_window.w = 180;
+    explorer_window.h = 120;
+    int untouched_page = 0;
+    assert(desktop_point_owner(338,262) == APP_NONE);
+    assert(!desktop_selection_pointer(338,262,1,&untouched_page));
+    assert(explorer_selection[0]);
     draw_desktop(0);
     assert(!ui_button_event(338,262,1,0));
     draw_desktop(0);
@@ -161,6 +198,34 @@ int main(int argc, char **argv)
     free(editor_clipboard);
     editor_clipboard = NULL;
     editor_history_reset();
+    /* Delete succeeds as an unprivileged owner; real directory denial is reported. */
+    char permissions[MAX_PATH];
+    assert(join_path(permissions,sizeof(permissions),directory,"permissions"));
+    assert(mkdir(permissions,0777) == 0 && chmod(permissions,0777) == 0);
+    pid_t permission_child = fork();
+    assert(permission_child >= 0);
+    if (!permission_child) {
+        assert(chdir(permissions) == 0);
+        if (geteuid() == 0) {
+            if (setgid(65534) != 0 || setuid(65534) != 0) {
+                fputs("SKIP: sandbox prevents unprivileged permission test\n", stderr);
+                _exit(77);
+            }
+        }
+        assert(mkdir("owned",0700) == 0);
+        FILE *file = fopen("owned/file","w");
+        assert(file && fclose(file) == 0);
+        assert(chmod("owned",0500) == 0);
+        assert(!explorer_delete_path("owned/file",TYPE_FILE) && errno == EACCES);
+        assert(chmod("owned",0700) == 0);
+        assert(explorer_delete_path("owned",TYPE_FOLDER));
+        _exit(0);
+    }
+    int permission_status;
+    assert(waitpid(permission_child,&permission_status,0) == permission_child);
+    assert(WIFEXITED(permission_status));
+    assert(WEXITSTATUS(permission_status) == 0 || WEXITSTATUS(permission_status) == 77);
+
     puts("PASS: selection edits, Nordic input, wrapped cursor/scroll, row scrolling, delete dialog and window switching");
     return 0;
 }

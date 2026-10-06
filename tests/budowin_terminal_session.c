@@ -53,7 +53,7 @@ static void pause_ms(void)
     nanosleep(&delay,NULL);
 }
 
-static int contains(const char *needle)
+static int contains_screen(const char *needle)
 {
     for (int row = 0; row < session_rows; ++row) {
         char text[SESSION_COLS + 1];
@@ -61,6 +61,12 @@ static int contains(const char *needle)
         text[session_cols] = 0;
         if (strstr(text,needle)) return 1;
     }
+    return 0;
+}
+
+static int contains(const char *needle)
+{
+    if (contains_screen(needle)) return 1;
     for (int i = 0; i < terminal_line_count; ++i)
         if (strstr(terminal_lines[i],needle)) return 1;
     return 0;
@@ -105,6 +111,30 @@ int main(int argc, char **argv)
     for (int i = 0; i < 50; ++i) { session_poll(); pause_ms(); }
     session_write("echo PTY-RETURN-OK\r",19);
     await_text("PTY-RETURN-OK");
+    /* Run the reported application and check its actual highlighted keyword. */
+    for (int i = 0; i < 100; ++i) { session_poll(); pause_ms(); }
+    char syntax_path[MAX_PATH], edit_command[MAX_PATH + 16];
+    assert(join_path(syntax_path,sizeof(syntax_path),getenv("BUDOWIN_TEST_DIR"),"syntax.c"));
+    FILE *syntax = fopen(syntax_path,"w");
+    assert(syntax && fputs("int answer = 42; /* syntax */\n",syntax) >= 0 && fclose(syntax) == 0);
+    int edit_length = snprintf(edit_command,sizeof(edit_command),"edit %s\r",syntax_path);
+    assert(edit_length > 0 && (size_t)edit_length < sizeof(edit_command));
+    session_write(edit_command,(size_t)edit_length);
+    await_text("answer");
+    int keyword_colored = 0;
+    for (int row = 0; row < session_rows; ++row)
+        for (int col = 0; col + 2 < session_cols; ++col) {
+            TerminalCell cell = session_cells[row][col];
+            if (cell.ch == 'i' && session_cells[row][col+1].ch == 'n' &&
+                session_cells[row][col+2].ch == 't' && cell.fg == (SESSION_RGB | 0x00cccc)) {
+                assert(cell.bg == 1);
+                keyword_colored = 1;
+            }
+        }
+    assert(keyword_colored);
+    session_write("\021",1);
+    for (int i = 0; i < 10000 && !contains_screen("$ "); ++i) { session_poll(); pause_ms(); }
+    assert(contains_screen("$ ") && session_pid == launcher);
     struct winsize size;
     assert(ioctl(session_fd,TIOCGWINSZ,&size) == 0);
     assert(size.ws_col == session_cols && size.ws_row == session_rows);
@@ -127,6 +157,27 @@ int main(int argc, char **argv)
     const char *alternate = "\033[?1049hother\033[?1049l";
     for (const unsigned char *p = (const unsigned char *)alternate; *p; ++p) session_byte(*p);
     assert(session_cells[0][1].ch == 'X' && session_cells[1][0].ch == 132);
+
+    /* libedit emits RGB foreground sequences; their components are not SGR attributes. */
+    session_clear();
+    const char *colors = "\033[38;2;204;102;255mA\033[0mB\033[48;2;7;41;90mC\033[0mD\033[38;5;196mE";
+    for (const unsigned char *p = (const unsigned char *)colors; *p; ++p) session_byte(*p);
+    assert(session_cells[0][0].fg == (SESSION_RGB | 0xcc66ff));
+    assert(session_cells[0][0].bg == 1 && !session_inverse && !session_bold);
+    assert(session_cells[0][1].fg == 5 && session_cells[0][1].bg == 1);
+    assert(session_cells[0][2].bg == (SESSION_RGB | 0x07295a));
+    assert(session_cells[0][2].fg == 5);
+    assert(session_cells[0][3].bg == 1);
+    assert(session_cells[0][4].fg == (SESSION_RGB | 0xff0000));
+    session_draw();
+    int tx = terminal_window.x + 7;
+    int ty = terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 6;
+    assert(!rgb_mask[(ty + 8) * SCREEN_WIDTH + tx]); /* Foreground leaves background indexed. */
+    const unsigned char *letter = glyph_for('A');
+    for (int gy = 0; gy < 7; ++gy)
+        for (int gx = 0; gx < 5; ++gx)
+            if (letter[gy] & (0x10 >> gx))
+                assert(rgb_framebuffer[(ty + gy) * SCREEN_WIDTH + tx + gx] == 0xffcc66ff);
 
     /* OSC graphics survive fragmented reads and both sequence terminators. */
     const char *art = "\033]777;pixel=rect;pixel_x=2;pixel_y=3;pixel_w=4;pixel_h=2;pixel_r=18;pixel_g=52;pixel_b=86;pixel_layer=2\a"
@@ -190,6 +241,6 @@ int main(int argc, char **argv)
     session_stop();
     close(endpoints[0]);
     close(endpoints[1]);
-    puts("PASS: real BUDOSTACK PTY, interactive cmath/return, resize, ANSI/Nordic output and embedded graphics/input");
+    puts("PASS: real BUDOSTACK PTY, interactive cmath/edit with RGB syntax/return, resize, ANSI/Nordic output and embedded graphics/input");
     return 0;
 }

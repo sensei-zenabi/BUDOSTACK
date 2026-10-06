@@ -7780,6 +7780,16 @@ static void terminal_gfx_input(struct budo_gfx_host *host, const SDL_Event *even
         input.key = event->key.keysym.sym;
         input.scancode = event->key.keysym.scancode;
         input.repeat = event->key.repeat;
+    } else if (event->type == SDL_TEXTINPUT) {
+        size_t offset = 0;
+        size_t length = strlen(event->text.text);
+        uint32_t codepoint;
+        while (terminal_utf8_next((const uint8_t *)event->text.text, length, &offset, &codepoint) == 0) {
+            input.type = BUDO_GFX_TEXT_INPUT;
+            input.key = (int32_t)codepoint;
+            budo_gfx_host_event(host, &input);
+        }
+        return;
     } else if (event->type == SDL_MOUSEMOTION) {
         input.type = BUDO_GFX_MOUSE_MOVE;
         window_x = event->motion.x;

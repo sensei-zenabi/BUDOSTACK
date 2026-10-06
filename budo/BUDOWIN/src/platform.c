@@ -20,11 +20,12 @@ static int mouse_x = 320, mouse_y = 240, mouse_buttons;
 static int raw_mouse_x, raw_mouse_y, raw_mouse_valid;
 static unsigned char keys[512];
 static int queue[256];
+static unsigned int queue_modifiers[256], key_modifiers;
 static unsigned int queue_read, queue_write;
 static int disconnected;
 static int (*event_filter)(const struct budo_gfx_event *);
 void bw_set_event_filter(int (*filter)(const struct budo_gfx_event *)) { event_filter = filter; }
-static int caps_lock;
+static int caps_lock, text_key_handled;
 static int nordic_keyboard = 1;
 static char user_directory[4096], state_directory[4096];
 static char own_executable[4096];
@@ -145,11 +146,16 @@ int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t lengt
     return 1;
 }
 static void enqueue(int key) {
-    if (queue_write - queue_read < 256) queue[queue_write++ % 256] = key;
+    if (queue_write - queue_read < 256) {
+        queue[queue_write % 256] = key;
+        queue_modifiers[queue_write % 256] = bw_modifiers();
+        ++queue_write;
+    }
 }
 unsigned int bw_modifiers(void) {
     return ((keys[225] || keys[229]) ? 3u : 0u) | ((keys[224] || keys[228]) ? 4u : 0u);
 }
+unsigned int bw_key_modifiers(void) { return key_modifiers; }
 int bw_get_keyboard_layout(void) { return nordic_keyboard; }
 void bw_load_keyboard_layout(void) {
     FILE *file = fopen(bw_state_file("keyboard.state"), "r");
@@ -177,6 +183,24 @@ int bw_set_keyboard_layout(int nordic) {
     nordic_keyboard = nordic;
     return 1;
 }
+static int unicode_key(unsigned int codepoint)
+{
+    if (codepoint >= 32 && codepoint < 127) return (int)codepoint;
+    switch (codepoint) {
+        case 0xe4: return 132;
+        case 0xc4: return 142;
+        case 0xf6: return 148;
+        case 0xd6: return 153;
+        case 0xe5: return 134;
+        case 0xc5: return 143;
+        case 0xe6: return 145;
+        case 0xc6: return 146;
+        case 0xf8: return 155;
+        case 0xd8: return 157;
+        default: return 0;
+    }
+}
+
 static void translate_key(const struct budo_gfx_event *event) {
     int key = event->key;
     int code = event->scancode;
@@ -246,6 +270,16 @@ static void translate_key(const struct budo_gfx_event *event) {
     } else if (code >= 45 && code <= 56) {
         key = "-=[]\\\\;'`,./"[code - 45];
     }
+    /* Some hosts provide a Unicode key without a physical scancode. */
+    if (!(bw_modifiers() & 4u) && (code == 0 || nordic_keyboard)) {
+        int cell = unicode_key((unsigned int)event->key);
+        if (cell < 128) cell = 0;
+        if (cell) {
+            enqueue(cell);
+            return;
+        }
+    }
+    if (code == 43) key = 9;
     if (code == 88) key = 13;
     if (code >= 89 && code <= 97) key = '1' + code - 89;
     if (code == 98) key = '0';
@@ -261,20 +295,29 @@ static void translate_key(const struct budo_gfx_event *event) {
     }
     if (key > 0 && key < 128) enqueue(key);
 }
-static int pump_one(void) {
-    struct budo_gfx_event event;
-    int result = budo_gfx_poll_event(screen, &event);
-    if (result < 0) { disconnected = 1; return 0; }
-    if (!result) return 0;
+static int process_event(const struct budo_gfx_event *input) {
+    struct budo_gfx_event event = *input;
     if (event.type == BUDO_GFX_QUIT) disconnected = 1;
     else if (event.type == BUDO_GFX_RESET) {
         if (event_filter) (void)event_filter(&event);
         memset(keys, 0, sizeof(keys)); mouse_buttons = 0;
         raw_mouse_valid = 0;
+        text_key_handled = 0;
         queue_read = queue_write = 0;
     } else if (event.type == BUDO_GFX_KEY_DOWN || event.type == BUDO_GFX_KEY_UP) {
         if (event.scancode >= 0 && event.scancode < 512) keys[event.scancode] = event.type == BUDO_GFX_KEY_DOWN;
-        if ((!event_filter || !event_filter(&event)) && event.type == BUDO_GFX_KEY_DOWN) translate_key(&event);
+        int consumed = event_filter && event_filter(&event);
+        if (event.type == BUDO_GFX_KEY_DOWN && !(event.scancode >= 224 && event.scancode <= 231)) {
+            unsigned int before = queue_write;
+            if (!consumed) translate_key(&event);
+            text_key_handled = consumed || (queue_write != before && queue[before % 256] >= 32);
+        }
+    } else if (event.type == BUDO_GFX_TEXT_INPUT) {
+        if (!event_filter || !event_filter(&event)) {
+            int cell = unicode_key((unsigned int)event.key);
+            if (!text_key_handled && cell && !(bw_modifiers() & 4u)) enqueue(cell);
+        }
+        text_key_handled = 0;
     } else if (event.type == BUDO_GFX_MOUSE_MOVE || event.type == BUDO_GFX_MOUSE_DOWN || event.type == BUDO_GFX_MOUSE_UP) {
         /* Apply movement to the already-clamped cursor, not the physical
          * pointer position. Outward movement at an edge is discarded, so
@@ -297,6 +340,13 @@ static int pump_one(void) {
     }
     return 1;
 }
+static int pump_one(void) {
+    struct budo_gfx_event event;
+    int result = budo_gfx_poll_event(screen, &event);
+    if (result < 0) { disconnected = 1; return 0; }
+    if (!result) return 0;
+    return process_event(&event);
+}
 int bw_begin_frame(void) {
     /* Collapse stale motion promptly, but render every button transition.
      * A press and release must remain separate frames for the original UI. */
@@ -317,7 +367,11 @@ int bw_end_frame(void) {
 }
 void bw_mouse_state(int *x, int *y, int *buttons) { *x = mouse_x; *y = mouse_y; *buttons = mouse_buttons; }
 int kbhit(void) { return queue_read != queue_write; }
-int getch(void) { return kbhit() ? queue[queue_read++ % 256] : -1; }
+int getch(void) {
+    if (!kbhit()) return -1;
+    key_modifiers = queue_modifiers[queue_read % 256];
+    return queue[queue_read++ % 256];
+}
 clock_t bw_clock(void) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);

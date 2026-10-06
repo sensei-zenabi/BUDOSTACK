@@ -186,6 +186,22 @@ int main(int argc, char **argv)
     assert(item_count == 1 && !strcmp(items[0].path, path));
     assert(!desktop_item_visible(DESKTOP_SHORTCUT_BASE));
     assert(desktop_item_visible(DESKTOP_SHORTCUT_BASE + 1));
+    /* Drag virtual shortcut references out of Explorer into the desktop. */
+    explorer_shortcut_drag_begin(0,250,180);
+    assert(explorer_drag_shortcut == 0);
+    assert(!explorer_shortcut_drag_update(251,181,1));
+    assert(explorer_shortcut_drag_update(620,445,1));
+    assert(explorer_shortcut_drag_drop(620,445));
+    assert(!shortcut_details[0].parent[0] && item_count == 0);
+    assert(access(path,F_OK) == 0 && desktop_item_visible(DESKTOP_SHORTCUT_BASE));
+    shortcuts_load();
+    assert(!shortcut_details[0].parent[0]);
+    assert(shortcut_move(0,folder) && load_directory(folder));
+    explorer_shortcut_drag_begin(0,250,180);
+    assert(explorer_shortcut_drag_update(255,180,1));
+    assert(!explorer_shortcut_drag_drop(explorer_window.x+10,explorer_window.y+10));
+    assert(!strcmp(shortcut_details[0].parent,folder));
+
     /* Nested folders use virtual membership after relocation. */
     shortcut_open(1, 0);
     desktop_begin_picker(1);

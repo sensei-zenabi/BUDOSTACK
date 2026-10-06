@@ -904,7 +904,12 @@ static void paint_draw(void)
     static const char *file_items[5] = {"New   Ctrl+N", "Open... Ctrl+O",
                                       "Save  Ctrl+S", "Save As...", "Close"};
     static const char *edit_items[2] = {"Undo  Ctrl+Z", "Clear"};
-    static const char *view_items[] = {"100%", "200%", "400%", "800%", "1600%", "3200%", "Pixel grid"};
+    BudoMenuItem view_items[] = {
+        {"100%", 1, zoom == 1}, {"200%", 1, zoom == 2},
+        {"400%", 1, zoom == 4}, {"800%", 1, zoom == 8},
+        {"1600%", 1, zoom == 16}, {"3200%", 1, zoom == 32},
+        {"Pixel grid", 1, pixel_grid}
+    };
     static const char *image_items[] = {"Image Size...", "Canvas Size..."};
     int x;
     if (!layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&pal_y,&status_y)) return;
@@ -953,7 +958,7 @@ static void paint_draw(void)
         host_api->get_system_color(BUDO_SYS_COLOR_TEXT), (cw - 12) / 6);
     if (paint_menu == 1) budo_menu_draw(host_api, cx + 4, cy + 22, 156, file_items, 5);
     else if (paint_menu == 2) budo_menu_draw(host_api, cx + 44, cy + 22, 156, edit_items, 2);
-    else if (paint_menu == 3) budo_menu_draw(host_api, cx + 84, cy + 22, 156, view_items, 7);
+    else if (paint_menu == 3) budo_menu_items_draw(host_api, cx + 84, cy + 22, 156, view_items, 7);
     else if (paint_menu == 4) budo_menu_draw(host_api, cx + 124, cy + 22, 156, image_items, 2);
     if (resize_dialog) paint_resize_draw(cx,cy,cw,ch);
 }

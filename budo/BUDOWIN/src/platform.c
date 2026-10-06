@@ -22,6 +22,8 @@ static unsigned char keys[512];
 static int queue[256];
 static unsigned int queue_read, queue_write;
 static int disconnected;
+static int (*event_filter)(const struct budo_gfx_event *);
+void bw_set_event_filter(int (*filter)(const struct budo_gfx_event *)) { event_filter = filter; }
 static int caps_lock;
 static int nordic_keyboard = 1;
 static char user_directory[4096], state_directory[4096];
@@ -266,12 +268,13 @@ static int pump_one(void) {
     if (!result) return 0;
     if (event.type == BUDO_GFX_QUIT) disconnected = 1;
     else if (event.type == BUDO_GFX_RESET) {
+        if (event_filter) (void)event_filter(&event);
         memset(keys, 0, sizeof(keys)); mouse_buttons = 0;
         raw_mouse_valid = 0;
         queue_read = queue_write = 0;
     } else if (event.type == BUDO_GFX_KEY_DOWN || event.type == BUDO_GFX_KEY_UP) {
         if (event.scancode >= 0 && event.scancode < 512) keys[event.scancode] = event.type == BUDO_GFX_KEY_DOWN;
-        if (event.type == BUDO_GFX_KEY_DOWN) translate_key(&event);
+        if ((!event_filter || !event_filter(&event)) && event.type == BUDO_GFX_KEY_DOWN) translate_key(&event);
     } else if (event.type == BUDO_GFX_MOUSE_MOVE || event.type == BUDO_GFX_MOUSE_DOWN || event.type == BUDO_GFX_MOUSE_UP) {
         /* Apply movement to the already-clamped cursor, not the physical
          * pointer position. Outward movement at an edge is discarded, so
@@ -287,7 +290,10 @@ static int pump_one(void) {
         if (event.type == BUDO_GFX_MOUSE_UP) mouse_buttons &= ~mask;
         if (event.type != BUDO_GFX_MOUSE_MOVE) return 2;
     } else if (event.type == BUDO_GFX_WHEEL) {
-        enqueue(0); enqueue(event.y > 0 ? 201 : 202);
+        if (!event_filter || !event_filter(&event)) {
+            enqueue(0);
+            enqueue(event.y > 0 ? 201 : 202);
+        }
     }
     return 1;
 }

@@ -20,6 +20,8 @@ struct ffblk {
 };
 int findfirst(const char *pattern, struct ffblk *entry, int attributes);
 int findnext(struct ffblk *entry);
+struct budo_gfx_event;
+void bw_set_event_filter(int (*filter)(const struct budo_gfx_event *));
 int kbhit(void);
 int getch(void);
 int bw_initialize(int argc, char **argv);

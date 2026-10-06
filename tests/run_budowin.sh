@@ -14,7 +14,12 @@ printf 'input' > "$BUDOWIN_TEST_DIR/input.txt"
 COMPILER=${CC:-cc}
 FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
 budo/BUDOWIN/build.sh
+make budostack apps/cmath commands/_CALC
 "$COMPILER" "${FLAGS[@]}" tests/budowin_editor.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/editor"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_document.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/document"
+"$TEST_DIR/document" "$TEST_DIR"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_terminal_session.c -ldl -lm -o "$TEST_DIR/terminal-session"
+"$TEST_DIR/terminal-session" "$ROOT_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_ui.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/ui"
 "$TEST_DIR/ui" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_shortcuts.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/shortcuts"

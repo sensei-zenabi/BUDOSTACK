@@ -181,14 +181,15 @@ int main(int argc, char **argv)
     assert(shortcut_move(0, folder));
     assert(!shortcut_move(1, folder));
     shortcut_open(1, 0);
-    assert(!strcmp(desktop_folder, folder));
-    assert(desktop_item_visible(DESKTOP_SHORTCUT_BASE) && !desktop_item_visible(0));
-    assert(!desktop_item_visible(DESKTOP_SHORTCUT_BASE + 1));
-    desktop_folder_up();
+    assert(!strcmp(current_path, folder) && explorer_window.open && active_window == APP_EXPLORER);
     assert(!desktop_folder[0]);
+    assert(item_count == 1 && !strcmp(items[0].path, path));
+    assert(!desktop_item_visible(DESKTOP_SHORTCUT_BASE));
+    assert(desktop_item_visible(DESKTOP_SHORTCUT_BASE + 1));
     /* Nested folders use virtual membership after relocation. */
     shortcut_open(1, 0);
     desktop_begin_picker(1);
+    assert(editor_file_load_directory(folder));
     editor_set_file_name("Nested");
     assert(editor_file_accept() && shortcut_count == 3);
     char nested[MAX_PATH];

@@ -207,10 +207,9 @@ version 1 shortcut files are still accepted. If an icon disappears, the default
 icon is used. Built-in application launchers remain on the root desktop.
 
 
-## Document improvement review
+## Window and editing controls
 
-See [the review checklist](docs/IMPROVEMENTS_REVIEW.md) for each request from
-BUDOSTACK_Improvements(1).txt and steps to verify it. Ctrl+Tab cycles open
+Ctrl+Tab cycles open
 applications with a visible list; Ctrl+Shift+Tab reverses direction. Minimized
 applications appear as clickable buttons along the bottom of the desktop.
 The top bar shows the weekday, desktop title and local date/time with seconds.

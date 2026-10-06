@@ -158,6 +158,7 @@
 
 #define KEYMOD_SHIFT 0x03
 #define KEYMOD_CTRL  0x04
+#define KEYMOD_ALT   0x08
 
 typedef struct DesktopItem {
     char name[MAX_NAME];
@@ -494,6 +495,7 @@ static int shortcut_icon_load(int index);
 static int desktop_picker_accept(const char *path);
 static void desktop_begin_picker(int action);
 static int shortcut_move(int index, const char *parent);
+static const char *shortcut_drop_parent(int x, int y);
 static void explorer_shortcut_drag_begin(int item, int x, int y);
 static int explorer_shortcut_drag_update(int x, int y, int down);
 static int explorer_shortcut_drag_drop(int x, int y);
@@ -7066,6 +7068,13 @@ static void desktop_switch_app(int reverse)
     app_switch_until = bw_clock() + CLOCKS_PER_SEC * 2;
 }
 
+static int desktop_switch_key(int key, unsigned int modifiers)
+{
+    if (key != 9 || !(modifiers & KEYMOD_ALT)) return 0;
+    desktop_switch_app((modifiers & KEYMOD_SHIFT) != 0);
+    return 1;
+}
+
 static int desktop_minimized_click(int x, int y)
 {
     int ids[3 + BWA_MAX_EXTERNAL];
@@ -9092,8 +9101,10 @@ static int explorer_delete_selection(void)
         explorer_status = changed ? "Shortcuts removed; target files preserved." : "No shortcut removed.";
         return changed;
     }
+    int selected = 0;
     for (i = 0; i < item_count; ++i) {
         if (explorer_selection[i]) {
+            ++selected;
             if (explorer_delete_path(items[i].path, items[i].type)) changed = 1;
             else {
                 snprintf(explorer_error, sizeof(explorer_error), "Delete failed: %.90s: %.40s",
@@ -9104,7 +9115,7 @@ static int explorer_delete_selection(void)
     }
 
     (void)load_directory(refresh_path);
-    explorer_status = failed ? explorer_error : "Selected entries deleted.";
+    explorer_status = failed ? explorer_error : selected ? "Selected entries deleted." : "No entries selected; nothing deleted.";
     return changed;
 }
 
@@ -9828,6 +9839,19 @@ static int shortcut_move(int index, const char *parent)
     return shortcut_move_impl(index, parent, 1);
 }
 
+static const char *shortcut_drop_parent(int x, int y)
+{
+    int owner = desktop_point_owner(x, y);
+    if (owner == APP_EXPLORER && explorer_shortcut_folder[0] &&
+        point_in_rect(x, y, explorer_client_x(), explorer_client_y(),
+                      explorer_client_w(), explorer_client_h() - BUDO_SCROLL_WIDTH))
+        return explorer_shortcut_folder;
+    if (owner != APP_NONE) return NULL;
+    int folder = shortcut_hit(x, y);
+    return folder >= 0 && desktop_shortcuts[folder].type == TYPE_FOLDER ?
+        desktop_shortcuts[folder].path : desktop_folder;
+}
+
 static void explorer_shortcut_drag_begin(int item, int x, int y)
 {
     explorer_drag_shortcut = -1;
@@ -9862,11 +9886,9 @@ static int explorer_shortcut_drag_drop(int x, int y)
     int dragging = explorer_shortcut_dragging;
     explorer_drag_shortcut = -1;
     explorer_shortcut_dragging = 0;
-    if (!dragging || index < 0 || index >= shortcut_count ||
-        desktop_point_owner(x, y) != APP_NONE) return 0;
-    int folder = shortcut_hit(x, y);
-    const char *parent = folder >= 0 && desktop_shortcuts[folder].type == TYPE_FOLDER ?
-        desktop_shortcuts[folder].path : desktop_folder;
+    if (!dragging || index < 0 || index >= shortcut_count) return 0;
+    const char *parent = shortcut_drop_parent(x, y);
+    if (!parent || !strcmp(shortcut_details[index].parent, parent)) return 0;
     if (!shortcut_move(index, parent)) {
         explorer_status = "Unable to move shortcut; check free desktop slots and settings permissions.";
         return 0;
@@ -10795,7 +10817,7 @@ int main(int argc, char **argv)
                     editor_window.drag_dy = mouse_y - editor_window.y;
                 }
                 handled = 1;
-            } else if (active_window == APP_EXPLORER &&
+            } else if (!handled && active_window == APP_EXPLORER &&
                        window_contains(&explorer_window, mouse_x, mouse_y)) {
                 int min_x = window_min_button_x(&explorer_window);
                 int max_x = window_max_button_x(&explorer_window);
@@ -11286,10 +11308,13 @@ int main(int argc, char **argv)
                 } else if (desktop_drag_app >= APP_SHORTCUT_BASE) {
                     int index = desktop_drag_app - APP_SHORTCUT_BASE;
                     if (index < shortcut_count) {
-                        int folder = shortcut_hit(mouse_x, mouse_y);
-                        if (folder >= 0 && folder != index && desktop_shortcuts[folder].type == TYPE_FOLDER) {
-                            (void)shortcut_move(index, desktop_shortcuts[folder].path);
-                        } else {
+                        const char *parent = shortcut_drop_parent(mouse_x, mouse_y);
+                        if (parent && strcmp(parent, shortcut_details[index].parent)) {
+                            if (shortcut_move(index, parent) && explorer_window.open && explorer_shortcut_folder[0]) {
+                                char refresh[MAX_PATH];
+                                if (copy_text(refresh, sizeof(refresh), current_path)) (void)load_directory(refresh);
+                            }
+                        } else if (parent) {
                             int previous_slot = shortcut_slots[index];
                             shortcut_slots[index] = slot;
                             if (!shortcuts_save()) shortcut_slots[index] = previous_slot;
@@ -11348,8 +11373,7 @@ int main(int argc, char **argv)
             } else if (editor_file_dialog != EDITOR_FILE_DIALOG_NONE) {
                 editor_file_dialog_key(key);
                 screen_dirty = 1;
-            } else if (key == 9 && (bw_key_modifiers() & 4u)) {
-                desktop_switch_app((bw_key_modifiers() & 3u) != 0);
+            } else if (desktop_switch_key(key, bw_key_modifiers())) {
                 screen_dirty = 1;
             } else if (key == 27 && context_menu) {
                 context_menu = 0;

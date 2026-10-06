@@ -22,6 +22,28 @@ fixture = r'''
 #include "lib/budo_gfx.h"
 #include <assert.h>
 #include <string.h>
+#include <stdio.h>
+#define SDL_VERSION_ATLEAST(a,b,c) 1
+#define SDL_TRUE 1
+#define SDL_FALSE 0
+#define SDL_HINT_OVERRIDE 2
+typedef void SDL_Window;
+static int grab_calls, grabbed;
+static char capture_hint[16] = "1";
+static const char *SDL_GetHint(const char *name) { (void)name; return capture_hint; }
+static int SDL_SetHintWithPriority(const char *name, const char *value, int priority)
+{
+    (void)name;
+    assert(priority == SDL_HINT_OVERRIDE);
+    snprintf(capture_hint, sizeof(capture_hint), "%s", value);
+    return 1;
+}
+static void SDL_SetWindowKeyboardGrab(SDL_Window *window, int enabled)
+{
+    (void)window;
+    ++grab_calls;
+    grabbed = enabled;
+}
 #define SDL_KEYDOWN 1
 #define SDL_KEYUP 2
 #define SDL_TEXTINPUT 3
@@ -75,11 +97,18 @@ static void terminal_gfx_display_rect(int dw, int dh, int *x, int *y, int *w, in
     *h = dh;
 }
 '''
+fixture += function("static void terminal_gfx_keyboard_capture(SDL_Window *window, int enabled)") + "\n"
 fixture += function("static int terminal_utf8_next(const uint8_t *data, size_t length, size_t *offset, uint32_t *out_codepoint)")
 fixture += "\n" + function("static void terminal_gfx_input(struct budo_gfx_host *host, const SDL_Event *event)")
 fixture += r'''
 int main(void)
 {
+    terminal_gfx_keyboard_capture(NULL, 1);
+    assert(grabbed && !strcmp(capture_hint, "0") && grab_calls == 1);
+    terminal_gfx_keyboard_capture(NULL, 1);
+    assert(grab_calls == 1);
+    terminal_gfx_keyboard_capture(NULL, 0);
+    assert(!grabbed && !strcmp(capture_hint, "1") && grab_calls == 2);
     SDL_Event event = {0};
     event.type = SDL_TEXTINPUT;
     strcpy(event.text.text, "\303\244\303\266\303\245\303\204\303\226\303\205");
@@ -107,4 +136,4 @@ with tempfile.TemporaryDirectory() as temporary:
                     "-Werror", "-Wpedantic", "-I", str(root), str(path / "input.c"),
                     "-o", str(path / "input")], check=True)
     subprocess.run([str(path / "input")], check=True)
-print("PASS: production SDL Unicode text and physical key forwarding")
+print("PASS: production SDL keyboard capture/release, Unicode text and physical key forwarding")

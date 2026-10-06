@@ -129,7 +129,8 @@ const char *bw_state_file(const char *name) {
 }
 int bw_screen_open(void) {
     disconnected = 0;
-    return budo_gfx_open(&screen, 640, 480, BUDO_GFX_ARGB8888) == 0;
+    if (budo_gfx_open(&screen, 640, 480, BUDO_GFX_ARGB8888) != 0) return 0;
+    return budo_gfx_set_keyboard_grab(screen, 1) == 0;
 }
 void bw_screen_close(void) { budo_gfx_close(screen); screen = NULL; }
 void bw_palette_entry(unsigned int index, unsigned int r, unsigned int g, unsigned int b) {
@@ -153,7 +154,8 @@ static void enqueue(int key) {
     }
 }
 unsigned int bw_modifiers(void) {
-    return ((keys[225] || keys[229]) ? 3u : 0u) | ((keys[224] || keys[228]) ? 4u : 0u);
+    return ((keys[225] || keys[229]) ? 3u : 0u) | ((keys[224] || keys[228]) ? 4u : 0u) |
+        (keys[226] ? 8u : 0u);
 }
 unsigned int bw_key_modifiers(void) { return key_modifiers; }
 int bw_get_keyboard_layout(void) { return nordic_keyboard; }

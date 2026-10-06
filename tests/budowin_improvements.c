@@ -202,6 +202,22 @@ int main(int argc, char **argv)
     assert(!explorer_shortcut_drag_drop(explorer_window.x+10,explorer_window.y+10));
     assert(!strcmp(shortcut_details[0].parent,folder));
 
+    /* The same open folder client is a valid drop target in both views. */
+    for (int view = 0; view < 2; ++view) {
+        explorer_list_view = view;
+        assert(shortcut_move(0, "") && load_directory(folder));
+        int drop_x = explorer_client_x() + 180;
+        int drop_y = explorer_client_y() + 50;
+        const char *parent = shortcut_drop_parent(drop_x, drop_y);
+        assert(parent && !strcmp(parent, folder));
+        assert(shortcut_move(0, parent) && load_directory(folder));
+        assert(item_count == 1 && !strcmp(items[0].path,path));
+        assert(!shortcut_drop_parent(explorer_window.x+10,explorer_window.y+10));
+        shortcuts_load();
+        assert(!strcmp(shortcut_details[0].parent, folder));
+    }
+    explorer_list_view = 0;
+
     /* Nested folders use virtual membership after relocation. */
     shortcut_open(1, 0);
     desktop_begin_picker(1);

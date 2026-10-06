@@ -503,7 +503,7 @@ static int session_forward_event(const struct budo_gfx_event *event)
     struct budo_gfx_event input = *event;
     if (event->type == BUDO_GFX_KEY_DOWN || event->type == BUDO_GFX_KEY_UP ||
         event->type == BUDO_GFX_TEXT_INPUT) {
-        if (event->scancode == 43 && (bw_modifiers() & 4u)) return 0;
+        if (event->scancode == 43 && (bw_modifiers() & KEYMOD_ALT)) return 0;
         budo_gfx_host_event(session_gfx,&input);
         return 1;
     }

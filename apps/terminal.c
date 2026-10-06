@@ -7770,6 +7770,26 @@ static void terminal_gfx_display_rect(int drawable_w, int drawable_h,
     }
 }
 
+static void terminal_gfx_keyboard_capture(SDL_Window *window, int enabled) {
+    static int captured;
+    if (captured == enabled) return;
+#if SDL_VERSION_ATLEAST(2, 0, 16)
+    static char previous_hint[16];
+    if (enabled) {
+        const char *hint = SDL_GetHint("SDL_ALLOW_ALT_TAB_WHILE_GRABBED");
+        snprintf(previous_hint, sizeof(previous_hint), "%s", hint ? hint : "1");
+        SDL_SetHintWithPriority("SDL_ALLOW_ALT_TAB_WHILE_GRABBED", "0", SDL_HINT_OVERRIDE);
+    }
+    SDL_SetWindowKeyboardGrab(window, enabled ? SDL_TRUE : SDL_FALSE);
+    if (!enabled)
+        SDL_SetHintWithPriority("SDL_ALLOW_ALT_TAB_WHILE_GRABBED", previous_hint, SDL_HINT_OVERRIDE);
+#else
+    (void)window;
+    if (enabled) fprintf(stderr, "Keyboard shortcut capture requires SDL2 2.0.16 or newer.\n");
+#endif
+    captured = enabled;
+}
+
 static void terminal_gfx_input(struct budo_gfx_host *host, const SDL_Event *event) {
     struct budo_gfx_event input = {0};
     int window_x = 0;
@@ -8541,15 +8561,30 @@ int main(int argc, char **argv) {
     int cursor_phase_visible = 1;
     int suppress_textinput_once = 0;
     int graphics_was_active = 0;
+    int graphics_grab_suspended = 0;
+    size_t graphics_capture_tab = active_tab_index;
     size_t graphics_last_tab = active_tab_index;
 
     while (running) {
         for (size_t tab_i = 0u; tab_i < TERMINAL_TAB_COUNT; tab_i++) {
             budo_gfx_host_poll(terminal_gfx_hosts[tab_i]);
         }
+        if (active_tab_index != graphics_capture_tab || !budo_gfx_host_active(terminal_gfx_hosts[active_tab_index]))
+            graphics_grab_suspended = 0;
+        graphics_capture_tab = active_tab_index;
+        terminal_gfx_keyboard_capture(window, !graphics_grab_suspended &&
+            budo_gfx_host_keyboard_grab(terminal_gfx_hosts[active_tab_index]));
         terminal_selection_validate(buffer);
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_g &&
+                !event.key.repeat && (event.key.keysym.mod & KMOD_CTRL) != 0 &&
+                (event.key.keysym.mod & KMOD_ALT) != 0 &&
+                budo_gfx_host_keyboard_grab(terminal_gfx_hosts[active_tab_index])) {
+                graphics_grab_suspended = !graphics_grab_suspended;
+                terminal_gfx_keyboard_capture(window, !graphics_grab_suspended);
+                continue;
+            }
             int graphics_input = budo_gfx_host_active(terminal_gfx_hosts[active_tab_index]);
             int tab_shortcut = event.type == SDL_KEYDOWN &&
                 (event.key.keysym.mod & KMOD_ALT) != 0 &&
@@ -9962,6 +9997,7 @@ int main(int argc, char **argv) {
     terminal_background_sound_free();
     terminal_shutdown_audio();
 #endif
+    terminal_gfx_keyboard_capture(window, 0);
     SDL_DestroyWindow(window);
     SDL_Quit();
 

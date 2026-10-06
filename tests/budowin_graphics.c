@@ -106,6 +106,7 @@ int main(int argc, char **argv) {
             if (dirty) {
                 ++frames;
                 if (frames == 5) {
+                    assert(budo_gfx_host_keyboard_grab(host));
                     memcpy(bottom_right, pixels + (480u * 640u - 1u) * 4u, 3);
                     FILE *file = fopen(argv[3], "wb");
                     assert(file);
@@ -218,6 +219,7 @@ int main(int argc, char **argv) {
     assert(done && WIFEXITED(status) && WEXITSTATUS(status) == 0 && frames >= 10);
     budo_gfx_host_poll(host);
     assert(!budo_gfx_host_active(host));
+    assert(!budo_gfx_host_keyboard_grab(host));
     budo_gfx_host_close(host);
     puts("BUDOWIN: 640x480 palette frames, mouse input, Escape and graphics cleanup passed.");
     return 0;

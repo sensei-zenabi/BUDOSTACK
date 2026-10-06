@@ -209,10 +209,13 @@ icon is used. Built-in application launchers remain on the root desktop.
 
 ## Window and editing controls
 
-Ctrl+Tab cycles open
-applications with a visible list; Ctrl+Shift+Tab reverses direction. Minimized
+Alt+Tab cycles open
+applications with a visible list; Alt+Shift+Tab reverses direction. Minimized
 applications appear as clickable buttons along the bottom of the desktop.
 The top bar shows the weekday, desktop title and local date/time with seconds.
+The SDL host captures Alt+Tab for BUDOWIN (SDL2 2.0.16 or newer); Ctrl+Alt+G
+releases/restores capture when you want to switch between host desktop windows.
+Shortcuts can be dropped into an open desktop-folder Explorer client area.
 
 Editor supports Shift+arrows, Shift+Home/End/Page Up/Page Down, Ctrl+word
 navigation, Shift+click, drag selection, Ctrl+A/C/X/V and selection replacement

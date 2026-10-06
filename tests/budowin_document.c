@@ -97,6 +97,19 @@ int main(int argc, char **argv)
     assert(bw_modifiers() == 0 && getch() == 9);
     assert((bw_key_modifiers() & (KEYMOD_CTRL | KEYMOD_SHIFT)) == (KEYMOD_CTRL | KEYMOD_SHIFT));
 
+    /* Alt+Tab uses captured modifiers even after release, and Shift reverses. */
+    explorer_window.open = 1;
+    active_window = APP_EDITOR;
+    assert(!desktop_switch_key(9, KEYMOD_CTRL));
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_DOWN,.scancode=226});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_DOWN,.scancode=43,.key=9});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_UP,.scancode=43});
+    process_event(&(struct budo_gfx_event){.type=BUDO_GFX_KEY_UP,.scancode=226});
+    int switch_key = getch();
+    assert(bw_modifiers() == 0 && desktop_switch_key(switch_key,bw_key_modifiers()));
+    assert(active_window == APP_EXPLORER && app_switch_until > bw_clock());
+    assert(desktop_switch_key(9,KEYMOD_ALT|KEYMOD_SHIFT) && active_window == APP_EDITOR);
+
     /* Hit testing starts at the visible segment, and scrolling upwards
      * works even when the cursor is several physical lines above the view. */
     editor_reset_document();

@@ -9,6 +9,7 @@ static unsigned char disk[FILE_BUFFER_SIZE];
 static unsigned int disk_size;
 static uint32_t drawn[MAX_PIXELS];
 static int surface_w, surface_h;
+static int client_w = 592, client_h = 404;
 static void *allocate(unsigned int count) { return malloc(count); }
 static int read_file(const char *path, unsigned char *buffer,
                      unsigned int capacity, unsigned int *size) {
@@ -37,12 +38,125 @@ static void panel(int x, int y, int w, int h, unsigned char c) {
 }
 static unsigned char system_color(int role) { (void)role; return 4; }
 static int client_rect(int *x, int *y, int *w, int *h) {
-    *x = 0; *y = 0; *w = 592; *h = 404;
+    *x = 0; *y = 0; *w = client_w; *h = client_h;
     return 1;
 }
 static int point_inside(int x, int y, int rx, int ry, int w, int h) {
     return x >= rx && y >= ry && x < rx + w && y < ry + h;
 }
+static void test_ovals(void) {
+    CANVAS_W = CANVAS_H = 80;
+    zoom = 1;
+    canvas_left = canvas_top = 0;
+    surface_w = surface_h = 80;
+    for (int height = 0; height <= 65; ++height) {
+        for (int width = 0; width <= 65; ++width) {
+            memset(canvas, 0, PIXELS);
+            oval_shape(5, 5, 5 + width, 5 + height, 1, 0);
+            /* Every contour pixel stays inside the inclusive drag bounds,
+             * and reversing the drag preserves its exact raster. */
+            memcpy(undo_canvas, canvas, PIXELS);
+            memset(canvas, 0, PIXELS);
+            oval_shape(5 + width, 5 + height, 5, 5, 1, 0);
+            assert(memcmp(canvas, undo_canvas, PIXELS) == 0);
+            int edges[4] = {0};
+            for (int y = 0; y < 80; ++y) {
+                for (int x = 0; x < 80; ++x) {
+                    if (!canvas[y * 80 + x]) continue;
+                    assert(x >= 5 && x <= 5 + width && y >= 5 && y <= 5 + height);
+                    edges[0] |= x == 5;
+                    edges[1] |= x == 5 + width;
+                    edges[2] |= y == 5;
+                    edges[3] |= y == 5 + height;
+                    assert(canvas[y * 80 + 10 + width - x] == 1);
+                    assert(canvas[(10 + height - y) * 80 + x] == 1);
+                }
+            }
+            for (int i = 0; i < 4; ++i) {
+                if (!edges[i]) fprintf(stderr, "ellipse %d x %d missing edge %d\n", width, height, i);
+                assert(edges[i]);
+            }
+            if (width >= 6 && height >= 6) {
+                flood(0, 0, 2);
+                assert(canvas[(5 + height / 2) * 80 + 5 + width / 2] == 0);
+            }
+            memcpy(canvas, undo_canvas, PIXELS);
+            /* Preview uses the same pixels and never mutates the image. */
+            for (int i = 0; i < PIXELS; ++i) drawn[i] = canvas_rgb(0);
+            drawing = 1;
+            tool = TOOL_OVAL;
+            start_x = start_y = 5;
+            preview_x = 5 + width;
+            preview_y = 5 + height;
+            draw_preview(0, 0, 80, 80, 1);
+            for (int i = 0; i < PIXELS; ++i) assert(drawn[i] == canvas_rgb(canvas[i]));
+            assert(memcmp(canvas, undo_canvas, PIXELS) == 0);
+            memset(canvas, 0, PIXELS);
+            oval_shape(5, 5, 5 + width, 5 + height, 1, 1);
+            for (int i = 0; i < PIXELS; ++i) assert(!undo_canvas[i] || canvas[i]);
+        }
+    }
+    drawing = 0;
+    /* Exercise decision arithmetic at the maximum supported dimensions. */
+    CANVAS_W = CANVAS_H = MAX_DIMENSION;
+    memset(canvas, 0, PIXELS);
+    oval_shape(0, 0, MAX_DIMENSION - 1, MAX_DIMENSION - 1, 1, 0);
+    flood(0, 0, 2);
+    assert(pixel_at(MAX_DIMENSION / 2, MAX_DIMENSION / 2) == 0);
+}
+
+static void test_palette(void) {
+    int cx,cy,cw,ch,sx,sy,vw,vh,py,st;
+    assert(layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&py,&st));
+    assert(palette_cols == 64 && palette_rows == 4 && palette_top == 0);
+    assert(!budo_scroll_limit(&palette_scroll));
+    uint64_t hash = paint_content_hash();
+    for (int index = 0; index < 256; ++index) {
+        int x = cx + 6 + index % 64 * PALETTE_STEP + 2;
+        int y = py + index / 64 * PALETTE_STEP + 2;
+        assert(paint_mouse_down(x, y, 1) && fg == index);
+        assert(paint_mouse_down(x, y, 2) && bg == index);
+    }
+    assert(paint_content_hash() == hash);
+    for (int height = 278; height <= 404; height += 126) {
+        client_w = 488;
+        client_h = height;
+        assert(layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&py,&st));
+        assert(budo_scroll_limit(&palette_scroll));
+        assert(palette_scroll.x + BUDO_SCROLL_WIDTH <= cw);
+        assert(palette_scroll.y + palette_scroll.length < st);
+        assert(sy + vh + BUDO_SCROLL_WIDTH + 2 < py - 11);
+        if (height == 278) assert(palette_rows == 1);
+        palette_top = 0;
+        int rows_seen = 0;
+        while (1) {
+            assert(layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&py,&st));
+            for (int i = 0; i < palette_rows * palette_cols; ++i) {
+                int index = palette_top * palette_cols + i;
+                if (index >= 256) break;
+                assert(paint_mouse_down(cx + 8 + i % palette_cols * PALETTE_STEP,
+                                        py + 2 + i / palette_cols * PALETTE_STEP, 1));
+                assert(fg == index);
+            }
+            if (palette_top == budo_scroll_limit(&palette_scroll)) break;
+            int old_top = palette_top;
+            assert(paint_scroll_pointer(palette_scroll.x + 4,
+                palette_scroll.y + palette_scroll.length - 4, BUDO_POINTER_DOWN));
+            assert(paint_scroll_pointer(0, 0, BUDO_POINTER_UP));
+            assert(palette_top == old_top + 1);
+            ++rows_seen;
+            assert(rows_seen < 256);
+        }
+        assert(fg == 255);
+        assert(paint_key('[') && palette_top == budo_scroll_limit(&palette_scroll) - 1);
+        assert(paint_key(']') && palette_top == budo_scroll_limit(&palette_scroll));
+    }
+    client_w = 592;
+    client_h = 404;
+    assert(layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&py,&st));
+    assert(palette_top == 0 && !budo_scroll_limit(&palette_scroll));
+}
+
 int main(void) {
     BwaHostApi api = {0};
     api.memory_alloc = allocate;
@@ -79,8 +193,7 @@ int main(void) {
     do_undo();
     assert(memcmp(canvas_palette, expected_palette, 768) == 0 && canvas[255] == 255);
     assert(!dirty); /* Undo returned exactly to the saved content. */
-    assert(paint_key('[') && palette_page == 15);
-    assert(paint_key(']') && palette_page == 0);
+
     /* Invalid RLE must leave both canvas and palette intact. */
     disk[128] = 0xc0;
     assert(!load_pcx("broken.pcx"));
@@ -147,13 +260,15 @@ int main(void) {
     draw_canvas(0,0,16,16);
     assert(drawn[1] == drawn[17]);
     new_canvas();
-    assert(CANVAS_W == 480 && CANVAS_H == 303);
+    assert(CANVAS_W == 480 && CANVAS_H == 294);
     assert(layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&py,&st));
-    assert(vw == 480 && vh == 303); /* The workspace fills the client area. */
+    assert(vw == CANVAS_W && vh == CANVAS_H); /* The workspace fills the client area. */
+    test_palette();
+    test_ovals();
     free(fill_queue);
     free(file_buffer);
     free(undo_canvas);
     free(canvas);
-    puts("PASS: Paint 256-color display/save/undo, palette pages, dimension-preserving PCX, resize/undo and failed-load preservation");
+    puts("PASS: Paint 256-color display/save/undo, palette grid/scrolling and closed symmetric midpoint ellipses, dimension-preserving PCX, resize/undo and failed-load preservation");
     return 0;
 }

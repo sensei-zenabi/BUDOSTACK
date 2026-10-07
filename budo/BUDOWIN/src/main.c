@@ -116,7 +116,7 @@
 #define EDITOR_WRITER_TABS 8
 #define EDITOR_WRITER_PAGE_COLS 77
 #define EDITOR_WRITER_PAGE_W (EDITOR_WRITER_PAGE_COLS * 6)
-#define EDITOR_WRITER_MIN_W (EDITOR_WRITER_PAGE_W + 16)
+#define EDITOR_WRITER_MIN_W (EDITOR_WRITER_PAGE_W + 32)
 #define EDITOR_MENU_NONE 0
 #define EDITOR_MENU_FILE 1
 #define EDITOR_MENU_EDIT 2
@@ -2598,8 +2598,9 @@ static void draw_back(int x, int y)
     fill_rect(x + 9, y + 8, 13, 6, BACK_COLOR);
 }
 
-static void draw_labeled_icon(int x, int y, const char *name, int type,
-                              int selected, const char *path)
+static void draw_labeled_icon_color(int x, int y, const char *name, int type,
+                              int selected, const char *path,
+                              unsigned char label_color)
 {
     int len = (int)strlen(name);
     int shown = len > 12 ? 12 : len;
@@ -2611,7 +2612,6 @@ static void draw_labeled_icon(int x, int y, const char *name, int type,
     int label_width = shown * 6 - 1;
     if (len > shown) bwa_pointer_region(x, y, DESKTOP_ICON_W, DESKTOP_ICON_H + 12, BUDO_CURSOR_ARROW, name);
     int label_x;
-    unsigned char label_color = TEXT_COLOR;
     budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W,
                              DESKTOP_ICON_H, selected, 0);
 
@@ -2654,6 +2654,12 @@ static void draw_labeled_icon(int x, int y, const char *name, int type,
     }
 
     draw_text_elided(label_x, y + DESKTOP_ICON_H + 2, name, label_color, shown);
+}
+
+static void draw_labeled_icon(int x, int y, const char *name, int type,
+                              int selected, const char *path)
+{
+    draw_labeled_icon_color(x, y, name, type, selected, path, TEXT_COLOR);
 }
 
 static void draw_back_icon(int x, int y)
@@ -3861,8 +3867,10 @@ static int editor_visible_rows(void)
 static int editor_text_x(void)
 {
     if (editor_writer_mode) {
-        return editor_window.x +
-               (editor_window.w - EDITOR_WRITER_PAGE_W) / 2;
+        int available = editor_window.w - 32;
+        int page_width = available < EDITOR_WRITER_PAGE_W ?
+                         available : EDITOR_WRITER_PAGE_W;
+        return editor_window.x + 8 + (available - page_width) / 2;
     }
 
     return editor_window.x + (editor_rows_enabled() ? 40 : 8);
@@ -4956,27 +4964,20 @@ static void draw_editor_window(void)
               editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H,
               editor_window.w - 4, 1, FOLDER_DARK);
 
-    if (editor_writer_mode) {
-        int page_x = text_x;
-        int page_y = editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 1;
-        int page_bottom = editor_window.y + editor_window.h -
-                          EDITOR_STATUS_H - 2;
-        int page_h = page_bottom - page_y;
-
-        /* A restrained paper sheet keeps attention on the document. */
-        fill_rect(page_x + EDITOR_WRITER_PAGE_W, page_y + 2,
-                  2, page_h, WINDOW_SHADOW_COLOR);
-        fill_rect(page_x + 2, page_bottom, EDITOR_WRITER_PAGE_W,
-                  2, WINDOW_SHADOW_COLOR);
-        fill_rect(page_x, page_y, EDITOR_WRITER_PAGE_W, page_h,
-                  FILE_COLOR);
-    }
+    /* Both modes share one writing surface and the same status-bar edge. */
+    fill_rect(editor_window.x + 2,
+              editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 1,
+              editor_window.w - 4,
+              editor_window.h - WINDOW_TITLE_H - EDITOR_MENU_H -
+              EDITOR_STATUS_H - 1, FILE_COLOR);
 
     if (editor_writer_mode && editor_writer_ruler) {
         int ruler_y = editor_window.y + WINDOW_TITLE_H +
                       EDITOR_MENU_H + 2;
         int ruler_x = text_x;
-        int ruler_w = EDITOR_WRITER_PAGE_W;
+        int page_cols = editor_visible_cols();
+        if (page_cols > EDITOR_WRITER_PAGE_COLS) page_cols = EDITOR_WRITER_PAGE_COLS;
+        int ruler_w = page_cols * 6;
         int tick;
         int i;
         int left_x = ruler_x + editor_writer_left_indent * 6;
@@ -4984,7 +4985,7 @@ static void draw_editor_window(void)
                       (editor_writer_left_indent +
                        editor_writer_first_indent) * 6;
         int right_x = ruler_x +
-                      (EDITOR_WRITER_PAGE_COLS -
+                      (page_cols -
                        editor_writer_right_indent) * 6;
 
         /*
@@ -7083,7 +7084,7 @@ static int desktop_minimized_click(int x, int y)
     int count = desktop_running_apps(ids, windows, names), slot = 0;
     for (int i = 0; i < count; ++i) {
         if (!windows[i]->minimized) continue;
-        int bx = 4 + (slot % 5) * 126, by = SCREEN_HEIGHT - 24 - (slot / 5) * 22;
+        int bx = 4 + (slot % 5) * 126, by = SCREEN_HEIGHT - 20 - (slot / 5) * 22;
         ++slot;
         if (point_in_rect(x, y, bx, by, 122, 20)) {
             windows[i]->minimized = 0;
@@ -7102,7 +7103,7 @@ static void desktop_running_draw(void)
     int count = desktop_running_apps(ids, windows, names), slot = 0;
     for (int i = 0; i < count; ++i) {
         if (!windows[i]->minimized) continue;
-        int x = 4 + (slot % 5) * 126, y = SCREEN_HEIGHT - 24 - (slot / 5) * 22;
+        int x = 4 + (slot % 5) * 126, y = SCREEN_HEIGHT - 20 - (slot / 5) * 22;
         ++slot;
         int owner = ui_draw_owner;
         ui_draw_owner = UI_OVERLAY_OWNER;
@@ -7177,11 +7178,12 @@ static void draw_desktop(int page)
             int chars = (int)strlen(desktop_shortcuts[i].name);
             if (chars > 12) chars = 12;
             draw_text(x + 16 - (chars * 6 - 1) / 2, y + DESKTOP_ICON_H + 2,
-                      desktop_shortcuts[i].name, TEXT_COLOR, chars);
+                      desktop_shortcuts[i].name, DESKTOP_TEXT_COLOR, chars);
             bwa_pointer_region(x - 20, y - 2, 72, 50, BUDO_CURSOR_ARROW, desktop_shortcuts[i].name);
         } else {
-            draw_labeled_icon(x, y, desktop_shortcuts[i].name, desktop_shortcuts[i].type,
-                              shortcut_selection[i], desktop_shortcuts[i].path);
+            draw_labeled_icon_color(x, y, desktop_shortcuts[i].name, desktop_shortcuts[i].type,
+                              shortcut_selection[i], desktop_shortcuts[i].path,
+                              DESKTOP_TEXT_COLOR);
         }
         if (desktop_shortcuts[i].type == TYPE_FILE) draw_text(x, y + 16, "->", TEXT_COLOR, 2);
         budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W,

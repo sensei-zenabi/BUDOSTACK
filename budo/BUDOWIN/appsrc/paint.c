@@ -41,7 +41,7 @@ static unsigned char *file_buffer;
 static unsigned char canvas_palette[768];
 static unsigned char undo_palette[768];
 static unsigned char undo_fg, undo_bg;
-static int palette_page, undo_palette_page;
+static int palette_top, undo_palette_top;
 static int *fill_queue;
 static int undo_valid;
 static int dirty;
@@ -57,7 +57,10 @@ static int file_owned;
 static int pending_action;
 static char pending_path[4096];
 static int paint_menu;
-static BudoScrollbar canvas_hscroll, canvas_vscroll;
+static BudoScrollbar canvas_hscroll, canvas_vscroll, palette_scroll;
+#define PALETTE_STEP 8
+#define PALETTE_CELL 6
+static int palette_cols = 64, palette_rows = 4;
 static int canvas_left, canvas_top;
 static void paint_action(int action);
 static int paint_save(void);
@@ -117,7 +120,7 @@ static void default_palette(void)
     }
     fg = 1;
     bg = 4;
-    palette_page = 0;
+    palette_top = 0;
 }
 
 static unsigned int canvas_rgb(unsigned char index)
@@ -214,7 +217,7 @@ static void save_undo(void)
     bytes_copy(undo_palette, canvas_palette, sizeof(canvas_palette));
     undo_fg = fg;
     undo_bg = bg;
-    undo_palette_page = palette_page;
+    undo_palette_top = palette_top;
     undo_valid = 1;
 }
 
@@ -244,8 +247,8 @@ static void do_undo(void)
     fg = undo_fg; undo_fg = color;
     color = bg;
     bg = undo_bg; undo_bg = color;
-    int page = palette_page;
-    palette_page = undo_palette_page; undo_palette_page = page;
+    int page = palette_top;
+    palette_top = undo_palette_top; undo_palette_top = page;
     dirty = 1;
     refresh_title();
     set_status("Undo");
@@ -259,6 +262,10 @@ static void clear_canvas(unsigned char color)
     refresh_title();
 }
 
+static int layout(int *cx, int *cy, int *cw, int *ch,
+                  int *sx, int *sy, int *vw, int *vh,
+                  int *palette_y, int *status_y);
+
 static void new_dimensions(void)
 {
     int x, y, width, height;
@@ -267,7 +274,9 @@ static void new_dimensions(void)
     if (host_api->window_get_client_rect &&
         host_api->window_get_client_rect(&x, &y, &width, &height)) {
         CANVAS_W = min_i(MAX_DIMENSION, max_i(1, width - 94 - BUDO_SCROLL_WIDTH - 6));
-        CANVAS_H = min_i(MAX_DIMENSION, max_i(1, height - 101));
+        int sx, sy, vw, vh, pal_y, status_y;
+        if (layout(&x, &y, &width, &height, &sx, &sy, &vw, &vh, &pal_y, &status_y))
+            CANVAS_H = min_i(MAX_DIMENSION, max_i(1, pal_y - BUDO_SCROLL_WIDTH - 18 - sy));
     }
 }
 
@@ -344,34 +353,65 @@ static void rect_shape(int x0, int y0, int x1, int y1,
     }
 }
 
+/* Midpoint ellipse on a doubled coordinate grid. Half-pixel centers keep
+ * odd and even bounding boxes symmetric without dropping the last row/column.
+ * 64-bit decisions cover the full 2048-pixel canvas on 32-bit hosts too. */
+typedef void (*OvalSpan)(int left, int right, int y,
+                         unsigned char color, void *context);
+
+static void oval_raster(int x0, int y0, int x1, int y1,
+                        unsigned char color, OvalSpan span, void *context)
+{
+    int left = min_i(x0, x1), right = max_i(x0, x1);
+    int top = min_i(y0, y1), bottom = max_i(y0, y1);
+    int a = right - left, b = bottom - top;
+    int x = a & 1, y = b;
+    int64_t a2 = (int64_t)a * a, b2 = (int64_t)b * b;
+    int64_t product = a2 * b2;
+    if (!a || !b) {
+        for (int row = top; row <= bottom; ++row)
+            span(left, right, row, color, context);
+        return;
+    }
+    while (y >= 0) {
+        int l = (left + right - x) / 2;
+        int r = (left + right + x) / 2;
+        int t = (top + bottom - y) / 2;
+        int d = (top + bottom + y) / 2;
+        span(l, r, t, color, context);
+        if (t != d) span(l, r, d, color, context);
+        if (x == a) {
+            y -= 2;
+        } else if (y == (b & 1)) {
+            x += 2;
+        } else if (b2 * x < a2 * y) {
+            int64_t next_x = x + 2, middle_y = y - 1;
+            if (b2 * next_x * next_x + a2 * middle_y * middle_y >= product)
+                y = max_i(b & 1, y - 2);
+            x += 2;
+        } else {
+            int64_t middle_x = x + 1, next_y = y - 2;
+            if (b2 * middle_x * middle_x + a2 * next_y * next_y <= product)
+                x = min_i(a, x + 2);
+            y -= 2;
+        }
+    }
+}
+
+static void oval_canvas_span(int left, int right, int y,
+                             unsigned char color, void *context)
+{
+    int filled = *(const int *)context;
+    pixel(left, y, color);
+    pixel(right, y, color);
+    if (filled)
+        for (int x = left + 1; x < right; ++x) pixel(x, y, color);
+}
+
 static void oval_shape(int x0, int y0, int x1, int y1,
                        unsigned char color, int filled)
 {
-    int l = min_i(x0, x1), r = max_i(x0, x1);
-    int t = min_i(y0, y1), b = max_i(y0, y1);
-    int rx = (r - l) / 2, ry = (b - t) / 2;
-    int cx = l + rx, cy = t + ry;
-    int y;
-    if (rx <= 0 || ry <= 0) {
-        rect_shape(x0, y0, x1, y1, color, filled);
-        return;
-    }
-    for (y = -ry; y <= ry; ++y) {
-        long yy = (long)y * y;
-        long ry2 = (long)ry * ry;
-        long rx2 = (long)rx * rx;
-        int x = 0;
-        while (x < rx &&
-               (long)(x + 1) * (x + 1) * ry2 + yy * rx2 <= rx2 * ry2)
-            ++x;
-        if (filled) {
-            int px;
-            for (px = -x; px <= x; ++px) pixel(cx + px, cy + y, color);
-        } else {
-            pixel(cx - x, cy + y, color);
-            pixel(cx + x, cy + y, color);
-        }
-    }
+    oval_raster(x0, y0, x1, y1, color, oval_canvas_span, &filled);
 }
 
 static void flood(int sx, int sy, unsigned char replacement)
@@ -479,7 +519,7 @@ static int load_pcx(const char *path)
     host_api->memory_free(loaded);
     fg = (unsigned char)nearest_color(canvas_palette, 0, 0, 0);
     bg = (unsigned char)nearest_color(canvas_palette, 255, 255, 255);
-    palette_page = 0;
+    palette_top = 0;
     dirty = 0;
     saved_fingerprint = paint_content_hash();
     refresh_title();
@@ -670,6 +710,23 @@ static void paint_confirm_result(int kind, int response)
     } else if (paint_save()) paint_continue();
 }
 
+static void palette_layout(int cx, int cy, int cw, int ch, int *palette_y)
+{
+    palette_rows = min_i(4, max_i(1, (ch - 270) / PALETTE_STEP));
+    palette_cols = min_i(64, max_i(1, (cw - 12) / PALETTE_STEP));
+    if ((256 + palette_cols - 1) / palette_cols > palette_rows)
+        palette_cols = min_i(64, max_i(1, (cw - 12 - BUDO_SCROLL_WIDTH - 2) / PALETTE_STEP));
+    palette_scroll.page = palette_rows;
+    palette_scroll.total = (256 + palette_cols - 1) / palette_cols;
+    palette_scroll.position = palette_top;
+    palette_scroll.length = max_i(48, palette_rows * PALETTE_STEP + 16);
+    *palette_y = cy + ch - 20 - (palette_scroll.length - 16);
+    palette_scroll.x = cx + 6 + palette_cols * PALETTE_STEP + 2;
+    palette_scroll.y = *palette_y - 16;
+    budo_scroll_clamp(&palette_scroll);
+    palette_top = palette_scroll.position;
+}
+
 static int layout(int *cx, int *cy, int *cw, int *ch,
                   int *sx, int *sy, int *vw, int *vh,
                   int *palette_y, int *status_y)
@@ -678,7 +735,7 @@ static int layout(int *cx, int *cy, int *cw, int *ch,
     if (!host_api->window_get_client_rect(cx, cy, cw, ch)) return 0;
     work_x = *cx + 94;
     work_y = *cy + 28;
-    *palette_y = *cy + *ch - 43;
+    palette_layout(*cx, *cy, *cw, *ch, palette_y);
     *status_y = *cy + *ch - 14;
     aw = *cx + *cw - BUDO_SCROLL_WIDTH - 6 - work_x;
     ah = *palette_y - BUDO_SCROLL_WIDTH - 18 - work_y;
@@ -762,6 +819,18 @@ static void preview_line(int sx, int sy, int vw, int vh,
     }
 }
 
+typedef struct OvalPreview {
+    int sx, sy, vw, vh;
+} OvalPreview;
+
+static void oval_preview_span(int left, int right, int y,
+                              unsigned char color, void *context)
+{
+    const OvalPreview *view = context;
+    preview_pixel(view->sx, view->sy, view->vw, view->vh, left, y, color);
+    preview_pixel(view->sx, view->sy, view->vw, view->vh, right, y, color);
+}
+
 static void draw_preview(int sx, int sy, int vw, int vh, unsigned char c)
 {
     int l, r, t, b;
@@ -776,18 +845,8 @@ static void draw_preview(int sx, int sy, int vw, int vh, unsigned char c)
         preview_line(sx, sy, vw, vh, r, b, l, b, c);
         preview_line(sx, sy, vw, vh, l, b, l, t, c);
     } else if (tool == TOOL_OVAL || tool == TOOL_FOVAL) {
-        int rx = (r - l) / 2, ry = (b - t) / 2;
-        int cx = l + rx, cy = t + ry, y;
-        if (rx <= 0 || ry <= 0) return;
-        for (y = -ry; y <= ry; ++y) {
-            long yy = (long)y * y, ry2 = (long)ry * ry, rx2 = (long)rx * rx;
-            int x = 0;
-            while (x < rx &&
-                   (long)(x + 1) * (x + 1) * ry2 + yy * rx2 <= rx2 * ry2)
-                ++x;
-            preview_pixel(sx, sy, vw, vh, cx - x, cy + y, c);
-            preview_pixel(sx, sy, vw, vh, cx + x, cy + y, c);
-        }
+        OvalPreview view = {sx, sy, vw, vh};
+        oval_raster(l, t, r, b, c, oval_preview_span, &view);
     }
 }
 
@@ -819,6 +878,9 @@ static int paint_scroll_pointer(int x, int y, int event)
     paint_scroll_layout(sx, sy, vw, vh);
     int handled = budo_scroll_pointer_host(host_api, &canvas_hscroll, x, y, event);
     handled |= budo_scroll_pointer_host(host_api, &canvas_vscroll, x, y, event);
+    if (budo_scroll_limit(&palette_scroll) || palette_scroll.dragging || palette_scroll.held)
+        handled |= budo_scroll_pointer_host(host_api, &palette_scroll, x, y, event);
+    palette_top = palette_scroll.position;
     canvas_left = canvas_hscroll.position;
     canvas_top = canvas_vscroll.position;
     return handled;
@@ -911,7 +973,6 @@ static void paint_draw(void)
         {"Pixel grid", 1, pixel_grid}
     };
     static const char *image_items[] = {"Image Size...", "Canvas Size..."};
-    int x;
     if (!layout(&cx,&cy,&cw,&ch,&sx,&sy,&vw,&vh,&pal_y,&status_y)) return;
     host_api->fill_rect(cx, cy, cw, ch,
         host_api->get_system_color(BUDO_SYS_COLOR_FACE));
@@ -931,25 +992,27 @@ static void paint_draw(void)
     draw_preview(sx, sy, vw, vh, draw_button == 2 ? bg : fg);
     host_api->draw_text(cx + 6, pal_y - 11, "Colors",
         host_api->get_system_color(BUDO_SYS_COLOR_TEXT), 6);
-    for (i = 0; i < 16; ++i) {
-        x = cx + 6 + i * 22;
-        int index = palette_page * 16 + i;
-        host_api->fill_rect_rgb(x, pal_y, 18, 16, canvas_rgb((unsigned char)index));
-        host_api->draw_rect(x - 1, pal_y - 1, 20, 18,
+    for (i = 0; i < palette_rows * palette_cols; ++i) {
+        int index = palette_top * palette_cols + i;
+        if (index >= 256) break;
+        int x = cx + 6 + (i % palette_cols) * PALETTE_STEP;
+        int y = pal_y + (i / palette_cols) * PALETTE_STEP;
+        host_api->fill_rect_rgb(x, y, PALETTE_CELL, PALETTE_CELL,
+                               canvas_rgb((unsigned char)index));
+        host_api->draw_rect(x - 1, y - 1, PALETTE_STEP, PALETTE_STEP,
             host_api->get_system_color(index == fg ?
                 BUDO_SYS_COLOR_ACCENT : BUDO_SYS_COLOR_SHADOW));
         if (index == bg)
-            host_api->draw_rect(x + 2, pal_y + 2, 14, 12,
+            host_api->draw_rect(x + 1, y + 1, PALETTE_CELL - 2, PALETTE_CELL - 2,
                 host_api->get_system_color(BUDO_SYS_COLOR_HIGHLIGHT));
     }
-    host_api->draw_text(cx + 366, pal_y + 4, "FG",
+    host_api->draw_text(cx + 60, pal_y - 11, "FG",
         host_api->get_system_color(BUDO_SYS_COLOR_TEXT), 2);
-    host_api->fill_rect_rgb(cx + 386, pal_y + 1, 14, 14, canvas_rgb(fg));
-    host_api->draw_text(cx + 406, pal_y + 4, "BG",
+    host_api->fill_rect_rgb(cx + 78, pal_y - 11, 8, 8, canvas_rgb(fg));
+    host_api->draw_text(cx + 98, pal_y - 11, "BG",
         host_api->get_system_color(BUDO_SYS_COLOR_TEXT), 2);
-    host_api->fill_rect_rgb(cx + 426, pal_y + 1, 14, 14, canvas_rgb(bg));
-    host_api->draw_standard_button(cx + 448, pal_y, 18, 16, "<", 0);
-    host_api->draw_standard_button(cx + 470, pal_y, 18, 16, ">", 0);
+    host_api->fill_rect_rgb(cx + 116, pal_y - 11, 8, 8, canvas_rgb(bg));
+    if (budo_scroll_limit(&palette_scroll)) budo_scroll_draw(host_api, &palette_scroll);
     host_api->fill_rect(cx, status_y - 1, cw, 1,
         host_api->get_system_color(BUDO_SYS_COLOR_SHADOW));
     char display_status[128];
@@ -1021,20 +1084,15 @@ static int paint_mouse_down(int x, int y, int buttons)
             tool = i; set_status(tool_labels[i]); return 1;
         }
     }
-    for (i = 0; i < 16; ++i) {
-        int px_color = cx + 6 + i * 22;
-        if (host_api->point_in_rect(x,y,px_color,pal_y,18,16)) {
-            unsigned char index = (unsigned char)(palette_page * 16 + i);
-            if (button == 2) bg = index; else fg = index;
+    int column = (x - cx - 6) / PALETTE_STEP;
+    int row = (y - pal_y) / PALETTE_STEP;
+    if (x >= cx + 6 && y >= pal_y && column < palette_cols && row < palette_rows) {
+        int index = (palette_top + row) * palette_cols + column;
+        if (index < 256) {
+            if (button == 2) bg = (unsigned char)index; else fg = (unsigned char)index;
             set_status(button == 2 ? "Background color selected" :
                                       "Foreground color selected");
-            return 1;
         }
-    }
-    if (host_api->point_in_rect(x,y,cx+448,pal_y,18,16) ||
-        host_api->point_in_rect(x,y,cx+470,pal_y,18,16)) {
-        palette_page = (palette_page + (x < cx + 470 ? 15 : 1)) % 16;
-        set_status("Palette page changed ([ / ])");
         return 1;
     }
     if (!to_canvas(x,y,&px,&py)) return 0;
@@ -1109,8 +1167,14 @@ static int paint_key(int key)
     if (key == '+' || key == '=') { paint_set_zoom(min_i(32, zoom * 2)); return 1; }
     if (key == '-') { paint_set_zoom(max_i(1, zoom / 2)); return 1; }
     if (key == '[' || key == ']') {
-        palette_page = (palette_page + (key == '[' ? 15 : 1)) % 16;
-        set_status("Palette page changed ([ / ])");
+        int cx, cy, cw, ch, pal_y;
+        if (host_api->window_get_client_rect(&cx, &cy, &cw, &ch)) {
+            palette_layout(cx, cy, cw, ch, &pal_y);
+            palette_scroll.position += key == '[' ? -1 : 1;
+            budo_scroll_clamp(&palette_scroll);
+            palette_top = palette_scroll.position;
+        }
+        set_status("Palette scrolled ([ / ])");
         return 1;
     }
     if (key == 26) { do_undo(); return 1; }
@@ -1145,6 +1209,7 @@ static int paint_open(void)
 
     canvas_hscroll.held = canvas_hscroll.armed = canvas_hscroll.dragging = 0;
     canvas_vscroll.held = canvas_vscroll.armed = canvas_vscroll.dragging = 0;
+    palette_scroll.held = palette_scroll.armed = palette_scroll.dragging = 0;
     drawing=0; dialog_mode=DIALOG_NONE; set_status("Ready");
     if (!host_api->window_create(WIN_X,WIN_Y,WIN_W,WIN_H,
         dirty ? "Paint *" : "Paint", BUDO_WINDOW_DEFAULT_BUTTONS)) {

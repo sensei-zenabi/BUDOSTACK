@@ -5,6 +5,8 @@
 #include "../budo/BUDOWIN/src/platform.c"
 #include <assert.h>
 
+static unsigned char before_scroll[SCREEN_SIZE];
+
 static int folder_row(const char *path)
 {
     for (int i = 0; i < explorer_folder_count; ++i)
@@ -17,7 +19,7 @@ static void click_folder(const char *path, int glyph, int *page)
     int index = folder_row(path);
     assert(index >= 0);
     explorer_folder_top = index;
-    int x = explorer_window.x + 8 + explorer_folder_indent(index) + (glyph ? 3 : 16);
+    int x = explorer_window.x + 8 + explorer_folder_indent(index) - explorer_folder_left + (glyph ? 3 : 16);
     assert(explorer_folder_pointer(x, explorer_folder_y() + 4, page));
 }
 
@@ -117,6 +119,84 @@ int main(int argc, char **argv)
     assert(explorer_folder_top > 0 && page == 0);
     desktop_scroll_pointer(0, 0, BUDO_POINTER_UP, &page);
     assert(point_to_slot(explorer_window.x + 10, explorer_folder_y() + 4) == -1);
+    /* Divider dragging resizes both panes, captures outside the window and clamps
+     * the content page while preserving the directory and selections. */
+    assert(load_directory(beta));
+    explorer_select_item(0, 0);
+    int divider_x = explorer_window.x + 8 + explorer_folder_width();
+    int divider_y = explorer_folder_y() + 10;
+    assert(desktop_scroll_pointer(divider_x + 3, divider_y, BUDO_POINTER_DOWN, &page));
+    assert(explorer_divider_dragging && ui_cursor_kind(0, 0) == EXPLORER_DIVIDER_CURSOR);
+    assert(desktop_scroll_pointer(divider_x + 83, divider_y, BUDO_POINTER_MOVE, &page));
+    assert(explorer_folder_width() == 240 && explorer_client_x() == explorer_window.x + 256);
+    assert(!strcmp(current_path, beta) && explorer_selection[0] && !explorer_select.dragging);
+    assert(desktop_scroll_pointer(SCREEN_WIDTH + 200, divider_y, BUDO_POINTER_MOVE, &page));
+    assert(explorer_client_w() == GRID_X_STEP);
+    assert(desktop_scroll_pointer(-100, divider_y, BUDO_POINTER_MOVE, &page));
+    assert(explorer_folder_width() == 96 && explorer_client_w() > GRID_X_STEP);
+    assert(desktop_scroll_pointer(explorer_window.x + 11, divider_y, BUDO_POINTER_MOVE, &page));
+    assert(explorer_folder_width() == 96); /* Requested width zero remains clamped. */
+    assert(desktop_scroll_pointer(0, 0, BUDO_POINTER_UP, &page) && !explorer_divider_dragging);
+    assert(!desktop_scroll_pointer(0, 0, BUDO_POINTER_MOVE, &page));
+    explorer_folder_preferred_width = 240;
+    explorer_window.w = WINDOW_MIN_W;
+    assert(explorer_folder_width() <= WINDOW_MIN_W - 40 - GRID_X_STEP);
+    explorer_window.w = WINDOW_DEFAULT_W;
+    assert(explorer_folder_width() == 240);
+    explorer_folder_preferred_width = 0;
+    /* A long folder label supplies horizontal overflow independently of the
+     * content page and vertical tree scroll; hit testing follows its offset. */
+    assert(join_path(path, sizeof(path), root,
+        "A-very-long-folder-name-that-needs-horizontal-scrolling-to-see-the-end"));
+    assert(mkdir(path, 0700) == 0);
+    assert(load_directory(root));
+    explorer_folder_left = 0;
+    explorer_folder_top = 0;
+    desktop_scroll_configure(APP_EXPLORER, page);
+    assert(budo_scroll_limit(&explorer_folder_hscroll) > 0);
+    int tree_top = explorer_folder_top;
+    assert(desktop_scroll_pointer(explorer_folder_hscroll.x + explorer_folder_hscroll.length - 3,
+        explorer_folder_hscroll.y + 3, BUDO_POINTER_DOWN, &page));
+    assert(explorer_folder_left > 0 && explorer_folder_top == tree_top && page == 0);
+    desktop_scroll_pointer(0, 0, BUDO_POINTER_UP, &page);
+    int thumb_start, thumb_size;
+    desktop_scroll_configure(APP_EXPLORER, page);
+    budo_scroll_thumb(&explorer_folder_hscroll, &thumb_start, &thumb_size);
+    assert(desktop_scroll_pointer(explorer_folder_hscroll.x + thumb_start + 1,
+        explorer_folder_hscroll.y + 3, BUDO_POINTER_DOWN, &page));
+    assert(explorer_folder_hscroll.dragging);
+    assert(desktop_scroll_pointer(SCREEN_WIDTH + 100, explorer_folder_hscroll.y + 3,
+        BUDO_POINTER_MOVE, &page));
+    assert(explorer_folder_left == budo_scroll_limit(&explorer_folder_hscroll));
+    assert(explorer_folder_top == tree_top && page == 0);
+    desktop_scroll_pointer(0, 0, BUDO_POINTER_UP, &page);
+    assert(!explorer_folder_hscroll.dragging);
+    render(argv[1], "folders-scrolled.ppm");
+    memcpy(before_scroll, framebuffer, sizeof(before_scroll));
+    --explorer_folder_left;
+    explorer_folder_draw();
+    int left = explorer_window.x + 8;
+    int right = left + explorer_folder_width() - BUDO_SCROLL_WIDTH;
+    int row_top = explorer_folder_y();
+    int row_bottom = row_top + explorer_folder_rows() * 12;
+    for (int sy = 0; sy < SCREEN_HEIGHT; ++sy)
+        for (int sx = 0; sx < SCREEN_WIDTH; ++sx)
+            if (sx < left || sx >= right || sy < row_top || sy >= row_bottom)
+                assert(framebuffer[sy * SCREEN_WIDTH + sx] == before_scroll[sy * SCREEN_WIDTH + sx]);
+    explorer_folder_left = explorer_folder_indent(folder_row(alpha));
+    explorer_folder_last_click[0] = 0;
+    click_folder(alpha, 0, &page);
+    assert(!strcmp(current_path, alpha));
+    int expanded = explorer_folder_expanded(alpha) >= 0;
+    click_folder(alpha, 1, &page);
+    assert((explorer_folder_expanded(alpha) >= 0) != expanded);
+    explorer_folder_left = 10000;
+    explorer_folder_preferred_width = explorer_window.w - 40 - GRID_X_STEP;
+    desktop_scroll_configure(APP_EXPLORER, page);
+    assert(explorer_folder_left == budo_scroll_limit(&explorer_folder_hscroll));
+    render(argv[1], "folders-wide.ppm");
+    explorer_folder_preferred_width = 0;
+    explorer_folder_left = 0;
     /* Filters and view modes do not change folder rows or their geometry. */
     assert(load_directory(root));
     int count = explorer_folder_count, top = explorer_folder_top;
@@ -148,6 +228,6 @@ int main(int argc, char **argv)
     assert(join_path(path, sizeof(path), root, "loop"));
     assert(symlink(root, path) == 0);
     assert(load_directory(path) && !strcmp(current_path, root));
-    puts("PASS: folder tree navigation, focus, scrolling, modes, refresh and failed loads");
+    puts("PASS: folder tree navigation, draggable divider, horizontal/vertical scrolling, modes and refresh");
     return 0;
 }

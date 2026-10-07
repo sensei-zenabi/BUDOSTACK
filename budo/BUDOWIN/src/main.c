@@ -60,6 +60,7 @@
 #define TEXT_CELL_WIDTH 6
 #define TEXT_CELL_HEIGHT 9
 #define CONTEXT_CURSOR_HOTSPOT 6
+#define EXPLORER_DIVIDER_CURSOR 5
 #define DESKTOP_TEXT_COLOR 4U
 #define TERMINAL_BG_COLOR 1U
 #define TERMINAL_TEXT_COLOR 5U
@@ -357,6 +358,9 @@ static char explorer_expanded[EXPLORER_TREE_EXPANDED_MAX][MAX_PATH];
 static int explorer_folder_count, explorer_expanded_count;
 static int explorer_folder_top, explorer_folder_focus = -1;
 static int explorer_folder_keyboard;
+static int explorer_folder_preferred_width;
+static int explorer_folder_left;
+static int explorer_divider_dragging, explorer_divider_grab;
 static char explorer_folder_last_click[MAX_PATH];
 static clock_t explorer_folder_click_time;
 static const char *explorer_status;
@@ -426,7 +430,7 @@ static char editor_pending_path[MAX_PATH];
 static uint64_t editor_saved_hash = 0;
 static BudoScrollbar editor_vscroll, editor_hscroll;
 static BudoScrollbar explorer_scroll, terminal_scrollbar, picker_scroll;
-static BudoScrollbar explorer_folder_scroll;
+static BudoScrollbar explorer_folder_scroll, explorer_folder_hscroll;
 static void explorer_folder_sync(void);
 static int explorer_folder_pointer(int x, int y, int *page);
 static int explorer_folder_key(int key, int scan, int *page);
@@ -509,6 +513,7 @@ static int point_in_rect(int px, int py, int x, int y, int w, int h);
 static void draw_text(int x, int y, const char *text,
                       unsigned char color, int max_chars);
 static int page_count(void);
+static void clamp_page(int *page);
 static int item_for_slot(int page, int slot);
 static void explorer_clear_selection(void);
 static int shortcuts_save(void);
@@ -938,7 +943,7 @@ static void bwa_pointer_region(int x, int y, int w, int h, int cursor,
 {
     int overlay = (cursor & BUDO_CURSOR_OVERLAY) != 0;
     cursor &= ~BUDO_CURSOR_OVERLAY;
-    if (cursor < BUDO_CURSOR_ARROW || cursor > BUDO_CURSOR_BUSY) return;
+    if (cursor < BUDO_CURSOR_ARROW || cursor > EXPLORER_DIVIDER_CURSOR) return;
     int owner = ui_draw_owner;
     if (overlay && (owner == active_window || owner == APP_NONE))
         ui_draw_owner = UI_OVERLAY_OWNER;
@@ -982,6 +987,7 @@ static int ui_button_event(int x, int y, int down, int up)
 static int ui_cursor_kind(int x, int y)
 {
     if (ui_busy) return BUDO_CURSOR_BUSY;
+    if (explorer_divider_dragging) return EXPLORER_DIVIDER_CURSOR;
     int hit = ui_hit(x, y, 0);
     if (hit >= 0) return ui_regions[hit].cursor;
     return BUDO_CURSOR_ARROW;
@@ -989,6 +995,10 @@ static int ui_cursor_kind(int x, int y)
 
 static int ui_cursor_ink(int kind, int x, int y)
 {
+    if (kind == EXPLORER_DIVIDER_CURSOR)
+        return (y == CONTEXT_CURSOR_HOTSPOT && x >= 1 && x <= 11) ||
+               (x >= 1 && x <= 4 && abs(y - CONTEXT_CURSOR_HOTSPOT) == x - 1) ||
+               (x >= 8 && x <= 11 && abs(y - CONTEXT_CURSOR_HOTSPOT) == 11 - x);
     if (kind == BUDO_CURSOR_TEXT)
         return (x == CONTEXT_CURSOR_HOTSPOT && y >= 2 && y <= 10) ||
                ((y == 2 || y == 10) && x >= 4 && x <= 8);
@@ -2483,8 +2493,15 @@ static int text_input_active(void)
 
 static int explorer_folder_width(void)
 {
-    int width = explorer_window.w / 3;
-    return width < 160 ? width : 160;
+    int width = explorer_folder_preferred_width;
+    if (!width) {
+        width = explorer_window.w / 3;
+        if (width > 160) width = 160;
+    }
+    int maximum = explorer_window.w - 40 - GRID_X_STEP;
+    if (width > maximum) width = maximum;
+    if (width < 96) width = 96;
+    return width;
 }
 
 static int explorer_folder_y(void)
@@ -2494,7 +2511,7 @@ static int explorer_folder_y(void)
 
 static int explorer_folder_rows(void)
 {
-    int rows = (explorer_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 44) / 12;
+    int rows = (explorer_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 44 - BUDO_SCROLL_WIDTH) / 12;
     return rows > 0 ? rows : 1;
 }
 
@@ -7681,9 +7698,76 @@ static void explorer_folder_toggle(int index, int *page)
 
 static int explorer_folder_indent(int index)
 {
-    int indent = explorer_folders[index].depth * 10;
-    int limit = explorer_folder_width() - BUDO_SCROLL_WIDTH - 42;
-    return indent < limit ? indent : limit;
+    return explorer_folders[index].depth * 10;
+}
+
+static int explorer_folder_extent(void)
+{
+    int extent = 0;
+    for (int i = 0; i < explorer_folder_count; ++i) {
+        const char *name = explorer_folders[i].name;
+        int cells = 0;
+        while (*name) {
+            (void)bw_text_cell(&name);
+            ++cells;
+        }
+        int end = explorer_folder_indent(i) + 12 + cells * TEXT_CELL_WIDTH + 3;
+        if (end > extent) extent = end;
+    }
+    return extent;
+}
+
+static void explorer_folder_clamp_horizontal(void)
+{
+    int limit = explorer_folder_extent() - (explorer_folder_width() - BUDO_SCROLL_WIDTH);
+    if (limit < 0) limit = 0;
+    if (explorer_folder_left > limit) explorer_folder_left = limit;
+    if (explorer_folder_left < 0) explorer_folder_left = 0;
+}
+
+static int explorer_divider_pointer(int x, int y, int event, int *page)
+{
+    if (event == BUDO_POINTER_UP) {
+        int handled = explorer_divider_dragging;
+        explorer_divider_dragging = 0;
+        return handled;
+    }
+    if (explorer_divider_dragging && event == BUDO_POINTER_MOVE) {
+        int width = x - explorer_window.x - 8 - explorer_divider_grab;
+        int maximum = explorer_window.w - 40 - GRID_X_STEP;
+        if (width < 96) width = 96;
+        if (width > maximum) width = maximum;
+        explorer_folder_preferred_width = width;
+        explorer_folder_clamp_horizontal();
+        clamp_page(page);
+        return 1;
+    }
+    if (event != BUDO_POINTER_DOWN || active_window != APP_EXPLORER ||
+        !explorer_window.open || explorer_window.minimized || explorer_rename_active ||
+        editor_file_dialog != EDITOR_FILE_DIALOG_NONE || confirm_kind ||
+        explorer_file_menu || explorer_view_menu || context_menu) return 0;
+    int divider_x = explorer_window.x + 8 + explorer_folder_width();
+    if (!point_in_rect(x, y, divider_x, explorer_folder_y() - 12, 8,
+                       explorer_folder_rows() * 12 + 12 + BUDO_SCROLL_WIDTH)) return 0;
+    explorer_divider_dragging = 1;
+    explorer_divider_grab = x - divider_x;
+    explorer_folder_last_click[0] = 0;
+    return 1;
+}
+
+static void explorer_folder_text(int x, int y, const char *text, unsigned char ink,
+                                 int left, int right)
+{
+    while (*text && x < right) {
+        const unsigned char *glyph = glyph_for((char)bw_text_cell(&text));
+        if (x + 5 > left) {
+            for (int row = 0; row < 7; ++row)
+                for (int col = 0; col < 5; ++col)
+                    if (x + col >= left && x + col < right && (glyph[row] & (0x10 >> col)))
+                        put_pixel(x + col, y + row, ink);
+        }
+        x += TEXT_CELL_WIDTH;
+    }
 }
 
 static int explorer_folder_pointer(int x, int y, int *page)
@@ -7693,7 +7777,7 @@ static int explorer_folder_pointer(int x, int y, int *page)
     explorer_folder_keyboard = 1;
     int index = explorer_folder_top + (y - explorer_folder_y()) / 12;
     if (index >= explorer_folder_count) return 1;
-    int glyph_x = explorer_window.x + 8 + explorer_folder_indent(index);
+    int glyph_x = explorer_window.x + 8 + explorer_folder_indent(index) - explorer_folder_left;
     if (x >= glyph_x && x < glyph_x + 10 && explorer_folders[index].expandable) {
         explorer_folder_last_click[0] = 0;
         explorer_folder_toggle(index, page);
@@ -7761,22 +7845,27 @@ static void explorer_folder_draw(void)
     }
     int x = explorer_window.x + 8, y = explorer_folder_y();
     int width = explorer_folder_width() - BUDO_SCROLL_WIDTH;
+    explorer_folder_clamp_horizontal();
     draw_text(x, y - 11, "Folders", TEXT_COLOR, 7);
-    draw_rect(x + explorer_folder_width() + 3, y - 12, 1,
-              explorer_folder_rows() * 12 + 12, WINDOW_SHADOW_COLOR);
+    int divider_x = x + explorer_folder_width();
+    int divider_h = explorer_folder_rows() * 12 + 12 + BUDO_SCROLL_WIDTH;
+    fill_rect(divider_x, y - 12, 8, divider_h, WINDOW_CHROME_COLOR);
+    draw_rect(divider_x + 3, y - 12, 1, divider_h, WINDOW_SHADOW_COLOR);
+    bwa_pointer_region(divider_x, y - 12, 8, divider_h, EXPLORER_DIVIDER_CURSOR, "Resize folder pane");
     for (int slot = 0; slot < explorer_folder_rows(); ++slot) {
         int index = explorer_folder_top + slot;
         if (index >= explorer_folder_count) break;
         int row_y = y + slot * 12;
-        int indent = explorer_folder_indent(index);
+        int indent = explorer_folder_indent(index) - explorer_folder_left;
         int selected = index == explorer_folder_focus;
         unsigned char ink = selected ? TITLE_TEXT_COLOR : TEXT_COLOR;
         fill_rect(x, row_y, width, 12, selected ? TITLE_COLOR : WINDOW_FACE_COLOR);
         if (explorer_folders[index].expandable)
-            draw_text(x + indent, row_y + 2,
-                      explorer_folder_expanded(explorer_folders[index].path) >= 0 ? "-" : "+", ink, 1);
-        draw_text_elided(x + indent + 12, row_y + 2, explorer_folders[index].name,
-                         ink, (width - indent - 12) / 6);
+            explorer_folder_text(x + indent, row_y + 2,
+                                 explorer_folder_expanded(explorer_folders[index].path) >= 0 ? "-" : "+",
+                                 ink, x, x + width);
+        explorer_folder_text(x + indent + 12, row_y + 2, explorer_folders[index].name,
+                             ink, x, x + width);
         bwa_pointer_region(x, row_y, width, 12, BUDO_CURSOR_ARROW, explorer_folders[index].path);
         if (selected && explorer_folder_keyboard) draw_rect(x, row_y, width, 12, ink);
     }
@@ -9520,11 +9609,13 @@ static void open_explorer(void)
 
 static void minimize_explorer(void)
 {
+    explorer_divider_dragging = 0;
     window_minimize_state(&explorer_window);
 }
 
 static void close_explorer(void)
 {
+    explorer_divider_dragging = 0;
     window_close_state(&explorer_window);
 }
 
@@ -9883,6 +9974,11 @@ static void desktop_scroll_configure(int app, int page)
             1, editor_wrap_enabled() ? 0 : longest,
             editor_visible_cols(), editor_left_col);
     } else if (app == APP_EXPLORER) {
+        scrollbar_configure(&explorer_folder_hscroll,
+            explorer_window.x + 8, explorer_folder_y() + explorer_folder_rows() * 12,
+            explorer_folder_width() - BUDO_SCROLL_WIDTH,
+            1, explorer_folder_extent(), explorer_folder_width() - BUDO_SCROLL_WIDTH, explorer_folder_left);
+        explorer_folder_left = explorer_folder_hscroll.position;
         scrollbar_configure(&explorer_folder_scroll,
             explorer_window.x + 8 + explorer_folder_width() - BUDO_SCROLL_WIDTH,
             explorer_folder_y(), explorer_folder_rows() * 12,
@@ -9912,6 +10008,9 @@ static void desktop_scroll_draw(int app, int page)
         if (!editor_wrap_enabled()) budo_scroll_draw(&bwa_host_api, &editor_hscroll);
     } else if (app == APP_EXPLORER) {
         budo_scroll_draw(&bwa_host_api, &explorer_folder_scroll);
+        budo_scroll_draw(&bwa_host_api, &explorer_folder_hscroll);
+        fill_rect(explorer_folder_scroll.x, explorer_folder_hscroll.y,
+                  BUDO_SCROLL_WIDTH, BUDO_SCROLL_WIDTH, WINDOW_CHROME_COLOR);
         budo_scroll_draw(&bwa_host_api, &explorer_scroll);
     } else if (app == APP_TERMINAL) {
         budo_scroll_draw(&bwa_host_api, &terminal_scrollbar);
@@ -9922,9 +10021,11 @@ static int desktop_scroll_pointer(int x, int y, int event, int *page)
 {
     int app = active_window;
     int handled = 0;
+    if (explorer_divider_pointer(x, y, event, page)) return 1;
     if (event == BUDO_POINTER_UP) {
         BudoScrollbar *bars[] = {&editor_vscroll, &editor_hscroll,
-                                &explorer_scroll, &explorer_folder_scroll, &terminal_scrollbar, &picker_scroll};
+                                &explorer_scroll, &explorer_folder_scroll, &explorer_folder_hscroll,
+                                &terminal_scrollbar, &picker_scroll};
         for (size_t i = 0; i < sizeof(bars) / sizeof(bars[0]); ++i)
             handled |= budo_scroll_pointer_at(bars[i], x, y, event, 0);
         return handled;
@@ -9942,6 +10043,9 @@ static int desktop_scroll_pointer(int x, int y, int event, int *page)
             handled = 1;
         }
     } else if (app == APP_EXPLORER && !explorer_rename_active) {
+        handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_folder_hscroll, x, y, event);
+        explorer_folder_left = explorer_folder_hscroll.position;
+        if (handled) return 1;
         handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_folder_scroll, x, y, event);
         explorer_folder_top = explorer_folder_scroll.position;
         if (handled) return 1;

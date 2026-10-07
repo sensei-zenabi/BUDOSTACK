@@ -343,6 +343,22 @@ static int editor_left_col = 0;
 static int editor_menu = EDITOR_MENU_NONE;
 static int explorer_file_menu = 0;
 static int explorer_list_view;
+/* Visible rows are rebuilt only when navigation or expansion changes. */
+#define EXPLORER_TREE_MAX 1024
+#define EXPLORER_TREE_EXPANDED_MAX 256
+typedef struct ExplorerFolderRow {
+    char path[MAX_PATH];
+    char name[MAX_NAME];
+    int depth;
+    int expandable;
+} ExplorerFolderRow;
+static ExplorerFolderRow explorer_folders[EXPLORER_TREE_MAX];
+static char explorer_expanded[EXPLORER_TREE_EXPANDED_MAX][MAX_PATH];
+static int explorer_folder_count, explorer_expanded_count;
+static int explorer_folder_top, explorer_folder_focus = -1;
+static int explorer_folder_keyboard;
+static char explorer_folder_last_click[MAX_PATH];
+static clock_t explorer_folder_click_time;
 static const char *explorer_status;
 static char explorer_error[160];
 static int explorer_view_menu;
@@ -410,6 +426,11 @@ static char editor_pending_path[MAX_PATH];
 static uint64_t editor_saved_hash = 0;
 static BudoScrollbar editor_vscroll, editor_hscroll;
 static BudoScrollbar explorer_scroll, terminal_scrollbar, picker_scroll;
+static BudoScrollbar explorer_folder_scroll;
+static void explorer_folder_sync(void);
+static int explorer_folder_pointer(int x, int y, int *page);
+static int explorer_folder_key(int key, int scan, int *page);
+static void explorer_folder_draw(void);
 static void editor_mark_saved(void);
 static void editor_close_now(void);
 static void close_terminal(void);
@@ -2460,9 +2481,26 @@ static int text_input_active(void)
            !terminal_window.minimized;
 }
 
+static int explorer_folder_width(void)
+{
+    int width = explorer_window.w / 3;
+    return width < 160 ? width : 160;
+}
+
+static int explorer_folder_y(void)
+{
+    return explorer_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 20;
+}
+
+static int explorer_folder_rows(void)
+{
+    int rows = (explorer_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 44) / 12;
+    return rows > 0 ? rows : 1;
+}
+
 static int explorer_client_x(void)
 {
-    return explorer_window.x + 8;
+    return explorer_window.x + 8 + explorer_folder_width() + 8;
 }
 
 static int explorer_client_y(void)
@@ -2472,7 +2510,7 @@ static int explorer_client_y(void)
 
 static int explorer_client_w(void)
 {
-    return explorer_window.w - 32;
+    return explorer_window.w - 40 - explorer_folder_width();
 }
 
 static int explorer_client_h(void)
@@ -2523,7 +2561,7 @@ static int point_to_slot(int x, int y)
         return -1;
     }
 
-    if (explorer_list_view && rel_x >= explorer_client_w()) return -1;
+    if (rel_x >= explorer_client_w()) return -1;
     col = explorer_list_view ? 0 : rel_x / GRID_X_STEP;
     row = rel_y / (explorer_list_view ? 12 : GRID_Y_STEP);
 
@@ -2770,8 +2808,7 @@ static void draw_checkbox(int x, int y, int checked)
 static void draw_explorer_list_entry(int index, int x, int y)
 {
     int width = explorer_client_w();
-    int name_w = width - 246;
-    if (name_w < 60) name_w = 60;
+    int name_w = width >= 360 ? width - 246 : width >= 270 ? width - 180 : width >= 210 ? width - 78 : width;
     int selected = index == -2 ? explorer_up_selected : index >= 0 && explorer_selection[index];
     unsigned char ink = selected ? TITLE_TEXT_COLOR : TEXT_COLOR;
     fill_rect(x, y, width, 12, selected ? TITLE_COLOR : WINDOW_FACE_COLOR);
@@ -2791,9 +2828,9 @@ static void draw_explorer_list_entry(int index, int x, int y)
             attributes[2] = S_ISLNK(info.st_mode) ? 'L' : '-';
             attributes[3] = items[index].type == TYPE_FOLDER ? 'D' : 'A';
         }
-        draw_text(x + name_w, y + 2, size, ink, 12);
-        draw_text(x + name_w + 78, y + 2, date, ink, 16);
-        draw_text(x + name_w + 180, y + 2, attributes, ink, 4);
+        if (width - name_w >= 78) draw_text(x + name_w, y + 2, size, ink, 12);
+        if (width - name_w >= 180) draw_text(x + name_w + 78, y + 2, date, ink, 16);
+        if (width - name_w >= 246) draw_text(x + name_w + 180, y + 2, attributes, ink, 4);
         if (index == explorer_selected_item) draw_rect(x, y, width, 12, ink);
     }
 }
@@ -2826,15 +2863,16 @@ static void draw_file_explorer_window(int page)
     draw_window_button(max_x, title_y + WINDOW_BORDER, 1);
     draw_window_button(close_x, title_y + WINDOW_BORDER, 2);
 
+    explorer_folder_draw();
     slots = explorer_slots();
     if (explorer_list_view) {
         int x = explorer_client_x(), y = explorer_client_y() - 12;
-        int name_w = explorer_client_w() - 246;
-        if (name_w < 60) name_w = 60;
+        int width = explorer_client_w();
+        int name_w = width >= 360 ? width - 246 : width >= 270 ? width - 180 : width >= 210 ? width - 78 : width;
         draw_text(x + 3, y, "Name", TEXT_COLOR, 4);
-        draw_text(x + name_w, y, "Bytes", TEXT_COLOR, 5);
-        draw_text(x + name_w + 78, y, "Modified", TEXT_COLOR, 8);
-        draw_text(x + name_w + 180, y, "Attr", TEXT_COLOR, 4);
+        if (width - name_w >= 78) draw_text(x + name_w, y, "Bytes", TEXT_COLOR, 5);
+        if (width - name_w >= 180) draw_text(x + name_w + 78, y, "Modified", TEXT_COLOR, 8);
+        if (width - name_w >= 246) draw_text(x + name_w + 180, y, "Attr", TEXT_COLOR, 4);
     }
 
     for (slot = 0; slot < slots; ++slot) {
@@ -7379,8 +7417,29 @@ static int load_directory(const char *path)
 {
     struct ffblk entry;
     char pattern[MAX_PATH];
+    char resolved[MAX_PATH];
     int done;
 
+    if (realpath(path, resolved)) {
+        DIR *directory = opendir(resolved);
+        if (!directory) {
+            snprintf(explorer_error, sizeof(explorer_error), "Cannot open folder: %s", strerror(errno));
+            explorer_status = explorer_error;
+            return 0;
+        }
+        closedir(directory);
+        path = resolved;
+    } else {
+        int virtual_folder = 0;
+        for (int i = 0; i < shortcut_count; ++i)
+            if (desktop_shortcuts[i].type == TYPE_FOLDER && !strcmp(desktop_shortcuts[i].path, path))
+                virtual_folder = 1;
+        if (!virtual_folder) {
+            snprintf(explorer_error, sizeof(explorer_error), "Cannot open folder: %s", strerror(errno));
+            explorer_status = explorer_error;
+            return 0;
+        }
+    }
     if (!copy_text(current_path, sizeof(current_path), path)) {
         return 0;
     }
@@ -7426,7 +7485,301 @@ static int load_directory(const char *path)
     qsort(items, (size_t)item_count, sizeof(items[0]), compare_items);
     explorer_up_selected = 0;
     budo_selection_clear(&explorer_select);
+    explorer_folder_sync();
     return 1;
+}
+
+static int explorer_folder_expanded(const char *path)
+{
+    for (int i = 0; i < explorer_expanded_count; ++i)
+        if (!strcmp(explorer_expanded[i], path)) return i;
+    return -1;
+}
+
+static void explorer_folder_expand(const char *path)
+{
+    if (explorer_folder_expanded(path) >= 0) return;
+    if (explorer_expanded_count == EXPLORER_TREE_EXPANDED_MAX) {
+        explorer_status = "Folder expansion limit reached";
+        return;
+    }
+    if (copy_text(explorer_expanded[explorer_expanded_count], MAX_PATH, path))
+        ++explorer_expanded_count;
+}
+
+static int explorer_folder_compare(const void *left, const void *right)
+{
+    const ExplorerFolderRow *a = left, *b = right;
+    return compare_names_ci(a->name, b->name);
+}
+
+static int explorer_folder_has_children(const char *path)
+{
+    for (int i = 0; i < shortcut_count; ++i) {
+        const char *owner = shortcut_details[i].parent;
+        if (!owner[0]) owner = bw_user_directory();
+        if (desktop_shortcuts[i].type == TYPE_FOLDER && !strcmp(owner, path)) return 1;
+    }
+    DIR *directory = opendir(path);
+    if (!directory) return 1; /* Keep inaccessible folders expandable to report errors. */
+    struct dirent *entry;
+    int found = 0;
+    while (!found && (entry = readdir(directory))) {
+        char child[MAX_PATH];
+        struct stat info;
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (join_path(child, sizeof(child), path, entry->d_name) &&
+            stat(child, &info) == 0 && S_ISDIR(info.st_mode)) found = 1;
+    }
+    closedir(directory);
+    return found;
+}
+
+static void explorer_folder_add(ExplorerFolderRow *children, int *count,
+                                int capacity, const char *path, const char *name, int depth)
+{
+    for (int i = 0; i < *count; ++i)
+        if (!strcmp(children[i].path, path)) return;
+    if (*count >= capacity) {
+        explorer_status = "Folder browser row limit reached";
+        return;
+    }
+    ExplorerFolderRow *row = &children[*count];
+    if (!copy_text(row->path, sizeof(row->path), path) ||
+        !copy_text(row->name, sizeof(row->name), name)) return;
+    row->depth = depth;
+    row->expandable = 0;
+    ++*count;
+}
+
+static void explorer_folder_rebuild(void)
+{
+    ExplorerFolderRow *children = malloc(sizeof(*children) * EXPLORER_TREE_MAX);
+    if (!children) {
+        perror("Folder browser");
+        explorer_status = "Cannot allocate folder browser rows";
+        return;
+    }
+    explorer_folder_count = 1;
+    copy_text(explorer_folders[0].path, MAX_PATH, "/");
+    copy_text(explorer_folders[0].name, MAX_NAME, "/");
+    explorer_folders[0].depth = 0;
+    for (int i = 0; i < explorer_folder_count; ++i) {
+        ExplorerFolderRow *parent = &explorer_folders[i];
+        if (explorer_folder_expanded(parent->path) < 0) continue;
+        int count = 0;
+        int capacity = EXPLORER_TREE_MAX - explorer_folder_count;
+        DIR *directory = opendir(parent->path);
+        if (directory) {
+            struct dirent *entry;
+            while ((entry = readdir(directory))) {
+                char path[MAX_PATH];
+                struct stat info;
+                if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+                if (join_path(path, sizeof(path), parent->path, entry->d_name) &&
+                    stat(path, &info) == 0 && S_ISDIR(info.st_mode))
+                    explorer_folder_add(children, &count, capacity, path, entry->d_name, parent->depth + 1);
+            }
+            closedir(directory);
+        }
+        /* Desktop folders can contain virtual folder shortcuts as well. */
+        for (int j = 0; j < shortcut_count; ++j) {
+            const char *owner = shortcut_details[j].parent;
+            if (!owner[0]) owner = bw_user_directory();
+            if (desktop_shortcuts[j].type == TYPE_FOLDER && !strcmp(owner, parent->path))
+                explorer_folder_add(children, &count, capacity, desktop_shortcuts[j].path,
+                                    desktop_shortcuts[j].name, parent->depth + 1);
+        }
+        qsort(children, (size_t)count, sizeof(*children), explorer_folder_compare);
+        memmove(&explorer_folders[i + 1 + count], &explorer_folders[i + 1],
+                (size_t)(explorer_folder_count - i - 1) * sizeof(*children));
+        memcpy(&explorer_folders[i + 1], children, (size_t)count * sizeof(*children));
+        explorer_folder_count += count;
+    }
+    free(children);
+    explorer_folder_focus = -1;
+    for (int i = 0; i < explorer_folder_count; ++i) {
+        explorer_folders[i].expandable = explorer_folder_has_children(explorer_folders[i].path);
+        if (!strcmp(explorer_folders[i].path, current_path)) explorer_folder_focus = i;
+    }
+}
+
+static void explorer_folder_ensure_visible(void)
+{
+    int rows = explorer_folder_rows();
+    if (explorer_folder_focus >= 0) {
+        if (explorer_folder_focus < explorer_folder_top) explorer_folder_top = explorer_folder_focus;
+        if (explorer_folder_focus >= explorer_folder_top + rows)
+            explorer_folder_top = explorer_folder_focus - rows + 1;
+    }
+    int last = explorer_folder_count - rows;
+    if (last < 0) last = 0;
+    if (explorer_folder_top > last) explorer_folder_top = last;
+    if (explorer_folder_top < 0) explorer_folder_top = 0;
+}
+
+static void explorer_folder_sync(void)
+{
+    char ancestor[MAX_PATH];
+    copy_text(ancestor, sizeof(ancestor), current_path);
+    char *slash = strrchr(ancestor, '/');
+    while (slash && slash != ancestor) {
+        *slash = 0;
+        explorer_folder_expand(ancestor);
+        slash = strrchr(ancestor, '/');
+    }
+    if (strcmp(current_path, "/")) explorer_folder_expand("/");
+    explorer_folder_rebuild();
+    explorer_folder_ensure_visible();
+}
+
+static void explorer_folder_select(int index, int *page)
+{
+    if (index < 0 || index >= explorer_folder_count) return;
+    if (!strcmp(explorer_folders[index].path, current_path)) return;
+    char path[MAX_PATH];
+    copy_text(path, sizeof(path), explorer_folders[index].path);
+    if (load_directory(path)) *page = 0;
+}
+
+static void explorer_folder_toggle(int index, int *page)
+{
+    if (index < 0 || index >= explorer_folder_count) return;
+    char path[MAX_PATH];
+    copy_text(path, sizeof(path), explorer_folders[index].path);
+    int expanded = explorer_folder_expanded(path);
+    if (expanded < 0) {
+        if (!explorer_folders[index].expandable) return;
+        DIR *directory = opendir(path);
+        if (!directory) {
+            int virtual_folder = 0;
+            for (int i = 0; i < shortcut_count; ++i)
+                if (desktop_shortcuts[i].type == TYPE_FOLDER && !strcmp(desktop_shortcuts[i].path, path))
+                    virtual_folder = 1;
+            if (!virtual_folder) {
+                snprintf(explorer_error, sizeof(explorer_error), "Cannot expand folder: %s", strerror(errno));
+                explorer_status = explorer_error;
+                return;
+            }
+        } else closedir(directory);
+        explorer_folder_expand(path);
+    } else {
+        /* Collapsing the selected branch moves selection to its parent row. */
+        if (explorer_folder_focus > index &&
+            explorer_folders[explorer_folder_focus].depth > explorer_folders[index].depth) {
+            int end = index + 1;
+            while (end < explorer_folder_count && explorer_folders[end].depth > explorer_folders[index].depth) ++end;
+            if (explorer_folder_focus < end) explorer_folder_select(index, page);
+        }
+        memmove(explorer_expanded[expanded], explorer_expanded[expanded + 1],
+                (size_t)(explorer_expanded_count - expanded - 1) * MAX_PATH);
+        --explorer_expanded_count;
+    }
+    explorer_folder_rebuild();
+    explorer_folder_ensure_visible();
+}
+
+static int explorer_folder_indent(int index)
+{
+    int indent = explorer_folders[index].depth * 10;
+    int limit = explorer_folder_width() - BUDO_SCROLL_WIDTH - 42;
+    return indent < limit ? indent : limit;
+}
+
+static int explorer_folder_pointer(int x, int y, int *page)
+{
+    if (!point_in_rect(x, y, explorer_window.x + 8, explorer_folder_y(),
+                       explorer_folder_width() - BUDO_SCROLL_WIDTH, explorer_folder_rows() * 12)) return 0;
+    explorer_folder_keyboard = 1;
+    int index = explorer_folder_top + (y - explorer_folder_y()) / 12;
+    if (index >= explorer_folder_count) return 1;
+    int glyph_x = explorer_window.x + 8 + explorer_folder_indent(index);
+    if (x >= glyph_x && x < glyph_x + 10 && explorer_folders[index].expandable) {
+        explorer_folder_last_click[0] = 0;
+        explorer_folder_toggle(index, page);
+    } else {
+        char path[MAX_PATH];
+        copy_text(path, sizeof(path), explorer_folders[index].path);
+        clock_t now = bw_clock();
+        int double_click = !strcmp(explorer_folder_last_click, path) &&
+            now - explorer_folder_click_time <= CLOCKS_PER_SEC / 2;
+        explorer_folder_select(index, page);
+        if (double_click) {
+            for (int i = 0; i < explorer_folder_count; ++i)
+                if (!strcmp(explorer_folders[i].path, path)) {
+                    explorer_folder_toggle(i, page);
+                    break;
+                }
+            explorer_folder_last_click[0] = 0;
+        } else copy_text(explorer_folder_last_click, sizeof(explorer_folder_last_click), path);
+        explorer_folder_click_time = now;
+    }
+    return 1;
+}
+
+static int explorer_folder_key(int key, int scan, int *page)
+{
+    if (key == 9) {
+        explorer_folder_keyboard = !explorer_folder_keyboard;
+        explorer_folder_ensure_visible();
+        return 1;
+    }
+    if (!explorer_folder_keyboard) return 0;
+    int index = explorer_folder_focus;
+    if (index < 0) index = 0;
+    if (key == 13 || key == ' ') explorer_folder_toggle(index, page);
+    else if (scan == 77) {
+        if (explorer_folder_expanded(explorer_folders[index].path) < 0) explorer_folder_toggle(index, page);
+        else if (index + 1 < explorer_folder_count && explorer_folders[index + 1].depth > explorer_folders[index].depth)
+            explorer_folder_select(index + 1, page);
+    } else if (scan == 75 || key == 8) {
+        if (scan == 75 && explorer_folder_expanded(explorer_folders[index].path) >= 0)
+            explorer_folder_toggle(index, page);
+        else {
+            int depth = explorer_folders[index].depth;
+            while (index > 0 && explorer_folders[--index].depth >= depth) {}
+            explorer_folder_select(index, page);
+        }
+    } else if (scan == 72 || scan == 80 || scan == 71 || scan == 79 || scan == 73 || scan == 81) {
+        if (scan == 71) index = 0;
+        else if (scan == 79) index = explorer_folder_count - 1;
+        else index += scan == 72 ? -1 : scan == 80 ? 1 : scan == 73 ? -explorer_folder_rows() : explorer_folder_rows();
+        if (index < 0) index = 0;
+        if (index >= explorer_folder_count) index = explorer_folder_count - 1;
+        explorer_folder_select(index, page);
+    }
+    /* File commands apply only when the content pane has keyboard focus. */
+    return 1;
+}
+
+static void explorer_folder_draw(void)
+{
+    static int previous_rows;
+    if (previous_rows != explorer_folder_rows()) {
+        explorer_folder_ensure_visible();
+        previous_rows = explorer_folder_rows();
+    }
+    int x = explorer_window.x + 8, y = explorer_folder_y();
+    int width = explorer_folder_width() - BUDO_SCROLL_WIDTH;
+    draw_text(x, y - 11, "Folders", TEXT_COLOR, 7);
+    draw_rect(x + explorer_folder_width() + 3, y - 12, 1,
+              explorer_folder_rows() * 12 + 12, WINDOW_SHADOW_COLOR);
+    for (int slot = 0; slot < explorer_folder_rows(); ++slot) {
+        int index = explorer_folder_top + slot;
+        if (index >= explorer_folder_count) break;
+        int row_y = y + slot * 12;
+        int indent = explorer_folder_indent(index);
+        int selected = index == explorer_folder_focus;
+        unsigned char ink = selected ? TITLE_TEXT_COLOR : TEXT_COLOR;
+        fill_rect(x, row_y, width, 12, selected ? TITLE_COLOR : WINDOW_FACE_COLOR);
+        if (explorer_folders[index].expandable)
+            draw_text(x + indent, row_y + 2,
+                      explorer_folder_expanded(explorer_folders[index].path) >= 0 ? "-" : "+", ink, 1);
+        draw_text_elided(x + indent + 12, row_y + 2, explorer_folders[index].name,
+                         ink, (width - indent - 12) / 6);
+        bwa_pointer_region(x, row_y, width, 12, BUDO_CURSOR_ARROW, explorer_folders[index].path);
+        if (selected && explorer_folder_keyboard) draw_rect(x, row_y, width, 12, ink);
+    }
 }
 
 static int parent_path(char *dest, size_t dest_size)
@@ -9530,6 +9883,11 @@ static void desktop_scroll_configure(int app, int page)
             1, editor_wrap_enabled() ? 0 : longest,
             editor_visible_cols(), editor_left_col);
     } else if (app == APP_EXPLORER) {
+        scrollbar_configure(&explorer_folder_scroll,
+            explorer_window.x + 8 + explorer_folder_width() - BUDO_SCROLL_WIDTH,
+            explorer_folder_y(), explorer_folder_rows() * 12,
+            0, explorer_folder_count, explorer_folder_rows(), explorer_folder_top);
+        explorer_folder_top = explorer_folder_scroll.position;
         scrollbar_configure(&explorer_scroll,
             explorer_window.x + explorer_window.w - 20,
             explorer_client_y(), explorer_client_h() - 12,
@@ -9553,6 +9911,7 @@ static void desktop_scroll_draw(int app, int page)
         budo_scroll_draw(&bwa_host_api, &editor_vscroll);
         if (!editor_wrap_enabled()) budo_scroll_draw(&bwa_host_api, &editor_hscroll);
     } else if (app == APP_EXPLORER) {
+        budo_scroll_draw(&bwa_host_api, &explorer_folder_scroll);
         budo_scroll_draw(&bwa_host_api, &explorer_scroll);
     } else if (app == APP_TERMINAL) {
         budo_scroll_draw(&bwa_host_api, &terminal_scrollbar);
@@ -9565,7 +9924,7 @@ static int desktop_scroll_pointer(int x, int y, int event, int *page)
     int handled = 0;
     if (event == BUDO_POINTER_UP) {
         BudoScrollbar *bars[] = {&editor_vscroll, &editor_hscroll,
-                                &explorer_scroll, &terminal_scrollbar, &picker_scroll};
+                                &explorer_scroll, &explorer_folder_scroll, &terminal_scrollbar, &picker_scroll};
         for (size_t i = 0; i < sizeof(bars) / sizeof(bars[0]); ++i)
             handled |= budo_scroll_pointer_at(bars[i], x, y, event, 0);
         return handled;
@@ -9583,6 +9942,9 @@ static int desktop_scroll_pointer(int x, int y, int event, int *page)
             handled = 1;
         }
     } else if (app == APP_EXPLORER && !explorer_rename_active) {
+        handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_folder_scroll, x, y, event);
+        explorer_folder_top = explorer_folder_scroll.position;
+        if (handled) return 1;
         handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_scroll, x, y, event);
         *page = explorer_scroll.position;
     } else if (app == APP_TERMINAL) {
@@ -10259,6 +10621,8 @@ static int desktop_selection_pointer(int x, int y, int buttons, int *page)
         int slot = point_to_slot(x, y);
         int index = slot >= 0 ? item_for_slot(*page, slot) : -1;
         if (index < 0) return 0;
+        explorer_folder_keyboard = 0;
+        explorer_folder_last_click[0] = 0;
         int order[MAX_ITEMS];
         int count = explorer_order(order);
         budo_selection_click(&explorer_select, order, count, index, modifiers, 1);
@@ -10875,7 +11239,13 @@ int main(int argc, char **argv)
                     explorer_window.drag_dx = mouse_x - explorer_window.x;
                     explorer_window.drag_dy = mouse_y - explorer_window.y;
                     last_target = -99;
+                } else if (explorer_folder_pointer(mouse_x, mouse_y, &page)) {
+                    screen_dirty = 1;
+                    last_target = -99;
+                    last_click_time = 0;
                 } else {
+                    explorer_folder_keyboard = 0;
+                    explorer_folder_last_click[0] = 0;
                     int slot = point_to_slot(mouse_x, mouse_y);
                     int target = slot >= 0 ? item_for_slot(page, slot) : -1;
                     unsigned int modifiers = keyboard_modifiers();
@@ -11568,6 +11938,9 @@ int main(int argc, char **argv)
                         explorer_rename_input[explorer_rename_len] = '\0';
                         screen_dirty = 1;
                     }
+                } else if (key != 0 && explorer_folder_key(key, 0, &page)) {
+                    screen_dirty = 1;
+                    last_target = -99;
                 } else if (key == ' ') {
                     int order[MAX_ITEMS];
                     int count = explorer_order(order);
@@ -11615,9 +11988,16 @@ int main(int argc, char **argv)
                     int extended = getch();
 
                     if (extended == 201 || extended == 202) {
-                        page += extended == 201 ? -1 : 1;
+                        if (point_in_rect(mouse_x, mouse_y, explorer_window.x + 8,
+                                          explorer_folder_y(), explorer_folder_width(), explorer_folder_rows() * 12)) {
+                            explorer_folder_top += extended == 201 ? -3 : 3;
+                            desktop_scroll_configure(APP_EXPLORER, page);
+                        } else page += extended == 201 ? -1 : 1;
                         clamp_page(&page);
                         screen_dirty = 1;
+                    } else if (explorer_folder_key(0, extended, &page)) {
+                        screen_dirty = 1;
+                        last_target = -99;
                     } else if (extended == 60) {
                         (void)explorer_begin_rename();
                         screen_dirty = 1;

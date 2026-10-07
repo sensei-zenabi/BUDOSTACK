@@ -14,7 +14,7 @@
 #pragma parameter grain_str "Grain Strength" 0.2 0.0 16.0 1.0
 #pragma parameter grain_intensity "Grain Intensity" 0.1 0.0 1.0 0.01
 #pragma parameter hotspot "Hotspot Toggle" 1.0 0.0 1.0 1.0
-#pragma parameter vignette "Vignette Toggle" 1.0 0.0 1.0 1.0
+#pragma parameter vignette "Vignette Toggle" 0.0 0.0 1.0 1.0
 #pragma parameter noise_toggle "Film Scratches" 0.0 0.0 1.0 1.0
 
 #if defined(VERTEX)
@@ -169,7 +169,7 @@ void main()
   film = mix(film, film + grain, grain_intensity); // Film grain
 
   film *= (vignette > 0.5) ? (1.0 - vig) : 1.0; // Vignette
-  film += ((1.0 - hot) * 0.15) * hotspot; // Hotspot ( * 0.2 )
+  film += ((1.0 - hot) * 0.05) * hotspot; // Hotspot ( * 0.2 )
 
   // Apply noise effects (or not)
   if (hash(float(FrameCount)) > 0.99 && noise_toggle > 0.5)

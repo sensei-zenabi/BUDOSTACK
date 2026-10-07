@@ -52,13 +52,13 @@ static void delete_workflow(char **argv, int view)
             if (dirty) {
                 ++frames;
                 /* (Up) is row zero; Test is row one in both views. */
-                int row_y = view ? 132 : 116;
+                int row_y = view ? 184 : 168;
                 if (frames == 5) pointer_event(host, BUDO_GFX_MOUSE_DOWN, 3, 180, row_y);
                 if (frames == 8) pointer_event(host, BUDO_GFX_MOUSE_UP, 3, 180, row_y);
                 if (frames == 11) pointer_event(host, BUDO_GFX_MOUSE_DOWN, 1, 200, row_y + 58);
                 if (frames == 14) pointer_event(host, BUDO_GFX_MOUSE_UP, 1, 200, row_y + 58);
-                if (frames == 17) pointer_event(host, BUDO_GFX_MOUSE_DOWN, 1, 360, 262);
-                if (frames == 20) pointer_event(host, BUDO_GFX_MOUSE_UP, 1, 360, 262);
+                if (frames == 17) pointer_event(host, BUDO_GFX_MOUSE_DOWN, 1, 360, 285);
+                if (frames == 20) pointer_event(host, BUDO_GFX_MOUSE_UP, 1, 360, 285);
                 if (frames == 25) {
                     struct budo_gfx_event quit = {.type = BUDO_GFX_QUIT};
                     budo_gfx_host_event(host, &quit);

@@ -188,14 +188,19 @@ int main(int argc, char **argv)
     explorer_window.w = 180;
     explorer_window.h = 120;
     int untouched_page = 0;
-    assert(desktop_point_owner(338,262) == APP_NONE);
-    assert(!desktop_selection_pointer(338,262,1,&untouched_page));
+    assert(desktop_point_owner(360,285) == APP_NONE);
+    assert(!desktop_selection_pointer(360,285,1,&untouched_page));
     assert(explorer_selection[0]);
     draw_desktop(0);
-    assert(!ui_button_event(338,262,1,0));
+    assert(!ui_button_event(360,285,1,0));
     draw_desktop(0);
-    assert(ui_button_event(338,262,0,1));
-    desktop_confirm_click(338,262);
+    assert(ui_button_event(360,285,0,1));
+    desktop_confirm_click(360,285);
+    for (int i = 0; file_job_active() && i < 5000; ++i) {
+        (void)file_job_poll();
+        struct timespec delay = {0, 1000000}; nanosleep(&delay, NULL);
+    }
+    assert(!file_job_active());
     assert(!confirm_kind && access(path,F_OK) != 0);
     explorer_window.minimized = 1;
     editor_window.open = 1;

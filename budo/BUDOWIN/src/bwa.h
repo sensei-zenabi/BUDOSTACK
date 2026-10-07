@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 13
+#define BWA_ABI_MINOR 14
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -47,7 +47,10 @@
 #define BUDO_CURSOR_RESIZE 2
 #define BUDO_CURSOR_CROSSHAIR 3
 #define BUDO_CURSOR_BUSY 4
+#define BUDO_CURSOR_HRESIZE 5
 #define BUDO_CURSOR_OVERLAY 0x100
+#define BUDO_CURSOR_CONTROL 0x200
+#define BUDO_CURSOR_MENU 0x400
 
 /* Stable UI geometry roles. */
 #define BUDO_SYS_METRIC_WINDOW_BORDER    0
@@ -165,6 +168,13 @@ typedef struct BwaHostApi {
     int (*get_keyboard_layout)(void);
     int (*set_keyboard_layout)(int nordic);
     int (*delete_file_association)(const char *extension);
+    /* ABI 1.14: persistent workspace and crisp 1x/2x UI scaling; restart applies. */
+    int (*get_workspace)(void);
+    int (*get_display_scale)(void);
+    int (*set_display)(int workspace, int scale);
+    /* Mark the requesting app's active modal; draw only its controls afterward. */
+    void (*set_modal_focus)(int enabled);
+    int (*get_focus_rect)(int *x, int *y, int *w, int *h);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

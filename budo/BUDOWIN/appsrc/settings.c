@@ -149,6 +149,17 @@ static void draw_list(void)
         host_api->draw_button_state(wx + 88, wy + 112, 66, 22, "NORD", nordic ? BUDO_BUTTON_PRESSED : 0);
         host_api->draw_text(wx + 16, wy + 148, "NORD: Finnish / Swedish keyboard", ui_color(BUDO_SYS_COLOR_TEXT), (ww - 32) / 6);
         host_api->draw_text(wx + 16, wy + 164, "AltGr: @, brackets and backslash", ui_color(BUDO_SYS_COLOR_TEXT), (ww - 32) / 6);
+        if (host_api->abi_minor >= 14 && host_api->get_workspace) {
+            host_api->draw_text(wx + 16, wy + 192, "Workspace (applies after restart)", ui_color(BUDO_SYS_COLOR_TEXT), 40);
+            const char *sizes[] = {"640x480", "960x720", "1280x960"};
+            for (int i = 0; i < 3; ++i)
+                host_api->draw_button_state(wx + 16 + i * 92, wy + 208, 86, 22, sizes[i],
+                                            host_api->get_workspace() == i ? BUDO_BUTTON_PRESSED : 0);
+            host_api->draw_text(wx + 16, wy + 240, "UI scale (200% uses 1280x960)", ui_color(BUDO_SYS_COLOR_TEXT), 40);
+            for (int i = 1; i <= 2; ++i)
+                host_api->draw_button_state(wx + 16 + (i - 1) * 92, wy + 256, 86, 22, i == 1 ? "100%" : "200%",
+                                            host_api->get_display_scale() == i ? BUDO_BUTTON_PRESSED : 0);
+        }
         host_api->draw_text(wx + 16, wy + wh - 20, settings_status, ui_color(BUDO_SYS_COLOR_TEXT), (ww - 32) / 6);
         return;
     }
@@ -184,6 +195,9 @@ static void draw_list(void)
         }
 
         app_name_for_id(app_id, app_name, sizeof(app_name));
+        if (host_api->abi_minor >= 14 && host_api->pointer_region)
+            host_api->pointer_region(list_x + 2, list_y + row * ROW_H + 1, list_w - 4, ROW_H - 1,
+                                    BUDO_CURSOR_ARROW | BUDO_CURSOR_MENU, ext);
         if (index == selected_association)
             host_api->fill_rect(list_x + 2, list_y + row * ROW_H + 1, list_w - 4, ROW_H - 1,
                                 ui_color(BUDO_SYS_COLOR_TITLE_ACTIVE));
@@ -220,7 +234,7 @@ static int settings_open(void)
     if (!host_api->window_create(WIN_X, WIN_Y, WIN_W, WIN_H,
                                   "Settings",
                                   BUDO_WINDOW_DEFAULT_BUTTONS)) return 0;
-    return host_api->window_set_min_size(360, 220);
+    return host_api->window_set_min_size(360, 340);
 }
 
 static void settings_draw(void)
@@ -351,6 +365,19 @@ static int settings_mouse_down(int x, int y, int buttons)
         settings_status = settings_tab ? "Click an entry to change its application." : "Keyboard settings are saved automatically.";
         return 1;
     }
+    if (!settings_tab && host_api->abi_minor >= 14 && host_api->set_display) {
+        int workspace = host_api->get_workspace(), scale = host_api->get_display_scale();
+        if (host_api->point_in_rect(x, y, wx + 16, wy + 208, 270, 22)) {
+            workspace = (x - wx - 16) / 92;
+            settings_status = host_api->set_display(workspace, scale) ? "Display saved; restart BUDOWIN to apply." : "Display save failed; previous settings kept.";
+            return 1;
+        }
+        if (host_api->point_in_rect(x, y, wx + 16, wy + 256, 178, 22)) {
+            scale = (x - wx - 16) / 92 + 1;
+            settings_status = host_api->set_display(workspace, scale) ? "Display saved; restart BUDOWIN to apply." : "Display save failed; previous settings kept.";
+            return 1;
+        }
+    }
     if (!settings_tab) {
         if (host_api->point_in_rect(x, y, wx + 16, wy + 112, 138, 22)) {
             settings_status = host_api->set_keyboard_layout(x >= wx + 88) ? "Keyboard language saved." : "Save failed; previous layout preserved.";
@@ -411,7 +438,13 @@ static int settings_key(int key)
         }
         return 1;
     }
-    if (settings_tab && key == (0x100 | 83)) { delete_association(); return 1; }
+    if (settings_tab && key == (0x100 | 83)) {
+        int fx, fy, fw, fh, wx, wy;
+        if (host_api->abi_minor >= 14 && host_api->get_focus_rect && host_api->get_focus_rect(&fx, &fy, &fw, &fh) && settings_rect(&wx, &wy, 0, 0)) {
+            if (fx == wx + 18 && fh == ROW_H - 1) selected_association = top_row + (fy - wy - 95) / ROW_H;
+        }
+        delete_association(); return 1;
+    }
     if (key == 27) {
         if (file_menu) { file_menu = 0; return 1; }
         return host_api->window_close();

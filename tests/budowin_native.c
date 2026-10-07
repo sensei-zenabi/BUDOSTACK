@@ -126,11 +126,14 @@ int main(int argc, char **argv) {
     char source[MAX_PATH], copy[MAX_PATH], link[MAX_PATH];
     assert(join_path(source, sizeof(source), getenv("BUDOWIN_TEST_DIR"), "folder"));
     assert(join_path(copy, sizeof(copy), getenv("BUDOWIN_TEST_DIR"), "folder-copy"));
-    assert(explorer_copy_path(source, copy, TYPE_FOLDER));
+    assert(fs_copy_tree(source, copy));
     assert(explorer_delete_path(copy, TYPE_FOLDER));
     assert(join_path(link, sizeof(link), getenv("BUDOWIN_TEST_DIR"), "link"));
     assert(symlink(source, link) == 0);
-    assert(!explorer_copy_path(link, copy, TYPE_FOLDER));
+    assert(fs_copy_tree(link, copy));
+    struct stat copied_link;
+    assert(lstat(copy, &copied_link) == 0 && S_ISLNK(copied_link.st_mode));
+    assert(explorer_delete_path(copy, TYPE_FILE));
     assert(explorer_delete_path(link, TYPE_FOLDER));
     assert(access(source, F_OK) == 0);
     if (argc == 3) {

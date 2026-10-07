@@ -438,8 +438,8 @@ static int session_poll(void)
 static int session_key(int key)
 {
     if (session_fd < 0) return 0;
-    if (key == 0) {
-        int scan = getch();
+    if (key == 0 || key >= 0x100) {
+        int scan = key >= 0x100 ? key & 255 : getch();
         const char *sequence = NULL;
         switch (scan) {
             case 72: sequence = "\033[A"; break; case 80: sequence = "\033[B"; break;

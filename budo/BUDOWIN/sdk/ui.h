@@ -164,6 +164,8 @@ static inline void budo_menu_bar_item(const BwaHostApi *host, int x, int y,
                                       int width, const char *label, int active)
 {
     int height = host->get_system_metric(BUDO_SYS_METRIC_MENU_HEIGHT);
+    if (host->abi_minor >= 14 && host->pointer_region)
+        host->pointer_region(x, y, width, height, BUDO_CURSOR_ARROW | BUDO_CURSOR_MENU, label);
     if (active) host->draw_standard_button(x, y, width, height, "", 1);
     host->draw_text(x + 4, y + 4, label,
                    host->get_system_color(active ? BUDO_SYS_COLOR_TITLE_TEXT : BUDO_SYS_COLOR_TEXT), (width - 8) / 6);
@@ -172,6 +174,9 @@ static inline void budo_menu_bar_item(const BwaHostApi *host, int x, int y,
 static inline void budo_menu_row_draw(const BwaHostApi *host, int x, int y,
                                       int width, const BudoMenuItem *item)
 {
+    if (item->enabled && host->abi_minor >= 14 && host->pointer_region)
+        host->pointer_region(x + 2, y + 2, width - 4, 16,
+                            BUDO_CURSOR_ARROW | BUDO_CURSOR_MENU | BUDO_CURSOR_OVERLAY, item->label);
     int mx = -1, my = -1, buttons = 0;
     if (host->abi_minor >= 10 && host->get_pointer_state)
         host->get_pointer_state(&mx, &my, &buttons);

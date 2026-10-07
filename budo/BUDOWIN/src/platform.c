@@ -14,7 +14,8 @@
 #include <unistd.h>
 
 static struct budo_gfx *screen;
-static uint32_t pixels[640 * 480];
+static uint32_t pixels[1280 * 960];
+#include "display_settings.h"
 static uint32_t palette[256];
 static int mouse_x = 320, mouse_y = 240, mouse_buttons;
 static int raw_mouse_x, raw_mouse_y, raw_mouse_valid;
@@ -111,6 +112,7 @@ int bw_initialize(int argc, char **argv) {
     if (written < 0 || (size_t)written >= sizeof(state_directory)) return 0;
     if (mkdir(state_directory, 0700) != 0 && errno != EEXIST) { perror("BUDOWIN: state directory"); return 0; }
     if (chdir(assets) != 0) { perror("BUDOWIN: asset directory"); return 0; }
+    bw_load_display();
     return 1;
 }
 const char *bw_user_directory(void) { return user_directory; }
@@ -129,7 +131,7 @@ const char *bw_state_file(const char *name) {
 }
 int bw_screen_open(void) {
     disconnected = 0;
-    if (budo_gfx_open(&screen, 640, 480, BUDO_GFX_ARGB8888) != 0) return 0;
+    if (budo_gfx_open(&screen, (unsigned int)(bw_screen_width() * display_scale), (unsigned int)(bw_screen_height() * display_scale), BUDO_GFX_ARGB8888) != 0) return 0;
     return budo_gfx_set_keyboard_grab(screen, 1) == 0;
 }
 void bw_screen_close(void) { budo_gfx_close(screen); screen = NULL; }
@@ -139,7 +141,7 @@ void bw_palette_entry(unsigned int index, unsigned int r, unsigned int g, unsign
 /* Composite exact PCX RGB with the independent indexed GUI palette. */
 int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t length,
                    const uint32_t *background, const unsigned char *mask) {
-    size_t count = sizeof(pixels) / sizeof(pixels[0]);
+    size_t count = (size_t)bw_screen_width() * bw_screen_height();
     if (offset > count || length > count - offset) return 0;
     for (size_t i = 0; i < length; ++i) {
         pixels[offset + i] = mask && mask[i] ? background[i] : palette[data[i]];
@@ -324,10 +326,11 @@ static int process_event(const struct budo_gfx_event *input) {
         /* Apply movement to the already-clamped cursor, not the physical
          * pointer position. Outward movement at an edge is discarded, so
          * reversing direction moves the cursor immediately. */
+        event.x /= display_scale; event.y /= display_scale;
         int64_t x = raw_mouse_valid ? (int64_t)mouse_x + event.x - raw_mouse_x : event.x;
         int64_t y = raw_mouse_valid ? (int64_t)mouse_y + event.y - raw_mouse_y : event.y;
-        mouse_x = x < 0 ? 0 : x > 639 ? 639 : (int)x;
-        mouse_y = y < 0 ? 0 : y > 479 ? 479 : (int)y;
+        mouse_x = x < 0 ? 0 : x >= bw_screen_width() ? bw_screen_width() - 1 : (int)x;
+        mouse_y = y < 0 ? 0 : y >= bw_screen_height() ? bw_screen_height() - 1 : (int)y;
         raw_mouse_x = event.x; raw_mouse_y = event.y;
         raw_mouse_valid = 1;
         int mask = event.button == 1 ? 1 : event.button == 3 ? 2 : 4;
@@ -359,11 +362,11 @@ int bw_begin_frame(void) {
     return !disconnected;
 }
 void bw_screen_flush(void) {
-    if (screen && budo_gfx_present(screen, pixels, NULL) != 0) disconnected = 1;
+    if (screen && budo_gfx_present(screen, bw_presentation_pixels(), NULL) != 0) disconnected = 1;
 }
 int bw_end_frame(void) {
     struct timespec delay = {0, 16000000};
-    if (budo_gfx_present(screen, pixels, NULL) != 0) return 0;
+    if (budo_gfx_present(screen, bw_presentation_pixels(), NULL) != 0) return 0;
     nanosleep(&delay, NULL);
     return !disconnected;
 }

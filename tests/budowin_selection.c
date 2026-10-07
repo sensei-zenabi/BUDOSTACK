@@ -5,7 +5,7 @@
 #include "../budo/BUDOWIN/src/platform.c"
 #include <assert.h>
 
-static uint32_t before[SCREEN_SIZE];
+static uint32_t before[SCREEN_CAPACITY];
 static int opened;
 
 static int open_test_app(void)

@@ -70,7 +70,8 @@ static void test_polish(void)
     /* A popup covering a button must intercept its hit test. */
     const char *items[] = {"Menu"};
     budo_menu_draw(&bwa_host_api, x, y, 100, items, 1);
-    assert(ui_hit(x + 5, y + 5, 1) == -1);
+    assert(ui_hit(x + 5, y + 5, 1) >= 0 &&
+           ui_regions[ui_hit(x + 5, y + 5, 1)].owner == UI_OVERLAY_OWNER);
     /* A popup can extend beyond its owner window. */
     budo_menu_draw(&bwa_host_api, 5, 5, 100, items, 1);
     assert(ui_hit(10, 10, 0) >= 0);

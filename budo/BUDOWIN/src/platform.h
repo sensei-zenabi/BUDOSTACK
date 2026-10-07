@@ -26,6 +26,11 @@ int kbhit(void);
 int getch(void);
 int bw_initialize(int argc, char **argv);
 int bw_screen_open(void);
+int bw_screen_width(void);
+int bw_screen_height(void);
+int bw_get_workspace(void);
+int bw_get_display_scale(void);
+int bw_set_display(int workspace, int scale);
 void bw_screen_close(void);
 void bw_palette_entry(unsigned int index, unsigned int r, unsigned int g, unsigned int b);
 int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t length,

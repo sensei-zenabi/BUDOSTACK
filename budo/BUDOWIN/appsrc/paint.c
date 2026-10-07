@@ -886,11 +886,15 @@ static void paint_resize_accept(void)
 static void paint_resize_draw(int cx, int cy, int cw, int ch)
 {
     int x = cx + (cw - 300) / 2, y = cy + (ch - 144) / 2;
+    if (host_api->abi_minor >= 14 && host_api->set_modal_focus) host_api->set_modal_focus(1);
     host_api->draw_sunken_panel(x,y,300,144,host_api->get_system_color(BUDO_SYS_COLOR_FACE));
+    if (host_api->abi_minor >= 14) host_api->pointer_region(x,y,300,144,BUDO_CURSOR_ARROW,NULL);
     host_api->draw_text(x+10,y+10,resize_dialog == 2 ? "Image Size (nearest neighbor)" : "Canvas Size (top-left anchor)",1,46);
     for (int i = 0; i < 2; ++i) {
         host_api->draw_text(x+12,y+37+i*26,i ? "Height" : "Width",1,8);
         host_api->draw_sunken_panel(x+76,y+30+i*26,100,22,resize_field == i && resize_selected ? 6 : 4);
+        if (host_api->abi_minor >= 14 && host_api->pointer_region)
+            host_api->pointer_region(x+76,y+30+i*26,100,22,BUDO_CURSOR_TEXT,i ? "Height" : "Width");
         host_api->draw_text(x+80,y+37+i*26,i ? resize_height : resize_width,resize_field == i && resize_selected ? 4 : 1,8);
     }
     host_api->draw_text(x+12,y+88,"1..2048 pixels",1,30);
@@ -901,6 +905,7 @@ static void paint_resize_draw(int cx, int cy, int cw, int ch)
 static void paint_draw(void)
 {
     int cx, cy, cw, ch, sx, sy, vw, vh, pal_y, status_y, i;
+    if (!resize_dialog && host_api->abi_minor >= 14 && host_api->set_modal_focus) host_api->set_modal_focus(0);
     static const char *file_items[5] = {"New   Ctrl+N", "Open... Ctrl+O",
                                       "Save  Ctrl+S", "Save As...", "Close"};
     static const char *edit_items[2] = {"Undo  Ctrl+Z", "Clear"};

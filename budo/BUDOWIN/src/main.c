@@ -634,6 +634,7 @@ static void open_editor(void);
 static void open_terminal(void);
 static int terminal_visible_rows(void);
 static int session_caret(int *x, int *y);
+static void terminal_draw_caret_row(unsigned long offset, size_t length);
 static void terminal_clear_selection(void);
 static void terminal_history_trimmed(void);
 static void terminal_load_resume_state(void);
@@ -2266,9 +2267,6 @@ static void restore_text_caret_vga(void)
 static void draw_text_caret_vga(void)
 {
     unsigned char rowbuf[TEXT_CELL_WIDTH];
-    unsigned char color =
-        active_window == APP_TERMINAL ?
-        TERMINAL_TEXT_COLOR : CURSOR_COLOR;
     int x;
     int y;
     int row;
@@ -2292,11 +2290,14 @@ static void draw_text_caret_vga(void)
         if (length <= 0) continue;
 
         offset = sy * SCREEN_WIDTH + start_x;
+        if (active_window == APP_TERMINAL) {
+            terminal_draw_caret_row((unsigned long)offset, (size_t)length);
+            continue;
+        }
         for (col = 0; col < length; ++col) {
             unsigned char underlying = framebuffer[offset + col];
-            rowbuf[start_x - x + col] = active_window == APP_TERMINAL ?
-                (underlying == color ? TERMINAL_BG_COLOR : color) :
-                (underlying == FILE_COLOR ? TEXT_COLOR : FILE_COLOR);
+            rowbuf[start_x - x + col] =
+                underlying == FILE_COLOR ? TEXT_COLOR : FILE_COLOR;
         }
         (void)vesa_copy_to_screen((unsigned long)offset,
                                   rowbuf + (start_x - x),
@@ -4113,12 +4114,6 @@ static void editor_wrap_segment(const char *text,
     int break_at;
     int i;
 
-    if (start > 0) {
-        while (start < len && isspace((unsigned char)text[start])) {
-            ++start;
-        }
-    }
-
     *draw_start = start;
 
     if (start >= len) {
@@ -4142,19 +4137,10 @@ static void editor_wrap_segment(const char *text,
     }
 
     if (break_at > start) {
-        int visible_end = break_at;
-
-        while (visible_end > start &&
-               isspace((unsigned char)text[visible_end - 1])) {
-            --visible_end;
-        }
-
-        *draw_len = visible_end - start;
-        i = break_at;
-        while (i < len && isspace((unsigned char)text[i])) {
-            ++i;
-        }
-        *next_start = i;
+        /* Every document byte needs a visible caret position. Hiding wrap
+         * spaces made distinct insertion positions share the same caret. */
+        *draw_len = break_at - start + 1;
+        *next_start = break_at + 1;
     } else {
         *draw_len = cols;
         *next_start = start + cols;
@@ -4183,6 +4169,7 @@ static int editor_wrapped_rows_for_line(int line, int cols)
         editor_wrap_segment(text, start, segment_cols,
                             &draw_start, &draw_len, &next_start);
         ++rows;
+        if (next_start == len && draw_len == segment_cols) ++rows;
 
         if (next_start <= start) {
             break;
@@ -4224,7 +4211,16 @@ static void editor_cursor_wrap_position(int *row_out, int *col_out)
                             &draw_start, &draw_len, &next_start);
         draw_end = draw_start + draw_len;
 
-        if (editor_cursor_col <= draw_end) {
+        if (editor_cursor_col == len && next_start == len &&
+            draw_len == segment_cols) {
+            *row_out = row + 1;
+            *col_out = editor_writer_mode ?
+                       editor_writer_segment_indent(row + 1) : 0;
+            return;
+        }
+
+        if (editor_cursor_col < draw_end ||
+            (editor_cursor_col == draw_end && next_start == len)) {
             int col = editor_cursor_col - draw_start;
 
             if (col < 0) col = 0;
@@ -4369,6 +4365,13 @@ static int editor_set_cursor_from_visual_row(int target_row, int desired_col)
 
                 ++row;
                 ++segment;
+                if (next_start == len && draw_len == segment_cols &&
+                    row == target_row) {
+                    editor_cursor_line = line;
+                    editor_cursor_col = len;
+                    return 1;
+                }
+                if (next_start == len && draw_len == segment_cols) ++row;
                 if (next_start <= start) {
                     break;
                 }
@@ -5230,6 +5233,9 @@ static void draw_editor_window(void)
 
                 if (line == editor_top_line && segment < editor_top_segment) {
                     ++segment;
+                    if (next_start == len &&
+                        draw_len == editor_writer_segment_cols(segment - 1) &&
+                        segment >= editor_top_segment) ++screen_row;
                     if (next_start <= start) break;
                     start = next_start;
                     continue;
@@ -5251,6 +5257,12 @@ static void draw_editor_window(void)
 
                 ++screen_row;
                 ++segment;
+
+                if (next_start == len &&
+                    draw_len == editor_writer_segment_cols(segment - 1)) {
+                    if (line != editor_top_line || segment >= editor_top_segment)
+                        ++screen_row;
+                }
 
                 if (next_start <= start) {
                     break;
@@ -10878,6 +10890,7 @@ static int shortcuts_delete_selected(void)
 
 static int desktop_selection_pointer(int x, int y, int buttons, int *page)
 {
+    if (buttons == 2 && y < 21) return 0;
     if (confirm_kind || editor_file_dialog != EDITOR_FILE_DIALOG_NONE) return 0;
     if (context_menu && buttons == 1) {
         int menu = context_menu;

@@ -6,6 +6,22 @@ static int terminal_settings_menu, terminal_color_dialog, terminal_edit_menu;
 static int terminal_context_x, terminal_context_y, terminal_context_menu;
 static int terminal_anchor = -1, terminal_selection_end = -1, terminal_selecting;
 
+static void terminal_draw_caret_row(unsigned long offset, size_t length)
+{
+    uint32_t row[TEXT_CELL_WIDTH];
+    unsigned char mask[TEXT_CELL_WIDTH];
+    unsigned int foreground = budo_palette_rgb(terminal_foreground);
+    unsigned int background = budo_palette_rgb(terminal_background);
+
+    for (size_t i = 0; i < length; ++i) {
+        int ink = rgb_mask[offset + i] &&
+            (rgb_framebuffer[offset + i] & 0xffffffu) == foreground;
+        row[i] = 0xff000000u | (ink ? background : foreground);
+        mask[i] = 1;
+    }
+    (void)bw_screen_copy(offset, framebuffer + offset, length, row, mask);
+}
+
 static void terminal_clear_selection(void)
 {
     terminal_anchor = terminal_selection_end = -1;

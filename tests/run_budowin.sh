@@ -4,7 +4,8 @@ cd "$(dirname "$0")/.."
 ROOT_DIR=$PWD
 TEST_DIR=$(mktemp -d "$ROOT_DIR/.budowin-test-XXXXXX")
 TEST_EXE="$ROOT_DIR/budo/budowin-test"
-trap 'rm -rf "$TEST_DIR"; rm -f "$TEST_EXE"' EXIT
+INSTANCE_EXE="$ROOT_DIR/budo/budowin-instances-test"
+trap 'rm -rf "$TEST_DIR"; rm -f "$TEST_EXE" "$INSTANCE_EXE"' EXIT
 export TMPDIR="$TEST_DIR"
 export HOME="$TEST_DIR"
 export BUDOWIN_TEST_DIR="$TEST_DIR/work"
@@ -16,6 +17,8 @@ FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
 budo/BUDOWIN/build.sh
 python3 tests/terminal_gfx_text.py
 make budostack apps/cmath apps/edit commands/_CALC utilities/do
+"$COMPILER" "${FLAGS[@]}" tests/budowin_instances.c -ldl -lm -o "$INSTANCE_EXE"
+"$INSTANCE_EXE" "$ROOT_DIR" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_editor.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/editor"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_document.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/document"
 "$TEST_DIR/document" "$TEST_DIR"

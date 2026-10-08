@@ -28,7 +28,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
     app->runtime_id = 0;
     app->app_id = "editor";
     app->name = "Editor";
-    app->flags = BWA_FLAG_SINGLETON | BWA_FLAG_LAUNCHER;
+    app->flags = BWA_FLAG_LAUNCHER;
     app->callbacks.open = editor_open;
     app->callbacks.draw = 0;
     app->callbacks.mouse_down = 0;

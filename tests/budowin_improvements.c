@@ -171,7 +171,7 @@ int main(int argc, char **argv)
     assert(load_directory(directory));
     explorer_clear_selection();
     for (int i = 0; i < item_count; ++i)
-        if (!strcmp(items[i].path, path)) explorer_select_item(i, 0);
+        if (!strcmp(directory_items[i].path, path)) explorer_select_item(i, 0);
     assert(shortcuts_create() && shortcut_count == 1);
     desktop_begin_picker(1);
     editor_set_file_name("Tools");
@@ -183,7 +183,7 @@ int main(int argc, char **argv)
     shortcut_open(1, 0);
     assert(!strcmp(current_path, folder) && explorer_window.open && active_window == APP_EXPLORER);
     assert(!desktop_folder[0]);
-    assert(item_count == 1 && !strcmp(items[0].path, path));
+    assert(item_count == 1 && !strcmp(directory_items[0].path, path));
     assert(!desktop_item_visible(DESKTOP_SHORTCUT_BASE));
     assert(desktop_item_visible(DESKTOP_SHORTCUT_BASE + 1));
     /* Drag virtual shortcut references out of Explorer into the desktop. */
@@ -211,7 +211,7 @@ int main(int argc, char **argv)
         const char *parent = shortcut_drop_parent(drop_x, drop_y);
         assert(parent && !strcmp(parent, folder));
         assert(shortcut_move(0, parent) && load_directory(folder));
-        assert(item_count == 1 && !strcmp(items[0].path,path));
+        assert(item_count == 1 && !strcmp(directory_items[0].path,path));
         assert(!shortcut_drop_parent(explorer_window.x+10,explorer_window.y+10));
         shortcuts_load();
         assert(!strcmp(shortcut_details[0].parent, folder));

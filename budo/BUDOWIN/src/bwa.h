@@ -16,6 +16,7 @@
 #define BWA_ID_LEN 16
 
 #define BWA_FLAG_NONE       0U
+/* Legacy flag retained for ABI compatibility; launchers create new instances. */
 #define BWA_FLAG_SINGLETON  1U
 #define BWA_FLAG_LAUNCHER   2U
 
@@ -118,7 +119,7 @@ typedef struct BwaHostApi {
     void (*draw_sunken_panel)(int x, int y, int w, int h,
                               unsigned char fill_color);
 
-    /* ABI 1.5: one host-managed top-level window per native app. */
+    /* ABI 1.5: one host-managed top-level window per native instance. */
     int (*window_create)(int x, int y, int w, int h,
                          const char *title,
                          unsigned int button_flags);

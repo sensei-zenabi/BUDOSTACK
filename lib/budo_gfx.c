@@ -19,6 +19,10 @@
 #define GFX_ACK 2u
 #define GFX_FRAME 3u
 #define GFX_EVENT 4u
+#define GFX_CLIPBOARD_SET 5u
+#define GFX_CLIPBOARD_GET 6u
+#define GFX_CLIPBOARD_REPLY 7u
+#define GFX_CLIPBOARD_LIMIT (1024u * 1024u)
 #define GFX_QUEUE 256u
 #define GFX_MAX_WIDTH 1920u
 #define GFX_MAX_HEIGHT 1080u
@@ -44,6 +48,8 @@ struct budo_gfx {
     unsigned int slot;
     unsigned int format;
     int keyboard_grab;
+    char *clipboard;
+    int clipboard_status;
     struct budo_gfx_event events[GFX_QUEUE];
     size_t head;
     size_t count;
@@ -66,6 +72,9 @@ struct budo_gfx_host {
     int dirty;
     int keyboard_grab;
     int64_t handshake_started;
+    int (*clipboard_set)(void *, const char *);
+    char *(*clipboard_get)(void *);
+    void *clipboard_context;
 };
 
 static struct gfx_packet gfx_packet(uint32_t type) {
@@ -165,9 +174,77 @@ static int gfx_receive(int fd, struct gfx_packet *packet, int *shared_fd) {
     return 1;
 }
 
+static int gfx_send_fd(int fd, const struct gfx_packet *packet, int shared_fd) {
+    if (shared_fd < 0) return gfx_send(fd, packet);
+    struct iovec iov = {(void *)packet, sizeof(*packet)};
+    union { struct cmsghdr align; char bytes[CMSG_SPACE(sizeof(int))]; } control;
+    struct msghdr message = {0};
+    memset(&control, 0, sizeof(control));
+    message.msg_iov = &iov;
+    message.msg_iovlen = 1;
+    message.msg_control = control.bytes;
+    message.msg_controllen = sizeof(control.bytes);
+    struct cmsghdr *cmsg = CMSG_FIRSTHDR(&message);
+    cmsg->cmsg_level = SOL_SOCKET;
+    cmsg->cmsg_type = SCM_RIGHTS;
+    cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cmsg), &shared_fd, sizeof(int));
+    ssize_t sent;
+    do { sent = sendmsg(fd, &message, MSG_NOSIGNAL | MSG_DONTWAIT); } while (sent < 0 && errno == EINTR);
+    return sent == (ssize_t)sizeof(*packet) ? 0 : -1;
+}
+
+static int gfx_clipboard_file(const char *text) {
+    size_t length = strlen(text) + 1;
+    if (length > GFX_CLIPBOARD_LIMIT) { errno = EFBIG; return -1; }
+    char path[512];
+    const char *temp_dir = getenv("TMPDIR");
+    int n = snprintf(path, sizeof(path), "%s/budogfx-clipboard-XXXXXX", temp_dir && *temp_dir ? temp_dir : "/tmp");
+    if (n < 0 || (size_t)n >= sizeof(path)) { errno = ENAMETOOLONG; return -1; }
+    int fd = mkstemp(path);
+    if (fd < 0) return -1;
+    if (unlink(path) < 0 || fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) { close(fd); return -1; }
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t written = pwrite(fd, text + offset, length - offset, (off_t)offset);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) { close(fd); return -1; }
+        offset += (size_t)written;
+    }
+    return fd;
+}
+
+static char *gfx_clipboard_read(int fd, uint32_t length) {
+    struct stat st;
+    if (!length || length > GFX_CLIPBOARD_LIMIT || fstat(fd, &st) < 0 ||
+        !S_ISREG(st.st_mode) || st.st_size != (off_t)length) { errno = EPROTO; return NULL; }
+    char *text = malloc(length);
+    if (!text) return NULL;
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t n = pread(fd, text + offset, length - offset, (off_t)offset);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) { free(text); errno = EPROTO; return NULL; }
+        offset += (size_t)n;
+    }
+    if (text[length - 1] || memchr(text, 0, length - 1)) { free(text); errno = EPROTO; return NULL; }
+    return text;
+}
+
 static int gfx_client_receive(struct budo_gfx *gfx, struct gfx_packet *packet) {
     int shared_fd;
     int result = gfx_receive(gfx->fd, packet, &shared_fd);
+    if (result == 1 && packet->type == GFX_CLIPBOARD_REPLY) {
+        free(gfx->clipboard);
+        gfx->clipboard = NULL;
+        gfx->clipboard_status = (int)packet->format;
+        if (shared_fd >= 0 && !gfx->clipboard_status) {
+            gfx->clipboard = gfx_clipboard_read(shared_fd, packet->width);
+            if (!gfx->clipboard) gfx->clipboard_status = errno;
+        }
+        if (shared_fd >= 0) close(shared_fd);
+        return result;
+    }
     if (shared_fd >= 0) {
         close(shared_fd);
         return -1;
@@ -212,7 +289,7 @@ static int gfx_client_receive(struct budo_gfx *gfx, struct gfx_packet *packet) {
     return result;
 }
 
-static int gfx_wait_ack(struct budo_gfx *gfx) {
+static int gfx_wait_reply(struct budo_gfx *gfx, uint32_t expected) {
     /* Absolute deadline remains bounded even under a stream of input. */
     int64_t deadline = gfx_milliseconds() + 2000;
     while (gfx_milliseconds() < deadline) {
@@ -232,7 +309,7 @@ static int gfx_wait_ack(struct budo_gfx *gfx) {
         if (result < 0) {
             return -1;
         }
-        if (result == 1 && packet.type == GFX_ACK) {
+        if (result == 1 && packet.type == expected) {
             return 0;
         }
         if (result == 1 && packet.type != GFX_EVENT) {
@@ -242,6 +319,41 @@ static int gfx_wait_ack(struct budo_gfx *gfx) {
     }
     errno = ETIMEDOUT;
     return -1;
+}
+
+static int gfx_wait_ack(struct budo_gfx *gfx) {
+    return gfx_wait_reply(gfx, GFX_ACK);
+}
+
+int budo_gfx_set_clipboard(struct budo_gfx *gfx, const char *text) {
+    if (!gfx || !text) { errno = EINVAL; return -1; }
+    int fd = gfx_clipboard_file(text);
+    if (fd < 0) return -1;
+    struct gfx_packet request = gfx_packet(GFX_CLIPBOARD_SET);
+    request.width = (uint32_t)(strlen(text) + 1);
+    int result = gfx_send_fd(gfx->fd, &request, fd);
+    close(fd);
+    if (result < 0 || gfx_wait_reply(gfx, GFX_CLIPBOARD_REPLY) < 0) return -1;
+    if (gfx->clipboard_status) { errno = gfx->clipboard_status; return -1; }
+    return 0;
+}
+
+char *budo_gfx_get_clipboard(struct budo_gfx *gfx) {
+    if (!gfx) { errno = EINVAL; return NULL; }
+    struct gfx_packet request = gfx_packet(GFX_CLIPBOARD_GET);
+    if (gfx_send(gfx->fd, &request) < 0 || gfx_wait_reply(gfx, GFX_CLIPBOARD_REPLY) < 0) return NULL;
+    if (gfx->clipboard_status) { errno = gfx->clipboard_status; return NULL; }
+    char *text = gfx->clipboard;
+    gfx->clipboard = NULL;
+    return text;
+}
+
+void budo_gfx_host_clipboard(struct budo_gfx_host *host,
+    int (*set)(void *, const char *), char *(*get)(void *), void *context) {
+    if (!host) return;
+    host->clipboard_set = set;
+    host->clipboard_get = get;
+    host->clipboard_context = context;
 }
 
 int budo_gfx_open(struct budo_gfx **out, unsigned int width,
@@ -387,6 +499,7 @@ void budo_gfx_close(struct budo_gfx *gfx) {
         if (gfx->fd >= 0) {
             close(gfx->fd);
         }
+        free(gfx->clipboard);
         free(gfx);
     }
 }
@@ -487,6 +600,33 @@ void budo_gfx_host_poll(struct budo_gfx_host *host) {
         if (result < 0) {
             gfx_host_disconnect(host);
             break;
+        }
+        if (host->mapping && (packet.type == GFX_CLIPBOARD_SET || packet.type == GFX_CLIPBOARD_GET)) {
+            struct gfx_packet reply = gfx_packet(GFX_CLIPBOARD_REPLY);
+            int output_fd = -1;
+            if (packet.type == GFX_CLIPBOARD_SET) {
+                char *text = shared_fd >= 0 ? gfx_clipboard_read(shared_fd, packet.width) : NULL;
+                if (!text) reply.format = EPROTO;
+                else if (!host->clipboard_set) reply.format = ENOTSUP;
+                else if (host->clipboard_set(host->clipboard_context, text) < 0) reply.format = EIO;
+                free(text);
+            } else if (shared_fd >= 0) reply.format = EPROTO;
+            else if (!host->clipboard_get) reply.format = ENOTSUP;
+            else {
+                char *text = host->clipboard_get(host->clipboard_context);
+                if (!text) reply.format = EIO;
+                else {
+                    output_fd = gfx_clipboard_file(text);
+                    if (output_fd < 0) reply.format = (uint32_t)errno;
+                    else reply.width = (uint32_t)(strlen(text) + 1);
+                }
+                free(text);
+            }
+            if (shared_fd >= 0) close(shared_fd);
+            int sent = gfx_send_fd(host->fd, &reply, output_fd);
+            if (output_fd >= 0) close(output_fd);
+            if (sent < 0) gfx_host_disconnect(host);
+            continue;
         }
         if (packet.type == GFX_HELLO && !host->mapping && shared_fd >= 0) {
             size_t bytes;

@@ -34,6 +34,8 @@ make budostack apps/cmath apps/edit commands/_CALC utilities/do
 "$TEST_DIR/editor"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_improvements_4.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/improvements-4"
 "$TEST_DIR/improvements-4" "$TEST_DIR"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_improvements_5.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/improvements-5"
+"$TEST_DIR/improvements-5" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_background.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/background"
 "$TEST_DIR/background" "$TEST_DIR/background.pcx"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_paint_colors.c -o "$TEST_DIR/paint-colors"

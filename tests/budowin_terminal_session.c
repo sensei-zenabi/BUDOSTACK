@@ -172,7 +172,9 @@ int main(int argc, char **argv)
     session_draw();
     int tx = terminal_window.x + 7;
     int ty = terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 6;
-    assert(!rgb_mask[(ty + 8) * SCREEN_WIDTH + tx]); /* Foreground leaves background indexed. */
+    assert(rgb_mask[(ty + 8) * SCREEN_WIDTH + tx]);
+    assert(rgb_framebuffer[(ty + 8) * SCREEN_WIDTH + tx] ==
+           (0xff000000u | budo_palette_rgb(terminal_background))); /* Defaults use the selected Paint palette. */
     const unsigned char *letter = glyph_for('A');
     for (int gy = 0; gy < 7; ++gy)
         for (int gx = 0; gx < 5; ++gx)

@@ -1,4 +1,5 @@
 #include "../sdk/ui.h"
+#include "../sdk/palette.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -19,7 +20,7 @@ static int resize_dialog, resize_field, resize_selected;
 static char resize_width[8], resize_height[8];
 
 #define TOOL_PENCIL 0
-#define TOOL_BRUSH 1
+#define TOOL_SPRAY 1
 #define TOOL_ERASER 2
 #define TOOL_FILL 3
 #define TOOL_LINE 4
@@ -47,6 +48,11 @@ static int undo_valid;
 static int dirty;
 static uint64_t saved_fingerprint;
 static int tool = TOOL_PENCIL;
+static int stroke_width = 1, spray_width = 16, spray_density = 20, stroke_round = 1;
+static int width_focus, width_selected, density_drag;
+static char width_text[5] = "1";
+static uint32_t spray_random = 0x12345678U;
+static unsigned long long spray_at;
 static unsigned char fg = 1;
 static unsigned char bg = 4;
 static int drawing;
@@ -68,15 +74,8 @@ static char filename[4096] = "PAINT.PCX";
 static char status_text[64] = "Ready";
 
 static const char *tool_labels[TOOL_COUNT] = {
-    "PEN", "BRUSH", "ERASE", "FILL", "LINE",
+    "PEN", "SPRAY", "ERASE", "FILL", "LINE",
     "RECT", "FRECT", "OVAL", "FOVAL", "PICK"
-};
-
-static const unsigned char palette_rgb[16][3] = {
-    {0,128,128}, {0,0,0}, {127,127,127}, {170,170,170},
-    {255,255,255}, {194,194,194}, {0,0,160}, {0,0,255},
-    {255,255,0}, {160,0,0}, {0,160,0}, {0,160,160},
-    {160,0,160}, {160,80,0}, {200,200,200}, {255,255,255}
 };
 
 static int abs_i(int v) { return v < 0 ? -v : v; }
@@ -103,20 +102,10 @@ static void default_palette(void)
 {
     int i;
     for (i = 0; i < 256; ++i) {
-        unsigned char r, g, b;
-        if (i < 16) {
-            r = palette_rgb[i][0]; g = palette_rgb[i][1]; b = palette_rgb[i][2];
-        } else if (i < 232) {
-            int c = i - 16;
-            r = (unsigned char)((c / 36) * 51);
-            g = (unsigned char)(((c / 6) % 6) * 51);
-            b = (unsigned char)((c % 6) * 51);
-        } else {
-            r = g = b = (unsigned char)((i - 232) * 255 / 23);
-        }
-        canvas_palette[i * 3] = r;
-        canvas_palette[i * 3 + 1] = g;
-        canvas_palette[i * 3 + 2] = b;
+        unsigned int rgb = budo_palette_rgb(i);
+        canvas_palette[i * 3] = (unsigned char)(rgb >> 16);
+        canvas_palette[i * 3 + 1] = (unsigned char)(rgb >> 8);
+        canvas_palette[i * 3 + 2] = (unsigned char)rgb;
     }
     fg = 1;
     bg = 4;
@@ -329,6 +318,80 @@ static void brush(int x, int y, int radius, unsigned char color)
         for (px = -radius; px <= radius; ++px)
             if (px * px + py * py <= radius * radius + 1)
                 pixel(x + px, y + py, color);
+}
+
+static int stamp_inside(int x, int y, int width, int round)
+{
+    int dx = 2 * x - (width - 1), dy = 2 * y - (width - 1);
+    /* A half-pixel inset keeps small odd diameters visibly circular. */
+    int diameter = 2 * width - 1;
+    return !round || 4 * (dx * dx + dy * dy) <= diameter * diameter;
+}
+
+static void stroke_stamp(int x, int y, unsigned char color)
+{
+    int offset = stroke_width / 2;
+    for (int py = 0; py < stroke_width; ++py)
+        for (int px = 0; px < stroke_width; ++px)
+            if (stamp_inside(px, py, stroke_width, stroke_round))
+                pixel(x + px - offset, y + py - offset, color);
+}
+
+static void stroke_line(int x0, int y0, int x1, int y1, unsigned char color)
+{
+    int dx = abs_i(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs_i(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    for (;;) {
+        stroke_stamp(x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = err * 2;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
+static unsigned int spray_rand(void)
+{
+    spray_random ^= spray_random << 13;
+    spray_random ^= spray_random >> 17;
+    spray_random ^= spray_random << 5;
+    return spray_random;
+}
+
+static unsigned long long paint_time(void)
+{
+    if (host_api->abi_minor >= 12 && host_api->get_time_ms) return host_api->get_time_ms();
+    struct timespec now;
+    if (timespec_get(&now, TIME_UTC) != TIME_UTC) return 0;
+    return (unsigned long long)now.tv_sec * 1000 + (unsigned long long)now.tv_nsec / 1000000;
+}
+
+static void spray(int x, int y, unsigned char color, int immediate)
+{
+    unsigned long long now = paint_time();
+    if (!immediate && now < spray_at) return;
+    spray_at = now + 20;
+    for (int i = 0; i < spray_density; ++i) {
+        int px, py;
+        do {
+            px = (int)(spray_rand() % (unsigned int)spray_width);
+            py = (int)(spray_rand() % (unsigned int)spray_width);
+        } while (!stamp_inside(px, py, spray_width, 1));
+        pixel(x + px - spray_width / 2, y + py - spray_width / 2, color);
+    }
+    dirty = 1;
+}
+
+static void width_commit(void)
+{
+    int width = 0;
+    (void)sscanf(width_text, "%d", &width);
+    width = min_i(256, max_i(1, width));
+    if (tool == TOOL_SPRAY) spray_width = width;
+    else stroke_width = width;
+    snprintf(width_text, sizeof(width_text), "%d", width);
+    width_focus = 0;
 }
 
 static void rect_shape(int x0, int y0, int x1, int y1,
@@ -809,7 +872,12 @@ static void preview_line(int sx, int sy, int vw, int vh,
     int dy = -abs_i(y1 - y0), stepy = y0 < y1 ? 1 : -1;
     int err = dx + dy;
     for (;;) {
-        preview_pixel(sx, sy, vw, vh, x0, y0, c);
+        if (tool == TOOL_LINE) {
+            for (int py = 0; py < stroke_width; ++py)
+                for (int px = 0; px < stroke_width; ++px)
+                    if (stamp_inside(px, py, stroke_width, stroke_round))
+                        preview_pixel(sx, sy, vw, vh, x0 + px - stroke_width / 2, y0 + py - stroke_width / 2, c);
+        } else preview_pixel(sx, sy, vw, vh, x0, y0, c);
         if (x0 == x1 && y0 == y1) break;
         {
             int e2 = err * 2;
@@ -984,6 +1052,24 @@ static void paint_draw(void)
     for (i = 0; i < TOOL_COUNT; ++i)
         host_api->draw_standard_button(cx + 5 + (i & 1) * 42,
             cy + 30 + (i >> 1) * 24, 38, 20, tool_labels[i], i == tool);
+    if (tool == TOOL_PENCIL || tool == TOOL_LINE || tool == TOOL_SPRAY) {
+        host_api->draw_text(cx + 6, cy + 155, "Width (px)", 1, 12);
+        host_api->draw_sunken_panel(cx + 6, cy + 168, 76, 20, width_focus && width_selected ? 6 : 4);
+        char value[8];
+        snprintf(value, sizeof(value), "%d", tool == TOOL_SPRAY ? spray_width : stroke_width);
+        host_api->draw_text(cx + 10, cy + 174, width_focus ? width_text : value, width_focus && width_selected ? 4 : 1, 8);
+        if (tool == TOOL_SPRAY) {
+            snprintf(value, sizeof(value), "%d", spray_density);
+            host_api->draw_text(cx + 6, cy + 198, "Density", 1, 10);
+            host_api->draw_text(cx + 54, cy + 198, value, 1, 4);
+            host_api->draw_sunken_panel(cx + 6, cy + 216, 76, 6, 2);
+            host_api->draw_standard_button(cx + 6 + (spray_density - 1) * 68 / 99, cy + 211, 8, 16, "", density_drag);
+        } else {
+            host_api->draw_standard_button(cx + 6, cy + 198, 14, 14, stroke_round ? "x" : "", 0);
+            host_api->draw_text(cx + 24, cy + 202, "Round", 1, 9);
+            host_api->draw_text(cx + 6, cy + 220, "Off: square", 1, 13);
+        }
+    }
     draw_canvas(sx, sy, vw, vh);
     if (host_api->abi_minor >= 12 && host_api->pointer_region)
         host_api->pointer_region(sx, sy, vw, vh, BUDO_CURSOR_CROSSHAIR, NULL);
@@ -1028,7 +1114,7 @@ static void paint_draw(void)
 
 static void commit_shape(unsigned char c)
 {
-    if (tool == TOOL_LINE) line(start_x,start_y,preview_x,preview_y,c);
+    if (tool == TOOL_LINE) stroke_line(start_x,start_y,preview_x,preview_y,c);
     else if (tool == TOOL_RECT) rect_shape(start_x,start_y,preview_x,preview_y,c,0);
     else if (tool == TOOL_FRECT) rect_shape(start_x,start_y,preview_x,preview_y,c,1);
     else if (tool == TOOL_OVAL) oval_shape(start_x,start_y,preview_x,preview_y,c,0);
@@ -1049,6 +1135,23 @@ static int paint_mouse_down(int x, int y, int buttons)
         if (host_api->point_in_rect(x,y,dx+116,dy+112,80,20)) paint_resize_accept();
         if (host_api->point_in_rect(x,y,dx+204,dy+112,80,20)) resize_dialog = 0;
         return 1;
+    }
+    if (width_focus) width_commit();
+    if (tool == TOOL_PENCIL || tool == TOOL_LINE || tool == TOOL_SPRAY) {
+        if (host_api->point_in_rect(x, y, cx + 6, cy + 168, 76, 20)) {
+            snprintf(width_text, sizeof(width_text), "%d", tool == TOOL_SPRAY ? spray_width : stroke_width);
+            width_focus = width_selected = 1;
+            return 1;
+        }
+        if (tool == TOOL_SPRAY && host_api->point_in_rect(x, y, cx + 6, cy + 208, 76, 20)) {
+            density_drag = 1;
+            spray_density = min_i(100, max_i(1, 1 + (x - cx - 10) * 99 / 68));
+            return 1;
+        }
+        if (tool != TOOL_SPRAY && host_api->point_in_rect(x, y, cx + 6, cy + 198, 76, 16)) {
+            stroke_round = !stroke_round;
+            return 1;
+        }
     }
     if (paint_menu) {
         int item = budo_menu_hit(x, y, cx + 4 + (paint_menu - 1) * 40, cy + 22,
@@ -1104,8 +1207,8 @@ static int paint_mouse_down(int x, int y, int buttons)
     drawing = 1; draw_button = button;
     start_x = last_x = preview_x = px;
     start_y = last_y = preview_y = py;
-    if (tool == TOOL_PENCIL) { pixel(px,py,c); dirty = 1; }
-    else if (tool == TOOL_BRUSH) { brush(px,py,2,c); dirty = 1; }
+    if (tool == TOOL_PENCIL) { stroke_stamp(px,py,c); dirty = 1; }
+    else if (tool == TOOL_SPRAY) { spray(px,py,c,1); }
     else if (tool == TOOL_ERASER) { brush(px,py,4,bg); dirty = 1; }
     else if (tool == TOOL_FILL) { flood(px,py,c); drawing = 0; dirty = 1; }
     if (dirty) refresh_title();
@@ -1114,6 +1217,12 @@ static int paint_mouse_down(int x, int y, int buttons)
 
 static int paint_mouse_move(int x, int y, int buttons)
 {
+    if (density_drag) {
+        int cx, cy, cw, ch;
+        if (host_api->window_get_client_rect(&cx, &cy, &cw, &ch))
+            spray_density = min_i(100, max_i(1, 1 + (x - cx - 10) * 99 / 68));
+        return 1;
+    }
     if (paint_menu || resize_dialog) return 1;
     if (paint_scroll_pointer(x, y, BUDO_POINTER_MOVE)) return 1;
     int px,py;
@@ -1122,9 +1231,9 @@ static int paint_mouse_move(int x, int y, int buttons)
     if (!to_canvas(x,y,&px,&py)) return 1;
     c = draw_button == 2 ? bg : fg;
     if (tool == TOOL_PENCIL) {
-        line(last_x,last_y,px,py,c); last_x=px; last_y=py; dirty=1;
-    } else if (tool == TOOL_BRUSH) {
-        line(last_x,last_y,px,py,c); brush(px,py,2,c);
+        stroke_line(last_x,last_y,px,py,c); last_x=px; last_y=py; dirty=1;
+    } else if (tool == TOOL_SPRAY) {
+        spray(px,py,c,0);
         last_x=px; last_y=py; dirty=1;
     } else if (tool == TOOL_ERASER) {
         line(last_x,last_y,px,py,bg); brush(px,py,4,bg);
@@ -1135,6 +1244,7 @@ static int paint_mouse_move(int x, int y, int buttons)
 
 static int paint_mouse_up(int x, int y, int buttons)
 {
+    if (density_drag) { density_drag = 0; return 1; }
     if (paint_scroll_pointer(x, y, BUDO_POINTER_UP)) return 1;
     int px,py;
     unsigned char c;
@@ -1151,6 +1261,17 @@ static int paint_mouse_up(int x, int y, int buttons)
 
 static int paint_key(int key)
 {
+    if (width_focus) {
+        size_t length = strlen(width_text);
+        if (key == 13 || key == 9) width_commit();
+        else if (key == 27) width_focus = 0;
+        else if (key == 8 || (key >= '0' && key <= '9')) {
+            if (width_selected) { width_text[0] = 0; length = 0; width_selected = 0; }
+            if (key == 8 && length) width_text[length - 1] = 0;
+            else if (key != 8 && length < 3) { width_text[length] = (char)key; width_text[length + 1] = 0; }
+        }
+        return 1;
+    }
     if (resize_dialog) {
         char *value = resize_field ? resize_height : resize_width;
         size_t length = strlen(value);

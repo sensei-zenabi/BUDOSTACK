@@ -262,8 +262,70 @@ static void test_motion_queue(void) {
     close(pair[0]); close(pair[1]);
 }
 
+static char *clipboard_text;
+static int clipboard_set(void *context, const char *text) {
+    (void)context;
+    free(clipboard_text);
+    clipboard_text = strdup(text);
+    return clipboard_text ? 0 : -1;
+}
+static char *clipboard_get(void *context) {
+    (void)context;
+    return strdup(clipboard_text ? clipboard_text : "");
+}
+static void test_clipboard(void) {
+    struct budo_gfx_host *host = test_host();
+    assert(clipboard_set(NULL, "Unicode: äöå\nmultiline") == 0);
+    budo_gfx_host_clipboard(host, clipboard_set, clipboard_get, NULL);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        close(endpoints[0]);
+        close(host->listener);
+        struct budo_gfx *gfx = NULL;
+        assert(budo_gfx_open(&gfx, 1, 1, BUDO_GFX_ARGB8888) == 0);
+        char *text = budo_gfx_get_clipboard(gfx);
+        assert(text && !strcmp(text, "Unicode: äöå\nmultiline"));
+        free(text);
+        text = malloc(65537);
+        assert(text);
+        memset(text, 'X', 65536);
+        text[65536] = 0;
+        assert(budo_gfx_set_clipboard(gfx, text) == 0);
+        char *received = budo_gfx_get_clipboard(gfx);
+        assert(received && !strcmp(received, text));
+        free(received);
+        free(text);
+        assert(budo_gfx_set_clipboard(gfx, "") == 0);
+        received = budo_gfx_get_clipboard(gfx);
+        assert(received && !*received);
+        free(received);
+        uint32_t pixel = 0xffabcdef;
+        assert(budo_gfx_present(gfx, &pixel, NULL) == 0);
+        budo_gfx_close(gfx);
+        _exit(0);
+    }
+    close(endpoints[0]);
+    close(endpoints[1]);
+    int status = 0;
+    for (int i = 0; i < 10000; ++i) {
+        budo_gfx_host_poll(host);
+        if (waitpid(child, &status, WNOHANG) == child) {
+            assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+            break;
+        }
+        test_pause();
+        assert(i < 9999);
+    }
+    assert(clipboard_text && !*clipboard_text);
+    free(clipboard_text);
+    clipboard_text = NULL;
+    budo_gfx_host_close(host);
+}
+
 int main(void) {
     test_motion_queue();
+    test_clipboard();
     size_t bytes;
     size_t length;
     assert(gfx_layout(0, 200, BUDO_GFX_INDEX8, &bytes, &length) < 0);

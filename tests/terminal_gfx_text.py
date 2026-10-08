@@ -19,10 +19,12 @@ def function(signature):
 
 
 fixture = r'''
+#define _POSIX_C_SOURCE 200809L
 #include "lib/budo_gfx.h"
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #define SDL_VERSION_ATLEAST(a,b,c) 1
 #define SDL_TRUE 1
 #define SDL_FALSE 0
@@ -97,12 +99,26 @@ static void terminal_gfx_display_rect(int dw, int dh, int *x, int *y, int *w, in
     *h = dh;
 }
 '''
+fixture += r'''
+static char clipboard[128];
+static int clipboard_frees;
+static int SDL_SetClipboardText(const char *text) { snprintf(clipboard, sizeof(clipboard), "%s", text); return 0; }
+static char *SDL_GetClipboardText(void) { return strdup(clipboard); }
+static const char *SDL_GetError(void) { return "fixture error"; }
+static void SDL_free(void *text) { ++clipboard_frees; free(text); }
+'''
+fixture += function("static int terminal_gfx_clipboard_set(void *context, const char *text)") + "\n"
+fixture += function("static char *terminal_gfx_clipboard_get(void *context)") + "\n"
 fixture += function("static void terminal_gfx_keyboard_capture(SDL_Window *window, int enabled)") + "\n"
 fixture += function("static int terminal_utf8_next(const uint8_t *data, size_t length, size_t *offset, uint32_t *out_codepoint)")
 fixture += "\n" + function("static void terminal_gfx_input(struct budo_gfx_host *host, const SDL_Event *event)")
 fixture += r'''
 int main(void)
 {
+    assert(terminal_gfx_clipboard_set(NULL, "äöå\nclipboard") == 0);
+    char *text = terminal_gfx_clipboard_get(NULL);
+    assert(text && !strcmp(text, "äöå\nclipboard") && clipboard_frees == 1);
+    free(text);
     terminal_gfx_keyboard_capture(NULL, 1);
     assert(grabbed && !strcmp(capture_hint, "0") && grab_calls == 1);
     terminal_gfx_keyboard_capture(NULL, 1);
@@ -136,4 +152,4 @@ with tempfile.TemporaryDirectory() as temporary:
                     "-Werror", "-Wpedantic", "-I", str(root), str(path / "input.c"),
                     "-o", str(path / "input")], check=True)
     subprocess.run([str(path / "input")], check=True)
-print("PASS: production SDL keyboard capture/release, Unicode text and physical key forwarding")
+print("PASS: production SDL keyboard capture/release, Unicode text and physical key forwarding and UTF-8 clipboard ownership")

@@ -337,6 +337,7 @@ static void session_resize(void)
     if (cols > SESSION_COLS) cols = SESSION_COLS;
     if (rows > SESSION_ROWS) rows = SESSION_ROWS;
     if (cols == session_cols && rows == session_rows) return;
+    terminal_clear_selection();
     session_cols = cols; session_rows = rows;
     session_scroll_top = 0; session_scroll_bottom = rows - 1;
     if (session_x >= cols) session_x = cols - 1;
@@ -347,6 +348,7 @@ static void session_resize(void)
 
 static void session_stop(void)
 {
+    terminal_clear_selection();
     session_art_free();
     session_mouse_left = session_mouse_right = 0;
     session_overlay = 0;
@@ -384,6 +386,7 @@ static int session_start(void)
         perror("Terminal PTY slave"); close(master); return 0;
     }
     if (budo_gfx_host_open(&session_gfx) != 0) { perror("Terminal graphics endpoint"); close(master); return 0; }
+    budo_gfx_host_clipboard(session_gfx, bw_clipboard_set, bw_clipboard_get, NULL);
     session_pid = fork();
     if (session_pid < 0) { perror("Terminal fork"); close(master); session_stop(); return 0; }
     if (session_pid == 0) {
@@ -435,11 +438,15 @@ static int session_poll(void)
     return changed;
 }
 
+#include "terminal_ui.h"
+
 static int session_key(int key)
 {
     if (session_fd < 0) return 0;
     if (key == 0) {
         int scan = getch();
+        if (terminal_selection_scan(scan)) return 1;
+        terminal_anchor = terminal_selection_end = -1;
         const char *sequence = NULL;
         switch (scan) {
             case 72: sequence = "\033[A"; break; case 80: sequence = "\033[B"; break;
@@ -461,6 +468,7 @@ static int session_key(int key)
         }
         if (sequence) session_write(sequence,strlen(sequence));
     } else if (key > 0 && key <= 255) {
+        terminal_anchor = terminal_selection_end = -1;
         char raw[2] = {(char)(key == 8 ? 127 : key),0};
         char encoded[8];
         if (bw_text_encode(encoded,sizeof(encoded),raw)) session_write(encoded,strlen(encoded));
@@ -501,6 +509,7 @@ static int session_forward_event(const struct budo_gfx_event *event)
     if (!session_gfx || !budo_gfx_host_active(session_gfx) || active_window != APP_TERMINAL ||
         terminal_window.minimized || confirm_kind || editor_file_dialog) return 0;
     struct budo_gfx_event input = *event;
+    if (terminal_color_dialog || terminal_settings_menu || terminal_edit_menu || terminal_context_menu) return 0;
     if (event->type == BUDO_GFX_KEY_DOWN || event->type == BUDO_GFX_KEY_UP ||
         event->type == BUDO_GFX_TEXT_INPUT) {
         if (event->scancode == 43 && (bw_modifiers() & KEYMOD_ALT)) return 0;
@@ -521,6 +530,7 @@ static int session_forward_event(const struct budo_gfx_event *event)
 
 static int session_pointer(int x, int y, int buttons, int previous)
 {
+    if (terminal_color_dialog || terminal_settings_menu || terminal_edit_menu || terminal_context_menu) return 0;
     if (session_fd >= 0 && active_window == APP_TERMINAL && !terminal_window.minimized &&
         !confirm_kind && !editor_file_dialog) session_art_mouse(x, y, buttons, previous);
     if (!session_gfx || !budo_gfx_host_active(session_gfx) || active_window != APP_TERMINAL ||
@@ -567,12 +577,26 @@ static void session_draw(void)
             int logical = row - terminal_scroll;
             if (logical < 0) {
                 int index = terminal_line_count + logical;
-                if (index >= 0) draw_text(x,y+row*9,terminal_lines[index],TERMINAL_TEXT_COLOR,session_cols);
+                if (index >= 0) {
+                    for (int col = 0; col < session_cols; ++col) {
+                        int selected = terminal_cell_selected(index, col);
+                        if (selected) fill_rect(x + col * 6, y + row * 9, 6, 9, TITLE_COLOR);
+                        char text[2] = {(char)terminal_selection_char(index, col), 0};
+                        terminal_rgb_text(x + col * 6, y + row * 9, text,
+                            budo_palette_rgb(selected ? 4 : terminal_foreground), 1);
+                    }
+                }
                 continue;
             }
             for (int col = 0; col < session_cols; ++col) {
                 TerminalCell cell = session_cells[logical][col];
                 int cx = x + col * 6, cy = y + row * 9;
+                if (cell.fg == 5) cell.fg = SESSION_RGB | budo_palette_rgb(terminal_foreground);
+                if (cell.bg == 1) cell.bg = SESSION_RGB | budo_palette_rgb(terminal_background);
+                if (terminal_cell_selected(terminal_line_count + logical, col)) {
+                    cell.bg = TITLE_COLOR;
+                    cell.fg = TITLE_TEXT_COLOR;
+                }
                 if (cell.bg & SESSION_RGB) fill_rect_rgb(cx, cy, 6, 9, cell.bg & 0xffffffu);
                 else fill_rect(cx, cy, 6, 9, (unsigned char)cell.bg);
                 if (cell.fg & SESSION_RGB) {

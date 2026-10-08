@@ -1842,6 +1842,22 @@ static uint32_t terminal_map_charset(const struct ansi_parser *parser, uint32_t 
     }
 }
 
+static int terminal_gfx_clipboard_set(void *context, const char *text) {
+    (void)context;
+    if (SDL_SetClipboardText(text) != 0) { fprintf(stderr, "Clipboard: %s\n", SDL_GetError()); return -1; }
+    return 0;
+}
+
+static char *terminal_gfx_clipboard_get(void *context) {
+    (void)context;
+    char *text = SDL_GetClipboardText();
+    if (!text) { fprintf(stderr, "Clipboard: %s\n", SDL_GetError()); return NULL; }
+    char *copy = strdup(text);
+    SDL_free(text);
+    if (!copy) perror("Clipboard");
+    return copy;
+}
+
 static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer) {
     if (!buffer) {
         return 0;
@@ -8263,6 +8279,7 @@ int main(int argc, char **argv) {
             terminal_free_requested_shaders();
             return EXIT_FAILURE;
         }
+        budo_gfx_host_clipboard(terminal_gfx_hosts[tab_i], terminal_gfx_clipboard_set, terminal_gfx_clipboard_get, NULL);
         child_pids[tab_i] = spawn_budostack(budostack_path, &master_fds[tab_i],
                                            budo_gfx_host_path(terminal_gfx_hosts[tab_i]));
         if (child_pids[tab_i] < 0) {

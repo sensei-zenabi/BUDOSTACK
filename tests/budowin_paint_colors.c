@@ -157,6 +157,74 @@ static void test_palette(void) {
     assert(palette_top == 0 && !budo_scroll_limit(&palette_scroll));
 }
 
+static unsigned long long tool_clock = 1000;
+static unsigned long long tool_time(void) { return tool_clock; }
+static void test_tools(BwaHostApi *api)
+{
+    image_width = image_height = 64;
+    bytes_fill(canvas, 4, PIXELS);
+    stroke_width = 3;
+    stroke_round = 1;
+    stroke_stamp(20, 20, 1);
+    assert(pixel_at(19, 19) == 4 && pixel_at(20, 19) == 1);
+    bytes_fill(canvas, 4, PIXELS);
+    stroke_width = 8;
+    stroke_round = 0;
+    stroke_stamp(20, 20, 1);
+    int count = 0;
+    for (int i = 0; i < PIXELS; ++i) count += canvas[i] == 1;
+    assert(count == 64 && pixel_at(16, 16) == 1 && pixel_at(23, 23) == 1 && pixel_at(24, 20) == 4);
+    bytes_fill(canvas, 4, PIXELS);
+    stroke_round = 1;
+    stroke_stamp(20, 20, 1);
+    assert(pixel_at(16, 16) == 4 && pixel_at(20, 16) == 1 && pixel_at(23, 20) == 1);
+    bytes_fill(canvas, 4, PIXELS);
+    stroke_line(5, 5, 40, 40, 1);
+    for (int i = 5; i <= 40; ++i) assert(pixel_at(i, i) == 1 && pixel_at(i + 2, i) == 1);
+    tool = TOOL_LINE;
+    drawing = 1;
+    start_x = start_y = 5;
+    preview_x = preview_y = 40;
+    surface_w = surface_h = 64;
+    zoom = 1;
+    canvas_left = canvas_top = 0;
+    for (int i = 0; i < PIXELS; ++i) drawn[i] = canvas_rgb(4);
+    draw_preview(0, 0, 64, 64, 1);
+    for (int i = 0; i < PIXELS; ++i) assert(drawn[i] == canvas_rgb(canvas[i]));
+    drawing = 0;
+    api->abi_minor = 12;
+    api->get_time_ms = tool_time;
+    tool = TOOL_SPRAY;
+    spray_width = 16;
+    spray_density = 100;
+    bytes_fill(canvas, 4, PIXELS);
+    save_undo();
+    spray(30, 30, 1, 1);
+    unsigned char before[4096];
+    memcpy(before, canvas, PIXELS);
+    spray(30, 30, 1, 0);
+    assert(!memcmp(before, canvas, PIXELS)); /* Repeated frames cannot increase spray speed. */
+    tool_clock += 20;
+    spray(30, 30, 1, 0);
+    assert(memcmp(before, canvas, PIXELS)); /* Holding still continues spraying after the tick. */
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x)
+            if (pixel_at(x, y) == 1) {
+                assert(x >= 22 && x < 38 && y >= 22 && y < 38);
+                assert(stamp_inside(x - 22, y - 22, 16, 1));
+            }
+    do_undo();
+    for (int i = 0; i < PIXELS; ++i) assert(canvas[i] == 4);
+    width_focus = width_selected = 1;
+    assert(paint_key('2') && paint_key('5') && paint_key('6') && paint_key(13));
+    assert(spray_width == 256 && !width_focus);
+    width_focus = width_selected = 1;
+    paint_key('0'); paint_key(13);
+    assert(spray_width == 1);
+    api->get_time_ms = NULL;
+    puts("PASS: stroke widths/shapes, preview parity, timed circular spray, undo and width editing");
+}
+
 int main(void) {
     BwaHostApi api = {0};
     api.memory_alloc = allocate;
@@ -189,7 +257,7 @@ int main(void) {
     assert(save_pcx("roundtrip.pcx"));
     assert(memcmp(disk + disk_size - 768, expected_palette, 768) == 0);
     do_undo(); /* Opening the image restores the preceding default canvas/palette. */
-    assert(canvas[0] == 4 && canvas_palette[0] == palette_rgb[0][0]);
+    assert(canvas[0] == 4 && canvas_palette[0] == (unsigned char)(budo_palette_rgb(0) >> 16));
     do_undo();
     assert(memcmp(canvas_palette, expected_palette, 768) == 0 && canvas[255] == 255);
     assert(!dirty); /* Undo returned exactly to the saved content. */
@@ -265,6 +333,7 @@ int main(void) {
     assert(vw == CANVAS_W && vh == CANVAS_H); /* The workspace fills the client area. */
     test_palette();
     test_ovals();
+    test_tools(&api);
     free(fill_queue);
     free(file_buffer);
     free(undo_canvas);

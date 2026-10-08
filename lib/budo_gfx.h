@@ -52,6 +52,13 @@ void budo_gfx_close(struct budo_gfx *gfx);
 /* Request host keyboard capture on subsequent frames; default is disabled. */
 int budo_gfx_set_keyboard_grab(struct budo_gfx *gfx, int enabled);
 
+/* UTF-8 system clipboard. Returned text is caller-owned (free). */
+int budo_gfx_set_clipboard(struct budo_gfx *gfx, const char *text);
+char *budo_gfx_get_clipboard(struct budo_gfx *gfx);
+/* Callbacks run on the host UI thread; get returns a malloc-owned string. */
+void budo_gfx_host_clipboard(struct budo_gfx_host *host,
+    int (*set)(void *, const char *), char *(*get)(void *), void *context);
+
 /* Host API used by terminal. All calls run on its UI thread. */
 int budo_gfx_host_open(struct budo_gfx_host **out);
 const char *budo_gfx_host_path(const struct budo_gfx_host *host);

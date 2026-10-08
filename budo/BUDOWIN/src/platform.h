@@ -27,6 +27,8 @@ int getch(void);
 int bw_initialize(int argc, char **argv);
 int bw_screen_open(void);
 void bw_screen_close(void);
+int bw_clipboard_set(void *context, const char *text);
+char *bw_clipboard_get(void *context);
 void bw_palette_entry(unsigned int index, unsigned int r, unsigned int g, unsigned int b);
 int bw_screen_copy(unsigned long offset, const unsigned char *data, size_t length,
                    const uint32_t *background, const unsigned char *mask);

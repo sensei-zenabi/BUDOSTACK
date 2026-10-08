@@ -132,6 +132,16 @@ int bw_screen_open(void) {
     if (budo_gfx_open(&screen, 640, 480, BUDO_GFX_ARGB8888) != 0) return 0;
     return budo_gfx_set_keyboard_grab(screen, 1) == 0;
 }
+int bw_clipboard_set(void *context, const char *text) {
+    (void)context;
+    if (!screen) { errno = ENOTCONN; return -1; }
+    return budo_gfx_set_clipboard(screen, text);
+}
+char *bw_clipboard_get(void *context) {
+    (void)context;
+    if (!screen) { errno = ENOTCONN; return NULL; }
+    return budo_gfx_get_clipboard(screen);
+}
 void bw_screen_close(void) { budo_gfx_close(screen); screen = NULL; }
 void bw_palette_entry(unsigned int index, unsigned int r, unsigned int g, unsigned int b) {
     if (index < 256) palette[index] = 0xff000000u | ((r * 255 / 63) << 16) | ((g * 255 / 63) << 8) | (b * 255 / 63);

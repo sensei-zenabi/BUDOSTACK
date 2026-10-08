@@ -112,7 +112,7 @@ int main(int argc, char **argv)
     assert(desktop_selection_pointer(x, y + 2, 2, &page));
     assert(selected_count() == 1);
     assert(copy_text(target, sizeof(target), items[explorer_selected_item].path));
-    menu_choose(1, &page);
+    menu_choose(6, &page);
     assert(shortcut_count == 1);
     assert(!strcmp(desktop_shortcuts[0].path, target));
     assert(!shortcuts_create()); /* no duplicate */

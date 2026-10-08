@@ -179,7 +179,7 @@ int main(int argc, char **argv)
     /* Exercise the actual press/release confirmation path. */
     explorer_window.open = 1;
     active_window = APP_EXPLORER;
-    assert(copy_text(path,sizeof(path),items[0].path));
+    assert(copy_text(path,sizeof(path),directory_items[0].path));
     assert(desktop_confirm(APP_EXPLORER,3,"Delete?","Delete selected file?"));
     /* The modal sits outside a small Explorer: underlying desktop must not consume it. */
     editor_window.open = 0;

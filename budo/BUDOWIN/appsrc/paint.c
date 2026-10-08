@@ -1376,6 +1376,16 @@ static void paint_draw_icon(int x, int y)
     host_api->fill_rect(x+17,y+8,2,5,1);
 }
 
+static void paint_close(void)
+{
+    if (canvas) host_api->memory_free(canvas);
+    if (undo_canvas) host_api->memory_free(undo_canvas);
+    if (file_buffer) host_api->memory_free(file_buffer);
+    if (fill_queue) host_api->memory_free(fill_queue);
+    canvas = undo_canvas = file_buffer = 0;
+    fill_queue = 0;
+}
+
 int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 {
     if (host==0 || app==0 || host->abi_major!=BWA_ABI_MAJOR ||
@@ -1399,7 +1409,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
     app->runtime_id=0;
     app->app_id="paint";
     app->name="Paint";
-    app->flags=BWA_FLAG_SINGLETON;
+    app->flags=BWA_FLAG_NONE;
     app->callbacks.open=paint_open;
     app->callbacks.draw=paint_draw;
     app->callbacks.mouse_down=paint_mouse_down;
@@ -1407,7 +1417,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
     app->request_close = paint_request_close;
     app->file_selected = paint_file_selected;
     app->confirm_result = paint_confirm_result;
-    app->callbacks.close=0;
+    app->callbacks.close=paint_close;
     app->callbacks.draw_icon=paint_draw_icon;
     app->callbacks.open_file=paint_open_file;
     app->callbacks.mouse_move=paint_mouse_move;

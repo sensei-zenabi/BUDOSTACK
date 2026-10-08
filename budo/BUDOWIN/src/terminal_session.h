@@ -11,21 +11,71 @@ typedef struct TerminalCell {
     uint32_t fg, bg;
 } TerminalCell;
 
-static TerminalCell session_cells[SESSION_ROWS][SESSION_COLS];
-static TerminalCell session_alternate[SESSION_ROWS][SESSION_COLS];
-static int session_fd = -1;
-static pid_t session_pid;
-static struct budo_gfx_host *session_gfx;
-static int session_cols = 80, session_rows = 24;
-static int session_x, session_y, session_saved_x, session_saved_y;
-static uint32_t session_fg = 5, session_bg = 1;
-static int session_bold, session_inverse;
-static int session_cursor_visible = 1, session_alternate_active;
-static int session_state, session_params[16], session_param_count, session_private;
-static unsigned int session_utf8, session_utf8_left;
-static int session_scroll_top, session_scroll_bottom = 23;
-static int session_wrap_pending;
-static int session_gfx_buttons;
+typedef struct SessionState {
+    TerminalCell session_cells[SESSION_ROWS][SESSION_COLS];
+    TerminalCell session_alternate[SESSION_ROWS][SESSION_COLS];
+    int session_fd;
+    pid_t session_pid;
+    struct budo_gfx_host *session_gfx;
+    int session_cols, session_rows;
+    int session_x, session_y, session_saved_x, session_saved_y;
+    uint32_t session_fg, session_bg;
+    int session_bold, session_inverse;
+    int session_cursor_visible, session_alternate_active;
+    int session_state, session_params[16], session_param_count, session_private;
+    unsigned int session_utf8, session_utf8_left;
+    int session_scroll_top, session_scroll_bottom;
+    int session_wrap_pending;
+    int session_gfx_buttons;
+} SessionState;
+static SessionState session_contexts[BUILTIN_INSTANCE_MAX] = {{
+    .session_fd = -1,
+    .session_cols = 80,
+    .session_rows = 24,
+    .session_fg = 5,
+    .session_bg = 1,
+    .session_cursor_visible = 1,
+    .session_scroll_bottom = 23
+}};
+static const SessionState session_defaults = {
+    .session_fd = -1,
+    .session_cols = 80,
+    .session_rows = 24,
+    .session_fg = 5,
+    .session_bg = 1,
+    .session_cursor_visible = 1,
+    .session_scroll_bottom = 23
+};
+
+#define session_context (session_contexts[terminal_instance_slot])
+#define session_cells (session_context.session_cells)
+#define session_alternate (session_context.session_alternate)
+#define session_fd (session_context.session_fd)
+#define session_pid (session_context.session_pid)
+#define session_gfx (session_context.session_gfx)
+#define session_cols (session_context.session_cols)
+#define session_rows (session_context.session_rows)
+#define session_x (session_context.session_x)
+#define session_y (session_context.session_y)
+#define session_saved_x (session_context.session_saved_x)
+#define session_saved_y (session_context.session_saved_y)
+#define session_fg (session_context.session_fg)
+#define session_bg (session_context.session_bg)
+#define session_bold (session_context.session_bold)
+#define session_inverse (session_context.session_inverse)
+#define session_cursor_visible (session_context.session_cursor_visible)
+#define session_alternate_active (session_context.session_alternate_active)
+#define session_state (session_context.session_state)
+#define session_params (session_context.session_params)
+#define session_param_count (session_context.session_param_count)
+#define session_private (session_context.session_private)
+#define session_utf8 (session_context.session_utf8)
+#define session_utf8_left (session_context.session_utf8_left)
+#define session_scroll_top (session_context.session_scroll_top)
+#define session_scroll_bottom (session_context.session_scroll_bottom)
+#define session_wrap_pending (session_context.session_wrap_pending)
+#define session_gfx_buttons (session_context.session_gfx_buttons)
+
 static void desktop_file_menu_draw(int app);
 
 static TerminalCell session_blank(void)
@@ -364,7 +414,7 @@ static void session_stop(void)
     if (session_gfx) { budo_gfx_host_close(session_gfx); session_gfx = NULL; }
 }
 
-static int session_start(void)
+static int session_start_program(const char *program, const char *directory)
 {
     if (session_fd >= 0) return 1;
     char executable[MAX_PATH], base[MAX_PATH], slave[MAX_PATH];
@@ -375,12 +425,16 @@ static int session_start(void)
         char relative[MAX_PATH];
         if (!join_path(relative,sizeof(relative),home_path,"../..") || !realpath(relative,base)) return 0;
     }
-    if (!join_path(executable,sizeof(executable),base,"budostack") || access(executable,X_OK) != 0) return 0;
+    if (program) {
+        if (!copy_text(executable, sizeof(executable), program)) return 0;
+    } else if (!join_path(executable,sizeof(executable),base,"budostack")) return 0;
+    if (access(executable, X_OK) != 0) return 0;
     int written = snprintf(command_path, sizeof(command_path), "%s/apps:%s/commands:%s/utilities:%s/games:%s/budo:%s",
         base, base, base, base, base, getenv("PATH") ? getenv("PATH") : "/usr/bin:/bin");
     if (written < 0 || (size_t)written >= sizeof(command_path)) return 0;
     int master = posix_openpt(O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (master < 0) { perror("Terminal PTY"); return 0; }
+    if (fcntl(master, F_SETFD, FD_CLOEXEC) != 0) { perror("Terminal PTY flags"); close(master); return 0; }
     if (grantpt(master) != 0 || unlockpt(master) != 0 || !ptsname(master) ||
         !copy_text(slave,sizeof(slave),ptsname(master))) {
         perror("Terminal PTY slave"); close(master); return 0;
@@ -395,7 +449,7 @@ static int session_start(void)
         if (fd < 0 || ioctl(fd,TIOCSCTTY,0) < 0 || dup2(fd,0) < 0 || dup2(fd,1) < 0 || dup2(fd,2) < 0) _exit(126);
         if (fd > 2) close(fd);
         close(master);
-        if (chdir(base) != 0 || setenv("PATH",command_path,1) != 0 || setenv("TERM","xterm-256color",1) != 0 ||
+        if (chdir(directory ? directory : base) != 0 || setenv("PATH",command_path,1) != 0 || setenv("TERM","xterm-256color",1) != 0 ||
             setenv("BUDOSTACK_BASE",base,1) != 0 || setenv("BUDOSTACK_TERM_ACTIVE","TRUE",1) != 0 || setenv("BUDOSTACK_EMBEDDED_TERMINAL","1",1) != 0 ||
             setenv("BUDOSTACK_GFX_SOCKET",budo_gfx_host_path(session_gfx),1) != 0) _exit(126);
         execl(executable,executable,(char *)NULL);
@@ -410,6 +464,11 @@ static int session_start(void)
     session_cols = session_rows = 0;
     session_resize();
     return 1;
+}
+
+static int session_start(void)
+{
+    return session_start_program(NULL, NULL);
 }
 
 static int session_poll(void)
@@ -432,7 +491,7 @@ static int session_poll(void)
         session_pid = 0;
         session_stop();
         terminal_window.open = 0;
-        if (active_window == APP_TERMINAL) active_window = APP_NONE;
+        desktop_focus_visible();
         changed = 1;
     }
     return changed;

@@ -104,11 +104,12 @@
 #define TYPE_FILE 2
 
 #define APP_NONE 0
-#define APP_EXPLORER 1
-#define APP_EDITOR 2
-#define APP_TERMINAL 3
+#define APP_EXPLORER (explorer_state->runtime_id)
+#define APP_EDITOR (editor_state->runtime_id)
+#define APP_TERMINAL (terminal_state->runtime_id)
 #define APP_BWA_BASE 100
 #define BWA_MAX_EXTERNAL 16
+#define BWA_MAX_INSTANCES 64
 
 #define EDITOR_MAX_LINES 512
 #define EDITOR_MAX_COLS 2048
@@ -226,6 +227,39 @@ typedef struct BwaLoadedApp {
     int window_min_h;
 } BwaLoadedApp;
 
+#include "builtin_state.h"
+static int terminal_instance_slot;
+static int builtin_new_instance(int kind);
+static int builtin_create_instance(int kind, int start_terminal);
+static void builtin_select(int runtime_id);
+static AppWindow *builtin_window(int runtime_id);
+
+static AppWindow *builtin_window(int runtime_id)
+{
+    if (runtime_id <= 0 || runtime_id >= APP_BWA_BASE) return NULL;
+    int slot = (runtime_id - 1) / 3;
+    if (slot >= BUILTIN_INSTANCE_MAX) return NULL;
+    switch ((runtime_id - 1) % 3) {
+        case 0: return explorer_instances[slot] ? &explorer_instances[slot]->v_explorer_window : NULL;
+        case 1: return editor_instances[slot] ? &editor_instances[slot]->v_editor_window : NULL;
+        default: return terminal_instances[slot] ? &terminal_instances[slot]->v_terminal_window : NULL;
+    }
+}
+
+static void builtin_select(int runtime_id)
+{
+    if (!builtin_window(runtime_id)) return;
+    int slot = (runtime_id - 1) / 3;
+    switch ((runtime_id - 1) % 3) {
+        case 0: explorer_state = explorer_instances[slot]; break;
+        case 1: editor_state = editor_instances[slot]; break;
+        default:
+            terminal_state = terminal_instances[slot];
+            terminal_instance_slot = slot;
+            break;
+    }
+}
+
 static unsigned char framebuffer[SCREEN_SIZE];
 static unsigned char desktop_background[SCREEN_SIZE];
 /* Keep PCX RGB separate from the GUI palette. */
@@ -262,18 +296,10 @@ static int back_pcx_icon_loaded = 0;
 static int cursor_pcx_icon_loaded = 0;
 static FileAssociation file_associations[FILE_ASSOC_MAX];
 static int file_association_count = 0;
-static DesktopItem items[MAX_ITEMS];
-static int item_count = 0;
-static char current_path[MAX_PATH] = "/";
+
 static char home_path[MAX_PATH] = "/";
 static int resume_explorer = 0;
-static int only_executables = 0;
-static unsigned char explorer_selection[MAX_ITEMS];
-static unsigned char explorer_drag_snapshot[MAX_ITEMS];
-static BudoSelection explorer_select = {
-    .selected = explorer_selection, .snapshot = explorer_drag_snapshot,
-    .capacity = MAX_ITEMS, .focus = -1, .anchor = -1
-};
+
 #define explorer_selected_item explorer_select.focus
 #define explorer_anchor explorer_select.anchor
 static DesktopItem desktop_shortcuts[DESKTOP_SHORTCUT_MAX];
@@ -307,17 +333,13 @@ static int context_x, context_y;
 static ExplorerClipboardItem explorer_clipboard[MAX_ITEMS];
 static int explorer_clipboard_count = 0;
 static int explorer_clipboard_mode = EXPLORER_CLIP_NONE;
-static int explorer_rename_active = 0;
-static int explorer_rename_item = -1;
-static char explorer_rename_input[MAX_NAME];
-static int explorer_rename_len = 0;
+
 static int explorer_desktop_slot = 0;
 static int editor_desktop_slot = 1;
 static int desktop_drag_app = APP_NONE;
 static int desktop_icon_pressed = 0;
 static int desktop_icon_dragging = 0;
-static int explorer_drag_shortcut = -1, explorer_shortcut_dragging;
-static int explorer_drag_press_x, explorer_drag_press_y, explorer_drag_x, explorer_drag_y;
+
 static int desktop_press_x = 0;
 static int desktop_press_y = 0;
 static int desktop_drag_x = 0;
@@ -327,66 +349,21 @@ static int desktop_drag_dy = 0;
 static int active_window = APP_NONE;
 static BwaLoadedApp bwa_external_apps[BWA_MAX_EXTERNAL];
 static int bwa_external_app_count = 0;
+static BwaLoadedApp bwa_instances[BWA_MAX_INSTANCES];
+static int bwa_instance_count;
+static BwaLoadedApp *bwa_new_instance(BwaLoadedApp *program);
+static int builtin_poll_terminals(void);
+static void desktop_focus_visible(void);
 static BwaLoadedApp *bwa_callback_app = NULL;
 
-static char editor_lines[EDITOR_MAX_LINES][EDITOR_MAX_COLS];
-static int editor_line_count = 1;
-static int editor_cursor_line = 0;
-static int editor_cursor_col = 0;
-static int editor_anchor_line, editor_anchor_col, editor_selection_active;
-static int editor_selecting;
 static char *editor_clipboard;
-static int explorer_up_selected;
+
 static clock_t app_switch_until;
 static void editor_selection_clear(void);
 static int editor_selection_delete(void);
-static int editor_top_line = 0;
-static int editor_top_segment = 0;
-static int editor_left_col = 0;
-static int editor_menu = EDITOR_MENU_NONE;
-static int explorer_file_menu = 0;
-static int explorer_list_view;
-/* Visible rows are rebuilt only when navigation or expansion changes. */
-#define EXPLORER_TREE_MAX 1024
-#define EXPLORER_TREE_EXPANDED_MAX 256
-typedef struct ExplorerFolderRow {
-    char path[MAX_PATH];
-    char name[MAX_NAME];
-    int depth;
-    int expandable;
-} ExplorerFolderRow;
-static ExplorerFolderRow explorer_folders[EXPLORER_TREE_MAX];
-static char explorer_expanded[EXPLORER_TREE_EXPANDED_MAX][MAX_PATH];
-static int explorer_folder_count, explorer_expanded_count;
-static int explorer_folder_top, explorer_folder_focus = -1;
-static int explorer_folder_keyboard;
-static int explorer_folder_preferred_width;
-static int explorer_folder_left;
-static int explorer_divider_dragging, explorer_divider_grab;
-static char explorer_folder_last_click[MAX_PATH];
-static clock_t explorer_folder_click_time;
-static const char *explorer_status;
-static char explorer_error[160];
-static int explorer_view_menu;
-static int terminal_file_menu = 0;
-static int explorer_creating_folder = 0;
-static int editor_dialog = EDITOR_DIALOG_NONE;
+
 static void editor_history_reset(void);
 static int editor_history_before_edit(void);
-static char editor_path[MAX_PATH] = "";
-static char editor_dialog_input[MAX_PATH] = "";
-static int editor_dialog_len = 0;
-static char editor_search_text[MAX_PATH] = "";
-static char editor_replacement[MAX_PATH] = "";
-static int editor_search_case = 0;
-static int editor_search_word = 0;
-static int editor_search_wrap = 1;
-static int editor_search_field = 0;
-static int editor_search_caret = 0;
-static int editor_search_selected = 0;
-static int editor_match_line = -1;
-static int editor_match_col = 0;
-static int editor_match_len = 0;
 
 static int editor_search_dialog_active(void)
 {
@@ -394,25 +371,12 @@ static int editor_search_dialog_active(void)
            editor_dialog == EDITOR_DIALOG_REPLACE_FIND ||
            editor_dialog == EDITOR_DIALOG_REPLACE_ALL_FIND;
 }
-static char editor_status[64] = "";
-static int editor_word_wrap = 0;
-static int editor_show_row_numbers = 1;
-static int editor_writer_mode = 0;
-static int editor_writer_ruler = 1;
-static int editor_writer_left_indent = 0;
-static int editor_writer_first_indent = 0;
-static int editor_writer_right_indent = 0;
-static int editor_writer_tabs[EDITOR_WRITER_TABS] =
-    {8, 16, 24, 32, 40, 48, 56, 64};
-static int editor_ruler_drag = 0;
-static char editor_last_save[24] = "Not saved";
+
 static int text_caret_visible = 1;
 static clock_t text_caret_last_toggle = 0;
-static int editor_preferred_visual_col = -1;
-static int editor_rtf_overflow = 0;
 
 static const BwaHostApi bwa_host_api;
-static int picker_owner = APP_EDITOR;
+static int picker_owner = BWA_HOST_APP_EDITOR;
 static int picker_overwrite = 0;
 static int picker_name_cursor = 0;
 static int picker_name_selected = 0;
@@ -426,13 +390,11 @@ static int confirm_kind = 0;
 static int confirm_is_picker = 0;
 static char confirm_title[80];
 static char confirm_message[256];
-static int editor_pending_action = 0;
+
 static int desktop_exit_requested = 0;
-static char editor_pending_path[MAX_PATH];
-static uint64_t editor_saved_hash = 0;
-static BudoScrollbar editor_vscroll, editor_hscroll;
-static BudoScrollbar explorer_scroll, terminal_scrollbar, picker_scroll;
-static BudoScrollbar explorer_folder_scroll, explorer_folder_hscroll;
+
+static BudoScrollbar picker_scroll;
+
 static void explorer_folder_sync(void);
 static int explorer_folder_pointer(int x, int y, int *page);
 static int explorer_folder_key(int key, int scan, int *page);
@@ -469,46 +431,6 @@ static char editor_file_path[MAX_PATH] = "/";
 static char editor_file_name[MAX_PATH] = "";
 static int editor_file_name_len = 0;
 static clock_t editor_file_last_click_time = 0;
-
-static AppWindow explorer_window = {
-    WINDOW_DEFAULT_X, WINDOW_DEFAULT_Y,
-    WINDOW_DEFAULT_W, WINDOW_DEFAULT_H,
-    WINDOW_DEFAULT_X, WINDOW_DEFAULT_Y,
-    WINDOW_DEFAULT_W, WINDOW_DEFAULT_H,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
-
-static AppWindow editor_window = {
-    90, 78, 480, 330,
-    90, 78, 480, 330,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
-
-static AppWindow terminal_window = {
-    110, 90, 500, 300,
-    110, 90, 500, 300,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-};
-
-static char terminal_lines[TERMINAL_MAX_LINES][TERMINAL_LINE_LEN];
-static int terminal_line_count = 0;
-static char terminal_input[TERMINAL_INPUT_LEN] = "";
-static int terminal_input_len = 0;
-static int terminal_cursor = 0;
-static char terminal_history[TERMINAL_HISTORY_MAX][TERMINAL_INPUT_LEN];
-static int terminal_history_count = 0;
-static int terminal_history_pos = -1;
-static int terminal_scroll = 0;
-static int terminal_paging = 0;
-static int terminal_page_top = 0;
-static int terminal_page_end = 0;
-static char terminal_completion[TERMINAL_COMPLETION_MAX][MAX_NAME];
-static int terminal_completion_count = 0;
-static int terminal_completion_index = -1;
-static int terminal_completion_start = 0;
-static int terminal_completion_end = 0;
-static char terminal_completion_prefix[MAX_PATH] = "";
-static char terminal_cwd[MAX_PATH] = "";
 
 static int window_contains(const AppWindow *window, int x, int y);
 static int point_in_rect(int px, int py, int x, int y, int w, int h);
@@ -1082,12 +1004,11 @@ static int window_resize_edges(const AppWindow *w, int x, int y)
 static AppWindow *window_at_point(int x, int y)
 {
     int owner = desktop_point_owner(x, y);
-    if (owner == APP_EXPLORER) return &explorer_window;
-    if (owner == APP_EDITOR) return &editor_window;
-    if (owner == APP_TERMINAL) return &terminal_window;
-    for (int i = 0; i < bwa_external_app_count; ++i)
-        if (bwa_external_apps[i].definition.runtime_id == owner && bwa_external_apps[i].managed_window)
-            return &bwa_external_apps[i].window;
+    AppWindow *builtin = builtin_window(owner);
+    if (builtin) return builtin;
+    for (int i = 0; i < bwa_instance_count; ++i)
+        if (bwa_instances[i].definition.runtime_id == owner && bwa_instances[i].managed_window)
+            return &bwa_instances[i].window;
     return NULL;
 }
 
@@ -1190,7 +1111,6 @@ static int window_min_button_x(const AppWindow *window)
 {
     return window_max_button_x(window) - 16;
 }
-
 
 static void window_open_state(AppWindow *window)
 {
@@ -1352,13 +1272,10 @@ static void draw_menu_bar_item(int x, int y, int w,
 }
 
 static void draw_popup_menu(int x, int y, int w,
-                            const BudoMenuItem *items, int count)
+                            const BudoMenuItem *menu_items, int count)
 {
-    budo_menu_items_draw(&bwa_host_api, x, y, w, items, count);
+    budo_menu_items_draw(&bwa_host_api, x, y, w, menu_items, count);
 }
-
-
-
 
 static unsigned int pcx_u16(const unsigned char *p)
 {
@@ -2922,21 +2839,21 @@ static void draw_explorer_list_entry(int index, int x, int y)
     int selected = index == -2 ? explorer_up_selected : index >= 0 && explorer_selection[index];
     unsigned char ink = selected ? TITLE_TEXT_COLOR : TEXT_COLOR;
     fill_rect(x, y, width, 12, selected ? TITLE_COLOR : WINDOW_FACE_COLOR);
-    const char *name = index == -2 ? ".. (Up)" : items[index].name;
+    const char *name = index == -2 ? ".. (Up)" : directory_items[index].name;
     draw_text_elided(x + 3, y + 2, name, ink, (name_w - 6) / 6);
     bwa_pointer_region(x, y, name_w, 12, BUDO_CURSOR_ARROW, name);
     if (index >= 0) {
         struct stat info;
         char size[32] = "?", date[24] = "?", attributes[6] = "----";
-        if (lstat(items[index].path, &info) == 0) {
-            if (items[index].type == TYPE_FOLDER) snprintf(size, sizeof(size), "<DIR>");
+        if (lstat(directory_items[index].path, &info) == 0) {
+            if (directory_items[index].type == TYPE_FOLDER) snprintf(size, sizeof(size), "<DIR>");
             else snprintf(size, sizeof(size), "%lld", (long long)info.st_size);
             struct tm when;
             if (localtime_r(&info.st_mtime, &when)) strftime(date, sizeof(date), "%Y-%m-%d %H:%M", &when);
             attributes[0] = info.st_mode & 0222 ? '-' : 'R';
-            attributes[1] = items[index].name[0] == '.' ? 'H' : '-';
+            attributes[1] = directory_items[index].name[0] == '.' ? 'H' : '-';
             attributes[2] = S_ISLNK(info.st_mode) ? 'L' : '-';
-            attributes[3] = items[index].type == TYPE_FOLDER ? 'D' : 'A';
+            attributes[3] = directory_items[index].type == TYPE_FOLDER ? 'D' : 'A';
         }
         if (width - name_w >= 78) draw_text(x + name_w, y + 2, size, ink, 12);
         if (width - name_w >= 180) draw_text(x + name_w + 78, y + 2, date, ink, 16);
@@ -2999,9 +2916,9 @@ static void draw_file_explorer_window(int page)
             draw_back_icon(x, y);
         } else if (item_index >= 0) {
             draw_labeled_icon(x, y,
-                              items[item_index].name,
-                              items[item_index].type,
-                              explorer_selection[item_index] != 0, items[item_index].path);
+                              directory_items[item_index].name,
+                              directory_items[item_index].type,
+                              explorer_selection[item_index] != 0, directory_items[item_index].path);
             budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W,
                                      DESKTOP_ICON_H, 0,
                                      item_index == explorer_selected_item);
@@ -3639,23 +3556,6 @@ static int editor_save_file_impl(const char *path)
     editor_set_status("File saved");
     return 1;
 }
-
-/* Packed snapshots keep replacement transactions reversible without
- * reserving the maximum document size for every history entry. */
-#define EDITOR_HISTORY_LIMIT 32
-struct EditorSnapshot {
-    char *text;
-    int lines;
-    int row;
-    int col;
-};
-static struct EditorSnapshot editor_undo[EDITOR_HISTORY_LIMIT];
-static struct EditorSnapshot editor_redo[EDITOR_HISTORY_LIMIT];
-static int editor_undo_count = 0;
-static int editor_redo_count = 0;
-static int editor_typing_line = -1;
-static int editor_typing_col = -1;
-static clock_t editor_typing_time = 0;
 
 static void editor_history_clear(struct EditorSnapshot *history, int *count)
 {
@@ -5415,7 +5315,6 @@ static void draw_editor_window(void)
               3, 2, TEXT_COLOR);
 }
 
-
 static void terminal_add_line(const char *text)
 {
     size_t len;
@@ -6031,9 +5930,7 @@ static void terminal_execute(void)
 
     if (terminal_command_prefix(p, "EXIT") &&
         p[4] == '\0') {
-        terminal_window.open = 0;
-        terminal_window.minimized = 0;
-        active_window = APP_NONE;
+        close_terminal();
         return;
     }
 
@@ -6069,7 +5966,6 @@ static void terminal_execute(void)
         }
         return;
     }
-
 
     terminal_run_external(p);
 }
@@ -6107,7 +6003,7 @@ static void draw_terminal_window(void)
 
     draw_window_chrome(&terminal_window);
     draw_text(terminal_window.x + 7, terminal_window.y + 6,
-              "BUDOSTACK Terminal", window_title_text_color(), 19);
+              terminal_title, window_title_text_color(), (terminal_window.w - 64) / 6);
     draw_window_button(min_x, terminal_window.y + WINDOW_BORDER, 0);
     draw_window_button(max_x, terminal_window.y + WINDOW_BORDER, 1);
     draw_window_button(close_x, terminal_window.y + WINDOW_BORDER, 2);
@@ -6193,12 +6089,7 @@ static void minimize_terminal(void)
 {
     session_reset_input();
     window_minimize_state(&terminal_window);
-    if (active_window == APP_TERMINAL) {
-        active_window = explorer_window.open && !explorer_window.minimized ?
-                        APP_EXPLORER :
-                        (editor_window.open && !editor_window.minimized ?
-                         APP_EDITOR : APP_NONE);
-    }
+    desktop_focus_visible();
 }
 
 static void close_terminal(void)
@@ -6207,12 +6098,7 @@ static void close_terminal(void)
     window_close_state(&terminal_window);
     terminal_paging = 0;
     terminal_scroll = 0;
-    if (active_window == APP_TERMINAL) {
-        active_window = explorer_window.open && !explorer_window.minimized ?
-                        APP_EXPLORER :
-                        (editor_window.open && !editor_window.minimized ?
-                         APP_EDITOR : APP_NONE);
-    }
+    desktop_focus_visible();
 }
 
 static void toggle_maximize_terminal(void)
@@ -6421,7 +6307,7 @@ static void bwa_draw_editor(void)
 static int bwa_open_editor_file(const char *path)
 {
     if (path == NULL) return 0;
-    open_editor();
+    if (!builtin_new_instance(BWA_HOST_APP_EDITOR)) return 0;
     editor_request_action(2, path);
     return 1;
 }
@@ -6437,26 +6323,26 @@ static void bwa_draw_terminal(void)
 
 static BwaAppDefinition bwa_builtin_apps[] = {
     {
-        APP_EXPLORER,
+        BWA_HOST_APP_EXPLORER,
         "explorer",
         "File Explorer",
-        BWA_FLAG_SINGLETON,
+        BWA_FLAG_NONE,
         {NULL, bwa_draw_explorer, NULL, NULL, NULL, NULL, NULL, NULL, NULL},
         NULL, NULL, NULL
     },
     {
-        APP_EDITOR,
+        BWA_HOST_APP_EDITOR,
         "editor",
         "Editor",
-        BWA_FLAG_SINGLETON,
+        BWA_FLAG_NONE,
         {NULL, bwa_draw_editor, NULL, NULL, NULL, NULL, bwa_open_editor_file, NULL, NULL},
         NULL, NULL, NULL
     },
     {
-        APP_TERMINAL,
+        BWA_HOST_APP_TERMINAL,
         "terminal",
         "Terminal",
-        BWA_FLAG_SINGLETON,
+        BWA_FLAG_NONE,
         {NULL, bwa_draw_terminal, NULL, NULL, NULL, NULL, NULL, NULL, NULL},
         NULL, NULL, NULL
     }
@@ -6473,7 +6359,8 @@ static BwaAppDefinition *bwa_find_builtin_app(int runtime_id)
     int i;
 
     for (i = 0; i < bwa_builtin_app_count(); ++i) {
-        if (bwa_builtin_apps[i].runtime_id == runtime_id) {
+        if (runtime_id > 0 && runtime_id < APP_BWA_BASE &&
+            bwa_builtin_apps[i].runtime_id == (runtime_id - 1) % 3 + 1) {
             return &bwa_builtin_apps[i];
         }
     }
@@ -6495,23 +6382,7 @@ static void bwa_draw_builtin_app(int runtime_id)
 
 static int bwa_launch_host_app(int app_id)
 {
-    if (app_id == BWA_HOST_APP_EXPLORER) {
-        open_explorer();
-        active_window = APP_EXPLORER;
-        return 1;
-    }
-
-    if (app_id == BWA_HOST_APP_EDITOR) {
-        open_editor();
-        return 1;
-    }
-
-    if (app_id == BWA_HOST_APP_TERMINAL) {
-        open_terminal();
-        return 1;
-    }
-
-    return 0;
+    return builtin_new_instance(app_id);
 }
 
 static unsigned char bwa_get_system_color(int role)
@@ -6720,15 +6591,7 @@ static int bwa_window_close(void)
         window_close_state(&app->window);
     }
 
-    if (active_window == app->definition.runtime_id) {
-        active_window =
-            explorer_window.open && !explorer_window.minimized ?
-            APP_EXPLORER :
-            (editor_window.open && !editor_window.minimized ?
-             APP_EDITOR :
-             (terminal_window.open && !terminal_window.minimized ?
-              APP_TERMINAL : APP_NONE));
-    }
+    desktop_focus_visible();
     return 1;
 }
 
@@ -6890,9 +6753,9 @@ static BwaLoadedApp *bwa_find_external_app(int runtime_id)
 {
     int i;
 
-    for (i = 0; i < bwa_external_app_count; ++i) {
-        if (bwa_external_apps[i].definition.runtime_id == runtime_id) {
-            return &bwa_external_apps[i];
+    for (i = 0; i < bwa_instance_count; ++i) {
+        if (bwa_instances[i].definition.runtime_id == runtime_id) {
+            return &bwa_instances[i];
         }
     }
 
@@ -7026,8 +6889,11 @@ static int open_associated_file(const char *path)
         return 0;
     }
 
+    app = bwa_new_instance(app);
+    if (!app) return 0;
     bwa_callback_app = app;
     if (!app->definition.callbacks.open_file(path)) {
+        if (app->definition.callbacks.close) app->definition.callbacks.close();
         bwa_callback_app = NULL;
         return 0;
     }
@@ -7124,6 +6990,68 @@ static int bwa_register_external(const char *path)
     return 1;
 }
 
+/* dlopen of the same pathname shares module globals. A private image gives
+ * each legacy callback-based BWA its own data segment without changing ABI. */
+static BwaLoadedApp *bwa_new_instance(BwaLoadedApp *program)
+{
+    int slot;
+    for (slot = 0; slot < bwa_instance_count; ++slot)
+        if (!bwa_instances[slot].open) break;
+    if (slot == BWA_MAX_INSTANCES) {
+        fprintf(stderr, "BUDOWIN: native window limit reached\n");
+        return NULL;
+    }
+    BwaLoadedApp *app = &bwa_instances[slot];
+    if (app->handle) {
+        (void)dlclose(app->handle);
+        memset(app, 0, sizeof(*app));
+    }
+    char temporary[MAX_PATH];
+    if (!copy_text(temporary, sizeof(temporary), bw_state_file("instance-XXXXXX"))) return NULL;
+    int output = mkstemp(temporary);
+    int input = open(program->path, O_RDONLY);
+    int ok = output >= 0 && input >= 0;
+    unsigned char buffer[16384];
+    while (ok) {
+        ssize_t n = read(input, buffer, sizeof(buffer));
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) { ok = 0; break; }
+        if (!n) break;
+        ssize_t offset = 0;
+        while (offset < n) {
+            ssize_t written = write(output, buffer + offset, (size_t)(n - offset));
+            if (written < 0 && errno == EINTR) continue;
+            if (written <= 0) { ok = 0; break; }
+            offset += written;
+        }
+    }
+    if (!ok) perror("BUDOWIN: private module image");
+    if (input >= 0) close(input);
+    if (output >= 0 && close(output) != 0) ok = 0;
+    void *handle = ok ? dlopen(temporary, RTLD_NOW | RTLD_LOCAL) : NULL;
+    if (output >= 0 && unlink(temporary) != 0) perror("BUDOWIN: remove module image");
+    if (!handle) {
+        bwa_log_load_failure(program->path, "instance", ok ? dlerror() : "copy failed");
+        return NULL;
+    }
+    union { void *object; BwaEntryPoint entry; } symbol;
+    symbol.object = dlsym(handle, "bwa_entry");
+    BwaAppDefinition definition;
+    memset(&definition, 0, sizeof(definition));
+    if (!symbol.object || !symbol.entry(&bwa_host_api, &definition) ||
+        !definition.app_id || !definition.name) {
+        bwa_log_load_failure(program->path, "instance", "invalid entry or definition");
+        dlclose(handle);
+        return NULL;
+    }
+    app->handle = handle;
+    app->definition = definition;
+    app->definition.runtime_id = APP_BWA_BASE + BWA_MAX_EXTERNAL + slot;
+    snprintf(app->path, sizeof(app->path), "%s", program->path);
+    if (slot == bwa_instance_count) ++bwa_instance_count;
+    return app;
+}
+
 static void bwa_load_external_apps(void)
 {
     char apps_path[MAX_PATH];
@@ -7214,30 +7142,19 @@ static void bwa_draw_external_app(BwaLoadedApp *app)
     ui_draw_owner = APP_NONE;
 }
 
-static void bwa_draw_external_nonactive(void)
-{
-    int i;
-
-    for (i = 0; i < bwa_external_app_count; ++i) {
-        BwaLoadedApp *app = &bwa_external_apps[i];
-
-        if (app->definition.runtime_id != active_window) {
-            bwa_draw_external_app(app);
-        }
-    }
-}
-
 static int desktop_running_apps(int *ids, AppWindow **windows, const char **names)
 {
     int count = 0;
-    AppWindow *builtin[] = {&explorer_window, &editor_window, &terminal_window};
     const char *labels[] = {"File Explorer", "Editor", "Terminal"};
-    for (int i = 0; i < 3; ++i) {
-        if (!builtin[i]->open) continue;
-        ids[count] = i + 1; windows[count] = builtin[i]; names[count++] = labels[i];
+    for (int id = 1; id <= BUILTIN_INSTANCE_MAX * 3; ++id) {
+        AppWindow *window = builtin_window(id);
+        if (!window || !window->open) continue;
+        ids[count] = id;
+        windows[count] = window;
+        names[count++] = (id - 1) % 3 == 2 ? terminal_instances[(id - 1) / 3]->v_terminal_title : labels[(id - 1) % 3];
     }
-    for (int i = 0; i < bwa_external_app_count; ++i) {
-        BwaLoadedApp *app = &bwa_external_apps[i];
+    for (int i = 0; i < bwa_instance_count; ++i) {
+        BwaLoadedApp *app = &bwa_instances[i];
         if (!app->open) continue;
         ids[count] = app->definition.runtime_id;
         windows[count] = &app->window;
@@ -7246,18 +7163,75 @@ static int desktop_running_apps(int *ids, AppWindow **windows, const char **name
     return count;
 }
 
+#define DESKTOP_RUNNING_MAX (BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES)
+static unsigned long desktop_z_order[APP_BWA_BASE + BWA_MAX_EXTERNAL + BWA_MAX_INSTANCES];
+static unsigned long desktop_z_sequence;
+static int desktop_last_active;
+
+static int desktop_window_order(int *ids, AppWindow **windows, const char **names)
+{
+    if (active_window != desktop_last_active) {
+        if (desktop_last_active > 0 && desktop_last_active < APP_BWA_BASE &&
+            (desktop_last_active - 1) % 3 == 2 && builtin_window(desktop_last_active)) {
+            TerminalState *saved = terminal_state;
+            int saved_slot = terminal_instance_slot;
+            builtin_select(desktop_last_active);
+            session_reset_input();
+            terminal_state = saved;
+            terminal_instance_slot = saved_slot;
+        }
+        if (active_window > 0 && active_window < (int)(sizeof(desktop_z_order) / sizeof(desktop_z_order[0])))
+            desktop_z_order[active_window] = ++desktop_z_sequence;
+        desktop_last_active = active_window;
+    }
+    int count = desktop_running_apps(ids, windows, names);
+    for (int i = 1; i < count; ++i) {
+        int id = ids[i], j = i;
+        AppWindow *window = windows[i];
+        const char *name = names[i];
+        while (j > 0 && desktop_z_order[ids[j - 1]] > desktop_z_order[id]) {
+            ids[j] = ids[j - 1];
+            windows[j] = windows[j - 1];
+            names[j] = names[j - 1];
+            --j;
+        }
+        ids[j] = id;
+        windows[j] = window;
+        names[j] = name;
+    }
+    return count;
+}
+
+static void desktop_focus_visible(void)
+{
+    int ids[DESKTOP_RUNNING_MAX];
+    AppWindow *windows[DESKTOP_RUNNING_MAX];
+    const char *names[DESKTOP_RUNNING_MAX];
+    if (active_window == APP_NONE) return;
+    int count = desktop_window_order(ids, windows, names);
+    for (int i = 0; i < count; ++i)
+        if (ids[i] == active_window && !windows[i]->minimized) return;
+    active_window = APP_NONE;
+    for (int i = count - 1; i >= 0; --i) {
+        if (windows[i]->minimized) continue;
+        active_window = ids[i];
+        builtin_select(active_window);
+        break;
+    }
+}
+
 static void desktop_switch_app(int reverse)
 {
-    session_reset_input();
-    int ids[3 + BWA_MAX_EXTERNAL];
-    AppWindow *windows[3 + BWA_MAX_EXTERNAL];
-    const char *names[3 + BWA_MAX_EXTERNAL];
+    int ids[BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES];
+    AppWindow *windows[BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES];
+    const char *names[BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES];
     int count = desktop_running_apps(ids, windows, names), current = -1;
     if (!count) return;
     for (int i = 0; i < count; ++i) if (ids[i] == active_window) current = i;
     current = (current + (reverse ? count - 1 : 1)) % count;
     windows[current]->minimized = 0;
     active_window = ids[current];
+    builtin_select(active_window);
     app_switch_until = bw_clock() + CLOCKS_PER_SEC * 2;
 }
 
@@ -7270,9 +7244,9 @@ static int desktop_switch_key(int key, unsigned int modifiers)
 
 static int desktop_minimized_click(int x, int y)
 {
-    int ids[3 + BWA_MAX_EXTERNAL];
-    AppWindow *windows[3 + BWA_MAX_EXTERNAL];
-    const char *names[3 + BWA_MAX_EXTERNAL];
+    int ids[BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES];
+    AppWindow *windows[BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES];
+    const char *names[BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES];
     int count = desktop_running_apps(ids, windows, names), slot = 0;
     for (int i = 0; i < count; ++i) {
         if (!windows[i]->minimized) continue;
@@ -7281,6 +7255,7 @@ static int desktop_minimized_click(int x, int y)
         if (point_in_rect(x, y, bx, by, 122, 20)) {
             windows[i]->minimized = 0;
             active_window = ids[i];
+            builtin_select(active_window);
             return 1;
         }
     }
@@ -7289,9 +7264,9 @@ static int desktop_minimized_click(int x, int y)
 
 static void desktop_running_draw(void)
 {
-    int ids[3 + BWA_MAX_EXTERNAL];
-    AppWindow *windows[3 + BWA_MAX_EXTERNAL];
-    const char *names[3 + BWA_MAX_EXTERNAL];
+    int ids[BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES];
+    AppWindow *windows[BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES];
+    const char *names[BUILTIN_INSTANCE_MAX * 3 + BWA_MAX_INSTANCES];
     int count = desktop_running_apps(ids, windows, names), slot = 0;
     for (int i = 0; i < count; ++i) {
         if (!windows[i]->minimized) continue;
@@ -7304,13 +7279,20 @@ static void desktop_running_draw(void)
         draw_text_elided(x + 4, y + 6, names[i], TEXT_COLOR, 19);
     }
     if (app_switch_until && count) {
-        int height = 26 + count * 18, y = (SCREEN_HEIGHT - height) / 2;
+        int shown = count < 22 ? count : 22;
+        int selected = 0;
+        for (int i = 0; i < count; ++i) if (ids[i] == active_window) selected = i;
+        int first = selected - shown / 2;
+        if (first < 0) first = 0;
+        if (first + shown > count) first = count - shown;
+        int height = 26 + shown * 18, y = (SCREEN_HEIGHT - height) / 2;
         fill_rect(208, y, 224, height, WINDOW_CHROME_COLOR);
         draw_bevel(208, y, 224, height, 1);
         draw_text(218, y + 7, "Running applications", TEXT_COLOR, 32);
-        for (int i = 0; i < count; ++i) {
-            if (ids[i] == active_window) fill_rect(214, y + 22 + i * 18, 212, 18, TITLE_COLOR);
-            draw_text_elided(220, y + 27 + i * 18, names[i], ids[i] == active_window ? TITLE_TEXT_COLOR : TEXT_COLOR, 33);
+        for (int i = first; i < first + shown; ++i) {
+            int row = i - first;
+            if (ids[i] == active_window) fill_rect(214, y + 22 + row * 18, 212, 18, TITLE_COLOR);
+            draw_text_elided(220, y + 27 + row * 18, names[i], ids[i] == active_window ? TITLE_TEXT_COLOR : TEXT_COLOR, 33);
         }
     }
 }
@@ -7394,7 +7376,7 @@ static void draw_desktop(int page)
     }
 
     if (!desktop_folder[0] && !bwa_has_external_app_id("explorer") &&
-        (!explorer_window.open || explorer_window.minimized)) {
+        1) {
         budo_selection_icon_draw(&bwa_host_api, explorer_x, explorer_y,
                                  DESKTOP_ICON_W, DESKTOP_ICON_H,
                                  desktop_select.selected[0], 0);
@@ -7404,7 +7386,7 @@ static void draw_desktop(int page)
                                  desktop_select.focus == 0);
     }
     if (!desktop_folder[0] && !bwa_has_external_app_id("editor") &&
-        (!editor_window.open || editor_window.minimized)) {
+        1) {
         budo_selection_icon_draw(&bwa_host_api, editor_x, editor_y,
                                  DESKTOP_ICON_W, DESKTOP_ICON_H,
                                  desktop_select.selected[1], 0);
@@ -7420,8 +7402,7 @@ static void draw_desktop(int page)
         for (i = 0; i < bwa_external_app_count; ++i) {
             BwaLoadedApp *app = &bwa_external_apps[i];
 
-            if (!desktop_folder[0] && (!app->open ||
-                (app->managed_window && app->window.minimized))) {
+            if (!desktop_folder[0] && 1) {
                 int app_x;
                 int app_y;
 
@@ -7446,29 +7427,33 @@ static void draw_desktop(int page)
 
     budo_selection_drag_draw(&bwa_host_api, &desktop_select);
     bwa_draw_page = page;
-    bwa_draw_external_nonactive();
 
-    if (active_window == APP_EXPLORER) {
-        bwa_draw_builtin_app(APP_EDITOR);
-        bwa_draw_builtin_app(APP_TERMINAL);
-        bwa_draw_builtin_app(APP_EXPLORER);
-    } else if (active_window == APP_EDITOR) {
-        bwa_draw_builtin_app(APP_EXPLORER);
-        bwa_draw_builtin_app(APP_TERMINAL);
-        bwa_draw_builtin_app(APP_EDITOR);
-    } else if (active_window == APP_TERMINAL) {
-        bwa_draw_builtin_app(APP_EXPLORER);
-        bwa_draw_builtin_app(APP_EDITOR);
-        bwa_draw_builtin_app(APP_TERMINAL);
-    } else {
-        BwaLoadedApp *active_app =
-            bwa_find_external_app(active_window);
-
-        bwa_draw_builtin_app(APP_EXPLORER);
-        bwa_draw_builtin_app(APP_EDITOR);
-        bwa_draw_builtin_app(APP_TERMINAL);
-        bwa_draw_external_app(active_app);
+    ExplorerState *saved_explorer = explorer_state;
+    EditorState *saved_editor = editor_state;
+    TerminalState *saved_terminal = terminal_state;
+    int saved_terminal_slot = terminal_instance_slot;
+    int ids[DESKTOP_RUNNING_MAX];
+    AppWindow *windows[DESKTOP_RUNNING_MAX];
+    const char *names[DESKTOP_RUNNING_MAX];
+    int count = desktop_window_order(ids, windows, names);
+    for (int i = 0; i < count; ++i) {
+        int id = ids[i];
+        if (windows[i]->minimized || id == active_window) continue;
+        if (id < APP_BWA_BASE) {
+            builtin_select(id);
+            if ((id - 1) % 3 == 0) bwa_draw_page = explorer_state->v_page;
+            bwa_draw_builtin_app(id);
+        } else bwa_draw_external_app(bwa_find_external_app(id));
     }
+    builtin_select(active_window);
+    if (active_window > 0 && active_window < APP_BWA_BASE) {
+        if ((active_window - 1) % 3 == 0) bwa_draw_page = explorer_state->v_page;
+        bwa_draw_builtin_app(active_window);
+    } else bwa_draw_external_app(bwa_find_external_app(active_window));
+    explorer_state = saved_explorer;
+    editor_state = saved_editor;
+    terminal_state = saved_terminal;
+    terminal_instance_slot = saved_terminal_slot;
     if (editor_file_dialog != EDITOR_FILE_DIALOG_NONE) {
         ui_region_count = 0;
         ui_draw_scope = ui_scope();
@@ -7615,9 +7600,9 @@ static int load_directory(const char *path)
             strcmp(entry.ff_name, "..") != 0 &&
             !(entry.ff_attrib & FA_LABEL) &&
             join_path(full_path, sizeof(full_path), current_path, entry.ff_name) &&
-            copy_text(items[item_count].name, sizeof(items[item_count].name), entry.ff_name) &&
-            copy_text(items[item_count].path, sizeof(items[item_count].path), full_path)) {
-            items[item_count].type =
+            copy_text(directory_items[item_count].name, sizeof(directory_items[item_count].name), entry.ff_name) &&
+            copy_text(directory_items[item_count].path, sizeof(directory_items[item_count].path), full_path)) {
+            directory_items[item_count].type =
                 (entry.ff_attrib & FA_DIREC) ? TYPE_FOLDER : TYPE_FILE;
             ++item_count;
         }
@@ -7634,11 +7619,11 @@ static int load_directory(const char *path)
             if (strcmp(shortcut_details[i].parent, current_path)) continue;
             int duplicate = 0;
             for (int j = 0; j < item_count; ++j)
-                if (!strcmp(items[j].path, desktop_shortcuts[i].path)) duplicate = 1;
-            if (!duplicate) items[item_count++] = desktop_shortcuts[i];
+                if (!strcmp(directory_items[j].path, desktop_shortcuts[i].path)) duplicate = 1;
+            if (!duplicate) directory_items[item_count++] = desktop_shortcuts[i];
         }
     }
-    qsort(items, (size_t)item_count, sizeof(items[0]), compare_items);
+    qsort(directory_items, (size_t)item_count, sizeof(directory_items[0]), compare_items);
     explorer_up_selected = 0;
     budo_selection_clear(&explorer_select);
     explorer_folder_sync();
@@ -8671,7 +8656,6 @@ static void editor_draw_file_dialog(void)
     bwa_draw_standard_button(dialog_x + dialog_w - 126, dialog_y + 18, 72, 14, "New Folder", 0);
     bwa_draw_standard_button(dialog_x + dialog_w - 48, dialog_y + 18, 38, 14, "Up", 0);
 
-
     fill_rect(list_x, list_y, list_w, list_h, WINDOW_FACE_COLOR);
     draw_bevel(list_x, list_y, list_w, list_h, 0);
 
@@ -8961,7 +8945,6 @@ static int bwa_delete_file_association(const char *extension)
     return 0;
 }
 
-
 static void normalize_slashes(char *path) { (void)path; }
 
 static void terminal_load_resume_state(void)
@@ -9013,37 +8996,26 @@ static void terminal_load_resume_state(void)
     (void)remove(TERMINAL_STATE_FILE);
 }
 
-static int save_session_state(int page)
+static int desktop_launch_program(const char *path, const char *directory)
 {
-    FILE *file = fopen(STATE_FILE, "wt");
-
-    if (file == NULL) {
+    char executable[MAX_PATH], working_directory[MAX_PATH];
+    if (!copy_text(executable, sizeof(executable), path) ||
+        !copy_text(working_directory, sizeof(working_directory), directory)) return 0;
+    if (!builtin_create_instance(BWA_HOST_APP_TERMINAL, 0)) return 0;
+    snprintf(terminal_title, sizeof(terminal_title), "%.255s",
+             strrchr(executable, '/') ? strrchr(executable, '/') + 1 : executable);
+    (void)copy_text(terminal_cwd, sizeof(terminal_cwd), working_directory);
+    if (!session_start_program(executable, working_directory)) {
+        terminal_add_line("Unable to start program.");
         return 0;
     }
-
-    fprintf(file, "%s\n", current_path);
-    fprintf(file, "%d %d %d %d %d %d %d %d %d %d %d %d %d\n",
-            page,
-            only_executables,
-            explorer_window.open,
-            explorer_window.minimized,
-            explorer_window.maximized,
-            explorer_window.x,
-            explorer_window.y,
-            explorer_window.w,
-            explorer_window.h,
-            explorer_window.restore_x,
-            explorer_window.restore_y,
-            explorer_window.restore_w,
-            explorer_window.restore_h);
-    fclose(file);
     return 1;
 }
 
 static int request_launch(const DesktopItem *item, int page)
 {
-    if (!save_session_state(page)) return 0;
-    return bw_request_launch(item->path, current_path, 0);
+    (void)page;
+    return desktop_launch_program(item->path, current_path);
 }
 static int load_initial_directory(int *page)
 {
@@ -9128,9 +9100,9 @@ static int visible_item_count(void)
     int count = 0;
 
     for (i = 0; i < item_count; ++i) {
-        if (items[i].type == TYPE_FOLDER ||
+        if (directory_items[i].type == TYPE_FOLDER ||
             !only_executables ||
-            executable_file(items[i].name)) {
+            executable_file(directory_items[i].name)) {
             ++count;
         }
     }
@@ -9144,9 +9116,9 @@ static int visible_item_at(int position)
     int visible = 0;
 
     for (i = 0; i < item_count; ++i) {
-        if (items[i].type == TYPE_FOLDER ||
+        if (directory_items[i].type == TYPE_FOLDER ||
             !only_executables ||
-            executable_file(items[i].name)) {
+            executable_file(directory_items[i].name)) {
             if (visible == position) {
                 return i;
             }
@@ -9338,12 +9310,12 @@ static void explorer_stage_clipboard(int mode)
         if (!explorer_selection[i]) continue;
 
         clip = &explorer_clipboard[explorer_clipboard_count];
-        if (!copy_text(clip->name, sizeof(clip->name), items[i].name) ||
-            !copy_text(clip->path, sizeof(clip->path), items[i].path)) {
+        if (!copy_text(clip->name, sizeof(clip->name), directory_items[i].name) ||
+            !copy_text(clip->path, sizeof(clip->path), directory_items[i].path)) {
             continue;
         }
 
-        clip->type = items[i].type;
+        clip->type = directory_items[i].type;
         ++explorer_clipboard_count;
     }
 
@@ -9527,7 +9499,7 @@ static int explorer_begin_rename(void)
 
     if (!copy_text(explorer_rename_input,
                    sizeof(explorer_rename_input),
-                   items[selected].name)) {
+                   directory_items[selected].name)) {
         return 0;
     }
 
@@ -9596,7 +9568,7 @@ static int explorer_commit_rename(void)
         explorer_rename_item >= item_count ||
         !explorer_rename_name_valid(explorer_rename_input) ||
         !copy_text(old_path, sizeof(old_path),
-                   items[explorer_rename_item].path) ||
+                   directory_items[explorer_rename_item].path) ||
         !join_path(new_path, sizeof(new_path),
                    current_path, encoded_name)) {
         return 0;
@@ -9629,7 +9601,7 @@ static int explorer_commit_rename(void)
     if (!load_directory(current_path)) return 0;
 
     for (i = 0; i < item_count; ++i) {
-        if (compare_names_ci(items[i].path, new_path) == 0) {
+        if (compare_names_ci(directory_items[i].path, new_path) == 0) {
             renamed_index = i;
             break;
         }
@@ -9659,11 +9631,11 @@ static int explorer_edit_selection(void)
 
     if (count != 1 ||
         selected < 0 ||
-        items[selected].type != TYPE_FILE) {
+        directory_items[selected].type != TYPE_FILE) {
         return 0;
     }
 
-    return bwa_open_editor_file(items[selected].path);
+    return bwa_open_editor_file(directory_items[selected].path);
 }
 
 static int explorer_delete_selection(void)
@@ -9683,7 +9655,7 @@ static int explorer_delete_selection(void)
             if (explorer_selection[i])
                 for (int j = 0; j < shortcut_count; ++j)
                     if (!strcmp(shortcut_details[j].parent, current_path) &&
-                        !strcmp(desktop_shortcuts[j].path, items[i].path)) shortcut_selection[j] = 1;
+                        !strcmp(desktop_shortcuts[j].path, directory_items[i].path)) shortcut_selection[j] = 1;
         changed = shortcuts_delete_selected();
         (void)load_directory(refresh_path);
         explorer_status = changed ? "Shortcuts removed; target files preserved." : "No shortcut removed.";
@@ -9693,10 +9665,10 @@ static int explorer_delete_selection(void)
     for (i = 0; i < item_count; ++i) {
         if (explorer_selection[i]) {
             ++selected;
-            if (explorer_delete_path(items[i].path, items[i].type)) changed = 1;
+            if (explorer_delete_path(directory_items[i].path, directory_items[i].type)) changed = 1;
             else {
                 snprintf(explorer_error, sizeof(explorer_error), "Delete failed: %.90s: %.40s",
-                         items[i].name, strerror(errno));
+                         directory_items[i].name, strerror(errno));
                 failed = 1;
             }
         }
@@ -9757,12 +9729,14 @@ static void minimize_explorer(void)
 {
     explorer_divider_dragging = 0;
     window_minimize_state(&explorer_window);
+    desktop_focus_visible();
 }
 
 static void close_explorer(void)
 {
     explorer_divider_dragging = 0;
     window_close_state(&explorer_window);
+    desktop_focus_visible();
 }
 
 static void toggle_maximize_explorer(void)
@@ -9848,7 +9822,7 @@ static int desktop_file_menu_click(int x, int y, int *page)
                 if (session_fd >= 0) session_clear();
             } else close_terminal();
         } else if (item == 0 && explorer_selected_item >= 0) {
-            DesktopItem *entry = &items[explorer_selected_item];
+            DesktopItem *entry = &directory_items[explorer_selected_item];
             if (entry->type == TYPE_FOLDER) {
                 if (load_directory(entry->path)) *page = 0;
             } else (void)open_associated_file(entry->path);
@@ -9998,6 +9972,7 @@ static void desktop_confirm_result(int response)
     int from_picker = confirm_is_picker;
     if (response == BUDO_RESPONSE_CANCEL) desktop_exit_requested = 0;
     int owner = confirm_owner;
+    builtin_select(owner);
     confirm_kind = 0;
     if (kind == 3 && owner == APP_EXPLORER) {
         if (response == BUDO_RESPONSE_SAVE) (void)explorer_delete_selection();
@@ -10225,16 +10200,97 @@ static void open_editor(void)
     active_window = APP_EDITOR;
 }
 
+/* Launchers create a fresh state. Ordinary focus/restore never calls here. */
+static int builtin_create_instance(int kind, int start_terminal)
+{
+    int slot;
+    if (kind < BWA_HOST_APP_EXPLORER || kind > BWA_HOST_APP_TERMINAL) return 0;
+    for (slot = 0; slot < BUILTIN_INSTANCE_MAX; ++slot) {
+        AppWindow *window = builtin_window(kind + slot * 3);
+        if (!window || !window->open) break;
+    }
+    if (slot == BUILTIN_INSTANCE_MAX) {
+        fprintf(stderr, "BUDOWIN: application window limit reached\n");
+        return 0;
+    }
+    if (kind == BWA_HOST_APP_EXPLORER) {
+        ExplorerState *state = explorer_instances[slot];
+        if (!state) state = malloc(sizeof(*state));
+        if (!state) { perror("BUDOWIN: Explorer instance"); return 0; }
+        *state = explorer_defaults;
+        explorer_instances[slot] = explorer_state = state;
+        state->runtime_id = kind + slot * 3;
+        explorer_select.selected = explorer_selection;
+        explorer_select.snapshot = explorer_drag_snapshot;
+        if (!load_directory(bw_user_directory())) return 0;
+        open_explorer();
+        active_window = APP_EXPLORER;
+    } else if (kind == BWA_HOST_APP_EDITOR) {
+        EditorState *state = editor_instances[slot];
+        if (state) {
+            editor_state = state;
+            editor_history_reset();
+        } else state = malloc(sizeof(*state));
+        if (!state) { perror("BUDOWIN: Editor instance"); return 0; }
+        *state = editor_defaults;
+        editor_instances[slot] = editor_state = state;
+        state->runtime_id = kind + slot * 3;
+        load_editor_settings();
+        open_editor();
+    } else {
+        TerminalState *state = terminal_instances[slot];
+        int reused = state != NULL;
+        if (!state) state = malloc(sizeof(*state));
+        if (!state) { perror("BUDOWIN: Terminal instance"); return 0; }
+        terminal_instances[slot] = terminal_state = state;
+        terminal_instance_slot = slot;
+        if (reused) session_stop();
+        *state = terminal_defaults;
+        state->runtime_id = kind + slot * 3;
+        session_context = session_defaults;
+        graphics_context = (GraphicsState){0};
+        terminalui_context = terminalui_defaults;
+        terminal_palette_load();
+        if (start_terminal) open_terminal();
+        else {
+            window_open_state(&terminal_window);
+            active_window = APP_TERMINAL;
+            bw_set_event_filter(session_forward_event);
+        }
+    }
+    AppWindow *window = builtin_window(kind + slot * 3);
+    int offset = (slot % 6) * 12;
+    window->x += offset;
+    window->y += offset;
+    return 1;
+}
+
+static int builtin_new_instance(int kind)
+{
+    return builtin_create_instance(kind, 1);
+}
+
+static int builtin_poll_terminals(void)
+{
+    TerminalState *saved = terminal_state;
+    int saved_slot = terminal_instance_slot, changed = 0;
+    for (int slot = 0; slot < BUILTIN_INSTANCE_MAX; ++slot) {
+        if (!terminal_instances[slot] || !terminal_instances[slot]->v_terminal_window.open) continue;
+        builtin_select(3 + slot * 3);
+        if (session_poll()) changed = 1;
+    }
+    terminal_state = saved;
+    terminal_instance_slot = saved_slot;
+    return changed;
+}
+
 static void minimize_editor(void)
 {
     editor_menu = EDITOR_MENU_NONE;
     editor_dialog = EDITOR_DIALOG_NONE;
     editor_file_dialog = EDITOR_FILE_DIALOG_NONE;
     window_minimize_state(&editor_window);
-    if (active_window == APP_EDITOR) {
-        active_window = explorer_window.open && !explorer_window.minimized ?
-                        APP_EXPLORER : APP_NONE;
-    }
+    desktop_focus_visible();
 }
 
 static void editor_close_now(void)
@@ -10243,10 +10299,7 @@ static void editor_close_now(void)
     editor_dialog = EDITOR_DIALOG_NONE;
     editor_file_dialog = EDITOR_FILE_DIALOG_NONE;
     window_close_state(&editor_window);
-    if (active_window == APP_EDITOR) {
-        active_window = explorer_window.open && !explorer_window.minimized ?
-                        APP_EXPLORER : APP_NONE;
-    }
+    desktop_focus_visible();
 }
 
 static void close_editor(void)
@@ -10257,14 +10310,20 @@ static void close_editor(void)
 static int desktop_request_exit(void)
 {
     if (confirm_kind || editor_file_dialog != EDITOR_FILE_DIALOG_NONE) return 0;
-    if (editor_window.open && editor_modified()) {
-        editor_window.minimized = 0;
-        active_window = APP_EDITOR;
-        editor_request_action(3, NULL);
-        return 0;
+    EditorState *saved = editor_state;
+    for (int slot = 0; slot < BUILTIN_INSTANCE_MAX; ++slot) {
+        if (!editor_instances[slot]) continue;
+        editor_state = editor_instances[slot];
+        if (editor_window.open && editor_modified()) {
+            editor_window.minimized = 0;
+            active_window = APP_EDITOR;
+            editor_request_action(3, NULL);
+            return 0;
+        }
     }
-    for (int i = 0; i < bwa_external_app_count; ++i) {
-        BwaLoadedApp *app = &bwa_external_apps[i];
+    editor_state = saved;
+    for (int i = 0; i < bwa_instance_count; ++i) {
+        BwaLoadedApp *app = &bwa_instances[i];
         if (app->open && app->definition.request_close) {
             bwa_callback_app = app;
             int allow = app->definition.request_close();
@@ -10278,8 +10337,6 @@ static int desktop_request_exit(void)
     }
     return 1;
 }
-
-
 
 static void toggle_maximize_editor(void)
 {
@@ -10309,9 +10366,10 @@ static void explorer_rubber_update(int mouse_x, int mouse_y, int page)
 
 static void shortcut_open(int index, int page)
 {
+    (void)page;
     DesktopItem *entry = &desktop_shortcuts[index];
     if (entry->type == TYPE_FOLDER) {
-        if (load_directory(entry->path)) {
+        if (builtin_new_instance(BWA_HOST_APP_EXPLORER) && load_directory(entry->path)) {
             open_explorer();
             active_window = APP_EXPLORER;
             budo_selection_clear(&desktop_select);
@@ -10326,8 +10384,7 @@ static void shortcut_open(int index, int page)
             if (slash == directory) slash[1] = '\0';
             else *slash = '\0';
         }
-        if (save_session_state(page))
-            shortcut_launch_requested = bw_request_launch(entry->path, directory, 0);
+        shortcut_launch_requested = desktop_launch_program(entry->path, directory);
     } else (void)open_associated_file(entry->path);
 }
 
@@ -10481,7 +10538,7 @@ static void explorer_shortcut_drag_begin(int item, int x, int y)
     if (item < 0 || item >= item_count || !explorer_shortcut_folder[0]) return;
     for (int i = 0; i < shortcut_count; ++i) {
         if (strcmp(shortcut_details[i].parent, current_path) ||
-            strcmp(desktop_shortcuts[i].path, items[item].path)) continue;
+            strcmp(desktop_shortcuts[i].path, directory_items[item].path)) continue;
         explorer_drag_shortcut = i;
         explorer_drag_press_x = x;
         explorer_drag_press_y = y;
@@ -10681,10 +10738,10 @@ static int shortcuts_create(void)
 {
     int old_count = shortcut_count;
     for (int i = 0; i < item_count; ++i) {
-        if (!explorer_selection[i] || items[i].type != TYPE_FILE) continue;
+        if (!explorer_selection[i] || directory_items[i].type != TYPE_FILE) continue;
         int duplicate = 0;
         for (int j = 0; j < shortcut_count; ++j)
-            if (!strcmp(items[i].path, desktop_shortcuts[j].path)) duplicate = 1;
+            if (!strcmp(directory_items[i].path, desktop_shortcuts[j].path)) duplicate = 1;
         if (duplicate) continue;
         int slot = desktop_free_slot("", -1);
         if (slot < 0 || shortcut_count == DESKTOP_SHORTCUT_MAX) {
@@ -10692,7 +10749,7 @@ static int shortcuts_create(void)
             break;
         }
         memset(&shortcut_details[shortcut_count], 0, sizeof(shortcut_details[shortcut_count]));
-        desktop_shortcuts[shortcut_count] = items[i];
+        desktop_shortcuts[shortcut_count] = directory_items[i];
         shortcut_slots[shortcut_count++] = slot;
     }
     if (shortcut_count == old_count) return 0;
@@ -10714,30 +10771,14 @@ static int shortcut_hit(int x, int y)
 
 static int desktop_point_owner(int x, int y)
 {
-    BwaLoadedApp *active = bwa_find_external_app(active_window);
-    if (active && active->open && active->managed_window &&
-        !active->window.minimized && window_contains(&active->window, x, y))
-        return active_window;
-    /* Reverse of the built-in window painting order in draw_desktop. */
-    int order[3] = {APP_TERMINAL, APP_EDITOR, APP_EXPLORER};
-    if (active_window == APP_EDITOR) {
-        order[0] = APP_EDITOR;
-        order[1] = APP_TERMINAL;
-    } else if (active_window == APP_EXPLORER) {
-        order[0] = APP_EXPLORER;
-        order[1] = APP_TERMINAL;
-        order[2] = APP_EDITOR;
-    }
-    for (int i = 0; i < 3; ++i) {
-        AppWindow *window = order[i] == APP_EXPLORER ? &explorer_window :
-                            order[i] == APP_EDITOR ? &editor_window : &terminal_window;
-        if (window->open && !window->minimized && window_contains(window, x, y))
-            return order[i];
-    }
-    for (int i = bwa_external_app_count - 1; i >= 0; --i) {
-        BwaLoadedApp *app = &bwa_external_apps[i];
-        if (app->open && app->managed_window && !app->window.minimized &&
-            window_contains(&app->window, x, y)) return app->definition.runtime_id;
+    int ids[DESKTOP_RUNNING_MAX];
+    AppWindow *windows[DESKTOP_RUNNING_MAX];
+    const char *names[DESKTOP_RUNNING_MAX];
+    int count = desktop_window_order(ids, windows, names);
+    for (int i = count - 1; i >= 0; --i) {
+        BwaLoadedApp *native = bwa_find_external_app(ids[i]);
+        if (native && !native->managed_window) continue;
+        if (!windows[i]->minimized && window_contains(windows[i], x, y)) return ids[i];
     }
     return APP_NONE;
 }
@@ -10759,15 +10800,16 @@ static int desktop_item_visible(int id)
 {
     if (id < DESKTOP_SHORTCUT_BASE && desktop_folder[0]) return 0;
     if (id == 0) return !bwa_has_external_app_id("explorer") &&
-                        (!explorer_window.open || explorer_window.minimized);
+                        1;
     if (id == 1) return !bwa_has_external_app_id("editor") &&
-                        (!editor_window.open || editor_window.minimized);
+                        1;
     if (id >= DESKTOP_SHORTCUT_BASE) return id - DESKTOP_SHORTCUT_BASE < shortcut_count &&
         !strcmp(shortcut_details[id - DESKTOP_SHORTCUT_BASE].parent, desktop_folder);
     int index = id - 2;
     if (index < 0 || index >= bwa_external_app_count) return 0;
     BwaLoadedApp *app = &bwa_external_apps[index];
-    return !app->open || (app->managed_window && app->window.minimized);
+    (void)app;
+    return 1;
 }
 
 static int desktop_order(int *order)
@@ -10801,29 +10843,29 @@ static void desktop_open_item(int id, int *page)
     if (id >= DESKTOP_SHORTCUT_BASE) {
         shortcut_open(id - DESKTOP_SHORTCUT_BASE, *page);
     } else if (id == 0) {
-        open_explorer();
-        active_window = APP_EXPLORER;
-        *page = 0;
+        if (builtin_new_instance(BWA_HOST_APP_EXPLORER)) *page = 0;
     } else if (id == 1) {
-        open_editor();
+        (void)builtin_new_instance(BWA_HOST_APP_EDITOR);
     } else {
-        BwaLoadedApp *app = &bwa_external_apps[id - 2];
+        BwaLoadedApp *program = &bwa_external_apps[id - 2];
+        BwaLoadedApp *app = program;
+        if (!(program->definition.flags & BWA_FLAG_LAUNCHER)) {
+            app = bwa_new_instance(program);
+            if (!app) return;
+        }
         int opened = 1;
-        if (app->managed_window && app->open && app->window.minimized) {
-            app->window.minimized = 0;
-        } else if (app->definition.callbacks.open) {
+        if (app->definition.callbacks.open) {
             bwa_callback_app = app;
             opened = app->definition.callbacks.open();
+            if (!opened && app->definition.callbacks.close) app->definition.callbacks.close();
             bwa_callback_app = NULL;
         }
         if (opened && !(app->definition.flags & BWA_FLAG_LAUNCHER)) {
             app->open = 1;
-            if (app->managed_window) {
-                app->window.open = 1;
-                app->window.minimized = 0;
-            }
+            if (app->managed_window) window_open_state(&app->window);
             active_window = app->definition.runtime_id;
         }
+
     }
 }
 
@@ -10914,7 +10956,7 @@ static int desktop_selection_pointer(int x, int y, int buttons, int *page)
             } else if (choice == 5) (void)explorer_begin_rename();
             else if (choice == 6) (void)shortcuts_create();
             else if (choice == 0 && explorer_selected_item >= 0) {
-                DesktopItem *entry = &items[explorer_selected_item];
+                DesktopItem *entry = &directory_items[explorer_selected_item];
                 if (entry->type == TYPE_FOLDER) { if (load_directory(entry->path)) *page = 0; }
                 else if (executable_path(entry->path)) shortcut_launch_requested = request_launch(entry, *page);
                 else (void)open_associated_file(entry->path);
@@ -11079,6 +11121,7 @@ static void explorer_navigate(int scan, int *page)
     }
 }
 
+#define page (explorer_state->v_page)
 int main(int argc, char **argv)
 {
     int mouse_x = SCREEN_WIDTH / 2;
@@ -11087,7 +11130,7 @@ int main(int argc, char **argv)
     int previous_mouse_y = mouse_y;
     int buttons = 0;
     int previous_buttons = 0;
-    int page = 0;
+    page = 0;
     int last_target = -99;
     int screen_dirty = 1;
     int exit_status = 0;
@@ -11159,7 +11202,9 @@ int main(int argc, char **argv)
     if (terminal_window.open) open_terminal();
     for (;;) {
         if (!bw_begin_frame()) break;
-        if (session_poll()) screen_dirty = 1;
+        builtin_select(active_window);
+        if (builtin_poll_terminals()) { desktop_focus_visible(); screen_dirty = 1; }
+        builtin_select(active_window);
         time_t second = time(NULL);
         if (second != desktop_second) { desktop_second = second; screen_dirty = 1; }
         if (app_switch_until && bw_clock() >= app_switch_until) {
@@ -11171,6 +11216,13 @@ int main(int argc, char **argv)
         ui_pointer_x = mouse_x;
         ui_pointer_y = mouse_y;
         ui_pointer_buttons = buttons;
+        if ((buttons & 1) && !(previous_buttons & 1) && ui_scope() == 0) {
+            int owner = desktop_point_owner(mouse_x, mouse_y);
+            if (owner != APP_NONE) {
+                active_window = owner;
+                builtin_select(owner);
+            }
+        }
         int down = (buttons & 1) && !(previous_buttons & 1);
         int up = !(buttons & 1) && (previous_buttons & 1);
         int text_pointer = terminal_text_pointer(mouse_x, mouse_y, buttons, previous_buttons);
@@ -11238,7 +11290,7 @@ int main(int argc, char **argv)
                 screen_dirty = 1;
             }
 
-            if (shortcut_launch_requested) goto application_exit;
+            if (shortcut_launch_requested) { shortcut_launch_requested = 0; screen_dirty = 1; }
 
             if (!handled && active_window == APP_TERMINAL &&
                 window_contains(&terminal_window, mouse_x, mouse_y)) {
@@ -11520,8 +11572,6 @@ int main(int argc, char **argv)
                 } else if (point_in_rect(mouse_x, mouse_y,
                                          close_x, explorer_window.y + WINDOW_BORDER, 14, 14)) {
                     close_explorer();
-                    active_window = editor_window.open && !editor_window.minimized ?
-                                    APP_EDITOR : APP_NONE;
                     screen_dirty = 1;
                     last_target = -99;
                 } else if (point_in_rect(mouse_x, mouse_y,
@@ -11533,8 +11583,6 @@ int main(int argc, char **argv)
                 } else if (point_in_rect(mouse_x, mouse_y,
                                          min_x, explorer_window.y + WINDOW_BORDER, 14, 14)) {
                     minimize_explorer();
-                    active_window = editor_window.open && !editor_window.minimized ?
-                                    APP_EDITOR : APP_NONE;
                     screen_dirty = 1;
                     last_target = -99;
                 } else if (window_begin_resize(&explorer_window, mouse_x, mouse_y)) {
@@ -11569,16 +11617,14 @@ int main(int argc, char **argv)
                                 page = 0;
                                 screen_dirty = 1;
                             }
-                        } else if (items[target].type == TYPE_FOLDER) {
-                            if (load_directory(items[target].path)) {
+                        } else if (directory_items[target].type == TYPE_FOLDER) {
+                            if (load_directory(directory_items[target].path)) {
                                 page = 0;
                                 screen_dirty = 1;
                             }
-                        } else if (executable_file(items[target].name)) {
-                            if (request_launch(&items[target], page)) {
-                                goto application_exit;
-                            }
-                        } else if (open_associated_file(items[target].path)) {
+                        } else if (executable_file(directory_items[target].name)) {
+                            if (request_launch(&directory_items[target], page)) screen_dirty = 1;
+                        } else if (open_associated_file(directory_items[target].path)) {
                             screen_dirty = 1;
                         }
 
@@ -11634,16 +11680,7 @@ int main(int argc, char **argv)
                                    (app->window_buttons &
                                     BUDO_WINDOW_BUTTON_MINIMIZE)) {
                             window_minimize_state(&app->window);
-                            active_window =
-                                explorer_window.open &&
-                                !explorer_window.minimized ?
-                                APP_EXPLORER :
-                                (editor_window.open &&
-                                 !editor_window.minimized ?
-                                 APP_EDITOR :
-                                 (terminal_window.open &&
-                                  !terminal_window.minimized ?
-                                  APP_TERMINAL : APP_NONE));
+                            desktop_focus_visible();
                         } else if (frame_action ==
                                    WINDOW_FRAME_MAXIMIZE &&
                                    (app->window_buttons &
@@ -11672,8 +11709,8 @@ int main(int argc, char **argv)
             if (!handled) {
                 int i;
 
-                for (i = bwa_external_app_count - 1; i >= 0; --i) {
-                    BwaLoadedApp *app = &bwa_external_apps[i];
+                for (i = bwa_instance_count - 1; i >= 0; --i) {
+                    BwaLoadedApp *app = &bwa_instances[i];
 
                     if (app->open && app->managed_window &&
                         !app->window.minimized &&
@@ -12105,7 +12142,7 @@ int main(int argc, char **argv)
                 else explorer_clear_selection();
                 screen_dirty = 1;
             } else if (active_window == APP_NONE && desktop_selection_key(key, &page)) {
-                if (shortcut_launch_requested) goto application_exit;
+                if (shortcut_launch_requested) { shortcut_launch_requested = 0; screen_dirty = 1; }
                 screen_dirty = 1;
             } else if (key == 27 && active_window < APP_BWA_BASE) {
                 if (editor_menu != EDITOR_MENU_NONE) {
@@ -12155,7 +12192,6 @@ int main(int argc, char **argv)
                         editor_match_line = -1;
                         editor_typing_line = -1;
                     }
-
 
                     screen_dirty = 1;
                 } else if (key == 1) {
@@ -12253,11 +12289,11 @@ int main(int argc, char **argv)
                     if (parent_path(parent, sizeof(parent)) && load_directory(parent)) page = 0;
                     screen_dirty = 1;
                 } else if (key == 13 && explorer_selected_item >= 0) {
-                    DesktopItem *entry = &items[explorer_selected_item];
+                    DesktopItem *entry = &directory_items[explorer_selected_item];
                     if (entry->type == TYPE_FOLDER) {
                         if (load_directory(entry->path)) page = 0;
                     } else if (executable_path(entry->path)) {
-                        if (request_launch(entry, page)) goto application_exit;
+                        if (request_launch(entry, page)) screen_dirty = 1;
                     } else (void)open_associated_file(entry->path);
                     screen_dirty = 1;
                 } else if (key == 1) {
@@ -12407,20 +12443,44 @@ int main(int argc, char **argv)
             cursor_drawn = 1;
         }
 
+        desktop_focus_visible();
+        builtin_select(active_window);
         previous_buttons = buttons;
         if (desktop_exit_requested && desktop_request_exit()) break;
         if (!bw_end_frame()) break;
     }
 
 application_exit:
-    session_stop();
+    for (int i = 0; i < bwa_instance_count; ++i) {
+        BwaLoadedApp *app = &bwa_instances[i];
+        bwa_callback_app = app;
+        if (app->open && app->definition.callbacks.close) app->definition.callbacks.close();
+        if (app->handle) dlclose(app->handle);
+    }
+    bwa_callback_app = NULL;
+    for (int slot = 0; slot < BUILTIN_INSTANCE_MAX; ++slot) {
+        if (terminal_instances[slot]) {
+            builtin_select(3 + slot * 3);
+            session_stop();
+            if (slot) free(terminal_instances[slot]);
+        }
+        if (editor_instances[slot]) {
+            editor_state = editor_instances[slot];
+            editor_history_reset();
+            if (slot) free(editor_instances[slot]);
+        }
+        if (slot) free(explorer_instances[slot]);
+    }
+    for (int i = 0; i < bwa_external_app_count; ++i)
+        if (bwa_external_apps[i].handle) dlclose(bwa_external_apps[i].handle);
     free(picker_selection.selected);
     picker_selection.selected = NULL;
     free(editor_file_items);
     editor_file_items = NULL;
-    editor_history_reset();
     free(editor_clipboard);
     set_text_mode();
     bw_finish();
     return exit_status;
 }
+
+#undef page

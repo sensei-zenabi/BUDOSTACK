@@ -54,13 +54,17 @@ int main(int argc, char **argv) {
     assert(!explorer_path_is_same_or_child("/tmp/ab", "/tmp/a"));
     for (int i = 0; i < bwa_external_app_count; ++i) {
         BwaLoadedApp *app = &bwa_external_apps[i];
+        if (!(app->definition.flags & BWA_FLAG_LAUNCHER)) app = bwa_new_instance(app);
+        assert(app);
         bwa_callback_app = app;
         assert(app->definition.callbacks.open());
         app->open = 1;
         if (app->definition.callbacks.draw) app->definition.callbacks.draw();
         bwa_callback_app = NULL;
     }
-    BwaLoadedApp *paint = bwa_find_external_app_id("paint");
+    BwaLoadedApp *paint = NULL;
+    for (int i = 0; i < bwa_instance_count; ++i)
+        if (!strcmp(bwa_instances[i].definition.app_id, "paint")) paint = &bwa_instances[i];
     assert(paint && paint->managed_window);
     bwa_callback_app = paint;
     active_window = paint->definition.runtime_id;
@@ -148,7 +152,9 @@ int main(int argc, char **argv) {
         assert(paint->definition.callbacks.key(27));
         bwa_callback_app = NULL;
         screenshot(argv[2], "paint-scrollbars.ppm");
-        BwaLoadedApp *settings = bwa_find_external_app_id("settings");
+        BwaLoadedApp *settings = NULL;
+        for (int i = 0; i < bwa_instance_count; ++i)
+            if (!strcmp(bwa_instances[i].definition.app_id, "settings")) settings = &bwa_instances[i];
         assert(settings);
         active_window = settings->definition.runtime_id;
         screenshot(argv[2], "settings-scrollbar.ppm");

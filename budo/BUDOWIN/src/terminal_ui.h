@@ -1,10 +1,37 @@
 #ifndef BUDOWIN_TERMINAL_UI_H
 #define BUDOWIN_TERMINAL_UI_H
 
-static int terminal_background = 1, terminal_foreground = 5;
-static int terminal_settings_menu, terminal_color_dialog, terminal_edit_menu;
-static int terminal_context_x, terminal_context_y, terminal_context_menu;
-static int terminal_anchor = -1, terminal_selection_end = -1, terminal_selecting;
+typedef struct TerminalUiState {
+    int terminal_background, terminal_foreground;
+    int terminal_settings_menu, terminal_color_dialog, terminal_edit_menu;
+    int terminal_context_x, terminal_context_y, terminal_context_menu;
+    int terminal_anchor, terminal_selection_end, terminal_selecting;
+} TerminalUiState;
+static TerminalUiState terminalui_contexts[BUILTIN_INSTANCE_MAX] = {{
+    .terminal_background = 1,
+    .terminal_foreground = 5,
+    .terminal_anchor = -1,
+    .terminal_selection_end = -1
+}};
+static const TerminalUiState terminalui_defaults = {
+    .terminal_background = 1,
+    .terminal_foreground = 5,
+    .terminal_anchor = -1,
+    .terminal_selection_end = -1
+};
+
+#define terminalui_context (terminalui_contexts[terminal_instance_slot])
+#define terminal_background (terminalui_context.terminal_background)
+#define terminal_foreground (terminalui_context.terminal_foreground)
+#define terminal_settings_menu (terminalui_context.terminal_settings_menu)
+#define terminal_color_dialog (terminalui_context.terminal_color_dialog)
+#define terminal_edit_menu (terminalui_context.terminal_edit_menu)
+#define terminal_context_x (terminalui_context.terminal_context_x)
+#define terminal_context_y (terminalui_context.terminal_context_y)
+#define terminal_context_menu (terminalui_context.terminal_context_menu)
+#define terminal_anchor (terminalui_context.terminal_anchor)
+#define terminal_selection_end (terminalui_context.terminal_selection_end)
+#define terminal_selecting (terminalui_context.terminal_selecting)
 
 static void terminal_draw_caret_row(unsigned long offset, size_t length)
 {

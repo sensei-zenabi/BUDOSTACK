@@ -72,7 +72,7 @@ int main(int argc, char **argv)
     int page = 7;
     click_folder(beta, 0, &page);
     assert(!strcmp(current_path, beta) && page == 0 && item_count == 1);
-    assert(!strcmp(items[0].name, "contents.txt"));
+    assert(!strcmp(directory_items[0].name, "contents.txt"));
     assert(explorer_folder_keyboard && !explorer_folders[folder_row(beta)].expandable);
     /* Expanding another branch preserves the current contents and file selection. */
     explorer_select_item(0, 0);

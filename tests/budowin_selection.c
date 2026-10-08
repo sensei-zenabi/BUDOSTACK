@@ -100,6 +100,7 @@ int main(void)
     app->definition.name = "Test App";
     app->definition.runtime_id = APP_BWA_BASE;
     app->definition.callbacks.open = open_test_app;
+    app->definition.flags = BWA_FLAG_LAUNCHER;
     app->desktop_slot = 2;
     shortcut_count = 2;
     for (int i = 0; i < 2; ++i) {
@@ -124,7 +125,7 @@ int main(void)
     }
     item_count = 5;
     only_executables = 0;
-    for (int i = 0; i < item_count; ++i) items[i].type = TYPE_FOLDER;
+    for (int i = 0; i < item_count; ++i) directory_items[i].type = TYPE_FOLDER;
     explorer_clear_selection();
     budo_selection_clear(&desktop_select);
     int page = 0;
@@ -204,7 +205,7 @@ int main(void)
     int x, y;
     desktop_slot_position(2, &x, &y);
     assert(desktop_selection_pointer(x + 4, y + 4, 1, &page));
-    assert(opened == 1 && app->open && active_window == APP_BWA_BASE);
+    assert(opened == 1 && !app->open);
     puts("PASS: shared selection, desktop/explorer parity, marquee and exact 32x32 highlights");
     return 0;
 }

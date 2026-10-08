@@ -5,12 +5,28 @@
 #define SESSION_ART_H 480
 #define SESSION_ART_PIXELS (SESSION_ART_W * SESSION_ART_H)
 #define SESSION_OSC_LIMIT (24U * 1024U * 1024U)
-static uint32_t *session_art_back[16], *session_art_front[16];
-static char *session_osc;
-static size_t session_osc_size, session_osc_capacity;
-static int session_osc_failed, session_overlay;
-static unsigned int session_mouse_left, session_mouse_right;
-static int session_mouse_x, session_mouse_y;
+
+typedef struct GraphicsState {
+    uint32_t *session_art_back[16], *session_art_front[16];
+    char *session_osc;
+    size_t session_osc_size, session_osc_capacity;
+    int session_osc_failed, session_overlay;
+    unsigned int session_mouse_left, session_mouse_right;
+    int session_mouse_x, session_mouse_y;
+} GraphicsState;
+static GraphicsState graphics_contexts[BUILTIN_INSTANCE_MAX] = {0};
+#define graphics_context (graphics_contexts[terminal_instance_slot])
+#define session_art_back (graphics_context.session_art_back)
+#define session_art_front (graphics_context.session_art_front)
+#define session_osc (graphics_context.session_osc)
+#define session_osc_size (graphics_context.session_osc_size)
+#define session_osc_capacity (graphics_context.session_osc_capacity)
+#define session_osc_failed (graphics_context.session_osc_failed)
+#define session_overlay (graphics_context.session_overlay)
+#define session_mouse_left (graphics_context.session_mouse_left)
+#define session_mouse_right (graphics_context.session_mouse_right)
+#define session_mouse_x (graphics_context.session_mouse_x)
+#define session_mouse_y (graphics_context.session_mouse_y)
 
 static void session_art_free(void)
 {

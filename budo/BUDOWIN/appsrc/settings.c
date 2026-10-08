@@ -480,7 +480,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
     app->runtime_id = 0;
     app->app_id = "settings";
     app->name = "Settings";
-    app->flags = BWA_FLAG_SINGLETON;
+    app->flags = BWA_FLAG_NONE;
     app->callbacks.open = settings_open;
     app->callbacks.draw = settings_draw;
     app->callbacks.mouse_down = settings_mouse_down;

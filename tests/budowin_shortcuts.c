@@ -111,21 +111,23 @@ int main(int argc, char **argv)
     slot_position(4, &x, &y);
     assert(desktop_selection_pointer(x, y + 2, 2, &page));
     assert(selected_count() == 1);
-    assert(copy_text(target, sizeof(target), items[explorer_selected_item].path));
+    assert(copy_text(target, sizeof(target), directory_items[explorer_selected_item].path));
     menu_choose(6, &page);
     assert(shortcut_count == 1);
     assert(!strcmp(desktop_shortcuts[0].path, target));
     assert(!shortcuts_create()); /* no duplicate */
     for (int i = 0; i < item_count; ++i)
-        if (!strcmp(items[i].path, executable)) explorer_selection[i] = 1;
+        if (!strcmp(directory_items[i].path, executable)) explorer_selection[i] = 1;
     assert(shortcuts_create() && shortcut_count == 2);
     shortcut_count = 0;
     shortcuts_load();
     assert(shortcut_count == 2);
     assert(load_directory(argv[1])); /* executable must not depend on Explorer directory */
     shortcut_open(1, page);
-    assert(shortcut_launch_requested && !strcmp(launch_command, executable));
-    assert(!strcmp(launch_directory, directory));
+    /* Endpoint creation is restricted here; concurrent launch is covered by the PTY test. */
+    assert(terminal_window.open && active_window == APP_TERMINAL);
+    assert(!strcmp(terminal_cwd, directory) && !launch_command[0]);
+    close_terminal();
     shortcut_launch_requested = 0;
     launch_command[0] = '\0';
     explorer_window.open = 0;
@@ -152,13 +154,14 @@ int main(int argc, char **argv)
     desktop_last_click = -1;
     assert(desktop_selection_pointer(x, y, 1, &page));
     assert(desktop_selection_pointer(x, y, 1, &page));
-    assert(shortcut_launch_requested && !strcmp(launch_command, executable));
+    assert(terminal_window.open && active_window == APP_TERMINAL && !launch_command[0]);
+    close_terminal();
     shortcut_launch_requested = 0;
     launch_command[0] = '\0';
     assert(load_directory(directory));
     explorer_clear_selection();
     for (int i = 0; i < item_count; ++i)
-        if (!strcmp(items[i].path, target)) explorer_select_item(i, 0);
+        if (!strcmp(directory_items[i].path, target)) explorer_select_item(i, 0);
     assert(shortcuts_create() && shortcut_count == 2);
     memset(shortcut_selection, 1, DESKTOP_SHORTCUT_MAX);
     desktop_slot_position(shortcut_slots[0], &x, &y);
@@ -169,7 +172,7 @@ int main(int argc, char **argv)
     assert(shortcut_count == 0);
     explorer_clear_selection();
     for (int i = 0; i < item_count; ++i)
-        if (!strcmp(items[i].path, executable)) explorer_select_item(i, 0);
+        if (!strcmp(directory_items[i].path, executable)) explorer_select_item(i, 0);
     assert(shortcuts_create() && shortcut_count == 1);
     /* Failed persistence must leave the visible shortcut intact. */
     assert(copy_text(path, sizeof(path), bw_state_file("shortcuts.state")));

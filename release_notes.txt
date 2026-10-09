@@ -18,10 +18,7 @@
  Contact email:   ville.m.suoranta(at)gmail.com
 
 
- License:         GPLv2
-
-  You can use, modify, and sell GPLv2 software freely, but if you distribute
-  it, you must provide the source code and keep it under the same license.
+ Copyright:       Ville Suoranta. All rights reserved.
 
   Note! Some files in sub-folders have their own licensing policies!
 

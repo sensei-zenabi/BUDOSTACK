@@ -5,7 +5,7 @@ ROOT_DIR=$PWD
 TEST_DIR=$(mktemp -d "$ROOT_DIR/.budowin-test-XXXXXX")
 TEST_EXE="$ROOT_DIR/budo/budowin-test"
 INSTANCE_EXE="$ROOT_DIR/budo/budowin-instances-test"
-trap 'rm -rf "$TEST_DIR"; rm -f "$TEST_EXE" "$INSTANCE_EXE"' EXIT
+trap 'rm -rf "$TEST_DIR"; rm -f "$TEST_EXE" "$INSTANCE_EXE" "$ROOT_DIR/budo/budowin-improvements7-test"' EXIT
 export TMPDIR="$TEST_DIR"
 export HOME="$TEST_DIR"
 export BUDOWIN_TEST_DIR="$TEST_DIR/work"
@@ -41,6 +41,9 @@ make budostack apps/cmath apps/edit commands/_CALC utilities/do
 "$TEST_DIR/improvements-5" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_improvements_6.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/improvements-6"
 "$TEST_DIR/improvements-6"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_improvements_7.c lib/budo_gfx.c -ldl -lm -o "$ROOT_DIR/budo/budowin-improvements7-test"
+mkdir -p "$TEST_DIR/improvements7-files"
+"$ROOT_DIR/budo/budowin-improvements7-test" "$ROOT_DIR/budo/BUDOWIN" "$TEST_DIR/improvements7-files"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_background.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/background"
 "$TEST_DIR/background" "$TEST_DIR/background.pcx"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_paint_colors.c -o "$TEST_DIR/paint-colors"

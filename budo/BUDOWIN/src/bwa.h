@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 13
+#define BWA_ABI_MINOR 14
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -23,6 +23,9 @@
 #define BWA_HOST_APP_EXPLORER 1
 #define BWA_HOST_APP_EDITOR   2
 #define BWA_HOST_APP_TERMINAL 3
+#define BWA_HOST_APP_READER 4
+#define BWA_HOST_APP_HELP 5
+#define BWA_HOST_APP_RECYCLE_BIN 6
 
 /* Stable system color roles.  Applications should query these through
  * BwaHostApi instead of depending on VGA palette indices. */
@@ -36,7 +39,22 @@
 #define BUDO_SYS_COLOR_TITLE_TEXT     7
 #define BUDO_SYS_COLOR_ACCENT         8
 #define BUDO_SYS_COLOR_TITLE_INACTIVE 9
-#define BUDO_SYS_COLOR_COUNT          10
+#define BUDO_SYS_COLOR_SURFACE 10
+#define BUDO_SYS_COLOR_FRAME 11
+#define BUDO_SYS_COLOR_HOVER 12
+#define BUDO_SYS_COLOR_PRESSED 13
+#define BUDO_SYS_COLOR_DESKTOP_TEXT 14
+#define BUDO_SYS_COLOR_TERMINAL_BG 15
+#define BUDO_SYS_COLOR_TERMINAL_TEXT 16
+#define BUDO_SYS_COLOR_FILE_ICON 17
+#define BUDO_SYS_COLOR_FOLDER_ICON 18
+#define BUDO_SYS_COLOR_CURSOR_FILL 19
+#define BUDO_SYS_COLOR_CURSOR_OUTLINE 20
+#define BUDO_SYS_COLOR_STATUS_BG 21
+#define BUDO_SYS_COLOR_STATUS_TEXT 22
+#define BUDO_SYS_COLOR_SELECTION_BG 23
+#define BUDO_SYS_COLOR_SELECTION_TEXT 24
+#define BUDO_SYS_COLOR_COUNT 25
 
 #define BUDO_BUTTON_PRESSED 1U
 #define BUDO_BUTTON_DISABLED 2U
@@ -169,6 +187,10 @@ typedef struct BwaHostApi {
     int (*get_keyboard_layout)(void);
     int (*set_keyboard_layout)(int nordic);
     int (*delete_file_association)(const char *extension);
+    /* ABI 1.14: read-only documents and persistent UI palette roles. */
+    int (*open_reader_file)(const char *path);
+    int (*set_system_color)(int role, int palette_index);
+    int (*reset_system_colors)(void);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

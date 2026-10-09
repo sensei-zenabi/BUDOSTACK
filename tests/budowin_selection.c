@@ -43,6 +43,7 @@ static void click_desktop(int id, unsigned int modifiers, int context, int *page
     keys[225] = (modifiers & KEYMOD_SHIFT) != 0;
     if (!context) desktop_last_click = -1;
     assert(desktop_selection_pointer(x + 4, y + 4, context ? 2 : 1, page));
+    if (!context) desktop_selection_release();
     keys[224] = keys[225] = 0;
 }
 

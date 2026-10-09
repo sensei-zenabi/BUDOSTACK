@@ -25,6 +25,7 @@ void bw_set_event_filter(int (*filter)(const struct budo_gfx_event *));
 int kbhit(void);
 int getch(void);
 int bw_initialize(int argc, char **argv);
+void bw_palette_rgb(unsigned int index, unsigned int rgb);
 int bw_screen_open(void);
 void bw_screen_close(void);
 int bw_clipboard_set(void *context, const char *text);

@@ -61,21 +61,10 @@ Examples:
 Values are validated in the range `0..1000`.
 
 ## Licence:
-BUDOSTACK is distributed under GPL-2.0 license, which is a is a free 
-copyleft license, that allows you to:
-- Run the software for any purpose
-- Study and modify the source code
-- Redistribute copies, both original and modified, provided you will 
-distribute them under the same GPL-2.0 terms and include the source 
-code.
+Copyright (c) Ville Suoranta. All rights reserved.
 
-**Note!** Files shared under folders:
-- ./fonts/
-- ./shaders/
-- ./sounds/
-
-Are not distributed using the GPL-2.0 license. Instead, these folders 
-contain their own LICENSE.txt files indicating their licensing conditions.
+Third-party files in `fonts/`, `shaders/`, and `sounds/` retain the licensing
+conditions stated in their respective `LICENSE.txt` files.
 
 
 ### Terminal and overlay sizing

@@ -9,19 +9,19 @@ static int terminal_open(void)
 
 static void terminal_draw_icon(int x, int y)
 {
-    host_api->fill_rect(x + 1, y + 1, 22, 15, BUDO_COLOR_TEXT);
+    host_api->fill_rect(x + 1, y + 1, 22, 15, host_api->get_system_color(BUDO_SYS_COLOR_TERMINAL_BG));
     host_api->draw_rect(x, y,
                         BUDO_BUILTIN_ICON_W, BUDO_BUILTIN_ICON_H,
-                        BUDO_COLOR_SHADOW);
+                        host_api->get_system_color(BUDO_SYS_COLOR_SHADOW));
     host_api->draw_text(x + 3, y + 5, "/>",
-                        BUDO_COLOR_WHITE, 3);
+                        host_api->get_system_color(BUDO_SYS_COLOR_TERMINAL_TEXT), 3);
 }
 
 int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 {
     if (host == 0 || app == 0 ||
         host->abi_major != BWA_ABI_MAJOR ||
-        host->launch_host_app == 0) {
+        host->launch_host_app == 0 || host->abi_minor < 14 || !host->get_system_color) {
         return 0;
     }
 

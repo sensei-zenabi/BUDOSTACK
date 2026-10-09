@@ -22,6 +22,7 @@ struct EditorSnapshot {
 #define BUILTIN_INSTANCE_MAX 24
 typedef struct ExplorerState {
     int runtime_id;
+    int v_recycle_bin;
     int v_page;
     DesktopItem v_items[MAX_ITEMS];
     int v_item_count;
@@ -108,6 +109,7 @@ static const ExplorerState explorer_defaults = {
 };
 static ExplorerState *explorer_state = &explorer_initial;
 static ExplorerState *explorer_instances[BUILTIN_INSTANCE_MAX] = {&explorer_initial};
+#define recycle_bin (explorer_state->v_recycle_bin)
 #define directory_items (explorer_state->v_items)
 #define item_count (explorer_state->v_item_count)
 #define current_path (explorer_state->v_current_path)
@@ -153,6 +155,10 @@ static ExplorerState *explorer_instances[BUILTIN_INSTANCE_MAX] = {&explorer_init
 typedef struct EditorState {
     int runtime_id;
     char v_editor_lines[EDITOR_MAX_LINES][EDITOR_MAX_COLS];
+    int v_editor_read_only;
+    int v_editor_end_affinity, v_editor_end_line, v_editor_end_col;
+    int v_editor_last_click_line, v_editor_last_click_col;
+    clock_t v_editor_click_time;
     int v_editor_line_count;
     int v_editor_cursor_line;
     int v_editor_cursor_col;
@@ -305,6 +311,7 @@ static const EditorState editor_defaults = {
 };
 static EditorState *editor_state = &editor_initial;
 static EditorState *editor_instances[BUILTIN_INSTANCE_MAX] = {&editor_initial};
+#define editor_read_only (editor_state->v_editor_read_only)
 #define editor_lines (editor_state->v_editor_lines)
 #define editor_line_count (editor_state->v_editor_line_count)
 #define editor_cursor_line (editor_state->v_editor_cursor_line)

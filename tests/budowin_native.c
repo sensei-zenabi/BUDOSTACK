@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     assert(chdir(argv[1]) == 0);
     assert(getcwd(home_path, sizeof(home_path)));
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 5);
+    assert(bwa_external_app_count == 8);
     load_file_associations();
     char path[MAX_PATH];
     assert(join_path(path, sizeof(path), "/", "tmp") && strcmp(path, "/tmp") == 0);
@@ -114,6 +114,7 @@ int main(int argc, char **argv) {
     bwa_callback_app = NULL;
     assert(bwa_file_write_all("exact.bin", (const unsigned char *)"abc", 3));
     assert(bwa_file_read_all("exact.bin", data, 3, &size) && size == 3);
+    assert(builtin_new_instance(BWA_HOST_APP_EDITOR));
     editor_reset_document();
     editor_insert_char('B'); editor_insert_char('U'); editor_insert_char('D');
     char document[MAX_PATH];

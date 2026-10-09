@@ -1,7 +1,7 @@
 #ifndef BUDOWIN_PALETTE_H
 #define BUDOWIN_PALETTE_H
 
-/* Fixed 256-color Paint palette, independent of the desktop theme. */
+/* Fixed global 256-color palette shared by Paint and UI theme selection. */
 static inline unsigned int budo_palette_rgb(int index)
 {
     static const unsigned int base[16] = {

@@ -1,4 +1,6 @@
 #include "../sdk/ui.h"
+#include "../sdk/palette.h"
+#include <stdio.h>
 
 #define WIN_X 110
 #define WIN_Y 70
@@ -10,6 +12,13 @@ static const BwaHostApi *host_api;
 static int top_row = 0;
 static int file_menu = 0;
 static int settings_tab;
+static int ui_role, ui_top;
+static BudoScrollbar ui_scroll;
+static const char *const ui_roles[BUDO_SYS_COLOR_COUNT] = {
+    "Desktop", "Text", "Shadow", "Midgray", "Highlight", "Control face", "Active title", "Title text", "Accent", "Inactive title",
+    "Document surface", "Window frame", "Control hover", "Control pressed", "Desktop text", "Terminal background", "Terminal text",
+    "File icon", "Folder icon", "Cursor fill", "Cursor outline", "Status background", "Status text", "Selection background", "Selection text"
+};
 static int selected_association = -1;
 static int adding_association;
 static char new_extension[9];
@@ -100,9 +109,26 @@ static void settings_scroll_configure(void)
     top_row = association_scroll.position;
 }
 
+static int settings_ui_pointer(int x, int y, int event)
+{
+    int wx, wy, ww, wh;
+    if (settings_tab != 2 || !settings_rect(&wx, &wy, &ww, &wh)) return 0;
+    ui_scroll.x = wx + 184;
+    ui_scroll.y = wy + 82;
+    ui_scroll.length = wh - 146;
+    ui_scroll.total = BUDO_SYS_COLOR_COUNT;
+    ui_scroll.page = (wh - 146) / ROW_H;
+    ui_scroll.position = ui_top;
+    budo_scroll_clamp(&ui_scroll);
+    int handled = budo_scroll_pointer_host(host_api, &ui_scroll, x, y, event);
+    ui_top = ui_scroll.position;
+    return handled;
+}
+
 static int settings_pointer(int x, int y, int event)
 {
-    if (!settings_tab) return 0;
+    if (settings_tab == 2) return settings_ui_pointer(x, y, event);
+    if (settings_tab != 1) return 0;
     settings_scroll_configure();
     int handled = budo_scroll_pointer_host(host_api, &association_scroll, x, y, event);
     top_row = association_scroll.position;
@@ -119,6 +145,38 @@ static int settings_mouse_up(int x, int y, int buttons)
 {
     (void)buttons;
     return settings_pointer(x, y, BUDO_POINTER_UP);
+}
+
+static void settings_ui_draw(int wx, int wy, int ww, int wh)
+{
+    (void)ww;
+    (void)settings_ui_pointer(0, 0, BUDO_POINTER_MOVE);
+    int rows = ui_scroll.page;
+    for (int row = 0; row < rows && ui_top + row < BUDO_SYS_COLOR_COUNT; ++row) {
+        int role = ui_top + row;
+        int y = wy + 82 + row * ROW_H;
+        if (role == ui_role) host_api->fill_rect(wx + 16, y, 164, ROW_H, ui_color(BUDO_SYS_COLOR_TITLE_ACTIVE));
+        host_api->draw_text(wx + 20, y + 3, ui_roles[role], ui_color(role == ui_role ? BUDO_SYS_COLOR_TITLE_TEXT : BUDO_SYS_COLOR_TEXT), 24);
+        host_api->fill_rect_rgb(wx + 170, y + 3, 8, 8, budo_palette_rgb(host_api->get_system_color(role)));
+    }
+    budo_scroll_draw(host_api, &ui_scroll);
+    host_api->draw_text(wx + 206, wy + 82, "Global 256-color palette", ui_color(BUDO_SYS_COLOR_TEXT), 24);
+    for (int i = 0; i < 256; ++i) {
+        int x = wx + 206 + (i % 16) * 10;
+        int y = wy + 98 + (i / 16) * 10;
+        host_api->fill_rect_rgb(x, y, 10, 10, budo_palette_rgb(i));
+        if (i == host_api->get_system_color(ui_role)) {
+            host_api->draw_rect(x, y, 10, 10, ui_color(BUDO_SYS_COLOR_TEXT));
+            host_api->draw_rect(x + 1, y + 1, 8, 8, ui_color(BUDO_SYS_COLOR_HIGHLIGHT));
+        }
+    }
+    host_api->draw_standard_button(wx + 206, wy + 266, 150, 20, "Reset UI colors", 0);
+    host_api->draw_text(wx + 16, wy + wh - 20, settings_status, ui_color(BUDO_SYS_COLOR_TEXT), (ww - 32) / 6);
+}
+
+static void settings_ui_color(int index)
+{
+    settings_status = host_api->set_system_color(ui_role, index) ? "UI color saved." : "Save failed; previous color preserved.";
 }
 
 static void draw_list(void)
@@ -138,10 +196,16 @@ static void draw_list(void)
     if (!settings_rect(&wx, &wy, &ww, &wh)) return;
     settings_scroll_configure();
     budo_menu_bar_item(host_api, wx + 5, wy + 23, 36, "File", file_menu);
-    host_api->draw_button_state(wx + 16, wy + 46, 126, 22, "User Interface",
+    host_api->draw_button_state(wx + 16, wy + 46, 92, 22, "Keyboard",
                                 settings_tab == 0 ? BUDO_BUTTON_PRESSED : 0);
-    host_api->draw_button_state(wx + 146, wy + 46, 150, 22, "File Associations",
+    host_api->draw_button_state(wx + 112, wy + 46, 150, 22, "File Associations",
                                 settings_tab == 1 ? BUDO_BUTTON_PRESSED : 0);
+    host_api->draw_button_state(wx + 266, wy + 46, 70, 22, "UI",
+                                settings_tab == 2 ? BUDO_BUTTON_PRESSED : 0);
+    if (settings_tab == 2) {
+        settings_ui_draw(wx, wy, ww, wh);
+        return;
+    }
     if (!settings_tab) {
         host_api->draw_text(wx + 16, wy + 90, "Keyboard language", ui_color(BUDO_SYS_COLOR_TEXT), 20);
         int nordic = host_api->get_keyboard_layout();
@@ -214,13 +278,15 @@ static int settings_open(void)
 {
     top_row = 0;
     settings_tab = adding_association = 0;
+    ui_top = ui_role = 0;
+    ui_scroll = (BudoScrollbar){0};
     selected_association = -1;
     settings_status = "Keyboard settings are saved automatically.";
     association_scroll.held = association_scroll.armed = association_scroll.dragging = 0;
     if (!host_api->window_create(WIN_X, WIN_Y, WIN_W, WIN_H,
                                   "Settings",
                                   BUDO_WINDOW_DEFAULT_BUTTONS)) return 0;
-    return host_api->window_set_min_size(360, 220);
+    return host_api->window_set_min_size(390, 330);
 }
 
 static void settings_draw(void)
@@ -345,10 +411,22 @@ static int settings_mouse_down(int x, int y, int buttons)
         file_menu = 1;
         return 1;
     }
-    if (host_api->point_in_rect(x, y, wx + 16, wy + 46, 280, 22)) {
-        settings_tab = x >= wx + 146;
+    if (host_api->point_in_rect(x, y, wx + 16, wy + 46, 320, 22)) {
+        settings_tab = x >= wx + 266 ? 2 : x >= wx + 112 ? 1 : 0;
         adding_association = 0;
-        settings_status = settings_tab ? "Click an entry to change its application." : "Keyboard settings are saved automatically.";
+        settings_status = settings_tab == 2 ? "Choose a UI element, then its color." : settings_tab == 1 ? "Click an entry to change its application." : "Keyboard settings are saved automatically.";
+        return 1;
+    }
+    if (settings_tab == 2) {
+        if (settings_ui_pointer(x, y, BUDO_POINTER_DOWN)) return 1;
+        if (host_api->point_in_rect(x, y, wx + 16, wy + 82, 164, wh - 146)) {
+            int role = ui_top + (y - wy - 82) / ROW_H;
+            if (role < BUDO_SYS_COLOR_COUNT) ui_role = role;
+        } else if (host_api->point_in_rect(x, y, wx + 206, wy + 98, 160, 160)) {
+            settings_ui_color((y - wy - 98) / 10 * 16 + (x - wx - 206) / 10);
+        } else if (host_api->point_in_rect(x, y, wx + 206, wy + 266, 150, 20)) {
+            settings_status = host_api->reset_system_colors() ? "Default UI colors restored." : "Unable to save UI colors.";
+        }
         return 1;
     }
     if (!settings_tab) {
@@ -411,10 +489,28 @@ static int settings_key(int key)
         }
         return 1;
     }
-    if (settings_tab && key == (0x100 | 83)) { delete_association(); return 1; }
+    if (settings_tab == 1 && key == (0x100 | 83)) { delete_association(); return 1; }
     if (key == 27) {
         if (file_menu) { file_menu = 0; return 1; }
         return host_api->window_close();
+    }
+    if (settings_tab == 2) {
+        int scan = key & 255;
+        if (key < 0x100) return 0;
+        if (scan == 72 && ui_role > 0) --ui_role;
+        else if (scan == 80 && ui_role + 1 < BUDO_SYS_COLOR_COUNT) ++ui_role;
+        else if (scan == 75 || scan == 77) {
+            int index = host_api->get_system_color(ui_role) + (scan == 75 ? -1 : 1);
+            if (index >= 0 && index <= 255) settings_ui_color(index);
+        } else if (scan == 201 || scan == 202) {
+            ui_top += scan == 201 ? -3 : 3;
+            (void)settings_ui_pointer(0, 0, BUDO_POINTER_MOVE);
+            return 1;
+        }
+        if (ui_role < ui_top) ui_top = ui_role;
+        if (ui_role >= ui_top + ui_scroll.page) ui_top = ui_role - ui_scroll.page + 1;
+        (void)settings_ui_pointer(0, 0, BUDO_POINTER_MOVE);
+        return 1;
     }
     if (!settings_tab) return 0;
     if (key >= 0x100) {
@@ -457,7 +553,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 {
     if (host == 0 || app == 0 ||
         host->abi_major != BWA_ABI_MAJOR ||
-        host->abi_minor < 13 ||
+        host->abi_minor < 14 ||
         host->get_system_color == 0 ||
         host->draw_standard_button == 0 ||
         host->draw_sunken_panel == 0 ||
@@ -471,7 +567,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
         host->get_file_app_count == 0 ||
         host->get_file_app == 0 ||
         host->get_keyboard_layout == 0 || host->set_keyboard_layout == 0 ||
-        host->delete_file_association == 0) {
+        host->delete_file_association == 0 || !host->set_system_color || !host->reset_system_colors || !host->fill_rect_rgb) {
         return 0;
     }
 

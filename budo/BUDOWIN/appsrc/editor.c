@@ -9,17 +9,17 @@ static int editor_open(void)
 
 static void editor_draw_icon(int x, int y)
 {
-    host_api->fill_rect(x + 4, y, 16, 16, BUDO_COLOR_SHADOW);
-    host_api->fill_rect(x + 5, y + 1, 14, 14, BUDO_COLOR_WHITE);
-    host_api->fill_rect(x + 15, y + 1, 4, 4, BUDO_COLOR_DESKTOP);
-    host_api->fill_rect(x + 15, y + 4, 4, 1, BUDO_COLOR_SHADOW);
+    host_api->fill_rect(x + 4, y, 16, 16, host_api->get_system_color(BUDO_SYS_COLOR_SHADOW));
+    host_api->fill_rect(x + 5, y + 1, 14, 14, host_api->get_system_color(BUDO_SYS_COLOR_FILE_ICON));
+    host_api->fill_rect(x + 15, y + 1, 4, 4, host_api->get_system_color(BUDO_SYS_COLOR_DESKTOP));
+    host_api->fill_rect(x + 15, y + 4, 4, 1, host_api->get_system_color(BUDO_SYS_COLOR_SHADOW));
 }
 
 int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 {
     if (host == 0 || app == 0 ||
         host->abi_major != BWA_ABI_MAJOR ||
-        host->launch_host_app == 0) {
+        host->launch_host_app == 0 || host->abi_minor < 14 || !host->get_system_color) {
         return 0;
     }
 

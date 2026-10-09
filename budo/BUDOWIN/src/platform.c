@@ -143,6 +143,9 @@ char *bw_clipboard_get(void *context) {
     return budo_gfx_get_clipboard(screen);
 }
 void bw_screen_close(void) { budo_gfx_close(screen); screen = NULL; }
+void bw_palette_rgb(unsigned int index, unsigned int rgb) {
+    if (index < 256) palette[index] = 0xff000000u | (rgb & 0xffffffu);
+}
 void bw_palette_entry(unsigned int index, unsigned int r, unsigned int g, unsigned int b) {
     if (index < 256) palette[index] = 0xff000000u | ((r * 255 / 63) << 16) | ((g * 255 / 63) << 8) | (b * 255 / 63);
 }

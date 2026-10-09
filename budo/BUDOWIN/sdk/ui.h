@@ -229,7 +229,7 @@ static inline void budo_selection_icon_draw(const BwaHostApi *host, int x, int y
 {
     if (w <= 0 || h <= 0) return;
     if (selected) host->fill_rect(x, y, w, h,
-                                  host->get_system_color(BUDO_SYS_COLOR_TITLE_ACTIVE));
+                                  host->get_system_color(host->abi_minor >= 14 ? BUDO_SYS_COLOR_SELECTION_BG : BUDO_SYS_COLOR_TITLE_ACTIVE));
     if (!focused) return;
     unsigned int color = host->get_system_color(BUDO_SYS_COLOR_SHADOW);
     for (int edge = 0; edge < w; edge += 2) {
@@ -250,7 +250,7 @@ static inline void budo_selection_drag_draw(const BwaHostApi *host,
     int y = s->end_y < s->start_y ? s->end_y : s->start_y;
     int w = s->end_x < s->start_x ? s->start_x - s->end_x + 1 : s->end_x - s->start_x + 1;
     int h = s->end_y < s->start_y ? s->start_y - s->end_y + 1 : s->end_y - s->start_y + 1;
-    unsigned int color = host->get_system_color(BUDO_SYS_COLOR_TITLE_ACTIVE);
+    unsigned int color = host->get_system_color(host->abi_minor >= 14 ? BUDO_SYS_COLOR_SELECTION_BG : BUDO_SYS_COLOR_TITLE_ACTIVE);
     host->fill_rect(x, y, w, 1, color);
     host->fill_rect(x, y + h - 1, w, 1, color);
     host->fill_rect(x, y, 1, h, color);

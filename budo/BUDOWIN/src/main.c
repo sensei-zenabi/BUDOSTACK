@@ -4628,11 +4628,9 @@ static void editor_selection_copy(int cut)
     if (cut && !editor_read_only) (void)editor_selection_delete();
 }
 
-static void editor_paste(void)
+static void editor_replace_selection(const char *text)
 {
-    if (editor_read_only) return;
-    desktop_text_clipboard_refresh();
-    if (!editor_clipboard) return;
+    if (editor_read_only || !text) return;
     int first = editor_cursor_line, fc = editor_cursor_col;
     int last = first, lc = fc;
     (void)editor_selection_bounds(&first, &fc, &last, &lc);
@@ -4641,7 +4639,7 @@ static void editor_paste(void)
     memcpy(replacement, editor_lines, (size_t)first * sizeof(editor_lines[0]));
     memcpy(replacement[first], editor_lines[first], (size_t)fc);
     int row = first, col = fc;
-    for (const char *c = editor_clipboard; *c; ++c) {
+    for (const char *c = text; *c; ++c) {
         if (*c == '\n') { ++row; col = 0; }
         else {
             if (row >= EDITOR_MAX_LINES || col >= EDITOR_MAX_COLS - 1) goto full;
@@ -4669,6 +4667,13 @@ static void editor_paste(void)
 full:
     free(replacement);
     editor_set_status("Paste exceeds document capacity");
+}
+
+static void editor_paste(void)
+{
+    if (editor_read_only) return;
+    desktop_text_clipboard_refresh();
+    editor_replace_selection(editor_clipboard);
 }
 
 static int editor_navigation(int scan, unsigned int modifiers)
@@ -4744,10 +4749,7 @@ static void editor_insert_char(char ch)
     int first, fc, last, lc;
     if (editor_selection_bounds(&first, &fc, &last, &lc)) {
         char replacement[2] = {ch, 0};
-        char *previous = editor_clipboard;
-        editor_clipboard = replacement;
-        editor_paste();
-        editor_clipboard = previous;
+        editor_replace_selection(replacement);
         return;
     }
     editor_selection_clear();
@@ -4791,10 +4793,7 @@ static void editor_newline(void)
     int first, fc, last, lc;
     if (editor_selection_bounds(&first, &fc, &last, &lc)) {
         char replacement[] = "\n";
-        char *previous = editor_clipboard;
-        editor_clipboard = replacement;
-        editor_paste();
-        editor_clipboard = previous;
+        editor_replace_selection(replacement);
         return;
     }
     editor_selection_clear();

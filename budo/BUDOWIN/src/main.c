@@ -7504,96 +7504,102 @@ static void draw_desktop(int page)
         bwa_draw_standard_button(12, 24, 84, 18, "Up / Desktop", 0);
     }
 
-    for (int i = 0; i < shortcut_count; ++i) {
-        if (strcmp(shortcut_details[i].parent, desktop_folder)) continue;
-        int x, y;
-        desktop_slot_position(shortcut_slots[i], &x, &y);
-        if (desktop_icon_dragging && desktop_drag_slots[DESKTOP_SHORTCUT_BASE + i] >= 0) {
-            x += desktop_drag_offset_x;
-            y += desktop_drag_offset_y;
+    /* Draw the dragged group after every stationary desktop icon. */
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int i = 0; i < shortcut_count; ++i) {
+            if (strcmp(shortcut_details[i].parent, desktop_folder)) continue;
+            if ((desktop_icon_dragging && desktop_drag_slots[DESKTOP_SHORTCUT_BASE + i] >= 0) != pass) continue;
+            int x, y;
+            desktop_slot_position(shortcut_slots[i], &x, &y);
+            if (desktop_icon_dragging && desktop_drag_slots[DESKTOP_SHORTCUT_BASE + i] >= 0) {
+                x += desktop_drag_offset_x;
+                y += desktop_drag_offset_y;
+            }
+            if (shortcut_details[i].icon_loaded) {
+                budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W, DESKTOP_ICON_H, shortcut_selection[i], 0);
+                for (int row = 0; row < DESKTOP_ICON_H; ++row)
+                    for (int col = 0; col < DESKTOP_ICON_W; ++col) {
+                        int pixel = row * DESKTOP_ICON_W + col;
+                        if (shortcut_details[i].pixels[pixel] != PCX_TRANSPARENT)
+                            put_rgb_pixel(x + col, y + row, shortcut_details[i].rgb[pixel]);
+                    }
+                int chars = (int)strlen(desktop_shortcuts[i].name);
+                if (chars > 12) chars = 12;
+                draw_text(x + 16 - (chars * 6 - 1) / 2, y + DESKTOP_ICON_H + 2,
+                          desktop_shortcuts[i].name, DESKTOP_TEXT_COLOR, chars);
+                bwa_pointer_region(x - 20, y - 2, 72, 50, BUDO_CURSOR_ARROW, desktop_shortcuts[i].name);
+            } else {
+                draw_labeled_icon_color(x, y, desktop_shortcuts[i].name, desktop_shortcuts[i].type,
+                                  shortcut_selection[i], desktop_shortcuts[i].path,
+                                  DESKTOP_TEXT_COLOR);
+            }
+            if (desktop_shortcuts[i].type == TYPE_FILE) draw_text(x, y + 16, "->", TEXT_COLOR, 2);
+            budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W,
+                                     DESKTOP_ICON_H, 0,
+                                     desktop_select.focus == DESKTOP_SHORTCUT_BASE + i);
         }
-        if (shortcut_details[i].icon_loaded) {
-            budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W, DESKTOP_ICON_H, shortcut_selection[i], 0);
-            for (int row = 0; row < DESKTOP_ICON_H; ++row)
-                for (int col = 0; col < DESKTOP_ICON_W; ++col) {
-                    int pixel = row * DESKTOP_ICON_W + col;
-                    if (shortcut_details[i].pixels[pixel] != PCX_TRANSPARENT)
-                        put_rgb_pixel(x + col, y + row, shortcut_details[i].rgb[pixel]);
-                }
-            int chars = (int)strlen(desktop_shortcuts[i].name);
-            if (chars > 12) chars = 12;
-            draw_text(x + 16 - (chars * 6 - 1) / 2, y + DESKTOP_ICON_H + 2,
-                      desktop_shortcuts[i].name, DESKTOP_TEXT_COLOR, chars);
-            bwa_pointer_region(x - 20, y - 2, 72, 50, BUDO_CURSOR_ARROW, desktop_shortcuts[i].name);
-        } else {
-            draw_labeled_icon_color(x, y, desktop_shortcuts[i].name, desktop_shortcuts[i].type,
-                              shortcut_selection[i], desktop_shortcuts[i].path,
-                              DESKTOP_TEXT_COLOR);
+        desktop_slot_position(explorer_desktop_slot, &explorer_x, &explorer_y);
+        desktop_slot_position(editor_desktop_slot, &editor_x, &editor_y);
+
+        if (desktop_icon_dragging && desktop_drag_slots[0] >= 0) {
+            explorer_x += desktop_drag_offset_x;
+            explorer_y += desktop_drag_offset_y;
         }
-        if (desktop_shortcuts[i].type == TYPE_FILE) draw_text(x, y + 16, "->", TEXT_COLOR, 2);
-        budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W,
-                                 DESKTOP_ICON_H, 0,
-                                 desktop_select.focus == DESKTOP_SHORTCUT_BASE + i);
-    }
-    desktop_slot_position(explorer_desktop_slot, &explorer_x, &explorer_y);
-    desktop_slot_position(editor_desktop_slot, &editor_x, &editor_y);
+        if (desktop_icon_dragging && desktop_drag_slots[1] >= 0) {
+            editor_x += desktop_drag_offset_x;
+            editor_y += desktop_drag_offset_y;
+        }
 
-    if (desktop_icon_dragging && desktop_drag_slots[0] >= 0) {
-        explorer_x += desktop_drag_offset_x;
-        explorer_y += desktop_drag_offset_y;
-    }
-    if (desktop_icon_dragging && desktop_drag_slots[1] >= 0) {
-        editor_x += desktop_drag_offset_x;
-        editor_y += desktop_drag_offset_y;
-    }
+        if (!desktop_folder[0] && !bwa_has_external_app_id("explorer") &&
+            (desktop_icon_dragging && desktop_drag_slots[0] >= 0) == pass) {
+            budo_selection_icon_draw(&bwa_host_api, explorer_x, explorer_y,
+                                     DESKTOP_ICON_W, DESKTOP_ICON_H,
+                                     desktop_select.selected[0], 0);
+            draw_explorer_app_icon(explorer_x, explorer_y);
+            budo_selection_icon_draw(&bwa_host_api, explorer_x, explorer_y,
+                                     DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
+                                     desktop_select.focus == 0);
+        }
+        if (!desktop_folder[0] && !bwa_has_external_app_id("editor") &&
+            (desktop_icon_dragging && desktop_drag_slots[1] >= 0) == pass) {
+            budo_selection_icon_draw(&bwa_host_api, editor_x, editor_y,
+                                     DESKTOP_ICON_W, DESKTOP_ICON_H,
+                                     desktop_select.selected[1], 0);
+            draw_editor_app_icon(editor_x, editor_y);
+            budo_selection_icon_draw(&bwa_host_api, editor_x, editor_y,
+                                     DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
+                                     desktop_select.focus == 1);
+        }
 
-    if (!desktop_folder[0] && !bwa_has_external_app_id("explorer") &&
-        1) {
-        budo_selection_icon_draw(&bwa_host_api, explorer_x, explorer_y,
-                                 DESKTOP_ICON_W, DESKTOP_ICON_H,
-                                 desktop_select.selected[0], 0);
-        draw_explorer_app_icon(explorer_x, explorer_y);
-        budo_selection_icon_draw(&bwa_host_api, explorer_x, explorer_y,
-                                 DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
-                                 desktop_select.focus == 0);
-    }
-    if (!desktop_folder[0] && !bwa_has_external_app_id("editor") &&
-        1) {
-        budo_selection_icon_draw(&bwa_host_api, editor_x, editor_y,
-                                 DESKTOP_ICON_W, DESKTOP_ICON_H,
-                                 desktop_select.selected[1], 0);
-        draw_editor_app_icon(editor_x, editor_y);
-        budo_selection_icon_draw(&bwa_host_api, editor_x, editor_y,
-                                 DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
-                                 desktop_select.focus == 1);
-    }
+        {
+            int i;
 
-    {
-        int i;
+            for (i = 0; i < bwa_external_app_count; ++i) {
+                BwaLoadedApp *app = &bwa_external_apps[i];
 
-        for (i = 0; i < bwa_external_app_count; ++i) {
-            BwaLoadedApp *app = &bwa_external_apps[i];
+                if (!desktop_folder[0] &&
+                    (desktop_icon_dragging && desktop_drag_slots[2 + i] >= 0) == pass) {
+                    int app_x;
+                    int app_y;
 
-            if (!desktop_folder[0] && 1) {
-                int app_x;
-                int app_y;
+                    desktop_slot_position(app->desktop_slot, &app_x, &app_y);
 
-                desktop_slot_position(app->desktop_slot, &app_x, &app_y);
+                    if (desktop_icon_dragging && desktop_drag_slots[2 + i] >= 0) {
+                        app_x += desktop_drag_offset_x;
+                        app_y += desktop_drag_offset_y;
+                    }
 
-                if (desktop_icon_dragging && desktop_drag_slots[2 + i] >= 0) {
-                    app_x += desktop_drag_offset_x;
-                    app_y += desktop_drag_offset_y;
+                    budo_selection_icon_draw(&bwa_host_api, app_x, app_y,
+                                             DESKTOP_ICON_W, DESKTOP_ICON_H,
+                                             desktop_select.selected[2 + i], 0);
+                    draw_bwa_app_icon(app_x, app_y, app);
+                    budo_selection_icon_draw(&bwa_host_api, app_x, app_y,
+                                             DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
+                                             desktop_select.focus == 2 + i);
                 }
-
-                budo_selection_icon_draw(&bwa_host_api, app_x, app_y,
-                                         DESKTOP_ICON_W, DESKTOP_ICON_H,
-                                         desktop_select.selected[2 + i], 0);
-                draw_bwa_app_icon(app_x, app_y, app);
-                budo_selection_icon_draw(&bwa_host_api, app_x, app_y,
-                                         DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
-                                         desktop_select.focus == 2 + i);
             }
         }
+
     }
 
     budo_selection_drag_draw(&bwa_host_api, &desktop_select);

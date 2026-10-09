@@ -37,6 +37,22 @@ struct budo_gfx_event {
 struct budo_gfx;
 struct budo_gfx_host;
 
+/* Monophonic square-wave effects; zero frequency is a rest. */
+#define BUDO_GFX_TONE_LIMIT 8u
+#define BUDO_GFX_TONE_MAX_HZ 4000u
+#define BUDO_GFX_TONE_MAX_MS 1000u
+#define BUDO_GFX_SOUND_MAX_MS 2000u
+struct budo_gfx_tone {
+    uint16_t frequency_hz;
+    uint16_t duration_ms;
+};
+/* Returns -1/ENOTSUP for older hosts or unavailable audio. Empty sequence stops.
+ * Playback is asynchronous; a new sequence replaces the tab's current effect. */
+int budo_gfx_play_tones(struct budo_gfx *gfx,
+    const struct budo_gfx_tone *tones, size_t count);
+void budo_gfx_host_tones(struct budo_gfx_host *host,
+    int (*play)(void *, const struct budo_gfx_tone *, size_t), void *context);
+
 /* Open fails outside apps/terminal: no fallback window is created. */
 int budo_gfx_open(struct budo_gfx **out, unsigned int width,
                   unsigned int height, unsigned int format);

@@ -132,6 +132,17 @@ int bw_screen_open(void) {
     if (budo_gfx_open(&screen, 640, 480, BUDO_GFX_ARGB8888) != 0) return 0;
     return budo_gfx_set_keyboard_grab(screen, 1) == 0;
 }
+int bw_play_tones(const BwaTone *tones, unsigned int count)
+{
+    if (!screen || count > BUDO_GFX_TONE_LIMIT || (count && !tones)) return 0;
+    struct budo_gfx_tone notes[BUDO_GFX_TONE_LIMIT];
+    for (unsigned int i = 0; i < count; ++i) {
+        notes[i].frequency_hz = tones[i].frequency_hz;
+        notes[i].duration_ms = tones[i].duration_ms;
+    }
+    return budo_gfx_play_tones(screen, notes, count) == 0;
+}
+
 int bw_clipboard_set(void *context, const char *text) {
     (void)context;
     if (!screen) { errno = ENOTCONN; return -1; }

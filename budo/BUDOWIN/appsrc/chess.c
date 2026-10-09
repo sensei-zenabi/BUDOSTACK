@@ -19,7 +19,60 @@ static BudoScrollbar history_scroll;
 static MoveList ai_moves;
 static Move ai_best;
 static int ai_index, ai_score, ai_active;
+static unsigned long long ai_ready_at;
 static unsigned int random_state = 1;
+static int sound_enabled = 1, sound_failed;
+
+typedef enum ChessSound {
+    SOUND_SELECT, SOUND_MOVE, SOUND_CAPTURE, SOUND_CASTLE, SOUND_PROMOTE,
+    SOUND_CHECK, SOUND_MATE, SOUND_DRAW, SOUND_NEW, SOUND_UNDO, SOUND_ERROR
+} ChessSound;
+
+static const struct {
+    BwaTone notes[8];
+    unsigned int count;
+} sound_effects[] = {
+    {{{1200, 18}}, 1},
+    {{{660, 35}, {880, 45}}, 2},
+    {{{220, 35}, {165, 35}, {440, 65}}, 3},
+    {{{523, 40}, {659, 40}, {784, 65}}, 3},
+    {{{523, 45}, {659, 45}, {784, 45}, {1047, 100}}, 4},
+    {{{880, 80}, {0, 30}, {1175, 110}}, 3},
+    {{{523, 90}, {659, 90}, {784, 90}, {0, 45}, {1047, 220}}, 5},
+    {{{659, 90}, {523, 90}, {392, 160}}, 3},
+    {{{523, 55}, {659, 55}, {784, 100}}, 3},
+    {{{880, 35}, {660, 50}}, 2},
+    {{{147, 70}, {0, 20}, {147, 70}}, 3}
+};
+
+static int sound_available(void)
+{
+    return host_api->abi_minor >= 15 && host_api->play_tones;
+}
+
+static void chess_sound(ChessSound effect)
+{
+    if (!sound_enabled || sound_failed || !sound_available()) return;
+    if (!host_api->play_tones(sound_effects[effect].notes, sound_effects[effect].count)) {
+        sound_failed = 1;
+        fprintf(stderr, "Chess: PC speaker effects unavailable in this terminal host.\n");
+    }
+}
+
+static void chess_stop_sound(void)
+{
+    if (sound_available()) (void)host_api->play_tones(NULL, 0);
+}
+
+static void toggle_sound(void)
+{
+    if (!sound_available()) return;
+    sound_enabled = !sound_enabled;
+    sound_failed = 0;
+    if (sound_enabled) chess_sound(SOUND_SELECT);
+    else chess_stop_sound();
+}
+
 
 static unsigned char color(int role)
 {
@@ -130,8 +183,10 @@ static void new_game(void)
     selected = -1;
     cursor = 52;
     menu = -1;
+    ai_ready_at = 0;
     history_scroll = (BudoScrollbar){0};
     update_status();
+    chess_sound(SOUND_NEW);
 }
 
 static void play_move(Move move)
@@ -143,27 +198,39 @@ static void play_move(Move move)
     }
     positions[history_count] = game;
     moves_played[history_count++] = move;
-    (void)make_move(&game, move);
+    char captured = make_move(&game, move);
     selected = -1;
     promotion = ai_active = 0;
     history_scroll.position = history_count;
     update_status();
+    if (finished) chess_sound(king_in_check(&game, game.white_to_move) ? SOUND_MATE : SOUND_DRAW);
+    else if (king_in_check(&game, game.white_to_move)) chess_sound(SOUND_CHECK);
+    else if (move.promotion) chess_sound(SOUND_PROMOTE);
+    else if (captured != ' ') chess_sound(SOUND_CAPTURE);
+    else if (move.castle) chess_sound(SOUND_CASTLE);
+    else chess_sound(SOUND_MOVE);
+    /* Let the player's cue finish before an immediate Easy reply replaces it. */
+    ai_ready_at = mode == MODE_PVC && !game.white_to_move && sound_enabled && !sound_failed && sound_available() ?
+                  host_api->get_time_ms() + 250 : 0;
 }
 
 static void undo(void)
 {
     if (!history_count) return;
+    ai_ready_at = 0;
     ai_active = promotion = 0;
     game = positions[--history_count];
     if (mode == MODE_PVC && !game.white_to_move && history_count)
         game = positions[--history_count];
     selected = -1;
     update_status();
+    chess_sound(SOUND_UNDO);
 }
 
 static void ai_step(void)
 {
     if (mode != MODE_PVC || game.white_to_move || finished || promotion || help_page || confirming) return;
+    if (host_api->get_time_ms() < ai_ready_at) return;
     if (!ai_active) {
         generate_legal_moves(&game, &ai_moves);
         if (!ai_moves.count) return;
@@ -202,14 +269,19 @@ static void select_square(int square)
             if (move.promotion) {
                 promotion_move = move;
                 promotion = 1;
+                chess_sound(SOUND_SELECT);
                 snprintf(status, sizeof(status), "Promote pawn: choose Q, R, B or N.");
             } else play_move(move);
             return;
         }
     }
     if (selected == square) selected = -1;
-    else if (piece_color(game.board[row][col]) == (game.white_to_move ? 1 : -1)) selected = square;
+    else if (piece_color(game.board[row][col]) == (game.white_to_move ? 1 : -1)) {
+        selected = square;
+        chess_sound(SOUND_SELECT);
+    }
     else {
+        chess_sound(SOUND_ERROR);
         snprintf(status, sizeof(status), "Illegal move. Select a piece and destination.");
     }
 }
@@ -344,7 +416,7 @@ static void draw_sidebar(const Layout *l)
 static void draw_overlay(const Layout *l)
 {
     int x = l->x + (l->w - 330) / 2, y = l->by + 50;
-    host_api->draw_sunken_panel(x, y, 330, help_page ? 184 : 80, color(BUDO_SYS_COLOR_FACE));
+    host_api->draw_sunken_panel(x, y, 330, help_page ? 200 : 80, color(BUDO_SYS_COLOR_FACE));
     if (promotion) {
         text(x + 12, y + 10, "Pawn promotion", 40);
         const char *labels[] = {"Queen", "Rook", "Bishop", "Knight"};
@@ -355,9 +427,9 @@ static void draw_overlay(const Layout *l)
             "Computer plays Black. You play White.", "Click a piece, then its destination.",
             "Arrows: move cursor. Enter/Space: select.", "Ctrl+N: new game. Ctrl+Z: undo turn.",
             "F: flip board. F1: help. Esc: dismiss.", "Promotion: Q, R, B or N. Enter: queen.",
-            "Draws: repetition, 50 moves, material."};
-        for (int i = 0; i < 9; ++i) text(x + 12, y + 10 + i * 16, lines[i], 51);
-        budo_button_draw(host_api, x + 125, y + 156, 80, 20, "OK", BUDO_BUTTON_DEFAULT);
+            "Draws: repetition, 50 moves, material.", "S: toggle PC speaker sound effects."};
+        for (int i = 0; i < 10; ++i) text(x + 12, y + 10 + i * 16, lines[i], 51);
+        budo_button_draw(host_api, x + 125, y + 172, 80, 20, "OK", BUDO_BUTTON_DEFAULT);
     }
 }
 
@@ -381,8 +453,9 @@ static void chess_draw(void)
     } else if (menu == 1) {
         BudoMenuItem items[] = {{"Player vs. Player", 1, mode == MODE_PVP}, {"Player vs Computer", 1, mode == MODE_PVC},
             {"Easy", mode == MODE_PVC, difficulty == DIFF_EASY}, {"Medium", mode == MODE_PVC, difficulty == DIFF_MEDIUM},
-            {"Hard", mode == MODE_PVC, difficulty == DIFF_HARD}, {"Flip board", 1, flipped}};
-        budo_menu_items_draw(host_api, l.x + 44, l.y + l.menu_h, 170, items, 6);
+            {"Hard", mode == MODE_PVC, difficulty == DIFF_HARD}, {"Flip board", 1, flipped},
+            {"Sound effects  S", sound_available(), sound_enabled && sound_available()}};
+        budo_menu_items_draw(host_api, l.x + 44, l.y + l.menu_h, 170, items, 7);
     } else if (menu == 2) {
         const char *labels[] = {"How to play / About"};
         budo_menu_draw(host_api, l.x + 106, l.y + l.menu_h, 170, labels, 1);
@@ -431,7 +504,7 @@ static int chess_mouse_down(int x, int y, int buttons)
         int ox = l.x + (l.w - 330) / 2, oy = l.by + 50;
         if (promotion && host_api->point_in_rect(x, y, ox + 9, oy + 38, 312, 24))
             promote((x - ox - 9) / 78);
-        else if (help_page && host_api->point_in_rect(x, y, ox + 125, oy + 156, 80, 20)) help_page = 0;
+        else if (help_page && host_api->point_in_rect(x, y, ox + 125, oy + 172, 80, 20)) help_page = 0;
         return 1;
     }
     if (host_api->point_in_rect(x, y, l.x, l.y, 148, l.menu_h)) {
@@ -442,7 +515,7 @@ static int chess_mouse_down(int x, int y, int buttons)
     if (menu >= 0) {
         int old = menu;
         int item = budo_menu_hit(x, y, l.x + (old == 0 ? 0 : old == 1 ? 44 : 106), l.y + l.menu_h, 170,
-                                 old == 0 ? 3 : old == 1 ? 6 : 1);
+                                 old == 0 ? 3 : old == 1 ? 7 : 1);
         menu = -1;
         if (old == 0 && item == 0) request_new_game(mode);
         else if (old == 0 && item == 1) undo();
@@ -450,6 +523,7 @@ static int chess_mouse_down(int x, int y, int buttons)
         else if (old == 1 && (item == 0 || item == 1)) request_new_game(item);
         else if (old == 1 && item >= 2 && item <= 4 && mode == MODE_PVC) set_difficulty(item - 2);
         else if (old == 1 && item == 5) flipped = !flipped;
+        else if (old == 1 && item == 6) toggle_sound();
         else if (old == 2 && item == 0) help_page = 1;
         return 1;
     }
@@ -508,6 +582,7 @@ static int chess_key(int key)
     }
     if (key == 14) { request_new_game(mode); return 1; }
     if (key == 26) { undo(); return 1; }
+    if (key == 's' || key == 'S') { toggle_sound(); return 1; }
     if (key == 'f' || key == 'F') { flipped = !flipped; return 1; }
     if (key == (0x100 | 59)) { help_page = 1; menu = -1; return 1; }
     if (key == 13 || key == ' ') { select_square(cursor); return 1; }
@@ -535,6 +610,8 @@ static int chess_open(void)
     mode = MODE_PVP;
     difficulty = DIFF_MEDIUM;
     flipped = 0;
+    sound_enabled = 1;
+    sound_failed = 0;
     random_state = (unsigned int)host_api->get_time_ms() | 1U;
     new_game();
     if (!host_api->window_create(34, 36, 570, 414, "Chess", BUDO_WINDOW_DEFAULT_BUTTONS)) return 0;
@@ -569,6 +646,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
     app->callbacks.mouse_move = chess_mouse_move;
     app->callbacks.mouse_up = chess_mouse_up;
     app->callbacks.key = chess_key;
+    app->callbacks.close = chess_stop_sound;
     app->confirm_result = confirm_result;
     return 1;
 }

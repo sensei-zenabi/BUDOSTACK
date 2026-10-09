@@ -1,6 +1,6 @@
 # Native BWA modules
 
-BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.14 (`src/bwa.h`). Modules use
+BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.15 (`src/bwa.h`). Modules use
 `BwaHostApi` for drawing, managed windows, binary file access and allocation.
 The built-in Explorer, Editor, Terminal, Reader, Help and Recycle Bin launcher modules delegate to
 host-managed application implementations; Paint and Settings own their
@@ -250,3 +250,24 @@ paths; recursive copy/delete never follows symlinks. Cross-filesystem moves
 copy the complete payload before removing the source. Empty deletes wrappers
 permanently after confirmation. Explorer deletion uses this store; desktop
 shortcuts continue to preserve their target files.
+
+## PC speaker effects (ABI 1.15)
+
+`play_tones(const BwaTone *notes, unsigned int count)` queues a monophonic
+square-wave sequence in the owning terminal tab without waiting for playback.
+It returns nonzero when queued, zero when audio is unavailable or invalid.
+A new sequence replaces the previous one; `play_tones(NULL, 0)` stops it.
+Up to eight notes are accepted, with frequencies 0–4000 Hz, durations
+1–1000 ms each and at most 2000 ms total. Frequency zero is a silent rest.
+The terminal synthesizes PCM at its audio device's rate and channel count,
+using a dedicated effect channel per tab. No WAV assets or separate audio
+device are needed. Disconnecting a graphics client stops its tab's effect.
+
+This service is appended to the host ABI. Check `abi_minor >= 15` and the
+callback before accessing it; Chess remains playable on ABI 1.14 hosts.
+Graphics protocol version 1 keeps its 56-byte packets: ACK format bit 0
+advertises tone support, request type 8 carries a note count in `width` and
+up to eight packed words from `height` (low 16 bits Hz, high 16 bits ms).
+Reply type 9 returns an errno value in `format`, or zero on success.
+Clients reject unsupported hosts locally; unavailable audio does not close
+an otherwise valid graphics connection.

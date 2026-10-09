@@ -1,5 +1,6 @@
 #ifndef BUDOWIN_PLATFORM_H
 #define BUDOWIN_PLATFORM_H
+#include "bwa.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <time.h>
@@ -27,6 +28,7 @@ int getch(void);
 int bw_initialize(int argc, char **argv);
 void bw_palette_rgb(unsigned int index, unsigned int rgb);
 int bw_screen_open(void);
+int bw_play_tones(const BwaTone *tones, unsigned int count);
 void bw_screen_close(void);
 int bw_clipboard_set(void *context, const char *text);
 char *bw_clipboard_get(void *context);

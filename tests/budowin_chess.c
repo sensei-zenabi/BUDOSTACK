@@ -4,6 +4,27 @@
 
 static int client_w = 564, client_h = 388, confirmations, close_count;
 static unsigned long long clock_ms = 123;
+static BwaTone heard[8];
+static unsigned int heard_count;
+static int sound_calls, sound_stops, audio_available = 1;
+static int play_tones(const BwaTone *notes, unsigned int count)
+{
+    assert(count <= 8);
+    if (!count) { ++sound_stops; return 1; }
+    ++sound_calls;
+    heard_count = count;
+    memcpy(heard, notes, count * sizeof(*notes));
+    return audio_available;
+}
+static void assert_effect(ChessSound effect)
+{
+    if (heard_count != sound_effects[effect].count) fprintf(stderr, "effect %d: heard %u, expected %u\n", effect, heard_count, sound_effects[effect].count);
+    assert(heard_count == sound_effects[effect].count);
+    for (unsigned int i = 0; i < heard_count; ++i) {
+        assert(heard[i].frequency_hz == sound_effects[effect].notes[i].frequency_hz);
+        assert(heard[i].duration_ms == sound_effects[effect].notes[i].duration_ms);
+    }
+}
 static unsigned char test_color(int role) { return (unsigned char)role; }
 static int metric(int role) { return role == BUDO_SYS_METRIC_MENU_HEIGHT ? 18 : 16; }
 static int inside(int x, int y, int bx, int by, int w, int h)
@@ -48,7 +69,7 @@ static void region(int x, int y, int w, int h, int c, const char *s)
     (void)c; (void)s;
     bounds(x, y, w, h);
 }
-static unsigned long long now(void) { return clock_ms++; }
+static unsigned long long now(void) { unsigned long long value = clock_ms; clock_ms += 16; return value; }
 static int create(int x, int y, int w, int h, const char *s, unsigned int flags)
 {
     (void)x; (void)y; (void)w; (void)h; (void)s; (void)flags;
@@ -68,6 +89,7 @@ static BwaHostApi test_host = {
     .point_in_rect = inside, .get_system_color = test_color, .get_system_metric = metric,
     .draw_standard_button = button, .draw_button_state = button_state, .draw_sunken_panel = fill,
     .window_create = create, .window_set_min_size = minimum, .window_get_client_rect = client,
+    .play_tones = play_tones,
     .window_close = close_window, .pointer_region = region, .get_time_ms = now, .confirm_dialog = confirm
 };
 
@@ -221,6 +243,56 @@ static void ui_checks(void)
     }
 }
 
+static void sound_checks(void)
+{
+    mode = MODE_PVP;
+    new_game(); assert_effect(SOUND_NEW);
+    select_square(52); assert_effect(SOUND_SELECT);
+    select_square(28); assert_effect(SOUND_ERROR); /* e2-e5 is illegal. */
+    select_square(36); assert_effect(SOUND_MOVE);
+    move("d7d5"); move("e4d5"); assert_effect(SOUND_CAPTURE);
+    undo(); assert_effect(SOUND_UNDO);
+    new_game();
+    game = fen("7k/8/8/3pP3/8/8/8/K7", 1);
+    game.en_passant_row = 2; game.en_passant_col = 3;
+    move("e5d6"); assert_effect(SOUND_CAPTURE);
+    new_game();
+    game = fen("4k3/8/8/8/8/8/8/R3K2R", 1);
+    game.white_castle_king = 1;
+    move("e1g1"); assert_effect(SOUND_CASTLE);
+    new_game();
+    game = fen("7k/8/8/8/8/8/8/KR6", 1);
+    move("b1b8"); assert_effect(SOUND_CHECK);
+    new_game();
+    game = fen("7k/P7/8/8/8/8/8/r6K", 1);
+    select_square(8); select_square(0); promote(2); assert_effect(SOUND_PROMOTE);
+    new_game();
+    move("f2f3"); move("e7e5"); move("g2g4"); move("d8h4"); assert_effect(SOUND_MATE);
+    new_game();
+    for (int i = 0; i < 2; ++i) {
+        move("g1f3"); move("g8f6"); move("f3g1"); move("f6g8");
+    }
+    assert_effect(SOUND_DRAW);
+    new_game();
+    int before = sound_calls;
+    chess_draw(); chess_draw(); assert(sound_calls == before);
+    chess_key('s'); assert(!sound_enabled && sound_stops > 0);
+    move("e2e4"); assert(sound_calls == before);
+    chess_key('S'); assert(sound_enabled); assert_effect(SOUND_SELECT);
+    audio_available = 0;
+    chess_sound(SOUND_MOVE); assert(sound_failed);
+    before = sound_calls;
+    chess_sound(SOUND_MOVE); assert(sound_calls == before);
+    audio_available = 1; sound_failed = 0;
+    unsigned short minor = test_host.abi_minor;
+    test_host.abi_minor = 14;
+    before = sound_calls;
+    chess_sound(SOUND_MOVE); assert(sound_calls == before);
+    assert(chess_open()); /* Backward-compatible ABI 1.14 game. */
+    test_host.abi_minor = minor;
+    chess_stop_sound();
+}
+
 int main(void)
 {
     BwaAppDefinition app;
@@ -230,6 +302,7 @@ int main(void)
     game_checks();
     computer_checks();
     ui_checks();
-    puts("PASS: chess perft, special moves, endings, promotion, AI levels, undo, confirmation and resized UI");
+    sound_checks();
+    puts("PASS: chess perft, special moves, endings, promotion, AI levels, undo, confirmation, resized UI, event sounds, mute and legacy hosts");
     return 0;
 }

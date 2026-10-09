@@ -323,7 +323,90 @@ static void test_clipboard(void) {
     budo_gfx_host_close(host);
 }
 
+static int tone_calls, tone_stops;
+static int test_play_tones(void *context, const struct budo_gfx_tone *tones, size_t count)
+{
+    assert(context == &tone_calls);
+    if (!count) { ++tone_stops; return 0; }
+    assert(count == 3 && tones[0].frequency_hz == 1000 && tones[0].duration_ms == 100);
+    assert(tones[1].frequency_hz == 0 && tones[1].duration_ms == 25);
+    assert(tones[2].frequency_hz == 500 && tones[2].duration_ms == 50);
+    ++tone_calls;
+    return tone_calls == 1 ? 0 : -1;
+}
+
+static void test_tones(void)
+{
+    const struct budo_gfx_tone notes[] = {{1000, 100}, {0, 25}, {500, 50}};
+    size_t frames;
+    float *samples = pcspeaker_render(notes, 3, 48000, 2, &frames);
+    assert(samples && frames == 8400);
+    for (size_t i = 0; i < frames; ++i) {
+        assert(samples[i * 2] == samples[i * 2 + 1]);
+        assert(samples[i * 2] >= -0.2f && samples[i * 2] <= 0.2f);
+        if (i >= 4800 && i < 6000) assert(samples[i * 2] == 0);
+    }
+    for (size_t i = 96; i < 4500; ++i) {
+        assert(samples[i * 2] == samples[(i + 48) * 2]); /* Exactly 1000 Hz. */
+        assert(samples[i * 2] == -samples[(i + 24) * 2]);
+    }
+    free(samples);
+    struct budo_gfx legacy = {0};
+    assert(budo_gfx_play_tones(&legacy, notes, 3) < 0 && errno == ENOTSUP);
+    struct budo_gfx_tone invalid = {4001, 1};
+    assert(!pcspeaker_valid(&invalid, 1));
+    invalid = (struct budo_gfx_tone){1000, 0}; assert(!pcspeaker_valid(&invalid, 1));
+    invalid.duration_ms = 1001; assert(!pcspeaker_valid(&invalid, 1));
+    assert(!pcspeaker_valid(notes, 9) && !pcspeaker_valid(NULL, 1));
+    struct budo_gfx_tone long_notes[] = {{1000, 1000}, {1000, 1000}, {1000, 1}};
+    assert(!pcspeaker_valid(long_notes, 3));
+    assert(!pcspeaker_render(notes, 3, 0, 2, &frames) && frames == 0);
+    assert(!pcspeaker_render(notes, 3, 48000, 0, &frames));
+    struct budo_gfx_host *host = test_host();
+    tone_calls = tone_stops = 0;
+    budo_gfx_host_tones(host, test_play_tones, &tone_calls);
+    pid_t child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        close(endpoints[0]);
+        close(host->listener);
+        struct budo_gfx *gfx = NULL;
+        assert(budo_gfx_open(&gfx, 1, 1, BUDO_GFX_ARGB8888) == 0);
+        assert(budo_gfx_play_tones(gfx, notes, 3) == 0);
+        assert(budo_gfx_play_tones(gfx, notes, 3) < 0 && errno == EIO);
+        assert(budo_gfx_play_tones(gfx, NULL, 0) == 0);
+        /* Bypass client validation to verify the receiving host rejects bad
+         * frequencies/counts/durations without disconnecting graphics. */
+        struct gfx_packet request = gfx_packet(GFX_TONES);
+        request.width = 1; request.height = (1u << 16) | 5000u;
+        assert(gfx_send(gfx->fd, &request) == 0);
+        assert(gfx_wait_reply(gfx, GFX_TONES_REPLY) == 0 && gfx->tone_status == EINVAL);
+        request.width = 9;
+        assert(gfx_send(gfx->fd, &request) == 0);
+        assert(gfx_wait_reply(gfx, GFX_TONES_REPLY) == 0 && gfx->tone_status == EINVAL);
+        uint32_t pixel = 0xffabcdef;
+        assert(budo_gfx_present(gfx, &pixel, NULL) == 0);
+        budo_gfx_close(gfx);
+        _exit(0);
+    }
+    close(endpoints[0]); close(endpoints[1]);
+    int status = 0;
+    for (int i = 0; i < 10000; ++i) {
+        budo_gfx_host_poll(host);
+        if (waitpid(child, &status, WNOHANG) == child) {
+            assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+            break;
+        }
+        test_pause();
+        assert(i < 9999);
+    }
+    budo_gfx_host_poll(host);
+    assert(tone_calls == 2 && tone_stops >= 2);
+    budo_gfx_host_close(host);
+}
+
 int main(void) {
+    test_tones();
     test_motion_queue();
     test_clipboard();
     size_t bytes;

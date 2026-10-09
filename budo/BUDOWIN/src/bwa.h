@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 14
+#define BWA_ABI_MINOR 15
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -99,6 +99,13 @@
 #define BUDO_RESPONSE_CANCEL 0
 #define BUDO_RESPONSE_SAVE 1
 #define BUDO_RESPONSE_DISCARD 2
+
+/* ABI 1.15: at most eight notes, each 1..1000 ms, total <=2000 ms.
+ * Frequencies 0..4000 Hz; zero is a rest. */
+typedef struct BwaTone {
+    unsigned short frequency_hz;
+    unsigned short duration_ms;
+} BwaTone;
 
 typedef struct BwaHostApi {
     unsigned short abi_major;
@@ -191,6 +198,9 @@ typedef struct BwaHostApi {
     int (*open_reader_file)(const char *path);
     int (*set_system_color)(int role, int palette_index);
     int (*reset_system_colors)(void);
+    /* Queues asynchronous PC-speaker-style audio through the terminal host.
+     * Replaces the current effect; count=0 stops. Zero means unavailable/error. */
+    int (*play_tones)(const BwaTone *tones, unsigned int count);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

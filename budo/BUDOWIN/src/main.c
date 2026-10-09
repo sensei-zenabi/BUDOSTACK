@@ -6912,7 +6912,8 @@ static const BwaHostApi bwa_host_api = {
     bwa_delete_file_association,
     bwa_open_reader_file,
     bwa_set_system_color,
-    bwa_reset_system_colors
+    bwa_reset_system_colors,
+    bw_play_tones
 };
 
 static BwaLoadedApp *bwa_find_external_app(int runtime_id)

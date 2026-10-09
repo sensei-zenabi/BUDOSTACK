@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     assert(chdir(argv[1]) == 0);
     assert(getcwd(home_path, sizeof(home_path)));
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 8);
+    assert(bwa_external_app_count == 9);
     load_file_associations();
     char path[MAX_PATH];
     assert(join_path(path, sizeof(path), "/", "tmp") && strcmp(path, "/tmp") == 0);
@@ -62,6 +62,25 @@ int main(int argc, char **argv) {
         if (app->definition.callbacks.draw) app->definition.callbacks.draw();
         bwa_callback_app = NULL;
     }
+    BwaLoadedApp *chess = NULL;
+    for (int i = 0; i < bwa_instance_count; ++i)
+        if (!strcmp(bwa_instances[i].definition.app_id, "chess")) chess = &bwa_instances[i];
+    assert(chess && chess->managed_window);
+    bwa_callback_app = chess;
+    active_window = chess->definition.runtime_id;
+    assert(chess->definition.callbacks.key(13)); /* Select e2 with the cursor. */
+    assert(chess->definition.callbacks.key(0x100 | 72));
+    assert(chess->definition.callbacks.key(0x100 | 72));
+    assert(chess->definition.callbacks.key(13)); /* e2-e4. */
+    if (argc == 3) screenshot(argv[2], "chess.ppm");
+    bwa_callback_app = chess;
+    assert(chess->definition.callbacks.key(0x100 | 59));
+    if (argc == 3) screenshot(argv[2], "chess-help.ppm");
+    bwa_callback_app = chess;
+    assert(chess->definition.callbacks.key(27));
+    assert(chess->definition.callbacks.key(26));
+    assert(bwa_window_close());
+    bwa_callback_app = NULL;
     BwaLoadedApp *paint = NULL;
     for (int i = 0; i < bwa_instance_count; ++i)
         if (!strcmp(bwa_instances[i].definition.app_id, "paint")) paint = &bwa_instances[i];

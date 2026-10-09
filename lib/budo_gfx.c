@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "budo_gfx.h"
+#include "pcspeaker.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -22,6 +23,9 @@
 #define GFX_CLIPBOARD_SET 5u
 #define GFX_CLIPBOARD_GET 6u
 #define GFX_CLIPBOARD_REPLY 7u
+#define GFX_TONES 8u
+#define GFX_TONES_REPLY 9u
+#define GFX_CAP_TONES 1u
 #define GFX_CLIPBOARD_LIMIT (1024u * 1024u)
 #define GFX_QUEUE 256u
 #define GFX_MAX_WIDTH 1920u
@@ -50,6 +54,8 @@ struct budo_gfx {
     int keyboard_grab;
     char *clipboard;
     int clipboard_status;
+    int tone_status;
+    uint32_t host_capabilities;
     struct budo_gfx_event events[GFX_QUEUE];
     size_t head;
     size_t count;
@@ -75,6 +81,8 @@ struct budo_gfx_host {
     int (*clipboard_set)(void *, const char *);
     char *(*clipboard_get)(void *);
     void *clipboard_context;
+    int (*tones_play)(void *, const struct budo_gfx_tone *, size_t);
+    void *tones_context;
 };
 
 static struct gfx_packet gfx_packet(uint32_t type) {
@@ -249,6 +257,10 @@ static int gfx_client_receive(struct budo_gfx *gfx, struct gfx_packet *packet) {
         close(shared_fd);
         return -1;
     }
+    if (result == 1 && packet->type == GFX_TONES_REPLY) {
+        gfx->tone_status = (int)packet->format;
+        return result;
+    }
     if (result == 1 && packet->type == GFX_EVENT) {
         /* Pointer motion is a position snapshot. Keep the newest position
          * between discrete events so high-rate mice cannot fill the queue
@@ -310,6 +322,7 @@ static int gfx_wait_reply(struct budo_gfx *gfx, uint32_t expected) {
             return -1;
         }
         if (result == 1 && packet.type == expected) {
+            if (expected == GFX_ACK) gfx->host_capabilities |= packet.format & GFX_CAP_TONES;
             return 0;
         }
         if (result == 1 && packet.type != GFX_EVENT) {
@@ -323,6 +336,31 @@ static int gfx_wait_reply(struct budo_gfx *gfx, uint32_t expected) {
 
 static int gfx_wait_ack(struct budo_gfx *gfx) {
     return gfx_wait_reply(gfx, GFX_ACK);
+}
+
+int budo_gfx_play_tones(struct budo_gfx *gfx,
+    const struct budo_gfx_tone *tones, size_t count)
+{
+    if (!gfx || !pcspeaker_valid(tones, count)) { errno = EINVAL; return -1; }
+    if (!(gfx->host_capabilities & GFX_CAP_TONES)) { errno = ENOTSUP; return -1; }
+    struct gfx_packet request = gfx_packet(GFX_TONES);
+    uint32_t packed[BUDO_GFX_TONE_LIMIT] = {0};
+    request.width = (uint32_t)count;
+    for (size_t i = 0; i < count; ++i)
+        packed[i] = (uint32_t)tones[i].frequency_hz | ((uint32_t)tones[i].duration_ms << 16);
+    /* The fixed packet has 40 payload bytes after width, without ABI changes. */
+    memcpy((unsigned char *)&request + offsetof(struct gfx_packet, height), packed, sizeof(packed));
+    if (gfx_send(gfx->fd, &request) < 0 || gfx_wait_reply(gfx, GFX_TONES_REPLY) < 0) return -1;
+    if (gfx->tone_status) { errno = gfx->tone_status; return -1; }
+    return 0;
+}
+
+void budo_gfx_host_tones(struct budo_gfx_host *host,
+    int (*play)(void *, const struct budo_gfx_tone *, size_t), void *context)
+{
+    if (!host) return;
+    host->tones_play = play;
+    host->tones_context = context;
 }
 
 int budo_gfx_set_clipboard(struct budo_gfx *gfx, const char *text) {
@@ -505,6 +543,7 @@ void budo_gfx_close(struct budo_gfx *gfx) {
 }
 
 static void gfx_host_disconnect(struct budo_gfx_host *host) {
+    if (host->mapping && host->tones_play) (void)host->tones_play(host->tones_context, NULL, 0);
     if (host->fd >= 0) {
         close(host->fd);
     }
@@ -601,6 +640,25 @@ void budo_gfx_host_poll(struct budo_gfx_host *host) {
             gfx_host_disconnect(host);
             break;
         }
+        if (host->mapping && packet.type == GFX_TONES) {
+            struct gfx_packet reply = gfx_packet(GFX_TONES_REPLY);
+            struct budo_gfx_tone notes[BUDO_GFX_TONE_LIMIT] = {{0}};
+            uint32_t packed[BUDO_GFX_TONE_LIMIT];
+            memcpy(packed, (const unsigned char *)&packet + offsetof(struct gfx_packet, height), sizeof(packed));
+            if (shared_fd >= 0 || packet.width > BUDO_GFX_TONE_LIMIT) reply.format = EINVAL;
+            else {
+                for (size_t n = 0; n < packet.width; ++n) {
+                    notes[n].frequency_hz = (uint16_t)packed[n];
+                    notes[n].duration_ms = (uint16_t)(packed[n] >> 16);
+                }
+                if (!pcspeaker_valid(notes, packet.width)) reply.format = EINVAL;
+                else if (!host->tones_play) reply.format = ENOTSUP;
+                else if (host->tones_play(host->tones_context, notes, packet.width) < 0) reply.format = EIO;
+            }
+            if (shared_fd >= 0) close(shared_fd);
+            if (gfx_send(host->fd, &reply) < 0) gfx_host_disconnect(host);
+            continue;
+        }
         if (host->mapping && (packet.type == GFX_CLIPBOARD_SET || packet.type == GFX_CLIPBOARD_GET)) {
             struct gfx_packet reply = gfx_packet(GFX_CLIPBOARD_REPLY);
             int output_fd = -1;
@@ -683,6 +741,7 @@ void budo_gfx_host_poll(struct budo_gfx_host *host) {
             break;
         }
         struct gfx_packet ack = gfx_packet(GFX_ACK);
+        ack.format = GFX_CAP_TONES;
         if (gfx_send(host->fd, &ack) < 0) {
             gfx_host_disconnect(host);
         }

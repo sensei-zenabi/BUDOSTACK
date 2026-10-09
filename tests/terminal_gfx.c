@@ -185,10 +185,37 @@ static void test_input_state(void) {
     budo_gfx_host_close(host);
 }
 
+static void test_speaker_audio(void)
+{
+    assert(terminal_initialize_audio() == 0);
+    SDL_PauseAudioDevice(terminal_audio_device, 1);
+    const struct budo_gfx_tone notes[] = {{880, 50}, {0, 20}, {660, 50}};
+    assert(terminal_gfx_play_tones((void *)(uintptr_t)0, notes, 3) == 0);
+    assert(terminal_gfx_play_tones((void *)(uintptr_t)1, notes, 3) == 0);
+    int channel0 = TERMINAL_GFX_SOUND_FIRST_CHANNEL;
+    int channel1 = channel0 + 1;
+    assert(terminal_sound_channels[channel0].active && terminal_sound_channels[channel1].active);
+    assert(terminal_sound_channels[channel0].owns_samples);
+    assert(terminal_sound_channels[channel0].samples != terminal_sound_channels[channel1].samples);
+    float output[1024] = {0};
+    terminal_audio_callback(NULL, (Uint8 *)output, sizeof(output));
+    int audible = 0;
+    for (size_t i = 0; i < sizeof(output) / sizeof(*output); ++i) audible |= output[i] != 0;
+    assert(audible && terminal_sound_channels[channel0].position == 512);
+    assert(terminal_gfx_play_tones((void *)(uintptr_t)0, NULL, 0) == 0);
+    assert(!terminal_sound_channels[channel0].active && terminal_sound_channels[channel1].active);
+    assert(terminal_gfx_play_tones((void *)(uintptr_t)TERMINAL_TAB_COUNT, notes, 3) < 0);
+    assert(terminal_gfx_play_tones((void *)(uintptr_t)1, notes, 3) == 0);
+    assert(terminal_sound_channels[channel1].position == 0);
+    terminal_shutdown_audio();
+    assert(terminal_gfx_play_tones(NULL, notes, 3) < 0);
+}
+
 int main(int argc, char **argv) {
     assert(argc == 3);
     assert(setenv("BUDO_GFX_TEST_SOCKETPAIR", "1", 1) == 0);
-    assert(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) == 0);
+    assert(SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER | SDL_INIT_AUDIO) == 0);
+    test_speaker_audio();
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
     SDL_Window *window = SDL_CreateWindow("terminal graphics test", 0, 0, 960, 540,

@@ -2,6 +2,7 @@
 #define _XOPEN_SOURCE 700
 
 #include "../lib/budo_gfx.h"
+#include "../lib/pcspeaker.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -323,7 +324,8 @@ static struct psf_font terminal_font = {0};
 #define TERMINAL_KEYBOARD_SOUND_FIRST_CHANNEL TERMINAL_SOUND_CHANNEL_COUNT
 #define TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT 4
 #define TERMINAL_BACKGROUND_SOUND_CHANNEL (TERMINAL_SOUND_CHANNEL_COUNT + TERMINAL_KEYBOARD_SOUND_CHANNEL_COUNT)
-#define TERMINAL_AUDIO_CHANNEL_COUNT (TERMINAL_BACKGROUND_SOUND_CHANNEL + 1)
+#define TERMINAL_GFX_SOUND_FIRST_CHANNEL (TERMINAL_BACKGROUND_SOUND_CHANNEL + 1)
+#define TERMINAL_AUDIO_CHANNEL_COUNT (TERMINAL_GFX_SOUND_FIRST_CHANNEL + TERMINAL_TAB_COUNT)
 #define TERMINAL_KEYBOARD_SOUND_DEFAULT_VOLUME 0.50f
 #define TERMINAL_BACKGROUND_SOUND_PATH "./sounds/environment/background_ambient.wav"
 #define TERMINAL_BACKGROUND_SOUND_DEFAULT_VOLUME 0.25f
@@ -1856,6 +1858,24 @@ static char *terminal_gfx_clipboard_get(void *context) {
     SDL_free(text);
     if (!copy) perror("Clipboard");
     return copy;
+}
+
+static int terminal_gfx_play_tones(void *context, const struct budo_gfx_tone *tones, size_t count)
+{
+    size_t tab = (size_t)(uintptr_t)context;
+    if (tab >= TERMINAL_TAB_COUNT || !pcspeaker_valid(tones, count)) return -1;
+    int channel = (int)(TERMINAL_GFX_SOUND_FIRST_CHANNEL + tab);
+    if (!count) { terminal_sound_stop(channel); return 0; }
+    if (!terminal_audio_device || !terminal_audio_mutex) return -1;
+    size_t frames;
+    float *samples = pcspeaker_render(tones, count, (unsigned int)terminal_audio_spec.freq,
+                                      terminal_audio_spec.channels, &frames);
+    if (!samples) { perror("PC speaker samples"); return -1; }
+    if (terminal_sound_play_samples(channel, samples, frames, 1, 0, 0u, 0.7f) != 0) {
+        free(samples);
+        return -1;
+    }
+    return 0;
 }
 
 static int terminal_copy_selection_to_clipboard(const struct terminal_buffer *buffer) {
@@ -8280,6 +8300,7 @@ int main(int argc, char **argv) {
             return EXIT_FAILURE;
         }
         budo_gfx_host_clipboard(terminal_gfx_hosts[tab_i], terminal_gfx_clipboard_set, terminal_gfx_clipboard_get, NULL);
+        budo_gfx_host_tones(terminal_gfx_hosts[tab_i], terminal_gfx_play_tones, (void *)(uintptr_t)tab_i);
         child_pids[tab_i] = spawn_budostack(budostack_path, &master_fds[tab_i],
                                            budo_gfx_host_path(terminal_gfx_hosts[tab_i]));
         if (child_pids[tab_i] < 0) {

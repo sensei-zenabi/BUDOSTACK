@@ -194,7 +194,88 @@ static void desktop_checks(void)
     desktop_drag_x = desktop_drag_origin_x + DESKTOP_GRID_X_STEP;
     desktop_drag_y = desktop_drag_origin_y;
     desktop_group_drop();
-    assert(explorer_desktop_slot == 9); /* Occupied drop is rejected. */
+    assert(explorer_desktop_slot == 2 && editor_desktop_slot == 10); /* Nearest free slot. */
+}
+
+static void begin_test_drop(int id, int target)
+{
+    for (int i = 0; i < DESKTOP_SELECTION_MAX; ++i) desktop_drag_slots[i] = -1;
+    desktop_drag_slots[id] = desktop_item_slot(id);
+    desktop_slot_position(desktop_item_slot(id), &desktop_drag_origin_x, &desktop_drag_origin_y);
+    desktop_slot_position(target, &desktop_drag_x, &desktop_drag_y);
+    ui_pointer_x = desktop_drag_x + 4;
+    ui_pointer_y = desktop_drag_y + 4;
+}
+
+static void desktop_placement_checks(void)
+{
+    desktop_folder[0] = 0;
+    bwa_external_app_count = 1;
+    bwa_external_apps[0].definition.app_id = "placement-test";
+    bwa_external_apps[0].desktop_slot = 0;
+    explorer_desktop_slot = editor_desktop_slot = 0;
+    shortcut_count = 3;
+    memset(shortcut_details, 0, sizeof(shortcut_details));
+    memset(desktop_shortcuts, 0, sizeof(desktop_shortcuts));
+    for (int i = 0; i < shortcut_count; ++i) {
+        desktop_shortcuts[i].type = TYPE_FILE;
+        snprintf(desktop_shortcuts[i].path, MAX_PATH, "/placement-%d", i);
+    }
+    shortcut_slots[0] = 8;
+    shortcut_slots[1] = 20;
+    shortcut_slots[2] = 0;
+    strcpy(shortcut_details[2].parent, "/nested");
+    desktop_repair_overlaps();
+    assert(explorer_desktop_slot == 0 && editor_desktop_slot == 1);
+    assert(bwa_external_apps[0].desktop_slot == 9);
+    assert(shortcut_slots[0] == 8 && shortcut_slots[1] == 20 && shortcut_slots[2] == 0);
+    load_desktop_layout();
+    shortcuts_load();
+    assert(editor_desktop_slot == 1 && bwa_external_apps[0].desktop_slot == 9);
+    desktop_repair_overlaps();
+    assert(shortcut_slots[0] == 8 && shortcut_slots[1] == 20);
+
+    /* A blocked group drop finds the nearest translation, preserving spacing. */
+    bwa_external_app_count = 0;
+    explorer_desktop_slot = 0;
+    editor_desktop_slot = 1;
+    shortcut_slots[0] = 16;
+    begin_test_drop(0, 16);
+    desktop_drag_slots[1] = 1;
+    desktop_group_drop();
+    assert(explorer_desktop_slot == 8 && editor_desktop_slot == 9);
+    assert(shortcut_slots[0] == 16 && shortcut_slots[1] == 20);
+    shortcut_slots[0] = 8;
+
+    /* A single file or folder still enters a folder instead of snapping beside it. */
+    desktop_shortcuts[0].type = TYPE_FOLDER;
+    for (int type = TYPE_FOLDER; type <= TYPE_FILE; ++type) {
+        desktop_shortcuts[1].type = type;
+        shortcut_slots[1] = 20;
+        shortcut_details[1].parent[0] = 0;
+        begin_test_drop(DESKTOP_SHORTCUT_BASE + 1, 8);
+        desktop_group_drop();
+        assert(!strcmp(shortcut_details[1].parent, desktop_shortcuts[0].path));
+        assert(shortcut_slots[0] == 8);
+    }
+    /* Dragging onto an open desktop folder's client area also keeps its action. */
+    shortcut_details[1].parent[0] = 0;
+    shortcut_slots[1] = 20;
+    builtin_select(APP_EXPLORER);
+    recycle_bin = 0;
+    explorer_window.open = 1;
+    explorer_window.minimized = 0;
+    active_window = APP_EXPLORER;
+    strcpy(explorer_shortcut_folder, desktop_shortcuts[0].path);
+    begin_test_drop(DESKTOP_SHORTCUT_BASE + 1, 8);
+    ui_pointer_x = explorer_client_x() + 4;
+    ui_pointer_y = explorer_client_y() + 4;
+    desktop_group_drop();
+    assert(!strcmp(shortcut_details[1].parent, desktop_shortcuts[0].path));
+    explorer_window.open = 0;
+    explorer_shortcut_folder[0] = 0;
+    active_window = APP_NONE;
+    shortcut_count = 0;
 }
 
 static void theme_checks(const char *directory)
@@ -247,6 +328,7 @@ int main(int argc, char **argv)
     editor_checks(argv[2]);
     recycle_checks(argv[2]);
     desktop_checks();
+    desktop_placement_checks();
     theme_checks(argv[2]);
     puts("PASS: Reader/Help, Writer navigation, word selection, Recycle Bin, grouped dragging and persistent UI colors");
     return 0;

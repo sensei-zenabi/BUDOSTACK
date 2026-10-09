@@ -11419,6 +11419,7 @@ int main(int argc, char **argv)
     }
     load_desktop_layout();
     shortcuts_load();
+    desktop_repair_overlaps();
     for (int id = 0; id < DESKTOP_SELECTION_MAX; ++id) desktop_drag_slots[id] = -1;
 
     if (!load_initial_directory(&page)) {

@@ -278,6 +278,49 @@ static void desktop_placement_checks(void)
     shortcut_count = 0;
 }
 
+static void desktop_drag_layer_checks(void)
+{
+    bwa_external_app_count = 1;
+    BwaLoadedApp *app = &bwa_external_apps[0];
+    app->definition.app_id = "layer-test";
+    app->definition.name = "Layer test";
+    app->desktop_slot = 12;
+    app->pcx_icon_loaded = 1;
+    memset(app->pcx_icon, 21, sizeof(app->pcx_icon));
+    int saved_colors = pcx_icon_color_count;
+    pcx_icon_color_count = 0;
+    shortcut_count = 1;
+    shortcut_slots[0] = 10;
+    shortcut_details[0].parent[0] = 0;
+    shortcut_details[0].icon_loaded = 1;
+    desktop_shortcuts[0].type = TYPE_FOLDER;
+    strcpy(desktop_shortcuts[0].name, "Dragged");
+    memset(shortcut_details[0].pixels, 22, sizeof(shortcut_details[0].pixels));
+    for (int i = 0; i < DESKTOP_ICON_W * DESKTOP_ICON_H; ++i)
+        shortcut_details[0].rgb[i] = 0xffcc1122u;
+    budo_selection_clear(&desktop_select);
+    desktop_icon_dragging = 1;
+    begin_test_drop(DESKTOP_SHORTCUT_BASE, 12);
+    desktop_drag_offset_x = desktop_drag_x - desktop_drag_origin_x;
+    desktop_drag_offset_y = desktop_drag_y - desktop_drag_origin_y;
+    draw_desktop(0);
+    int pixel = (desktop_drag_y + 12) * SCREEN_WIDTH + desktop_drag_x + 12;
+    assert(rgb_mask[pixel] && rgb_framebuffer[pixel] == 0xffcc1122u);
+
+    /* Native application icons also render over stationary shortcuts. */
+    begin_test_drop(2, 10);
+    desktop_drag_offset_x = desktop_drag_x - desktop_drag_origin_x;
+    desktop_drag_offset_y = desktop_drag_y - desktop_drag_origin_y;
+    draw_desktop(0);
+    pixel = (desktop_drag_y + 12) * SCREEN_WIDTH + desktop_drag_x + 12;
+    assert(!rgb_mask[pixel] && framebuffer[pixel] == 21);
+    desktop_icon_dragging = 0;
+    desktop_drag_offset_x = desktop_drag_offset_y = 0;
+    for (int id = 0; id < DESKTOP_SELECTION_MAX; ++id) desktop_drag_slots[id] = -1;
+    shortcut_count = bwa_external_app_count = 0;
+    pcx_icon_color_count = saved_colors;
+}
+
 static void theme_checks(const char *directory)
 {
     uint32_t original[256];
@@ -329,6 +372,7 @@ int main(int argc, char **argv)
     recycle_checks(argv[2]);
     desktop_checks();
     desktop_placement_checks();
+    desktop_drag_layer_checks();
     theme_checks(argv[2]);
     puts("PASS: Reader/Help, Writer navigation, word selection, Recycle Bin, grouped dragging and persistent UI colors");
     return 0;

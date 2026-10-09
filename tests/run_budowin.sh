@@ -30,6 +30,8 @@ make budostack apps/cmath apps/edit commands/_CALC utilities/do
 "$TEST_DIR/shortcuts" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_selection.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/selection"
 "$TEST_DIR/selection"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_editor_selection_replace.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/selection-replace"
+"$TEST_DIR/selection-replace"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_folder_browser.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/folder-browser"
 "$TEST_DIR/folder-browser" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_improvements.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/improvements"

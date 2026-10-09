@@ -478,6 +478,9 @@ static int explorer_make_copy_name(const char *name,
 static int explorer_delete_selection(void);
 static int recycle_load(void);
 static int recycle_put(const char *path);
+static int desktop_recycle_store(const char *wrapper, int root);
+static int desktop_recycle_restore(const char *wrapper);
+static int desktop_recycle_folders(const char *wrapper, int restore);
 static int recycle_restore(void);
 static int recycle_empty(void);
 static int bwa_open_reader_file(const char *path);
@@ -7732,6 +7735,7 @@ static int is_root_path(void)
 }
 
 #include "recycle.h"
+#include "desktop_recycle.h"
 
 static int load_directory(const char *path)
 {
@@ -9849,7 +9853,7 @@ static int explorer_delete_selection(void)
                         !strcmp(desktop_shortcuts[j].path, directory_items[i].path)) shortcut_selection[j] = 1;
         changed = shortcuts_delete_selected();
         (void)load_directory(refresh_path);
-        explorer_status = changed ? "Shortcuts removed; target files preserved." : "No shortcut removed.";
+        explorer_status = changed ? "Selected shortcuts removed; folders moved to Recycle Bin." : "No shortcut removed.";
         return changed;
     }
     int selected = 0;
@@ -11114,44 +11118,49 @@ static int shortcuts_delete_selected(void)
     int slots[DESKTOP_SHORTCUT_MAX];
     ShortcutDetails *details = malloc(sizeof(shortcut_details));
     if (!details) { perror("Delete shortcuts"); return 0; }
-    memcpy(details, shortcut_details, sizeof(shortcut_details));
-    unsigned char relocated[DESKTOP_SHORTCUT_MAX] = {0};
-    int count = shortcut_count, keep = 0;
-    for (int i = 0; i < count; ++i) {
-        if (!shortcut_selection[i] || desktop_shortcuts[i].type != TYPE_FOLDER) continue;
-        /* Preserve contained shortcuts by moving them to the visible parent. */
-        for (int j = 0; j < count; ++j)
-            if (!strcmp(shortcut_details[j].parent, desktop_shortcuts[i].path)) {
-                (void)copy_text(shortcut_details[j].parent, MAX_PATH, desktop_folder);
-                relocated[j] = 1;
-            }
-    }
     memcpy(backup, desktop_shortcuts, sizeof(backup));
     memcpy(slots, shortcut_slots, sizeof(slots));
+    memcpy(details, shortcut_details, sizeof(shortcut_details));
+    unsigned char removed[DESKTOP_SHORTCUT_MAX];
+    memcpy(removed, shortcut_selection, sizeof(removed));
+    desktop_recycle_descendants(removed);
+    char wrappers[DESKTOP_SHORTCUT_MAX][MAX_PATH] = {{0}};
+    int count = shortcut_count, keep = 0, saved = 1;
     for (int i = 0; i < count; ++i) {
-        if (shortcut_selection[i]) continue;
-        desktop_shortcuts[keep] = desktop_shortcuts[i];
-        shortcut_details[keep] = shortcut_details[i];
-        shortcut_slots[keep] = relocated[i] ? -1 : shortcut_slots[i];
-        ++keep;
-    }
-    shortcut_count = keep;
-    int saved = 1;
-    for (int i = 0; i < keep; ++i) {
-        if (shortcut_slots[i] >= 0) continue;
-        shortcut_slots[i] = desktop_free_slot(shortcut_details[i].parent, i);
-        if (shortcut_slots[i] < 0) {
-            fprintf(stderr, "Cannot delete desktop folder: parent has no free slots\n");
+        if (!removed[i] || desktop_shortcuts[i].type != TYPE_FOLDER) continue;
+        int nested = 0;
+        for (int j = 0; j < count; ++j)
+            if (removed[j] && desktop_shortcuts[j].type == TYPE_FOLDER &&
+                !strcmp(shortcut_details[i].parent, desktop_shortcuts[j].path)) nested = 1;
+        if (!nested && !recycle_put_impl(desktop_shortcuts[i].path, i, wrappers[i])) {
+            perror("Recycle desktop folder");
             saved = 0;
             break;
         }
     }
-    if (saved) saved = shortcuts_save();
+    if (saved) {
+        for (int i = 0; i < count; ++i) {
+            if (removed[i]) continue;
+            desktop_shortcuts[keep] = desktop_shortcuts[i];
+            shortcut_details[keep] = shortcut_details[i];
+            shortcut_slots[keep++] = shortcut_slots[i];
+        }
+        shortcut_count = keep;
+        saved = shortcuts_save();
+    }
     if (!saved) {
         shortcut_count = count;
         memcpy(desktop_shortcuts, backup, sizeof(backup));
         memcpy(shortcut_slots, slots, sizeof(slots));
         memcpy(shortcut_details, details, sizeof(shortcut_details));
+        for (int i = count - 1; i >= 0; --i) {
+            if (!wrappers[i][0]) continue;
+            char payload[MAX_PATH];
+            if (join_path(payload, sizeof(payload), wrappers[i], "payload") &&
+                recycle_move(payload, backup[i].path) && desktop_recycle_folders(wrappers[i], 1))
+                (void)explorer_delete_path(wrappers[i], TYPE_FOLDER);
+            else perror("Restore desktop folder after failed deletion");
+        }
     } else {
         budo_selection_clear(&desktop_select);
     }

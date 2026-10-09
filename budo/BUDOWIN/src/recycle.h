@@ -87,7 +87,7 @@ static int recycle_move(const char *source, const char *dest)
     return 1;
 }
 
-static int recycle_put(const char *source)
+static int recycle_put_impl(const char *source, int desktop_root, char *saved_wrapper)
 {
     char root[MAX_PATH], absolute[MAX_PATH], parent[MAX_PATH];
     char wrapper[MAX_PATH], metadata[MAX_PATH], payload[MAX_PATH];
@@ -115,14 +115,30 @@ static int recycle_put(const char *source)
         if (fflush(file) != 0 || fsync(fileno(file)) != 0) ok = 0;
         if (fclose(file) != 0) ok = 0;
     }
+    if (ok && desktop_root >= 0) ok = desktop_recycle_store(wrapper, desktop_root);
     if (ok) ok = recycle_move(absolute, payload);
+    if (ok && desktop_root >= 0 && !desktop_recycle_folders(wrapper, 0)) {
+        int saved = errno;
+        if (!recycle_move(payload, absolute)) {
+            perror("Rollback desktop folder deletion");
+            return 0;
+        }
+        errno = saved;
+        ok = 0;
+    }
     if (!ok) {
         int saved = errno;
         (void)explorer_delete_path(wrapper, TYPE_FOLDER);
         errno = saved;
         perror(source);
     }
+    if (ok && saved_wrapper) copy_text(saved_wrapper, MAX_PATH, wrapper);
     return ok;
+}
+
+static int recycle_put(const char *source)
+{
+    return recycle_put_impl(source, -1, NULL);
 }
 
 static int recycle_origin(const char *wrapper, char *origin)
@@ -184,6 +200,13 @@ static int recycle_restore(void)
         *slash = 0;
         if (!recycle_origin(wrapper, origin) || !recycle_move(directory_items[i].path, origin)) {
             snprintf(explorer_error, sizeof(explorer_error), "Restore failed: %.80s: %.40s", directory_items[i].name, strerror(errno));
+            failed = 1;
+            continue;
+        }
+        if (!desktop_recycle_restore(wrapper)) {
+            int saved = errno;
+            if (!recycle_move(origin, directory_items[i].path)) perror("Rollback folder restore");
+            snprintf(explorer_error, sizeof(explorer_error), "Restore failed: %.80s: %.40s", directory_items[i].name, strerror(saved));
             failed = 1;
             continue;
         }

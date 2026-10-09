@@ -28,6 +28,8 @@ make budostack apps/cmath apps/edit commands/_CALC utilities/do
 "$TEST_DIR/ui" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_shortcuts.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/shortcuts"
 "$TEST_DIR/shortcuts" "$TEST_DIR"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_desktop_recycle.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/desktop-recycle"
+"$TEST_DIR/desktop-recycle" "$TEST_DIR"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_selection.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/selection"
 "$TEST_DIR/selection"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_editor_selection_replace.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/selection-replace"

@@ -264,8 +264,8 @@ int main(int argc, char **argv)
     memset(shortcut_selection, 0, DESKTOP_SHORTCUT_MAX);
     shortcut_selection[1] = 1;
     assert(shortcuts_delete_selected());
-    assert(shortcut_count == 1 && !shortcut_details[0].parent[0]);
-    assert(!strcmp(desktop_shortcuts[0].path, path));
+    assert(shortcut_count == 0 && access(folder, F_OK) != 0);
+    assert(access(path, F_OK) == 0);
     render(argv[1], "improvements-desktop.ppm");
 
     bwa_load_external_apps();

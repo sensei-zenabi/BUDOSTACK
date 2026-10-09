@@ -9,18 +9,18 @@ static int explorer_open(void)
 
 static void explorer_draw_icon(int x, int y)
 {
-    host_api->fill_rect(x + 2, y, 9, 4, BUDO_COLOR_CHROME);
+    host_api->fill_rect(x + 2, y, 9, 4, host_api->get_system_color(BUDO_SYS_COLOR_FOLDER_ICON));
     host_api->fill_rect(x, y + 3,
-                        BUDO_BUILTIN_ICON_W, 13, BUDO_COLOR_MIDGRAY);
+                        BUDO_BUILTIN_ICON_W, 13, host_api->get_system_color(BUDO_SYS_COLOR_SHADOW));
     host_api->fill_rect(x + 1, y + 4,
-                        BUDO_BUILTIN_ICON_W - 2, 11, BUDO_COLOR_CHROME);
+                        BUDO_BUILTIN_ICON_W - 2, 11, host_api->get_system_color(BUDO_SYS_COLOR_FOLDER_ICON));
 }
 
 int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 {
     if (host == 0 || app == 0 ||
         host->abi_major != BWA_ABI_MAJOR ||
-        host->launch_host_app == 0) {
+        host->launch_host_app == 0 || host->abi_minor < 14 || !host->get_system_color) {
         return 0;
     }
 

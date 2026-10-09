@@ -37,34 +37,37 @@
  * 16-colour desktop conventions.  No Microsoft artwork or resources
  * are used; all chrome and icons are drawn by BUDOWIN.
  */
-#define DESKTOP_COLOR 0U
-#define TEXT_COLOR 1U
-#define FILE_DARK 2U
-#define FOLDER_DARK 2U
-#define FILE_COLOR 4U
-#define FOLDER_COLOR 5U
-#define BACK_COLOR 6U
-#define CURSOR_COLOR 1U
-#define MOUSE_CURSOR_OUTLINE_COLOR 1U
-#define MOUSE_CURSOR_FILL_COLOR 4U
+static const unsigned char ui_color_defaults[BUDO_SYS_COLOR_COUNT] = {0, 1, 2, 3, 4, 5, 6, 4, 7, 5, 4, 2, 7, 6, 4, 1, 5, 4, 5, 4, 1, 2, 1, 6, 4};
+static unsigned char ui_color_indices[BUDO_SYS_COLOR_COUNT] = {0, 1, 2, 3, 4, 5, 6, 4, 7, 5, 4, 2, 7, 6, 4, 1, 5, 4, 5, 4, 1, 2, 1, 6, 4};
 
-#define WINDOW_FACE_COLOR 4U
-#define WINDOW_CHROME_COLOR 5U
-#define WINDOW_HIGHLIGHT_COLOR 4U
-#define WINDOW_SHADOW_COLOR 2U
-#define WINDOW_FRAME_COLOR 2U
-#define TITLE_COLOR 6U
-#define TITLE_TEXT_COLOR 4U
-#define TITLE_INACTIVE_COLOR WINDOW_CHROME_COLOR
-#define CONTROL_HOVER_COLOR 7U
-#define CONTROL_PRESSED_COLOR TITLE_COLOR
+#define DESKTOP_COLOR (ui_color_indices[BUDO_SYS_COLOR_DESKTOP])
+#define TEXT_COLOR (ui_color_indices[BUDO_SYS_COLOR_TEXT])
+#define FILE_DARK (ui_color_indices[BUDO_SYS_COLOR_SHADOW])
+#define FOLDER_DARK (ui_color_indices[BUDO_SYS_COLOR_SHADOW])
+#define FILE_COLOR (ui_color_indices[BUDO_SYS_COLOR_SURFACE])
+#define FOLDER_COLOR (ui_color_indices[BUDO_SYS_COLOR_FOLDER_ICON])
+#define BACK_COLOR (ui_color_indices[BUDO_SYS_COLOR_TITLE_ACTIVE])
+#define CURSOR_COLOR (ui_color_indices[BUDO_SYS_COLOR_TEXT])
+#define MOUSE_CURSOR_OUTLINE_COLOR (ui_color_indices[BUDO_SYS_COLOR_CURSOR_OUTLINE])
+#define MOUSE_CURSOR_FILL_COLOR (ui_color_indices[BUDO_SYS_COLOR_CURSOR_FILL])
+
+#define WINDOW_FACE_COLOR (ui_color_indices[BUDO_SYS_COLOR_SURFACE])
+#define WINDOW_CHROME_COLOR (ui_color_indices[BUDO_SYS_COLOR_FACE])
+#define WINDOW_HIGHLIGHT_COLOR (ui_color_indices[BUDO_SYS_COLOR_HIGHLIGHT])
+#define WINDOW_SHADOW_COLOR (ui_color_indices[BUDO_SYS_COLOR_SHADOW])
+#define WINDOW_FRAME_COLOR (ui_color_indices[BUDO_SYS_COLOR_FRAME])
+#define TITLE_COLOR (ui_color_indices[BUDO_SYS_COLOR_TITLE_ACTIVE])
+#define TITLE_TEXT_COLOR (ui_color_indices[BUDO_SYS_COLOR_TITLE_TEXT])
+#define TITLE_INACTIVE_COLOR (ui_color_indices[BUDO_SYS_COLOR_TITLE_INACTIVE])
+#define CONTROL_HOVER_COLOR (ui_color_indices[BUDO_SYS_COLOR_HOVER])
+#define CONTROL_PRESSED_COLOR (ui_color_indices[BUDO_SYS_COLOR_PRESSED])
 #define TEXT_CELL_WIDTH 6
 #define TEXT_CELL_HEIGHT 9
 #define CONTEXT_CURSOR_HOTSPOT 6
 #define EXPLORER_DIVIDER_CURSOR 5
-#define DESKTOP_TEXT_COLOR 4U
-#define TERMINAL_BG_COLOR 1U
-#define TERMINAL_TEXT_COLOR 5U
+#define DESKTOP_TEXT_COLOR (ui_color_indices[BUDO_SYS_COLOR_DESKTOP_TEXT])
+#define TERMINAL_BG_COLOR (ui_color_indices[BUDO_SYS_COLOR_TERMINAL_BG])
+#define TERMINAL_TEXT_COLOR (ui_color_indices[BUDO_SYS_COLOR_TERMINAL_TEXT])
 
 #define MAX_ITEMS 256
 #define MAX_NAME 256
@@ -337,6 +340,10 @@ static int explorer_clipboard_mode = EXPLORER_CLIP_NONE;
 static int explorer_desktop_slot = 0;
 static int editor_desktop_slot = 1;
 static int desktop_drag_app = APP_NONE;
+static int desktop_drag_slots[DESKTOP_SELECTION_MAX];
+static int desktop_drag_origin_x, desktop_drag_origin_y;
+static int desktop_drag_offset_x, desktop_drag_offset_y;
+static void desktop_group_drop(void);
 static int desktop_icon_pressed = 0;
 static int desktop_icon_dragging = 0;
 
@@ -469,6 +476,13 @@ static int explorer_make_copy_name(const char *name,
                                    char *dest,
                                    size_t dest_size);
 static int explorer_delete_selection(void);
+static int recycle_load(void);
+static int recycle_put(const char *path);
+static int recycle_restore(void);
+static int recycle_empty(void);
+static int bwa_open_reader_file(const char *path);
+static void editor_search_click(int mx, int my);
+static void editor_selection_begin(void);
 static int explorer_begin_rename(void);
 static int explorer_commit_rename(void);
 static void explorer_cancel_rename(void);
@@ -655,7 +669,7 @@ static void set_palette_entry(unsigned char index, unsigned char r,
 
 static BudoUiStyle desktop_ui_style = BUDO_UI_STYLE_CLASSIC;
 
-/* Future Settings pages update this host state, never individual apps. */
+/* Compatibility RGB style hook. Settings maps roles to fixed palette entries. */
 static int desktop_apply_ui_style(const BudoUiStyle *style)
 {
     if (style == NULL) return 0;
@@ -674,29 +688,67 @@ static int desktop_apply_ui_style(const BudoUiStyle *style)
 
 static void set_classic_gui_palette(void)
 {
-    int r;
-    int g;
-    int b;
-
-    /* All shared controls and host chrome resolve these UI-owned slots. */
     (void)desktop_apply_ui_style(&desktop_ui_style);
+    for (int i = 16; i < 256; ++i) bw_palette_rgb((unsigned int)i, budo_palette_rgb(i));
+}
 
-    /*
-     * Entries 16..231 form a fixed 6x6x6 RGB cube for PCX assets.
-     * This prevents an image palette from changing BUDOWIN's UI colors.
-     */
-    for (r = 0; r < 6; ++r) {
-        for (g = 0; g < 6; ++g) {
-            for (b = 0; b < 6; ++b) {
-                unsigned char index =
-                    (unsigned char)(16 + r * 36 + g * 6 + b);
-                set_palette_entry(index,
-                                  (unsigned char)((r * 63) / 5),
-                                  (unsigned char)((g * 63) / 5),
-                                  (unsigned char)((b * 63) / 5));
+static int ui_colors_save(const unsigned char *colors)
+{
+    char path[MAX_PATH], temporary[MAX_PATH];
+    if (!copy_text(path, sizeof(path), bw_state_file("ui-colors.state")) ||
+        !copy_text(temporary, sizeof(temporary), bw_state_file("ui-colors.tmp"))) return 0;
+    FILE *file = fopen(temporary, "wb");
+    if (!file) { perror(path); return 0; }
+    int ok = fwrite(colors, 1, BUDO_SYS_COLOR_COUNT, file) == BUDO_SYS_COLOR_COUNT;
+    if (fclose(file) != 0) ok = 0;
+    if (ok && rename(temporary, path) == 0) return 1;
+    perror("Save UI colors");
+    (void)unlink(temporary);
+    return 0;
+}
+
+static void ui_colors_load(void)
+{
+    unsigned char colors[BUDO_SYS_COLOR_COUNT];
+    memcpy(ui_color_indices, ui_color_defaults, sizeof(ui_color_indices));
+    FILE *file = fopen(bw_state_file("ui-colors.state"), "rb");
+    if (!file) {
+        if (errno != ENOENT) { perror("Load UI colors"); return; }
+        file = fopen(bw_state_file("terminal-colors.state"), "r");
+        if (file) {
+            int background, foreground;
+            if (fscanf(file, "%d %d", &background, &foreground) == 2 &&
+                background >= 0 && background <= 255 && foreground >= 0 && foreground <= 255) {
+                ui_color_indices[BUDO_SYS_COLOR_TERMINAL_BG] = (unsigned char)background;
+                ui_color_indices[BUDO_SYS_COLOR_TERMINAL_TEXT] = (unsigned char)foreground;
             }
+            if (fclose(file) != 0) perror("Load terminal colors");
         }
+        return;
     }
+    size_t count = fread(colors, 1, sizeof(colors), file);
+    int extra = fgetc(file);
+    if (fclose(file) != 0) { perror("Load UI colors"); return; }
+    if (count == sizeof(colors) && extra == EOF) memcpy(ui_color_indices, colors, sizeof(colors));
+    else fprintf(stderr, "BUDOWIN: invalid UI colors file; using defaults\n");
+}
+
+static int bwa_set_system_color(int role, int index)
+{
+    if (role < 0 || role >= BUDO_SYS_COLOR_COUNT || index < 0 || index > 255) return 0;
+    unsigned char colors[BUDO_SYS_COLOR_COUNT];
+    memcpy(colors, ui_color_indices, sizeof(colors));
+    colors[role] = (unsigned char)index;
+    if (!ui_colors_save(colors)) return 0;
+    memcpy(ui_color_indices, colors, sizeof(colors));
+    return 1;
+}
+
+static int bwa_reset_system_colors(void)
+{
+    if (!ui_colors_save(ui_color_defaults)) return 0;
+    memcpy(ui_color_indices, ui_color_defaults, sizeof(ui_color_indices));
+    return 1;
 }
 
 static int vesa_copy_to_screen(unsigned long offset,
@@ -952,10 +1004,10 @@ static int ui_cursor_ink(int kind, int x, int y)
 
 static unsigned char ui_cursor_pixel(int kind, int x, int y)
 {
-    if (ui_cursor_ink(kind, x, y)) return TEXT_COLOR;
+    if (ui_cursor_ink(kind, x, y)) return MOUSE_CURSOR_OUTLINE_COLOR;
     if (ui_cursor_ink(kind, x - 1, y) || ui_cursor_ink(kind, x + 1, y) ||
         ui_cursor_ink(kind, x, y - 1) || ui_cursor_ink(kind, x, y + 1))
-        return WINDOW_HIGHLIGHT_COLOR;
+        return MOUSE_CURSOR_FILL_COLOR;
     return PCX_TRANSPARENT;
 }
 
@@ -1987,6 +2039,8 @@ static void draw_cursor_vga(int x, int y)
             unsigned char cursor_pixel =
                 kind == BUDO_CURSOR_ARROW ? cursor_pcx_icon[row * MOUSE_CURSOR_W + image_x] :
                 ui_cursor_pixel(kind, image_x, row);
+            if (kind == BUDO_CURSOR_ARROW && !cursor_rgb && cursor_pixel != PCX_TRANSPARENT)
+                cursor_pixel = cursor_pixel == 1 ? MOUSE_CURSOR_OUTLINE_COLOR : MOUSE_CURSOR_FILL_COLOR;
 
             if (cursor_pixel != PCX_TRANSPARENT) {
                 pixel = cursor_pixel;
@@ -2497,6 +2551,7 @@ static int text_input_active(void)
 
 static int explorer_folder_width(void)
 {
+    if (recycle_bin) return 0;
     int width = explorer_folder_preferred_width;
     if (!width) {
         width = explorer_window.w / 3;
@@ -2611,7 +2666,7 @@ static void draw_folder(int x, int y)
 static void draw_file(int x, int y)
 {
     fill_rect(x + 4, y, 16, 16, FILE_DARK);
-    fill_rect(x + 5, y + 1, 14, 14, FILE_COLOR);
+    fill_rect(x + 5, y + 1, 14, 14, ui_color_indices[BUDO_SYS_COLOR_FILE_ICON]);
     fill_rect(x + 15, y + 1, 4, 4, DESKTOP_COLOR);
     put_pixel(x + 15, y + 4, FILE_DARK);
     put_pixel(x + 16, y + 4, FILE_DARK);
@@ -2837,8 +2892,8 @@ static void draw_explorer_list_entry(int index, int x, int y)
     int width = explorer_client_w();
     int name_w = width >= 360 ? width - 246 : width >= 270 ? width - 180 : width >= 210 ? width - 78 : width;
     int selected = index == -2 ? explorer_up_selected : index >= 0 && explorer_selection[index];
-    unsigned char ink = selected ? TITLE_TEXT_COLOR : TEXT_COLOR;
-    fill_rect(x, y, width, 12, selected ? TITLE_COLOR : WINDOW_FACE_COLOR);
+    unsigned char ink = selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR;
+    fill_rect(x, y, width, 12, selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_BG] : WINDOW_FACE_COLOR);
     const char *name = index == -2 ? ".. (Up)" : directory_items[index].name;
     draw_text_elided(x + 3, y + 2, name, ink, (name_w - 6) / 6);
     bwa_pointer_region(x, y, name_w, 12, BUDO_CURSOR_ARROW, name);
@@ -2879,12 +2934,14 @@ static void draw_file_explorer_window(int page)
 
     draw_window_chrome(&explorer_window);
     draw_text(explorer_window.x + 7, title_y + 6,
-              "File Explorer", window_title_text_color(), 13);
+              recycle_bin ? "Recycle Bin" : "File Explorer", window_title_text_color(), 13);
 
-    ui_register(filter_x, filter_y, 112, 12, BUDO_CURSOR_ARROW, "Only Executables", 1, 0);
-    draw_checkbox(filter_x, filter_y, only_executables);
-    draw_text(filter_x + 14, title_y + 6,
-              "Only Executables", window_title_text_color(), 16);
+    if (!recycle_bin) {
+        ui_register(filter_x, filter_y, 112, 12, BUDO_CURSOR_ARROW, "Only Executables", 1, 0);
+        draw_checkbox(filter_x, filter_y, only_executables);
+        draw_text(filter_x + 14, title_y + 6,
+                  "Only Executables", window_title_text_color(), 16);
+    }
 
     draw_window_button(min_x, title_y + WINDOW_BORDER, 0);
     draw_window_button(max_x, title_y + WINDOW_BORDER, 1);
@@ -2944,7 +3001,7 @@ static void draw_file_explorer_window(int page)
                   explorer_window.w - WINDOW_BORDER * 2,
                   1, WINDOW_SHADOW_COLOR);
         draw_text(explorer_window.x + 7, status_y + 2,
-                  explorer_status ? explorer_status : shortcuts, TEXT_COLOR, max_chars);
+                  explorer_status ? explorer_status : recycle_bin ? "Select entries to Restore; Empty deletes permanently." : shortcuts, TEXT_COLOR, max_chars);
     }
 
     desktop_scroll_draw(APP_EXPLORER, page);
@@ -3002,6 +3059,7 @@ static void editor_set_status(const char *text)
 
 static void editor_reset_document(void)
 {
+    editor_state->v_editor_end_affinity = 0;
     editor_selection_clear();
     editor_match_line = -1;
     editor_history_reset();
@@ -3450,9 +3508,16 @@ static int editor_export_postscript(const char *path)
 static int editor_load_file_impl(const char *path);
 static int editor_load_file(const char *path)
 {
+    editor_state->v_editor_end_affinity = 0;
     editor_selection_clear();
     int previous = ui_busy_begin();
     int result = editor_load_file_impl(path);
+    if (result && editor_read_only) {
+        editor_writer_mode = 1;
+        editor_writer_ruler = 0;
+        editor_writer_left_indent = editor_writer_first_indent = editor_writer_right_indent = 0;
+        editor_ensure_cursor_visible();
+    }
     ui_busy_end(previous);
     return result;
 }
@@ -3508,6 +3573,7 @@ static int editor_load_file_impl(const char *path)
 static int editor_save_file_impl(const char *path);
 static int editor_save_file(const char *path)
 {
+    if (editor_read_only) return 0;
     int previous = ui_busy_begin();
     int result = editor_save_file_impl(path);
     ui_busy_end(previous);
@@ -3603,6 +3669,7 @@ static int editor_history_capture(struct EditorSnapshot *history, int *count)
 
 static int editor_history_before_edit(void)
 {
+    if (editor_read_only) return 0;
     editor_typing_line = -1;
     if (!editor_history_capture(editor_undo, &editor_undo_count)) return 0;
     editor_history_clear(editor_redo, &editor_redo_count);
@@ -3612,6 +3679,7 @@ static int editor_history_before_edit(void)
 
 static void editor_history_restore(int redo)
 {
+    if (editor_read_only) return;
     editor_selection_clear();
     editor_typing_line = -1;
     struct EditorSnapshot *source = redo ? editor_redo : editor_undo;
@@ -3834,6 +3902,7 @@ static int editor_replace_all(const char *find_text,
 
 static void editor_begin_dialog(int dialog, const char *initial)
 {
+    if (editor_read_only && dialog != EDITOR_DIALOG_FIND) return;
     size_t len = strlen(initial);
 
     if (len >= sizeof(editor_dialog_input)) {
@@ -4086,6 +4155,9 @@ static void editor_cursor_wrap_position(int *row_out, int *col_out)
     int len = (int)strlen(text);
     int start = 0;
     int row = 0;
+    int end_affinity = editor_writer_mode && editor_state->v_editor_end_affinity &&
+        editor_state->v_editor_end_line == editor_cursor_line &&
+        editor_state->v_editor_end_col == editor_cursor_col;
 
     if (editor_cursor_col > len) {
         editor_cursor_col = len;
@@ -4111,7 +4183,7 @@ static void editor_cursor_wrap_position(int *row_out, int *col_out)
                             &draw_start, &draw_len, &next_start);
         draw_end = draw_start + draw_len;
 
-        if (editor_cursor_col == len && next_start == len &&
+        if (!end_affinity && editor_cursor_col == len && next_start == len &&
             draw_len == segment_cols) {
             *row_out = row + 1;
             *col_out = editor_writer_mode ?
@@ -4120,7 +4192,7 @@ static void editor_cursor_wrap_position(int *row_out, int *col_out)
         }
 
         if (editor_cursor_col < draw_end ||
-            (editor_cursor_col == draw_end && next_start == len)) {
+            (editor_cursor_col == draw_end && (next_start == len || end_affinity))) {
             int col = editor_cursor_col - draw_start;
 
             if (col < 0) col = 0;
@@ -4202,6 +4274,7 @@ static int editor_cursor_absolute_visual_row(void)
 
 static int editor_set_cursor_from_visual_row(int target_row, int desired_col)
 {
+    editor_state->v_editor_end_affinity = 0;
     int line;
     int row = 0;
 
@@ -4260,6 +4333,9 @@ static int editor_set_cursor_from_visual_row(int target_row, int desired_col)
 
                     editor_cursor_line = line;
                     editor_cursor_col = draw_start + col;
+                    editor_state->v_editor_end_affinity = editor_writer_mode && col == draw_len && draw_len > 0;
+                    editor_state->v_editor_end_line = line;
+                    editor_state->v_editor_end_col = editor_cursor_col;
                     return 1;
                 }
 
@@ -4303,6 +4379,7 @@ static void editor_move_visual_row(int delta)
 
 static void editor_place_cursor_from_point(int x, int y)
 {
+    editor_state->v_editor_end_affinity = 0;
     int text_x = editor_text_x();
     int ruler_h =
         editor_writer_mode && editor_writer_ruler ? EDITOR_RULER_H : 0;
@@ -4347,6 +4424,66 @@ static void editor_place_cursor_from_point(int x, int y)
 
     editor_preferred_visual_col = -1;
     editor_ensure_cursor_visible();
+}
+
+static int editor_word_character(unsigned char ch)
+{
+    return isalnum(ch) || ch == '_' || ch >= 128;
+}
+
+static void editor_text_click(int x, int y, clock_t now, unsigned int modifiers)
+{
+    if (modifiers & KEYMOD_SHIFT) editor_selection_begin();
+    else editor_selection_clear();
+    editor_place_cursor_from_point(x, y);
+    int row = editor_cursor_line, col = editor_cursor_col;
+    int twice = !(modifiers & (KEYMOD_SHIFT | KEYMOD_CTRL)) &&
+        editor_state->v_editor_click_time &&
+        now - editor_state->v_editor_click_time <= CLOCKS_PER_SEC / 2 &&
+        row == editor_state->v_editor_last_click_line &&
+        abs(col - editor_state->v_editor_last_click_col) <= 1;
+    if (twice) {
+        int text_x = editor_text_x();
+        editor_place_cursor_from_point(x - 3 < text_x ? text_x : x - 3, y);
+        row = editor_cursor_line;
+        col = editor_cursor_col;
+    }
+    if (twice && editor_word_character((unsigned char)editor_lines[row][col])) {
+        int first = col, last = col;
+        while (first > 0 && editor_word_character((unsigned char)editor_lines[row][first - 1])) --first;
+        while (editor_word_character((unsigned char)editor_lines[row][last])) ++last;
+        editor_anchor_line = row;
+        editor_anchor_col = first;
+        editor_cursor_col = last;
+        editor_selection_active = 1;
+        editor_selecting = 0;
+        editor_state->v_editor_click_time = 0;
+    } else {
+        editor_selection_begin();
+        editor_selecting = 1;
+        editor_state->v_editor_click_time = now;
+        editor_state->v_editor_last_click_line = row;
+        editor_state->v_editor_last_click_col = col;
+    }
+}
+
+static int reader_menu_click(int x, int y)
+{
+    if (!editor_read_only) return 0;
+    int menu_y = editor_window.y + WINDOW_TITLE_H;
+    if (editor_dialog != EDITOR_DIALOG_NONE) {
+        editor_search_click(x, y);
+        return 1;
+    }
+    if (point_in_rect(x, y, editor_window.x + 5, menu_y, 48, EDITOR_MENU_H)) {
+        editor_begin_file_dialog(EDITOR_FILE_DIALOG_OPEN);
+        return 1;
+    }
+    if (point_in_rect(x, y, editor_window.x + 57, menu_y, 48, EDITOR_MENU_H)) {
+        editor_begin_dialog(EDITOR_DIALOG_FIND, "");
+        return 1;
+    }
+    return y < menu_y + EDITOR_MENU_H && y >= editor_window.y + WINDOW_TITLE_H;
 }
 
 static void editor_ensure_cursor_visible(void)
@@ -4419,6 +4556,7 @@ static int editor_selection_contains(int row, int col)
 
 static int editor_selection_delete(void)
 {
+    if (editor_read_only) return 0;
     int first, fc, last, lc;
     if (!editor_selection_bounds(&first, &fc, &last, &lc)) return 0;
     size_t tail = strlen(editor_lines[last] + lc);
@@ -4487,13 +4625,12 @@ static void editor_selection_copy(int cut)
     free(editor_clipboard);
     editor_clipboard = copy;
     desktop_text_clipboard_publish(copy);
-    if (cut) (void)editor_selection_delete();
+    if (cut && !editor_read_only) (void)editor_selection_delete();
 }
 
-static void editor_paste(void)
+static void editor_replace_selection(const char *text)
 {
-    desktop_text_clipboard_refresh();
-    if (!editor_clipboard) return;
+    if (editor_read_only || !text) return;
     int first = editor_cursor_line, fc = editor_cursor_col;
     int last = first, lc = fc;
     (void)editor_selection_bounds(&first, &fc, &last, &lc);
@@ -4502,7 +4639,7 @@ static void editor_paste(void)
     memcpy(replacement, editor_lines, (size_t)first * sizeof(editor_lines[0]));
     memcpy(replacement[first], editor_lines[first], (size_t)fc);
     int row = first, col = fc;
-    for (const char *c = editor_clipboard; *c; ++c) {
+    for (const char *c = text; *c; ++c) {
         if (*c == '\n') { ++row; col = 0; }
         else {
             if (row >= EDITOR_MAX_LINES || col >= EDITOR_MAX_COLS - 1) goto full;
@@ -4532,10 +4669,18 @@ full:
     editor_set_status("Paste exceeds document capacity");
 }
 
+static void editor_paste(void)
+{
+    if (editor_read_only) return;
+    desktop_text_clipboard_refresh();
+    editor_replace_selection(editor_clipboard);
+}
+
 static int editor_navigation(int scan, unsigned int modifiers)
 {
     if (scan != 71 && scan != 72 && scan != 73 && scan != 75 &&
         scan != 77 && scan != 79 && scan != 80 && scan != 81) return 0;
+    if (scan == 75 || scan == 77) editor_state->v_editor_end_affinity = 0;
     int shift = (modifiers & KEYMOD_SHIFT) != 0;
     int ctrl = (modifiers & KEYMOD_CTRL) != 0;
     int first, fc, last, lc;
@@ -4576,8 +4721,14 @@ static int editor_navigation(int scan, unsigned int modifiers)
             } while (moved < EDITOR_MAX_LINES * EDITOR_MAX_COLS);
             editor_preferred_visual_col = -1;
         } else if (scan == 71 || scan == 79) {
-            if (ctrl) editor_cursor_line = scan == 71 ? 0 : editor_line_count - 1;
-            editor_cursor_col = scan == 71 ? 0 : (int)strlen(editor_lines[editor_cursor_line]);
+            if (editor_writer_mode && !ctrl) {
+                int row = editor_cursor_absolute_visual_row();
+                (void)editor_set_cursor_from_visual_row(row, scan == 71 ? 0 : EDITOR_MAX_COLS);
+            } else {
+                editor_state->v_editor_end_affinity = 0;
+                if (ctrl) editor_cursor_line = scan == 71 ? 0 : editor_line_count - 1;
+                editor_cursor_col = scan == 71 ? 0 : (int)strlen(editor_lines[editor_cursor_line]);
+            }
             editor_preferred_visual_col = -1;
         } else {
             int delta = scan == 72 || scan == 73 ? -1 : 1;
@@ -4593,13 +4744,12 @@ static int editor_navigation(int scan, unsigned int modifiers)
 
 static void editor_insert_char(char ch)
 {
+    if (editor_read_only) return;
+    editor_state->v_editor_end_affinity = 0;
     int first, fc, last, lc;
     if (editor_selection_bounds(&first, &fc, &last, &lc)) {
         char replacement[2] = {ch, 0};
-        char *previous = editor_clipboard;
-        editor_clipboard = replacement;
-        editor_paste();
-        editor_clipboard = previous;
+        editor_replace_selection(replacement);
         return;
     }
     editor_selection_clear();
@@ -4638,13 +4788,12 @@ static void editor_insert_char(char ch)
 
 static void editor_newline(void)
 {
+    if (editor_read_only) return;
+    editor_state->v_editor_end_affinity = 0;
     int first, fc, last, lc;
     if (editor_selection_bounds(&first, &fc, &last, &lc)) {
         char replacement[] = "\n";
-        char *previous = editor_clipboard;
-        editor_clipboard = replacement;
-        editor_paste();
-        editor_clipboard = previous;
+        editor_replace_selection(replacement);
         return;
     }
     editor_selection_clear();
@@ -4686,6 +4835,7 @@ static void editor_newline(void)
 
 static void editor_delete_forward(void)
 {
+    if (editor_read_only) return;
     if (editor_selection_delete()) return;
     char *line = editor_lines[editor_cursor_line];
     int len = (int)strlen(line);
@@ -4709,6 +4859,8 @@ static void editor_delete_forward(void)
 
 static void editor_backspace(void)
 {
+    if (editor_read_only) return;
+    editor_state->v_editor_end_affinity = 0;
     int first, fc, last, lc;
     if (editor_selection_bounds(&first, &fc, &last, &lc)) {
         (void)editor_selection_delete();
@@ -4768,6 +4920,7 @@ static void editor_search_geometry(int *x, int *y, int *w)
 
 static void editor_search_action(int action)
 {
+    if (editor_read_only && action >= 2) return;
     if (action == 3) {
         (void)editor_replace_all(editor_search_text, editor_replacement);
     } else if (action == 2) {
@@ -4803,9 +4956,9 @@ static void editor_draw_search_dialog(void)
     fill_rect(x, y, w, 154, WINDOW_CHROME_COLOR);
     draw_bevel(x, y, w, 154, 1);
     fill_rect(x + 2, y + 2, w - 4, 16, TITLE_COLOR);
-    draw_text(x + 6, y + 6, "Find / Replace", TITLE_TEXT_COLOR, 24);
+    draw_text(x + 6, y + 6, editor_read_only ? "Find" : "Find / Replace", TITLE_TEXT_COLOR, 24);
     bwa_draw_standard_button(x + w - 18, y + 3, 14, 13, "x", 0);
-    for (i = 0; i < 2; ++i) {
+    for (i = 0; i < (editor_read_only ? 1 : 2); ++i) {
         const char *value = i ? editor_replacement : editor_search_text;
         int cols = (w - 82) / 6;
         int offset = editor_search_field == i && editor_search_caret >= cols ?
@@ -4827,7 +4980,7 @@ static void editor_draw_search_dialog(void)
     bwa_draw_standard_button(x + 8, y + 73, 60, 16, "Case", editor_search_case);
     bwa_draw_standard_button(x + 76, y + 73, 60, 16, "Word", editor_search_word);
     bwa_draw_standard_button(x + 144, y + 73, 60, 16, "Wrap", editor_search_wrap);
-    for (i = 0; i < 4; ++i) {
+    for (i = 0; i < (editor_read_only ? 2 : 4); ++i) {
         int bw = (w - 16) / 4;
         bwa_draw_standard_button(x + 8 + i * bw, y + 94, bw - 3, 19, buttons[i], 0);
     }
@@ -4844,7 +4997,7 @@ static void editor_search_click(int mx, int my)
         editor_dialog = EDITOR_DIALOG_NONE;
         return;
     }
-    for (i = 0; i < 2; ++i) {
+    for (i = 0; i < (editor_read_only ? 1 : 2); ++i) {
         if (point_in_rect(mx, my, x + 70, y + 24 + i * 24, w - 78, 18)) {
             int cols = (w - 82) / 6;
             int offset = editor_search_field == i && editor_search_caret >= cols ?
@@ -4866,7 +5019,7 @@ static void editor_search_click(int mx, int my)
         editor_search_wrap = !editor_search_wrap;
     else if (point_in_rect(mx, my, x + 8, y + 94, w - 16, 19)) {
         int action = (mx - x - 8) / ((w - 16) / 4);
-        if (action < 4) editor_search_action(action);
+        if (action < (editor_read_only ? 2 : 4)) editor_search_action(action);
         return;
     }
     editor_match_line = -1;
@@ -4887,7 +5040,7 @@ static void editor_search_key(int key)
     if (key == 27) {
         editor_dialog = EDITOR_DIALOG_NONE;
     } else if (key == 9) {
-        editor_search_field = !editor_search_field;
+        editor_search_field = editor_read_only ? 0 : !editor_search_field;
         editor_search_selected = 1;
         *caret = (int)strlen(editor_search_field ? editor_replacement : editor_search_text);
     } else if (key == 13) {
@@ -4944,8 +5097,8 @@ static void editor_draw_text(int x, int y, int line, int start, int count)
         int matched = editor_selection_contains(line, start + i) || (editor_match_line == line &&
                       start + i >= editor_match_col &&
                       start + i < editor_match_col + editor_match_len);
-        if (matched) fill_rect(x + i * 6, y, 6, 9, TITLE_COLOR);
-        draw_text(x + i * 6, y, character, matched ? TITLE_TEXT_COLOR : TEXT_COLOR, 1);
+        if (matched) fill_rect(x + i * 6, y, 6, 9, ui_color_indices[BUDO_SYS_COLOR_SELECTION_BG]);
+        draw_text(x + i * 6, y, character, matched ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR, 1);
     }
 }
 
@@ -4978,7 +5131,7 @@ static void draw_editor_window(void)
         const char *name = strrchr(editor_path, '/');
         name = name ? name + 1 : (editor_path[0] ? editor_path : "Untitled");
         int max_chars = (wrap_x - editor_window.x - 13) / 6;
-        snprintf(title, sizeof(title), "%s%s - %.255s", editor_writer_mode ? "Write" : "Editor",
+        snprintf(title, sizeof(title), "%s%s - %.255s", editor_read_only ? "Reader" : editor_writer_mode ? "Write" : "Editor",
                  editor_modified() ? " *" : "", name);
         draw_text_elided(editor_window.x + 7, editor_window.y + 6, title,
                   window_title_text_color(), max_chars);
@@ -5004,33 +5157,40 @@ static void draw_editor_window(void)
         draw_text(rows_x + 14, editor_window.y + 6,
                   "Rows", window_title_text_color(), 4);
     }
-    ui_register(writer_x, editor_window.y + 6, 56, 12, BUDO_CURSOR_ARROW, "Writer mode", 1, 0);
-    draw_checkbox(writer_x, editor_window.y + 6,
-                  editor_writer_mode);
-    draw_text(writer_x + 14, editor_window.y + 6,
-              "Writer", window_title_text_color(), 6);
+    if (!editor_read_only) {
+        ui_register(writer_x, editor_window.y + 6, 56, 12, BUDO_CURSOR_ARROW, "Writer mode", 1, 0);
+        draw_checkbox(writer_x, editor_window.y + 6,
+                      editor_writer_mode);
+        draw_text(writer_x + 14, editor_window.y + 6,
+                  "Writer", window_title_text_color(), 6);
+    }
 
     draw_window_button(min_x, editor_window.y + WINDOW_BORDER, 0);
     draw_window_button(max_x, editor_window.y + WINDOW_BORDER, 1);
     draw_window_button(close_x, editor_window.y + WINDOW_BORDER, 2);
 
-    draw_menu_bar_item(editor_window.x + 5,
-                       editor_window.y + WINDOW_TITLE_H,
-                       32, "File",
-                       editor_menu == EDITOR_MENU_FILE);
-    draw_menu_bar_item(editor_window.x + 41,
-                       editor_window.y + WINDOW_TITLE_H,
-                       32, "Edit",
-                       editor_menu == EDITOR_MENU_EDIT);
-    draw_menu_bar_item(editor_window.x + 77,
-                       editor_window.y + WINDOW_TITLE_H,
-                       48, editor_writer_mode ? "Find" : "Search",
-                       editor_menu == EDITOR_MENU_SEARCH);
-    if (editor_writer_mode) {
-        draw_menu_bar_item(editor_window.x + 113,
+    if (editor_read_only) {
+        draw_menu_bar_item(editor_window.x + 5, editor_window.y + WINDOW_TITLE_H, 48, "Open...", 0);
+        draw_menu_bar_item(editor_window.x + 57, editor_window.y + WINDOW_TITLE_H, 48, "Find...", 0);
+    } else {
+        draw_menu_bar_item(editor_window.x + 5,
                            editor_window.y + WINDOW_TITLE_H,
-                           56, "Document",
-                           editor_menu == EDITOR_MENU_DOCUMENT);
+                           32, "File",
+                           editor_menu == EDITOR_MENU_FILE);
+        draw_menu_bar_item(editor_window.x + 41,
+                           editor_window.y + WINDOW_TITLE_H,
+                           32, "Edit",
+                           editor_menu == EDITOR_MENU_EDIT);
+        draw_menu_bar_item(editor_window.x + 77,
+                           editor_window.y + WINDOW_TITLE_H,
+                           48, editor_writer_mode ? "Find" : "Search",
+                           editor_menu == EDITOR_MENU_SEARCH);
+        if (editor_writer_mode) {
+            draw_menu_bar_item(editor_window.x + 113,
+                               editor_window.y + WINDOW_TITLE_H,
+                               56, "Document",
+                               editor_menu == EDITOR_MENU_DOCUMENT);
+        }
     }
     fill_rect(editor_window.x + 2,
               editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H,
@@ -5194,8 +5354,10 @@ static void draw_editor_window(void)
 
         fill_rect(editor_window.x + 2, status_y,
                   editor_window.w - 4,
-                  EDITOR_STATUS_H - 2, FILE_DARK);
-        if (editor_writer_mode) {
+                  EDITOR_STATUS_H - 2, ui_color_indices[BUDO_SYS_COLOR_STATUS_BG]);
+        if (editor_read_only) {
+            snprintf(status_text, sizeof(status_text), "READER  Words %d  Read only", words);
+        } else if (editor_writer_mode) {
             snprintf(status_text, sizeof(status_text),
                      "WRITER  Ln %d  Col %d  Words %d  Saved %s",
                      editor_cursor_line + 1,
@@ -5211,12 +5373,12 @@ static void draw_editor_window(void)
                      editor_last_save);
         }
         draw_text(editor_window.x + 6, status_y + 3,
-                  status_text, TEXT_COLOR,
+                  status_text, ui_color_indices[BUDO_SYS_COLOR_STATUS_TEXT],
                   (editor_window.w - 16) / 6);
     }
 
     desktop_scroll_draw(APP_EDITOR, 0);
-    if (editor_menu != EDITOR_MENU_NONE) {
+    if (!editor_read_only && editor_menu != EDITOR_MENU_NONE) {
         int menu_x = editor_window.x + 5;
         int menu_y = editor_window.y + WINDOW_TITLE_H + EDITOR_MENU_H;
         BudoMenuItem file_items[6] = {
@@ -5978,6 +6140,7 @@ static int terminal_visible_rows(void)
 
 static void draw_terminal_window(void)
 {
+    terminal_palette_load();
     int min_x = window_min_button_x(&terminal_window);
     int max_x = window_max_button_x(&terminal_window);
     int close_x = window_close_button_x(&terminal_window);
@@ -6380,26 +6543,23 @@ static void bwa_draw_builtin_app(int runtime_id)
     }
 }
 
+static int bwa_open_reader_file(const char *path)
+{
+    if (!path || !builtin_new_instance(BWA_HOST_APP_READER)) return 0;
+    if (editor_load_file(path)) return 1;
+    editor_close_now();
+    return 0;
+}
+
 static int bwa_launch_host_app(int app_id)
 {
+    if (app_id == BWA_HOST_APP_HELP) return bwa_open_reader_file("../../documents/help.txt");
     return builtin_new_instance(app_id);
 }
 
 static unsigned char bwa_get_system_color(int role)
 {
-    switch (role) {
-        case BUDO_SYS_COLOR_DESKTOP:      return DESKTOP_COLOR;
-        case BUDO_SYS_COLOR_TEXT:         return TEXT_COLOR;
-        case BUDO_SYS_COLOR_SHADOW:       return WINDOW_SHADOW_COLOR;
-        case BUDO_SYS_COLOR_MIDGRAY:      return 3U;
-        case BUDO_SYS_COLOR_HIGHLIGHT:    return WINDOW_HIGHLIGHT_COLOR;
-        case BUDO_SYS_COLOR_FACE:         return WINDOW_CHROME_COLOR;
-        case BUDO_SYS_COLOR_TITLE_ACTIVE: return TITLE_COLOR;
-        case BUDO_SYS_COLOR_TITLE_TEXT:   return TITLE_TEXT_COLOR;
-        case BUDO_SYS_COLOR_ACCENT:       return 7U;
-        case BUDO_SYS_COLOR_TITLE_INACTIVE: return TITLE_INACTIVE_COLOR;
-        default:                          return TEXT_COLOR;
-    }
+    return role >= 0 && role < BUDO_SYS_COLOR_COUNT ? ui_color_indices[role] : TEXT_COLOR;
 }
 
 static int bwa_get_system_metric(int metric)
@@ -6746,7 +6906,10 @@ static const BwaHostApi bwa_host_api = {
     bwa_get_time_ms,
     bw_get_keyboard_layout,
     bw_set_keyboard_layout,
-    bwa_delete_file_association
+    bwa_delete_file_association,
+    bwa_open_reader_file,
+    bwa_set_system_color,
+    bwa_reset_system_colors
 };
 
 static BwaLoadedApp *bwa_find_external_app(int runtime_id)
@@ -6883,6 +7046,7 @@ static int open_associated_file(const char *path)
     if (strcmp(app_id, "editor") == 0) {
         return bwa_open_editor_file(path);
     }
+    if (strcmp(app_id, "reader") == 0) return bwa_open_reader_file(path);
 
     app = bwa_find_external_app_id(app_id);
     if (app == NULL || app->definition.callbacks.open_file == NULL) {
@@ -7151,7 +7315,10 @@ static int desktop_running_apps(int *ids, AppWindow **windows, const char **name
         if (!window || !window->open) continue;
         ids[count] = id;
         windows[count] = window;
-        names[count++] = (id - 1) % 3 == 2 ? terminal_instances[(id - 1) / 3]->v_terminal_title : labels[(id - 1) % 3];
+        int kind = (id - 1) % 3, slot = (id - 1) / 3;
+        names[count++] = kind == 2 ? terminal_instances[slot]->v_terminal_title :
+                        kind == 1 && editor_instances[slot]->v_editor_read_only ? "Reader" :
+                        kind == 0 && explorer_instances[slot]->v_recycle_bin ? "Recycle Bin" : labels[kind];
     }
     for (int i = 0; i < bwa_instance_count; ++i) {
         BwaLoadedApp *app = &bwa_instances[i];
@@ -7171,6 +7338,10 @@ static int desktop_last_active;
 static int desktop_window_order(int *ids, AppWindow **windows, const char **names)
 {
     if (active_window != desktop_last_active) {
+        if (active_window > 0 && active_window < APP_BWA_BASE && (active_window - 1) % 3 == 0) {
+            builtin_select(active_window);
+            if (recycle_bin) { (void)recycle_load(); explorer_state->v_page = 0; }
+        }
         if (desktop_last_active > 0 && desktop_last_active < APP_BWA_BASE &&
             (desktop_last_active - 1) % 3 == 2 && builtin_window(desktop_last_active)) {
             TerminalState *saved = terminal_state;
@@ -7333,96 +7504,102 @@ static void draw_desktop(int page)
         bwa_draw_standard_button(12, 24, 84, 18, "Up / Desktop", 0);
     }
 
-    for (int i = 0; i < shortcut_count; ++i) {
-        if (strcmp(shortcut_details[i].parent, desktop_folder)) continue;
-        int x, y;
-        desktop_slot_position(shortcut_slots[i], &x, &y);
-        if (desktop_icon_dragging && desktop_drag_app == APP_SHORTCUT_BASE + i) {
-            x = desktop_drag_x;
-            y = desktop_drag_y;
+    /* Draw the dragged group after every stationary desktop icon. */
+    for (int pass = 0; pass < 2; ++pass) {
+        for (int i = 0; i < shortcut_count; ++i) {
+            if (strcmp(shortcut_details[i].parent, desktop_folder)) continue;
+            if ((desktop_icon_dragging && desktop_drag_slots[DESKTOP_SHORTCUT_BASE + i] >= 0) != pass) continue;
+            int x, y;
+            desktop_slot_position(shortcut_slots[i], &x, &y);
+            if (desktop_icon_dragging && desktop_drag_slots[DESKTOP_SHORTCUT_BASE + i] >= 0) {
+                x += desktop_drag_offset_x;
+                y += desktop_drag_offset_y;
+            }
+            if (shortcut_details[i].icon_loaded) {
+                budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W, DESKTOP_ICON_H, shortcut_selection[i], 0);
+                for (int row = 0; row < DESKTOP_ICON_H; ++row)
+                    for (int col = 0; col < DESKTOP_ICON_W; ++col) {
+                        int pixel = row * DESKTOP_ICON_W + col;
+                        if (shortcut_details[i].pixels[pixel] != PCX_TRANSPARENT)
+                            put_rgb_pixel(x + col, y + row, shortcut_details[i].rgb[pixel]);
+                    }
+                int chars = (int)strlen(desktop_shortcuts[i].name);
+                if (chars > 12) chars = 12;
+                draw_text(x + 16 - (chars * 6 - 1) / 2, y + DESKTOP_ICON_H + 2,
+                          desktop_shortcuts[i].name, DESKTOP_TEXT_COLOR, chars);
+                bwa_pointer_region(x - 20, y - 2, 72, 50, BUDO_CURSOR_ARROW, desktop_shortcuts[i].name);
+            } else {
+                draw_labeled_icon_color(x, y, desktop_shortcuts[i].name, desktop_shortcuts[i].type,
+                                  shortcut_selection[i], desktop_shortcuts[i].path,
+                                  DESKTOP_TEXT_COLOR);
+            }
+            if (desktop_shortcuts[i].type == TYPE_FILE) draw_text(x, y + 16, "->", TEXT_COLOR, 2);
+            budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W,
+                                     DESKTOP_ICON_H, 0,
+                                     desktop_select.focus == DESKTOP_SHORTCUT_BASE + i);
         }
-        if (shortcut_details[i].icon_loaded) {
-            budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W, DESKTOP_ICON_H, shortcut_selection[i], 0);
-            for (int row = 0; row < DESKTOP_ICON_H; ++row)
-                for (int col = 0; col < DESKTOP_ICON_W; ++col) {
-                    int pixel = row * DESKTOP_ICON_W + col;
-                    if (shortcut_details[i].pixels[pixel] != PCX_TRANSPARENT)
-                        put_rgb_pixel(x + col, y + row, shortcut_details[i].rgb[pixel]);
-                }
-            int chars = (int)strlen(desktop_shortcuts[i].name);
-            if (chars > 12) chars = 12;
-            draw_text(x + 16 - (chars * 6 - 1) / 2, y + DESKTOP_ICON_H + 2,
-                      desktop_shortcuts[i].name, DESKTOP_TEXT_COLOR, chars);
-            bwa_pointer_region(x - 20, y - 2, 72, 50, BUDO_CURSOR_ARROW, desktop_shortcuts[i].name);
-        } else {
-            draw_labeled_icon_color(x, y, desktop_shortcuts[i].name, desktop_shortcuts[i].type,
-                              shortcut_selection[i], desktop_shortcuts[i].path,
-                              DESKTOP_TEXT_COLOR);
+        desktop_slot_position(explorer_desktop_slot, &explorer_x, &explorer_y);
+        desktop_slot_position(editor_desktop_slot, &editor_x, &editor_y);
+
+        if (desktop_icon_dragging && desktop_drag_slots[0] >= 0) {
+            explorer_x += desktop_drag_offset_x;
+            explorer_y += desktop_drag_offset_y;
         }
-        if (desktop_shortcuts[i].type == TYPE_FILE) draw_text(x, y + 16, "->", TEXT_COLOR, 2);
-        budo_selection_icon_draw(&bwa_host_api, x, y, DESKTOP_ICON_W,
-                                 DESKTOP_ICON_H, 0,
-                                 desktop_select.focus == DESKTOP_SHORTCUT_BASE + i);
-    }
-    desktop_slot_position(explorer_desktop_slot, &explorer_x, &explorer_y);
-    desktop_slot_position(editor_desktop_slot, &editor_x, &editor_y);
+        if (desktop_icon_dragging && desktop_drag_slots[1] >= 0) {
+            editor_x += desktop_drag_offset_x;
+            editor_y += desktop_drag_offset_y;
+        }
 
-    if (desktop_icon_dragging && desktop_drag_app == APP_EXPLORER) {
-        explorer_x = desktop_drag_x;
-        explorer_y = desktop_drag_y;
-    } else if (desktop_icon_dragging && desktop_drag_app == APP_EDITOR) {
-        editor_x = desktop_drag_x;
-        editor_y = desktop_drag_y;
-    }
+        if (!desktop_folder[0] && !bwa_has_external_app_id("explorer") &&
+            (desktop_icon_dragging && desktop_drag_slots[0] >= 0) == pass) {
+            budo_selection_icon_draw(&bwa_host_api, explorer_x, explorer_y,
+                                     DESKTOP_ICON_W, DESKTOP_ICON_H,
+                                     desktop_select.selected[0], 0);
+            draw_explorer_app_icon(explorer_x, explorer_y);
+            budo_selection_icon_draw(&bwa_host_api, explorer_x, explorer_y,
+                                     DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
+                                     desktop_select.focus == 0);
+        }
+        if (!desktop_folder[0] && !bwa_has_external_app_id("editor") &&
+            (desktop_icon_dragging && desktop_drag_slots[1] >= 0) == pass) {
+            budo_selection_icon_draw(&bwa_host_api, editor_x, editor_y,
+                                     DESKTOP_ICON_W, DESKTOP_ICON_H,
+                                     desktop_select.selected[1], 0);
+            draw_editor_app_icon(editor_x, editor_y);
+            budo_selection_icon_draw(&bwa_host_api, editor_x, editor_y,
+                                     DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
+                                     desktop_select.focus == 1);
+        }
 
-    if (!desktop_folder[0] && !bwa_has_external_app_id("explorer") &&
-        1) {
-        budo_selection_icon_draw(&bwa_host_api, explorer_x, explorer_y,
-                                 DESKTOP_ICON_W, DESKTOP_ICON_H,
-                                 desktop_select.selected[0], 0);
-        draw_explorer_app_icon(explorer_x, explorer_y);
-        budo_selection_icon_draw(&bwa_host_api, explorer_x, explorer_y,
-                                 DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
-                                 desktop_select.focus == 0);
-    }
-    if (!desktop_folder[0] && !bwa_has_external_app_id("editor") &&
-        1) {
-        budo_selection_icon_draw(&bwa_host_api, editor_x, editor_y,
-                                 DESKTOP_ICON_W, DESKTOP_ICON_H,
-                                 desktop_select.selected[1], 0);
-        draw_editor_app_icon(editor_x, editor_y);
-        budo_selection_icon_draw(&bwa_host_api, editor_x, editor_y,
-                                 DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
-                                 desktop_select.focus == 1);
-    }
+        {
+            int i;
 
-    {
-        int i;
+            for (i = 0; i < bwa_external_app_count; ++i) {
+                BwaLoadedApp *app = &bwa_external_apps[i];
 
-        for (i = 0; i < bwa_external_app_count; ++i) {
-            BwaLoadedApp *app = &bwa_external_apps[i];
+                if (!desktop_folder[0] &&
+                    (desktop_icon_dragging && desktop_drag_slots[2 + i] >= 0) == pass) {
+                    int app_x;
+                    int app_y;
 
-            if (!desktop_folder[0] && 1) {
-                int app_x;
-                int app_y;
+                    desktop_slot_position(app->desktop_slot, &app_x, &app_y);
 
-                desktop_slot_position(app->desktop_slot, &app_x, &app_y);
+                    if (desktop_icon_dragging && desktop_drag_slots[2 + i] >= 0) {
+                        app_x += desktop_drag_offset_x;
+                        app_y += desktop_drag_offset_y;
+                    }
 
-                if (desktop_icon_dragging &&
-                    desktop_drag_app == app->definition.runtime_id) {
-                    app_x = desktop_drag_x;
-                    app_y = desktop_drag_y;
+                    budo_selection_icon_draw(&bwa_host_api, app_x, app_y,
+                                             DESKTOP_ICON_W, DESKTOP_ICON_H,
+                                             desktop_select.selected[2 + i], 0);
+                    draw_bwa_app_icon(app_x, app_y, app);
+                    budo_selection_icon_draw(&bwa_host_api, app_x, app_y,
+                                             DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
+                                             desktop_select.focus == 2 + i);
                 }
-
-                budo_selection_icon_draw(&bwa_host_api, app_x, app_y,
-                                         DESKTOP_ICON_W, DESKTOP_ICON_H,
-                                         desktop_select.selected[2 + i], 0);
-                draw_bwa_app_icon(app_x, app_y, app);
-                budo_selection_icon_draw(&bwa_host_api, app_x, app_y,
-                                         DESKTOP_ICON_W, DESKTOP_ICON_H, 0,
-                                         desktop_select.focus == 2 + i);
             }
         }
+
     }
 
     budo_selection_drag_draw(&bwa_host_api, &desktop_select);
@@ -7551,11 +7728,14 @@ static int compare_items(const void *left, const void *right)
 
 static int is_root_path(void)
 {
-    return strcmp(current_path, "/") == 0;
+    return recycle_bin || strcmp(current_path, "/") == 0;
 }
+
+#include "recycle.h"
 
 static int load_directory(const char *path)
 {
+    if (recycle_bin) return recycle_load();
     struct ffblk entry;
     char pattern[MAX_PATH];
     char resolved[MAX_PATH];
@@ -7761,6 +7941,7 @@ static void explorer_folder_ensure_visible(void)
 
 static void explorer_folder_sync(void)
 {
+    if (recycle_bin) return;
     char ancestor[MAX_PATH];
     copy_text(ancestor, sizeof(ancestor), current_path);
     char *slash = strrchr(ancestor, '/');
@@ -7896,6 +8077,7 @@ static void explorer_folder_text(int x, int y, const char *text, unsigned char i
 
 static int explorer_folder_pointer(int x, int y, int *page)
 {
+    if (recycle_bin) return 0;
     if (!point_in_rect(x, y, explorer_window.x + 8, explorer_folder_y(),
                        explorer_folder_width() - BUDO_SCROLL_WIDTH, explorer_folder_rows() * 12)) return 0;
     explorer_folder_keyboard = 1;
@@ -7927,6 +8109,7 @@ static int explorer_folder_pointer(int x, int y, int *page)
 
 static int explorer_folder_key(int key, int scan, int *page)
 {
+    if (recycle_bin) return 0;
     if (key == 9) {
         explorer_folder_keyboard = !explorer_folder_keyboard;
         explorer_folder_ensure_visible();
@@ -7962,6 +8145,7 @@ static int explorer_folder_key(int key, int scan, int *page)
 
 static void explorer_folder_draw(void)
 {
+    if (recycle_bin) return;
     static int previous_rows;
     if (previous_rows != explorer_folder_rows()) {
         explorer_folder_ensure_visible();
@@ -7982,8 +8166,8 @@ static void explorer_folder_draw(void)
         int row_y = y + slot * 12;
         int indent = explorer_folder_indent(index) - explorer_folder_left;
         int selected = index == explorer_folder_focus;
-        unsigned char ink = selected ? TITLE_TEXT_COLOR : TEXT_COLOR;
-        fill_rect(x, row_y, width, 12, selected ? TITLE_COLOR : WINDOW_FACE_COLOR);
+        unsigned char ink = selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR;
+        fill_rect(x, row_y, width, 12, selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_BG] : WINDOW_FACE_COLOR);
         if (explorer_folders[index].expandable)
             explorer_folder_text(x + indent, row_y + 2,
                                  explorer_folder_expanded(explorer_folders[index].path) >= 0 ? "-" : "+",
@@ -8231,6 +8415,7 @@ static void editor_replace_extension(char *name,
 
 static void editor_begin_file_dialog(int mode)
 {
+    if (editor_read_only && mode != EDITOR_FILE_DIALOG_OPEN) return;
     char start_path[MAX_PATH];
 
     picker_owner = APP_EDITOR;
@@ -8671,12 +8856,12 @@ static void editor_draw_file_dialog(void)
         }
 
         if (editor_file_items[index].type == TYPE_FOLDER) {
-            draw_text(list_x + 5, y, "[Dir]", index == editor_file_selected ? TITLE_TEXT_COLOR : TEXT_COLOR, 5);
+            draw_text(list_x + 5, y, "[Dir]", index == editor_file_selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR, 5);
             draw_text_elided(list_x + 41, y,
-                      editor_file_items[index].name, index == editor_file_selected ? TITLE_TEXT_COLOR : TEXT_COLOR, (list_w - 46) / 6);
+                      editor_file_items[index].name, index == editor_file_selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR, (list_w - 46) / 6);
         } else {
             draw_text_elided(list_x + 5, y,
-                      editor_file_items[index].name, index == editor_file_selected ? TITLE_TEXT_COLOR : TEXT_COLOR, (list_w - 10) / 6);
+                      editor_file_items[index].name, index == editor_file_selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR, (list_w - 10) / 6);
         }
         bwa_pointer_region(list_x + 2, list_y + 1 + row * 12, list_w - 4, 11,
                            BUDO_CURSOR_ARROW, editor_file_items[index].name);
@@ -8698,7 +8883,7 @@ static void editor_draw_file_dialog(void)
         if (picker_focus && picker_name_selected)
             fill_rect(dialog_x + 75, dialog_y + dialog_h - 51, dialog_w - 88, 12, TITLE_COLOR);
         draw_text(dialog_x + 77, dialog_y + dialog_h - 48, editor_file_name + offset,
-                  picker_focus && picker_name_selected ? TITLE_TEXT_COLOR : TEXT_COLOR, cols);
+                  picker_focus && picker_name_selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR, cols);
         if (picker_focus && !picker_name_selected && text_caret_visible)
             fill_rect(dialog_x + 77 + (picker_name_cursor - offset) * 6,
                       dialog_y + dialog_h - 49, 2, TEXT_CELL_HEIGHT, TEXT_COLOR);
@@ -9014,6 +9199,7 @@ static int desktop_launch_program(const char *path, const char *directory)
 
 static int request_launch(const DesktopItem *item, int page)
 {
+    if (active_window == APP_EXPLORER && recycle_bin) return 0;
     (void)page;
     return desktop_launch_program(item->path, current_path);
 }
@@ -9298,6 +9484,7 @@ static int explorer_delete_path(const char *path, int type)
 
 static void explorer_stage_clipboard(int mode)
 {
+    if (recycle_bin) return;
     int i;
 
     explorer_clipboard_count = 0;
@@ -9388,6 +9575,7 @@ static int explorer_make_copy_name(const char *name,
 static int explorer_paste_clipboard_impl(void);
 static int explorer_paste_clipboard(void)
 {
+    if (recycle_bin) return 0;
     int previous = ui_busy_begin();
     int result = explorer_paste_clipboard_impl();
     ui_busy_end(previous);
@@ -9483,6 +9671,7 @@ static int explorer_paste_clipboard_impl(void)
 
 static int explorer_begin_rename(void)
 {
+    if (recycle_bin) return 0;
     int i;
     int selected = -1;
     int count = 0;
@@ -9546,6 +9735,7 @@ static int explorer_rename_name_valid(const char *name)
 
 static int explorer_commit_rename(void)
 {
+    if (recycle_bin) return 0;
     char encoded_name[MAX_NAME];
     if (!bw_text_encode(encoded_name, sizeof(encoded_name), explorer_rename_input)) return 0;
     if (explorer_creating_folder) {
@@ -9640,6 +9830,7 @@ static int explorer_edit_selection(void)
 
 static int explorer_delete_selection(void)
 {
+    if (recycle_bin) return 0;
     char refresh_path[MAX_PATH];
     int i;
     int changed = 0;
@@ -9665,7 +9856,7 @@ static int explorer_delete_selection(void)
     for (i = 0; i < item_count; ++i) {
         if (explorer_selection[i]) {
             ++selected;
-            if (explorer_delete_path(directory_items[i].path, directory_items[i].type)) changed = 1;
+            if (recycle_put(directory_items[i].path)) changed = 1;
             else {
                 snprintf(explorer_error, sizeof(explorer_error), "Delete failed: %.90s: %.40s",
                          directory_items[i].name, strerror(errno));
@@ -9675,7 +9866,7 @@ static int explorer_delete_selection(void)
     }
 
     (void)load_directory(refresh_path);
-    explorer_status = failed ? explorer_error : selected ? "Selected entries deleted." : "No entries selected; nothing deleted.";
+    explorer_status = failed ? explorer_error : selected ? "Selected entries moved to Recycle Bin." : "No entries selected; nothing deleted.";
     return changed;
 }
 
@@ -9746,6 +9937,7 @@ static void toggle_maximize_explorer(void)
 
 static void editor_save_current(void)
 {
+    if (editor_read_only) return;
     if (editor_path[0]) (void)editor_save_file(editor_path);
     else editor_begin_file_dialog(EDITOR_FILE_DIALOG_SAVE_AS);
 }
@@ -9758,8 +9950,13 @@ static void desktop_file_menu_draw(int app)
     const char *terminal_items[3] = {"Save Output...", "Clear Output", "Close"};
     fill_rect(window->x + 4, window->y + WINDOW_TITLE_H,
               window->w - 8, EDITOR_MENU_H, WINDOW_CHROME_COLOR);
-    draw_menu_bar_item(window->x + 5, window->y + WINDOW_TITLE_H, 36, "File", menu);
+    draw_menu_bar_item(window->x + 5, window->y + WINDOW_TITLE_H, 36, app == APP_EXPLORER && recycle_bin ? "Close" : "File", menu);
     if (app == APP_TERMINAL) terminal_ui_draw();
+    if (app == APP_EXPLORER && recycle_bin) {
+        bwa_draw_standard_button(window->x + 44, window->y + WINDOW_TITLE_H, 60, EDITOR_MENU_H, "Restore", 0);
+        bwa_draw_standard_button(window->x + 108, window->y + WINDOW_TITLE_H, 60, EDITOR_MENU_H, "Empty", 0);
+        return;
+    }
     if (app == APP_EXPLORER) {
         draw_menu_bar_item(window->x + 44, window->y + WINDOW_TITLE_H, 36, "View", explorer_view_menu);
         if (explorer_view_menu) {
@@ -9781,6 +9978,15 @@ static int desktop_file_menu_click(int x, int y, int *page)
     if (app != APP_EXPLORER && app != APP_TERMINAL) return 0;
     window = app == APP_EXPLORER ? &explorer_window : &terminal_window;
     menu = app == APP_EXPLORER ? &explorer_file_menu : &terminal_file_menu;
+    if (app == APP_EXPLORER && recycle_bin) {
+        if (point_in_rect(x, y, window->x + 44, window->y + WINDOW_TITLE_H, 60, EDITOR_MENU_H)) return recycle_restore(), 1;
+        if (point_in_rect(x, y, window->x + 108, window->y + WINDOW_TITLE_H, 60, EDITOR_MENU_H)) {
+            (void)desktop_confirm(APP_EXPLORER, 4, "Empty Recycle Bin?", "Permanently delete all recycled files and folders?");
+            return 1;
+        }
+        if (point_in_rect(x, y, window->x + 5, window->y + WINDOW_TITLE_H, 36, EDITOR_MENU_H)) return close_explorer(), 1;
+        return 0;
+    }
     if (app == APP_TERMINAL && terminal_ui_click(x, y)) return 1;
     if (app == APP_EXPLORER && explorer_view_menu) {
         int item = budo_menu_hit(x, y, window->x + 44, window->y + WINDOW_TITLE_H + EDITOR_MENU_H, 156, 2);
@@ -9825,7 +10031,8 @@ static int desktop_file_menu_click(int x, int y, int *page)
             DesktopItem *entry = &directory_items[explorer_selected_item];
             if (entry->type == TYPE_FOLDER) {
                 if (load_directory(entry->path)) *page = 0;
-            } else (void)open_associated_file(entry->path);
+            } else if (recycle_bin) (void)bwa_open_reader_file(entry->path);
+            else (void)open_associated_file(entry->path);
         } else if (item == 1) {
             char parent[MAX_PATH];
             if (parent_path(parent, sizeof(parent)) && load_directory(parent)) *page = 0;
@@ -9839,7 +10046,7 @@ static int desktop_file_menu_click(int x, int y, int *page)
             (void)explorer_begin_rename();
         } else if (item == 4) {
             (void)desktop_confirm(APP_EXPLORER, 3, "Delete selected files?",
-                                  "Permanently delete the selected entries?");
+                                  "Move the selected entries to Recycle Bin?");
         } else if (item == 5) (void)shortcuts_create();
         else if (item == 6) close_explorer();
         else if (item == 7) desktop_begin_picker(5);
@@ -9874,7 +10081,7 @@ static uint64_t editor_document_hash(void)
 
 static int editor_modified(void)
 {
-    return editor_document_hash() != editor_saved_hash;
+    return !editor_read_only && editor_document_hash() != editor_saved_hash;
 }
 
 static void editor_mark_saved(void)
@@ -9959,6 +10166,7 @@ static void editor_request_action(int action, const char *path)
                         "Save your document before continuing?");
         return;
     }
+    if (editor_read_only && action == 1) return;
     if (action == 1) editor_reset_document();
     else if (action == 2) {
         if (path && path[0]) (void)editor_load_file(path);
@@ -9974,6 +10182,10 @@ static void desktop_confirm_result(int response)
     int owner = confirm_owner;
     builtin_select(owner);
     confirm_kind = 0;
+    if (kind == 4 && owner == APP_EXPLORER) {
+        if (response == BUDO_RESPONSE_SAVE) (void)recycle_empty();
+        return;
+    }
     if (kind == 3 && owner == APP_EXPLORER) {
         if (response == BUDO_RESPONSE_SAVE) (void)explorer_delete_selection();
         return;
@@ -10026,7 +10238,7 @@ static void desktop_confirm_draw(void)
     int x = 130, y = 185, w = 380;
     int count = confirm_kind == BUDO_CONFIRM_SAVE ? 3 : 2;
     const char *labels[3] = {"Save", "Discard", "Cancel"};
-    if (count == 2) { labels[0] = confirm_kind == 3 ? "Delete" : "Replace"; labels[1] = "Cancel"; }
+    if (count == 2) { labels[0] = confirm_kind == 4 ? "Empty" : confirm_kind == 3 ? "Delete" : "Replace"; labels[1] = "Cancel"; }
     fill_rect(x + 3, y + 3, w, 100, WINDOW_SHADOW_COLOR);
     bwa_draw_standard_window(x, y, w, 100, confirm_title, 0);
     draw_text(x + 10, y + 33, confirm_message, TEXT_COLOR, 60);
@@ -10138,10 +10350,12 @@ static void desktop_scroll_draw(int app, int page)
         budo_scroll_draw(&bwa_host_api, &editor_vscroll);
         if (!editor_wrap_enabled()) budo_scroll_draw(&bwa_host_api, &editor_hscroll);
     } else if (app == APP_EXPLORER) {
-        budo_scroll_draw(&bwa_host_api, &explorer_folder_scroll);
-        budo_scroll_draw(&bwa_host_api, &explorer_folder_hscroll);
-        fill_rect(explorer_folder_scroll.x, explorer_folder_hscroll.y,
-                  BUDO_SCROLL_WIDTH, BUDO_SCROLL_WIDTH, WINDOW_CHROME_COLOR);
+        if (!recycle_bin) {
+            budo_scroll_draw(&bwa_host_api, &explorer_folder_scroll);
+            budo_scroll_draw(&bwa_host_api, &explorer_folder_hscroll);
+            fill_rect(explorer_folder_scroll.x, explorer_folder_hscroll.y,
+                      BUDO_SCROLL_WIDTH, BUDO_SCROLL_WIDTH, WINDOW_CHROME_COLOR);
+        }
         budo_scroll_draw(&bwa_host_api, &explorer_scroll);
     } else if (app == APP_TERMINAL) {
         budo_scroll_draw(&bwa_host_api, &terminal_scrollbar);
@@ -10152,7 +10366,7 @@ static int desktop_scroll_pointer(int x, int y, int event, int *page)
 {
     int app = active_window;
     int handled = 0;
-    if (explorer_divider_pointer(x, y, event, page)) return 1;
+    if (!recycle_bin && explorer_divider_pointer(x, y, event, page)) return 1;
     if (event == BUDO_POINTER_UP) {
         BudoScrollbar *bars[] = {&editor_vscroll, &editor_hscroll,
                                 &explorer_scroll, &explorer_folder_scroll, &explorer_folder_hscroll,
@@ -10174,12 +10388,14 @@ static int desktop_scroll_pointer(int x, int y, int event, int *page)
             handled = 1;
         }
     } else if (app == APP_EXPLORER && !explorer_rename_active) {
-        handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_folder_hscroll, x, y, event);
-        explorer_folder_left = explorer_folder_hscroll.position;
-        if (handled) return 1;
-        handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_folder_scroll, x, y, event);
-        explorer_folder_top = explorer_folder_scroll.position;
-        if (handled) return 1;
+        if (!recycle_bin) {
+            handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_folder_hscroll, x, y, event);
+            explorer_folder_left = explorer_folder_hscroll.position;
+            if (handled) return 1;
+            handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_folder_scroll, x, y, event);
+            explorer_folder_top = explorer_folder_scroll.position;
+            if (handled) return 1;
+        }
         handled = budo_scroll_pointer_host(&bwa_host_api, &explorer_scroll, x, y, event);
         *page = explorer_scroll.position;
     } else if (app == APP_TERMINAL) {
@@ -10204,6 +10420,10 @@ static void open_editor(void)
 static int builtin_create_instance(int kind, int start_terminal)
 {
     int slot;
+    int reader = kind == BWA_HOST_APP_READER;
+    int bin = kind == BWA_HOST_APP_RECYCLE_BIN;
+    if (reader) kind = BWA_HOST_APP_EDITOR;
+    if (bin) kind = BWA_HOST_APP_EXPLORER;
     if (kind < BWA_HOST_APP_EXPLORER || kind > BWA_HOST_APP_TERMINAL) return 0;
     for (slot = 0; slot < BUILTIN_INSTANCE_MAX; ++slot) {
         AppWindow *window = builtin_window(kind + slot * 3);
@@ -10222,7 +10442,9 @@ static int builtin_create_instance(int kind, int start_terminal)
         state->runtime_id = kind + slot * 3;
         explorer_select.selected = explorer_selection;
         explorer_select.snapshot = explorer_drag_snapshot;
-        if (!load_directory(bw_user_directory())) return 0;
+        recycle_bin = bin;
+        if (!(bin ? recycle_load() : load_directory(bw_user_directory()))) return 0;
+        if (bin) explorer_list_view = 1;
         open_explorer();
         active_window = APP_EXPLORER;
     } else if (kind == BWA_HOST_APP_EDITOR) {
@@ -10236,6 +10458,12 @@ static int builtin_create_instance(int kind, int start_terminal)
         editor_instances[slot] = editor_state = state;
         state->runtime_id = kind + slot * 3;
         load_editor_settings();
+        if (reader) {
+            editor_read_only = 1;
+            editor_writer_mode = 1;
+            editor_writer_ruler = 0;
+            editor_writer_left_indent = editor_writer_first_indent = editor_writer_right_indent = 0;
+        }
         open_editor();
     } else {
         TerminalState *state = terminal_instances[slot];
@@ -10533,6 +10761,7 @@ static const char *shortcut_drop_parent(int x, int y)
 
 static void explorer_shortcut_drag_begin(int item, int x, int y)
 {
+    if (recycle_bin) return;
     explorer_drag_shortcut = -1;
     explorer_shortcut_dragging = 0;
     if (item < 0 || item >= item_count || !explorer_shortcut_folder[0]) return;
@@ -10593,6 +10822,7 @@ static void desktop_folder_up(void)
 
 static void desktop_begin_picker(int action)
 {
+    if (recycle_bin && action == 5) return;
     desktop_picker_shortcut = desktop_select.focus - DESKTOP_SHORTCUT_BASE;
     editor_begin_file_dialog(action == 2 ? EDITOR_FILE_DIALOG_OPEN : EDITOR_FILE_DIALOG_SAVE_AS);
     picker_owner = APP_NONE;
@@ -10930,6 +11160,18 @@ static int shortcuts_delete_selected(void)
     return saved;
 }
 
+static void desktop_selection_release(void)
+{
+    if (desktop_icon_pressed && !desktop_icon_dragging && desktop_select.focus >= 0) {
+        int id = desktop_select.focus;
+        budo_selection_clear(&desktop_select);
+        desktop_select.selected[id] = 1;
+        desktop_select.focus = desktop_select.anchor = id;
+    }
+}
+
+#include "desktop_drag.h"
+
 static int desktop_selection_pointer(int x, int y, int buttons, int *page)
 {
     if (buttons == 2 && y < 21) return 0;
@@ -10949,7 +11191,7 @@ static int desktop_selection_pointer(int x, int y, int buttons, int *page)
             } else desktop_begin_picker(1);
         } else if (menu == 1) {
             if (choice == 1 && explorer_selected_item >= 0)
-                (void)desktop_confirm(APP_EXPLORER, 3, "Delete selected files?", "Permanently delete the selected entries?");
+                (void)desktop_confirm(APP_EXPLORER, 3, "Delete selected files?", "Move the selected entries to Recycle Bin?");
             else if (choice == 4) {
                 char parent[MAX_PATH];
                 if (parent_path(parent, sizeof(parent)) && load_directory(parent)) *page = 0;
@@ -10959,6 +11201,7 @@ static int desktop_selection_pointer(int x, int y, int buttons, int *page)
                 DesktopItem *entry = &directory_items[explorer_selected_item];
                 if (entry->type == TYPE_FOLDER) { if (load_directory(entry->path)) *page = 0; }
                 else if (executable_path(entry->path)) shortcut_launch_requested = request_launch(entry, *page);
+                else if (recycle_bin) (void)bwa_open_reader_file(entry->path);
                 else (void)open_associated_file(entry->path);
             }
         } else {
@@ -10984,6 +11227,7 @@ static int desktop_selection_pointer(int x, int y, int buttons, int *page)
             return 0;
         }
         if (buttons != 2 || explorer_rename_active) return 0;
+        if (recycle_bin) return 1;
         int slot = point_to_slot(x, y);
         int index = slot >= 0 ? item_for_slot(*page, slot) : -1;
         if (!point_in_rect(x, y, explorer_window.x + WINDOW_BORDER,
@@ -11013,7 +11257,9 @@ static int desktop_selection_pointer(int x, int y, int buttons, int *page)
             else budo_selection_click(&desktop_select, order, count, -1, modifiers, 1);
             return 1;
         }
-        budo_selection_click(&desktop_select, order, count, id, modifiers, buttons == 2);
+        if (buttons != 1 || modifiers & (KEYMOD_CTRL | KEYMOD_SHIFT) || !desktop_select.selected[id])
+            budo_selection_click(&desktop_select, order, count, id, modifiers, buttons == 2);
+        else desktop_select.focus = id;
         if (buttons == 2) {
             context_menu = 2;
             desktop_last_click = -1;
@@ -11034,6 +11280,11 @@ static int desktop_selection_pointer(int x, int y, int buttons, int *page)
             desktop_press_x = x;
             desktop_press_y = y;
             desktop_slot_position(desktop_item_slot(id), &desktop_drag_x, &desktop_drag_y);
+            desktop_drag_origin_x = desktop_drag_x;
+            desktop_drag_origin_y = desktop_drag_y;
+            desktop_drag_offset_x = desktop_drag_offset_y = 0;
+            for (int i = 0; i < DESKTOP_SELECTION_MAX; ++i)
+                desktop_drag_slots[i] = desktop_select.selected[i] && desktop_item_visible(i) ? desktop_item_slot(i) : -1;
             desktop_drag_dx = x - desktop_drag_x;
             desktop_drag_dy = y - desktop_drag_y;
             if (id == 0) desktop_drag_app = APP_EXPLORER;
@@ -11174,6 +11425,8 @@ int main(int argc, char **argv)
     }
     load_desktop_layout();
     shortcuts_load();
+    desktop_repair_overlaps();
+    for (int id = 0; id < DESKTOP_SELECTION_MAX; ++id) desktop_drag_slots[id] = -1;
 
     if (!load_initial_directory(&page)) {
         return 1;
@@ -11193,6 +11446,8 @@ int main(int argc, char **argv)
     }
 
     set_classic_gui_palette();
+    for (int i = 0; i < 16; ++i) bw_palette_rgb((unsigned int)i, budo_palette_rgb(i));
+    ui_colors_load();
 
     if (!mouse_init()) {
         set_text_mode();
@@ -11322,6 +11577,8 @@ int main(int argc, char **argv)
                         screen_dirty = 1;
                     }
                     handled = 1;
+                } else if (reader_menu_click(mouse_x, mouse_y)) {
+                    screen_dirty = handled = 1;
                 } else if (!editor_writer_mode &&
                            point_in_rect(mouse_x, mouse_y,
                                          wrap_x, editor_window.y + 4,
@@ -11342,7 +11599,7 @@ int main(int argc, char **argv)
                     (void)save_editor_settings();
                     screen_dirty = 1;
                     handled = 1;
-                } else if (point_in_rect(mouse_x, mouse_y,
+                } else if (!editor_read_only && point_in_rect(mouse_x, mouse_y,
                                          writer_x, editor_window.y + 4,
                                          58, 12)) {
                     editor_writer_mode = !editor_writer_mode;
@@ -11524,11 +11781,7 @@ int main(int argc, char **argv)
                                          EDITOR_MENU_H - EDITOR_STATUS_H -
                                          ((editor_writer_mode &&
                                            editor_writer_ruler) ? EDITOR_RULER_H : 0) - 8)) {
-                    if (bw_modifiers() & 3u) editor_selection_begin();
-                    else editor_selection_clear();
-                    editor_place_cursor_from_point(mouse_x, mouse_y);
-                    editor_selection_begin();
-                    editor_selecting = 1;
+                    editor_text_click(mouse_x, mouse_y, now, bw_modifiers());
                     text_caret_visible = 1;
                     text_caret_last_toggle = now;
                     screen_dirty = 1;
@@ -11562,7 +11815,7 @@ int main(int argc, char **argv)
 
                 if (explorer_rename_active) {
                     handled = 1;
-                } else if (point_in_rect(mouse_x, mouse_y,
+                } else if (!recycle_bin && point_in_rect(mouse_x, mouse_y,
                                   filter_x, filter_y, 108, 11)) {
                     only_executables = !only_executables;
                     page = 0;
@@ -11622,6 +11875,8 @@ int main(int argc, char **argv)
                                 page = 0;
                                 screen_dirty = 1;
                             }
+                        } else if (recycle_bin) {
+                            if (bwa_open_reader_file(directory_items[target].path)) screen_dirty = 1;
                         } else if (executable_file(directory_items[target].name)) {
                             if (request_launch(&directory_items[target], page)) screen_dirty = 1;
                         } else if (open_associated_file(directory_items[target].path)) {
@@ -11784,9 +12039,22 @@ int main(int argc, char **argv)
                 if (new_x > SCREEN_WIDTH - 50) new_x = SCREEN_WIDTH - 50;
                 if (new_y > SCREEN_HEIGHT - 38) new_y = SCREEN_HEIGHT - 38;
 
+                for (int id = 0; id < DESKTOP_SELECTION_MAX; ++id) {
+                    if (desktop_drag_slots[id] < 0) continue;
+                    int sx, sy;
+                    desktop_slot_position(desktop_drag_slots[id], &sx, &sy);
+                    int offset_x = new_x - desktop_drag_origin_x;
+                    int offset_y = new_y - desktop_drag_origin_y;
+                    if (sx + offset_x < 22) new_x += 22 - sx - offset_x;
+                    if (sy + offset_y < 24) new_y += 24 - sy - offset_y;
+                    if (sx + offset_x > SCREEN_WIDTH - 50) new_x -= sx + offset_x - SCREEN_WIDTH + 50;
+                    if (sy + offset_y > SCREEN_HEIGHT - 38) new_y -= sy + offset_y - SCREEN_HEIGHT + 38;
+                }
                 if (new_x != desktop_drag_x || new_y != desktop_drag_y) {
                     desktop_drag_x = new_x;
                     desktop_drag_y = new_y;
+                    desktop_drag_offset_x = new_x - desktop_drag_origin_x;
+                    desktop_drag_offset_y = new_y - desktop_drag_origin_y;
                     screen_dirty = 1;
                 }
             }
@@ -12008,36 +12276,9 @@ int main(int argc, char **argv)
                 }
             }
 
+            if (!desktop_icon_dragging && desktop_icon_pressed) desktop_selection_release();
             if (desktop_icon_dragging) {
-                int slot = desktop_slot_from_point(desktop_drag_x,
-                                                   desktop_drag_y);
-                if (desktop_drag_app == APP_EXPLORER) {
-                    explorer_desktop_slot = slot;
-                } else if (desktop_drag_app == APP_EDITOR) {
-                    editor_desktop_slot = slot;
-                } else if (desktop_drag_app >= APP_SHORTCUT_BASE) {
-                    int index = desktop_drag_app - APP_SHORTCUT_BASE;
-                    if (index < shortcut_count) {
-                        const char *parent = shortcut_drop_parent(mouse_x, mouse_y);
-                        if (parent && strcmp(parent, shortcut_details[index].parent)) {
-                            if (shortcut_move(index, parent) && explorer_window.open && explorer_shortcut_folder[0]) {
-                                char refresh[MAX_PATH];
-                                if (copy_text(refresh, sizeof(refresh), current_path)) (void)load_directory(refresh);
-                            }
-                        } else if (parent) {
-                            int previous_slot = shortcut_slots[index];
-                            shortcut_slots[index] = slot;
-                            if (!shortcuts_save()) shortcut_slots[index] = previous_slot;
-                        }
-                    }
-                } else if (desktop_drag_app >= APP_BWA_BASE) {
-                    BwaLoadedApp *app =
-                        bwa_find_external_app(desktop_drag_app);
-
-                    if (app != NULL) {
-                        app->desktop_slot = slot;
-                    }
-                }
+                desktop_group_drop();
 
                 desktop_icon_dragging = 0;
                 (void)save_desktop_layout();
@@ -12294,7 +12535,8 @@ int main(int argc, char **argv)
                         if (load_directory(entry->path)) page = 0;
                     } else if (executable_path(entry->path)) {
                         if (request_launch(entry, page)) screen_dirty = 1;
-                    } else (void)open_associated_file(entry->path);
+                    } else if (recycle_bin) (void)bwa_open_reader_file(entry->path);
+                    else (void)open_associated_file(entry->path);
                     screen_dirty = 1;
                 } else if (key == 1) {
                     explorer_select_all_visible();
@@ -12341,7 +12583,7 @@ int main(int argc, char **argv)
                         screen_dirty = 1;
                     } else if (extended == 83) {
                         (void)desktop_confirm(APP_EXPLORER, 3, "Delete selected files?",
-                                              "Permanently delete the selected entries?");
+                                              "Move the selected entries to Recycle Bin?");
                         screen_dirty = 1;
                         last_target = -99;
                     } else if (extended == 75 || extended == 77 ||

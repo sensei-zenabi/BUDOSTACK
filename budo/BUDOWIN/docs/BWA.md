@@ -1,8 +1,8 @@
 # Native BWA modules
 
-BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.13 (`src/bwa.h`). Modules use
+BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.14 (`src/bwa.h`). Modules use
 `BwaHostApi` for drawing, managed windows, binary file access and allocation.
-The built-in Explorer, Editor and Terminal launcher modules delegate to
+The built-in Explorer, Editor, Terminal, Reader, Help and Recycle Bin launcher modules delegate to
 host-managed application implementations; Paint and Settings own their
 callbacks and managed windows.
 
@@ -217,3 +217,36 @@ application that is temporarily unavailable. An empty ID leaves a row unassigned
 The saved table is authoritative, so removed default associations stay removed.
 Keyboard events retain the one-byte CP850 Nordic repertoire; host text drawing
 also understands its UTF-8 equivalents in POSIX filenames.
+
+## Documents and UI palette roles (ABI 1.14)
+
+Services append to `BwaHostApi` without changing earlier offsets. Modules that
+use them must require `host->abi_minor >= 14`.
+
+| Service | Result |
+| --- | --- |
+| `open_reader_file(path)` | Opens a new read-only host document instance; returns zero on failure. |
+| `set_system_color(role, palette_index)` | Saves a role assignment (index 0–255), then applies it globally; zero preserves the previous assignment. |
+| `reset_system_colors()` | Saves and applies default role assignments; zero preserves the current theme. |
+
+`get_system_color(role)` returns the assigned global palette index. The fixed
+256-entry palette in `sdk/palette.h` is shared with Paint. Theme changes alter
+role assignments, never palette RGB values or independent PCX/RGB artwork.
+`BUDO_SYS_COLOR_COUNT` is 25; appended roles cover document surfaces, frames,
+hover/pressed controls, desktop labels, terminal defaults, fallback file/folder
+icons, cursor ink, status bars and selection. `ui-colors.state` stores one byte
+per role. Existing `terminal-colors.state` defaults migrate when no UI state exists.
+
+`launch_host_app()` also accepts `BWA_HOST_APP_READER`, `BWA_HOST_APP_HELP`
+and `BWA_HOST_APP_RECYCLE_BIN`. Reader uses the Editor document formats and
+capacity limits, with all editing and save commands blocked. Help opens
+`documents/help.txt` from the repository through Reader. Reader and Recycle Bin
+share the host Editor/Explorer instance pools while retaining independent state.
+
+Recycle storage is user-owned under `.budowin/RecycleBin`. Each `entry-*`
+wrapper contains a NUL-terminated absolute original path in `origin` and the
+original file, directory or symlink at `payload`. Restore rejects existing
+paths; recursive copy/delete never follows symlinks. Cross-filesystem moves
+copy the complete payload before removing the source. Empty deletes wrappers
+permanently after confirmation. Explorer deletion uses this store; desktop
+shortcuts continue to preserve their target files.

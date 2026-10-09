@@ -255,14 +255,8 @@ static void terminal_palette_save(void)
 
 static void terminal_palette_load(void)
 {
-    FILE *file = fopen(bw_state_file("terminal-colors.state"), "r");
-    if (!file) { if (errno != ENOENT) perror("Terminal colors"); return; }
-    int bg, fg;
-    if (fscanf(file, "%d %d", &bg, &fg) == 2 && bg >= 0 && bg < 256 && fg >= 0 && fg < 256) {
-        terminal_background = bg;
-        terminal_foreground = fg;
-    }
-    if (fclose(file) != 0) perror("Terminal colors");
+    terminal_background = ui_color_indices[BUDO_SYS_COLOR_TERMINAL_BG];
+    terminal_foreground = ui_color_indices[BUDO_SYS_COLOR_TERMINAL_TEXT];
 }
 
 static void terminal_ui_draw(void)
@@ -304,9 +298,12 @@ static int terminal_ui_click(int x, int y)
         if (dy > SCREEN_HEIGHT - 238) dy = SCREEN_HEIGHT - 238;
         if (point_in_rect(x, y, dx + 12, dy + 26, 192, 192)) {
             int color = (x - dx - 12) / 12 + (y - dy - 26) / 12 * 16;
-            if (terminal_color_dialog == 1) terminal_background = color;
-            else terminal_foreground = color;
-            terminal_palette_save();
+            int role = terminal_color_dialog == 1 ? BUDO_SYS_COLOR_TERMINAL_BG : BUDO_SYS_COLOR_TERMINAL_TEXT;
+            if (bwa_set_system_color(role, color)) {
+                if (terminal_color_dialog == 1) terminal_background = color;
+                else terminal_foreground = color;
+                terminal_palette_save();
+            }
             terminal_color_dialog = 0;
         } else if (point_in_rect(x, y, dx + 132, dy + 216, 72, 16)) terminal_color_dialog = 0;
         return 1;

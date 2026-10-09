@@ -15,6 +15,8 @@ printf 'input' > "$BUDOWIN_TEST_DIR/input.txt"
 COMPILER=${CC:-cc}
 FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
 budo/BUDOWIN/build.sh
+"$COMPILER" "${FLAGS[@]}" -O2 tests/budowin_chess.c -o "$TEST_DIR/chess"
+"$TEST_DIR/chess"
 python3 tests/terminal_gfx_text.py
 make budostack apps/cmath apps/edit commands/_CALC utilities/do
 "$COMPILER" "${FLAGS[@]}" tests/budowin_instances.c -ldl -lm -o "$INSTANCE_EXE"

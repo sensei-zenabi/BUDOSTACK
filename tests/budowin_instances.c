@@ -141,7 +141,7 @@ static void native_programs(void)
     assert(first != second && first->handle != second->handle);
     assert(first->definition.callbacks.draw != second->definition.callbacks.draw);
     assert(first->definition.runtime_id != second->definition.runtime_id);
-    assert(bwa_external_app_count == 8 && desktop_item_visible(2));
+    assert(bwa_external_app_count == 9 && desktop_item_visible(2));
     int x = first->window.x + 180, y = first->window.y + 130;
     bwa_callback_app = first;
     assert(first->definition.callbacks.mouse_down(x, y, 1));
@@ -243,7 +243,7 @@ int main(int argc, char **argv)
     assert(setenv("BUDOSTACK_BASE", argv[1], 1) == 0);
     set_classic_gui_palette();
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 8);
+    assert(bwa_external_app_count == 9);
     editors();
     explorers(argv[2]);
     native_programs();

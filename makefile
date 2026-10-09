@@ -164,7 +164,9 @@ print-platform:
 
 budo_build: $(BUDO_BUILD_STAMP)
 
-$(BUDO_BUILD_STAMP): $(BUDO_SRCS) ./budo/build.sh ./lib/budo_gfx.c ./lib/budo_gfx.h
+./games/chess.o: ./lib/chess_engine.h
+
+$(BUDO_BUILD_STAMP): ./lib/chess_engine.h $(BUDO_SRCS) ./budo/build.sh ./lib/budo_gfx.c ./lib/budo_gfx.h
 	@echo "Running ./budo/build.sh..."
 	@./budo/build.sh
 	@touch $(BUDO_BUILD_STAMP)

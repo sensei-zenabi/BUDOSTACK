@@ -1,0 +1,44 @@
+
+THIS DOCUMENT HAS BEEN WRITTEN USING BUDOWIN EDITOR
+
+TITLE: BUDOWIN IMPROVEMENTS
+
+Implement all below requests and/or fixes. I will then review and test them one by one from the branch to which you have implemented them.
+
+ASSIGNMENTS:
+[REQ] = New capability request.
+[BUG] = Identified issue.
+[NOK] = Requirement or bug has still issues.
+[OK]  = Requirement or bug has been implemented correctly.
+
+NOTE!
+If you consider that the chatgpt quota cannot deliver all the change requests, implement only those that you think you can. If the quota is so low, that it cannot implement any individual request below, reject the task and tell to the user that the quota is too low.
+
+=================================================================
+CHANGE REQUESTS TO BE IMPLEMENTED
+=================================================================
+
+
+=================================================================
+BACKLOG (DO NOT IMPLEMENT YET)
+=================================================================
+
+
+READER:
+
+[REQ] When opening common formats like .md etc. 'Reader' should display them in their "readable" form (in contrast to 'Editor' which is designed for editing them in the "non-writer mode"). I.e. in case of .md this means displaying it like e.g. github would.
+
+
+SETTINGS:
+
+[REQ] We need a new tab called "Settings" that basically allows user to edit all the settings that can be found from config.ini. To enable that, you can modify config.ini as per industry best practices, but remember that ./tasks/autoexec.task uses config.ini as well... In the "Settings" tab we need also "Save" and "Apply" buttons for user to test the settings and save them without the need to restart BUDOSTACK / BUDOWIN to see the effect
+
+
+TICTACTOE:
+
+[REQ] Make the game support mouse as well, now user needs to place the markers with keyboard.
+
+
+TERMINAL:
+
+[REQ] Please open the BUDOWIN 'terminal' as default to a size that is able to display BUDOSTACK in it's intended number of columns and rows. Also, redraw the content if user re-sizes the window size and make sure that the BUDOSTACK running inside the 'terminal' window uses the new size to display it's content.

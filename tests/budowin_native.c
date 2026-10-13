@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     assert(chdir(argv[1]) == 0);
     assert(getcwd(home_path, sizeof(home_path)));
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 12);
+    assert(bwa_external_app_count == 13);
     load_file_associations();
     char path[MAX_PATH];
     assert(join_path(path, sizeof(path), "/", "tmp") && strcmp(path, "/tmp") == 0);
@@ -84,6 +84,28 @@ int main(int argc, char **argv) {
         assert(bwa_window_close());
         bwa_callback_app = NULL;
     }
+    BwaLoadedApp *flow = NULL;
+    for (int i = 0; i < bwa_instance_count; ++i)
+        if (!strcmp(bwa_instances[i].definition.app_id, "flow")) flow = &bwa_instances[i];
+    assert(flow && flow->managed_window);
+    int assoc = find_file_association(".FLOW");
+    assert(assoc >= 0 && !strcmp(file_associations[assoc].app_id, "flow"));
+    bwa_callback_app = flow;
+    active_window = flow->definition.runtime_id;
+    int fx, fy, fw, fh;
+    assert(bwa_window_get_client_rect(&fx, &fy, &fw, &fh));
+    assert(flow->definition.callbacks.mouse_down(fx + 20, fy + 277, 1)); /* Templates. */
+    int overlay_x = fx + (fw - 380) / 2, overlay_y = fy + (fh - 264) / 2;
+    assert(flow->definition.callbacks.mouse_down(overlay_x + 30, overlay_y + 46, 1));
+    if (argc == 3) screenshot(argv[2], "flow.ppm");
+    bwa_callback_app = flow;
+    assert(flow->definition.callbacks.key(0x100 | 59));
+    if (argc == 3) screenshot(argv[2], "flow-help.ppm");
+    bwa_callback_app = flow;
+    assert(flow->definition.callbacks.key(27));
+    assert(!flow->definition.request_close()); /* Dirty project cannot silently close. */
+    desktop_confirm_result(BUDO_RESPONSE_CANCEL);
+    bwa_callback_app = NULL;
     BwaLoadedApp *chess = NULL;
     for (int i = 0; i < bwa_instance_count; ++i)
         if (!strcmp(bwa_instances[i].definition.app_id, "chess")) chess = &bwa_instances[i];

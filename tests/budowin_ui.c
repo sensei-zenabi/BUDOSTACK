@@ -41,6 +41,84 @@ static void test_title_double_click(void)
     window_title_click = NULL;
 }
 
+static void test_rename_keyboard(const char *directory)
+{
+    char original[MAX_PATH], renamed[MAX_PATH];
+    int page = 0;
+    assert(join_path(original, sizeof(original), directory, "rename.txt"));
+    FILE *file = fopen(original, "w");
+    assert(file && fclose(file) == 0);
+    assert(load_directory(directory));
+    for (int i = 0; i < item_count; ++i)
+        if (!strcmp(directory_items[i].path, original)) explorer_select_item(i, 0);
+    assert(explorer_begin_rename());
+    assert(explorer_rename_cursor == 10);
+    explorer_rename_key(0, 75, &page);
+    assert(explorer_rename_cursor == 9 && !strcmp(explorer_rename_input, "rename.txt"));
+    explorer_rename_key(0, 77, &page);
+    assert(explorer_rename_cursor == 10);
+    explorer_rename_key(0, 77, &page);
+    assert(explorer_rename_cursor == 10);
+    explorer_rename_key(0, 71, &page);
+    explorer_rename_key(0, 75, &page);
+    assert(explorer_rename_cursor == 0);
+    explorer_rename_key(8, 0, &page);
+    explorer_rename_key('X', 0, &page);
+    assert(!strcmp(explorer_rename_input, "Xrename.txt"));
+    explorer_rename_key(8, 0, &page);
+    explorer_rename_key(0, 83, &page);
+    assert(!strcmp(explorer_rename_input, "ename.txt") && explorer_rename_len == 9);
+    explorer_rename_key('R', 0, &page);
+    for (int scan = 72; scan <= 81; ++scan) {
+        if (scan == 75 || scan == 77 || scan == 79) continue;
+        explorer_rename_key(0, scan, &page);
+    }
+    assert(!strcmp(explorer_rename_input, "Rename.txt"));
+    explorer_rename_key(0, 79, &page);
+    explorer_rename_key(0, 83, &page);
+    assert(explorer_rename_cursor == explorer_rename_len);
+    explorer_rename_key(13, 0, &page);
+    assert(!explorer_rename_active && !explorer_rename_cursor);
+    assert(join_path(renamed, sizeof(renamed), directory, "Rename.txt"));
+    assert(access(original, F_OK) != 0 && access(renamed, F_OK) == 0);
+
+    assert(explorer_begin_rename());
+    explorer_rename_key(0, 71, &page);
+    explorer_rename_key('X', 0, &page);
+    explorer_rename_key(27, 0, &page);
+    assert(!explorer_rename_active && access(renamed, F_OK) == 0);
+
+    /* Long names keep the caret visible, and the input remains bounded. */
+    explorer_rename_active = 1;
+    memset(explorer_rename_input, 'a', MAX_NAME - 1);
+    explorer_rename_input[MAX_NAME - 1] = 0;
+    explorer_rename_cursor = explorer_rename_len = MAX_NAME - 1;
+    explorer_rename_key('b', 0, &page);
+    assert(explorer_rename_len == MAX_NAME - 1 && explorer_rename_input[MAX_NAME - 1] == 0);
+    active_window = APP_EXPLORER;
+    explorer_window.open = 1;
+    explorer_window.minimized = 0;
+    int x, y;
+    assert(text_caret_rect(&x, &y));
+    explorer_rename_key(0, 71, &page);
+    int start_x, start_y;
+    assert(text_caret_rect(&start_x, &start_y) && start_x < x && start_y == y);
+    explorer_cancel_rename();
+
+    /* Folder names use the same editing path. */
+    assert(join_path(original, sizeof(original), directory, "rename-folder"));
+    assert(mkdir(original, 0700) == 0 && load_directory(directory));
+    for (int i = 0; i < item_count; ++i)
+        if (!strcmp(directory_items[i].path, original)) explorer_select_item(i, 0);
+    assert(explorer_begin_rename());
+    explorer_rename_key(0, 71, &page);
+    explorer_rename_key('X', 0, &page);
+    explorer_rename_key(13, 0, &page);
+    assert(join_path(renamed, sizeof(renamed), directory, "Xrename-folder"));
+    struct stat info;
+    assert(access(original, F_OK) != 0 && stat(renamed, &info) == 0 && S_ISDIR(info.st_mode));
+}
+
 static void choose(const char *directory, const char *name, int mode)
 {
     picker_owner = APP_EDITOR;
@@ -261,6 +339,7 @@ int main(int argc, char **argv)
     test_polish();
     test_input_caret();
     const char *directory = argv[1];
+    test_rename_keyboard(directory);
     char path[MAX_PATH];
     BudoScrollbar bar = {.x=10, .y=20, .length=200, .total=100, .page=10};
     int start, size;

@@ -5,6 +5,42 @@
 #include "../budo/BUDOWIN/src/platform.c"
 #include <assert.h>
 
+static int title_press(AppWindow *window, int x, int y)
+{
+    ++window_pointer_press;
+    return window_frame_mouse_down(window, x, y);
+}
+
+static void test_title_double_click(void)
+{
+    AppWindow window = {.x = 40, .y = 60, .w = 400, .h = 250, .open = 1};
+    AppWindow other = {.x = 40, .y = 60, .w = 400, .h = 250, .open = 1};
+    assert(title_press(&window, 70, 70) == WINDOW_FRAME_DRAG);
+    assert(title_press(&window, 71, 70) == WINDOW_FRAME_MAXIMIZE);
+    window_toggle_maximize_state(&window);
+    assert(window.maximized && !window.dragging && !window.resizing);
+    assert(window.x == 0 && window.y == 21 && window.w == SCREEN_WIDTH);
+    assert(title_press(&window, 70, 30) == WINDOW_FRAME_DRAG);
+    assert(title_press(&window, 70, 30) == WINDOW_FRAME_MAXIMIZE);
+    window_toggle_maximize_state(&window);
+    assert(!window.maximized && !window.dragging && !window.resizing);
+    assert(window.x == 40 && window.y == 60 && window.w == 400 && window.h == 250);
+
+    assert(title_press(&window, 70, 70) == WINDOW_FRAME_DRAG);
+    assert(title_press(&window, 70, 100) == WINDOW_FRAME_CLIENT);
+    assert(title_press(&window, 70, 70) == WINDOW_FRAME_DRAG);
+    assert(title_press(&other, 70, 70) == WINDOW_FRAME_DRAG);
+    assert(title_press(&window, 70, 70) == WINDOW_FRAME_DRAG);
+    window_title_click_time -= CLOCKS_PER_SEC;
+    assert(title_press(&window, 70, 70) == WINDOW_FRAME_DRAG);
+    assert(window_update_pointer(&window, 90, 80, WINDOW_MIN_W, WINDOW_MIN_H));
+    window.dragging = 0;
+    assert(title_press(&window, 90, 80) == WINDOW_FRAME_DRAG);
+    assert(title_press(&window, window_close_button_x(&window) + 2, window.y + 5) == WINDOW_FRAME_CLOSE);
+    assert(title_press(&window, window_max_button_x(&window) + 2, window.y + 5) == WINDOW_FRAME_MAXIMIZE);
+    window_title_click = NULL;
+}
+
 static void choose(const char *directory, const char *name, int mode)
 {
     picker_owner = APP_EDITOR;
@@ -206,6 +242,7 @@ static void test_input_caret(void)
 
 int main(int argc, char **argv)
 {
+    test_title_double_click();
     assert(argc == 2);
     BudoUiStyle original = desktop_ui_style;
     BudoUiStyle custom = original;

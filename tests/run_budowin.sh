@@ -84,3 +84,26 @@ python3 - "$BUDOWIN_LAUNCH_MARKER" <<'PY'
 import pathlib, sys
 assert [pathlib.Path(p).name for p in pathlib.Path(sys.argv[1]).read_text().splitlines()] == ['example', 'rocket']
 PY
+
+# Launch the same executables through a desktop shortcut folder. Its directory
+# contains no executables; every shortcut resolves to the launch directory.
+mkdir -p "$TEST_DIR/Games"
+python3 - "$HOME/.budowin/shortcuts.state" "$TEST_DIR/Games" "$TEST_DIR/launch" <<'PY'
+import pathlib, sys
+state, folder, launch = map(pathlib.Path, sys.argv[1:])
+records = [(2, 1, folder, ''), (0, 2, launch / 'example', folder),
+           (1, 2, launch / 'rocket', folder)]
+with state.open('wb') as f:
+    f.write(b'BUDOWIN shortcuts 2\n3\n')
+    for slot, kind, target, parent in records:
+        f.write(f'{slot} {kind}\n'.encode())
+        for value in (target, parent, ''):
+            f.write(str(value).encode().ljust(4096, b'\0'))
+PY
+printf '%s\n0 0 1 0 0 60 60 520 340 60 60 520 340\n' "$TEST_DIR/Games" > "$HOME/.budowin/session.state"
+rm -f "$BUDOWIN_LAUNCH_MARKER"
+"$TEST_DIR/launch-test" "$ROOT_DIR/budo/budowin" "$TEST_DIR/launch-socket.so"
+python3 - "$BUDOWIN_LAUNCH_MARKER" <<'PY'
+import pathlib, sys
+assert [pathlib.Path(p).name for p in pathlib.Path(sys.argv[1]).read_text().splitlines()] == ['example', 'rocket']
+PY

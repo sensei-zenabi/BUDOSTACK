@@ -1,0 +1,9 @@
+name=Shell
+extensions=.sh .bash .zsh
+filenames=.bashrc .bash_profile .profile .zshrc
+keywords=if then else elif fi for while until do done in case esac function select time export local readonly return break continue
+span=string|"|"|multiline escape
+span=string|'|'|multiline
+rule=comment|#.*
+rule=directive|[$]([[:alpha:]_][[:alnum:]_]*|\{[^}]*\}|[0-9@*#?!$-])
+rule=number|[0-9]+

@@ -156,7 +156,11 @@ static ExplorerState *explorer_instances[BUILTIN_INSTANCE_MAX] = {&explorer_init
 
 typedef struct EditorState {
     int runtime_id;
-    char v_editor_lines[EDITOR_MAX_LINES][EDITOR_MAX_COLS];
+    char (*v_editor_lines)[EDITOR_MAX_COLS];
+    int v_editor_crlf;
+    const BwSyntaxLanguage *v_editor_syntax_language;
+    uint64_t v_editor_syntax_hash[EDITOR_MAX_LINES];
+    unsigned char v_editor_syntax_start[EDITOR_MAX_LINES], v_editor_syntax_end[EDITOR_MAX_LINES];
     int v_editor_read_only;
     int v_editor_end_affinity, v_editor_end_line, v_editor_end_col;
     int v_editor_last_click_line, v_editor_last_click_col;
@@ -211,7 +215,9 @@ typedef struct EditorState {
     int v_editor_typing_col;
     clock_t v_editor_typing_time;
 } EditorState;
+static char editor_initial_lines[EDITOR_MAX_LINES][EDITOR_MAX_COLS];
 static EditorState editor_initial = {
+    .v_editor_lines = editor_initial_lines,
     .runtime_id = 2,
     .v_editor_line_count = 1,
     .v_editor_cursor_line = 0,

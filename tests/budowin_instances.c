@@ -252,7 +252,10 @@ int main(int argc, char **argv)
         if (editor_instances[slot]) {
             builtin_select(2 + slot * 3);
             editor_history_reset();
-            if (slot) free(editor_instances[slot]);
+            if (slot) {
+                free(editor_instances[slot]->v_editor_lines);
+                free(editor_instances[slot]);
+            }
         }
         if (slot) { free(explorer_instances[slot]); free(terminal_instances[slot]); }
     }

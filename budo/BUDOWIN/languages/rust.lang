@@ -1,0 +1,7 @@
+name=Rust
+extensions=.rs
+keywords=as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while
+span=comment|/*|*/|multiline
+span=string|"|"|escape
+rule=comment|//.*
+rule=number|0[xX][[:xdigit:]_]+|0[bB][01_]+|[0-9][0-9_]*([.][0-9]+)?

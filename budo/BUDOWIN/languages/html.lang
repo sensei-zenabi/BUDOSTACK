@@ -1,0 +1,5 @@
+name=HTML
+extensions=.html .htm .xhtml .xml .svg
+span=comment|<!--|-->|multiline
+span=tag|<|>|multiline
+rule=number|&(#x[[:xdigit:]]+|#[0-9]+|[[:alpha:]][[:alnum:]]*);

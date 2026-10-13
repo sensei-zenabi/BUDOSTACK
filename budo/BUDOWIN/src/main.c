@@ -4,6 +4,7 @@
 #endif
 #include "platform.h"
 #include "text_encoding.h"
+#include "editor_syntax.h"
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -114,8 +115,9 @@ static unsigned char ui_color_indices[BUDO_SYS_COLOR_COUNT] = {0, 1, 2, 3, 4, 5,
 #define BWA_MAX_EXTERNAL 16
 #define BWA_MAX_INSTANCES 64
 
-#define EDITOR_MAX_LINES 512
+#define EDITOR_MAX_LINES 16384
 #define EDITOR_MAX_COLS 2048
+#define EDITOR_DOCUMENT_BYTES ((size_t)EDITOR_MAX_LINES * EDITOR_MAX_COLS)
 #define EDITOR_MENU_H 14
 #define EDITOR_STATUS_H 14
 #define EDITOR_RULER_H 20
@@ -1896,6 +1898,7 @@ static const unsigned char *glyph_for(char c)
     static const unsigned char section_sign[7] = {0x0E,0x10,0x0E,0x11,0x0E,0x01,0x0E};
     static const unsigned char half_sign[7] = {0x11,0x12,0x04,0x08,0x13,0x05,0x07};
     static const unsigned char pound_sign[7] = {0x06,0x09,0x08,0x1E,0x08,0x08,0x1F};
+    static const unsigned char tab_arrow[7] = {0,0x04,0x02,0x1F,0x02,0x04,0};
     unsigned char uc = (unsigned char)c;
 
     if (c >= 'a' && c <= 'z') return font5x7_lower[c - 'a'];
@@ -1903,6 +1906,7 @@ static const unsigned char *glyph_for(char c)
     if (c >= '0' && c <= '9') return font5x7[26 + c - '0'];
 
     switch (uc) {
+        case 9: return tab_arrow;
         case 33: return exclaim;
         case 34: return quote;
         case 35: return hash;
@@ -3113,7 +3117,7 @@ static void editor_reset_document(void)
     editor_selection_clear();
     editor_match_line = -1;
     editor_history_reset();
-    memset(editor_lines, 0, sizeof(editor_lines));
+    memset(editor_lines, 0, EDITOR_DOCUMENT_BYTES);
     editor_line_count = 1;
     editor_cursor_line = 0;
     editor_cursor_col = 0;
@@ -3121,6 +3125,8 @@ static void editor_reset_document(void)
     editor_top_segment = 0;
     editor_left_col = 0;
     editor_path[0] = '\0';
+    editor_state->v_editor_crlf = 0;
+    editor_state->v_editor_syntax_language = NULL;
     strcpy(editor_last_save, "Not saved");
     editor_mark_saved();
     editor_set_status("New document");
@@ -3239,7 +3245,7 @@ static int editor_parse_rtf(const char *path)
     }
 
     editor_rtf_overflow = 0;
-    memset(editor_lines, 0, sizeof(editor_lines));
+    memset(editor_lines, 0, EDITOR_DOCUMENT_BYTES);
     editor_line_count = 1;
     editor_writer_left_indent = 0;
     editor_writer_first_indent = 0;
@@ -3399,9 +3405,9 @@ static int editor_load_rtf(const char *path)
         editor_set_status("Invalid RTF; current document preserved");
         return 0;
     }
-    char (*previous)[EDITOR_MAX_COLS] = malloc(sizeof(editor_lines));
+    char (*previous)[EDITOR_MAX_COLS] = malloc(EDITOR_DOCUMENT_BYTES);
     if (!previous) { editor_set_status("Not enough memory to open RTF"); return 0; }
-    memcpy(previous, editor_lines, sizeof(editor_lines));
+    memcpy(previous, editor_lines, EDITOR_DOCUMENT_BYTES);
     int old_count = editor_line_count;
     int old_left = editor_writer_left_indent;
     int old_first = editor_writer_first_indent;
@@ -3410,7 +3416,7 @@ static int editor_load_rtf(const char *path)
     memcpy(old_tabs, editor_writer_tabs, sizeof(old_tabs));
     int ok = editor_parse_rtf(path);
     if (!ok) {
-        memcpy(editor_lines, previous, sizeof(editor_lines));
+        memcpy(editor_lines, previous, EDITOR_DOCUMENT_BYTES);
         editor_line_count = old_count;
         editor_writer_left_indent = old_left;
         editor_writer_first_indent = old_first;
@@ -3577,37 +3583,57 @@ static int editor_load_file_impl(const char *path)
     FILE *file;
     char (*loaded)[EDITOR_MAX_COLS];
     char buffer[EDITOR_MAX_COLS * 2 + 2];
-    int count = 0;
-    int ok = 1;
+    int count = 0, crlf = 0, ended_with_newline = 0;
+    const char *error = NULL;
     if (editor_path_is_rtf(path)) return editor_load_rtf(path);
-    file = fopen(path, "rt");
+    file = fopen(path, "rb");
     if (!file) { editor_set_status("Open failed; current document preserved"); return 0; }
     loaded = calloc(EDITOR_MAX_LINES, sizeof(*loaded));
     if (!loaded) { fclose(file); editor_set_status("Not enough memory to open file"); return 0; }
     for (;;) {
-        /* A sentinel lets us distinguish embedded NUL bytes from the
-         * terminator written by fgets, while keeping reads bounded. */
-        memset(buffer, 0xff, sizeof(buffer));
-        if (!fgets(buffer, sizeof(buffer), file)) break;
-        size_t len = sizeof(buffer);
-        while (len && (unsigned char)buffer[len - 1] == 0xff) --len;
-        if (!len) { ok = 0; break; }
-        --len;
-        if (memchr(buffer, '\0', len)) { ok = 0; break; }
-        while (len && (buffer[len - 1] == '\n' || buffer[len - 1] == '\r')) buffer[--len] = '\0';
+        /* fgets cannot distinguish embedded NULs from its terminator. */
+        size_t len = 0;
+        int ch;
+        while ((ch = fgetc(file)) != EOF && ch != '\n') {
+            if (ch == 0 || (ch < 32 && ch != '\t' && ch != '\r') || ch == 127) {
+                error = "Binary/control bytes; document preserved";
+                break;
+            }
+            if (len + 1 >= sizeof(buffer)) {
+                error = "Line exceeds 2047 cells; document preserved";
+                break;
+            }
+            buffer[len++] = (char)ch;
+        }
+        if (error) break;
+        if (ch == EOF && !len) break;
+        ended_with_newline = ch == '\n';
+        if (len && buffer[len - 1] == '\r' && ended_with_newline) { --len; crlf = 1; }
+        buffer[len] = 0;
+        if (memchr(buffer, '\r', len)) {
+            error = "Unsupported line endings; document preserved";
+            break;
+        }
         bw_text_decode(buffer, buffer);
         len = strlen(buffer);
-        if (len >= EDITOR_MAX_COLS || count >= EDITOR_MAX_LINES) { ok = 0; break; }
+        if (len >= EDITOR_MAX_COLS) { error = "Line exceeds 2047 cells; document preserved"; break; }
+        if (count >= EDITOR_MAX_LINES) { error = "More than 16384 lines; document preserved"; break; }
         memcpy(loaded[count++], buffer, len + 1);
+        if (ch == EOF) break;
     }
-    if (ferror(file)) ok = 0;
-    if (fclose(file) != 0) ok = 0;
-    if (!ok) {
+    if (ferror(file)) error = "Read failed; document preserved";
+    if (fclose(file)) error = "Read failed; document preserved";
+    if (!error && ended_with_newline) {
+        if (count == EDITOR_MAX_LINES) error = "More than 16384 lines; document preserved";
+        else ++count; /* A final empty row preserves the terminating newline. */
+    }
+    if (error) {
         free(loaded);
-        editor_set_status("Unsupported, oversized or unreadable file; document preserved");
+        editor_set_status(error);
         return 0;
     }
-    memcpy(editor_lines, loaded, sizeof(editor_lines));
+    editor_state->v_editor_crlf = crlf;
+    memcpy(editor_lines, loaded, EDITOR_DOCUMENT_BYTES);
     free(loaded);
     editor_history_reset();
     editor_line_count = count ? count : 1;
@@ -3657,7 +3683,7 @@ static int editor_save_file_impl(const char *path)
         }
         fputs(encoded, file);
         if (i + 1 < editor_line_count) {
-            fputc('\n', file);
+            fputs(editor_state->v_editor_crlf ? "\r\n" : "\n", file);
         }
     }
 
@@ -3745,7 +3771,7 @@ static void editor_history_restore(int redo)
     }
     if (!editor_history_capture(dest, dest_count)) return;
     snapshot = source[--*source_count];
-    memset(editor_lines, 0, sizeof(editor_lines));
+    memset(editor_lines, 0, EDITOR_DOCUMENT_BYTES);
     for (i = 0; i < snapshot.lines; ++i) {
         size_t len = strlen(snapshot.text + offset) + 1;
         memcpy(editor_lines[i], snapshot.text + offset, len);
@@ -4704,7 +4730,7 @@ static void editor_replace_selection(const char *text)
     memcpy(replacement[row] + col, editor_lines[last] + lc, tail + 1);
     memcpy(replacement + row + 1, editor_lines + last + 1, (size_t)remaining * sizeof(editor_lines[0]));
     if (editor_history_before_edit()) {
-        memcpy(editor_lines, replacement, sizeof(editor_lines));
+        memcpy(editor_lines, replacement, EDITOR_DOCUMENT_BYTES);
         editor_line_count = row + 1 + remaining;
         editor_cursor_line = row;
         editor_cursor_col = end_col;
@@ -5139,6 +5165,20 @@ static void editor_search_key(int key)
     }
 }
 
+static unsigned char editor_syntax_styles[EDITOR_MAX_COLS];
+
+static unsigned char editor_syntax_color(unsigned char style)
+{
+    /* Fixed palette slots are shared with theme selection. Use brighter
+     * alternatives on dark surfaces; selection colors always take precedence. */
+    static const unsigned char light[] = {1, 6, 22, 9, 12, 13, 6, 6, 12};
+    static const unsigned char dark[] = {4, 117, 120, 216, 219, 222, 117, 117, 219};
+    unsigned int bg = budo_palette_rgb(WINDOW_FACE_COLOR);
+    unsigned int brightness = ((bg >> 16) & 255) * 299 + ((bg >> 8) & 255) * 587 + (bg & 255) * 114;
+    if (style == BW_SYNTAX_TEXT || style > BW_SYNTAX_OPERATOR) return TEXT_COLOR;
+    return brightness < 128000 ? dark[style] : light[style];
+}
+
 static void editor_draw_text(int x, int y, int line, int start, int count)
 {
     int i;
@@ -5149,7 +5189,8 @@ static void editor_draw_text(int x, int y, int line, int start, int count)
                       start + i >= editor_match_col &&
                       start + i < editor_match_col + editor_match_len);
         if (matched) fill_rect(x + i * 6, y, 6, 9, ui_color_indices[BUDO_SYS_COLOR_SELECTION_BG]);
-        draw_text(x + i * 6, y, character, matched ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR, 1);
+        draw_text(x + i * 6, y, character, matched ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] :
+                  editor_writer_mode || editor_read_only ? TEXT_COLOR : editor_syntax_color(editor_syntax_styles[start + i]), 1);
     }
 }
 
@@ -5306,10 +5347,32 @@ static void draw_editor_window(void)
         }
     }
 
+    const BwSyntaxLanguage *language = editor_writer_mode || editor_read_only ? NULL : bw_syntax_for_path(editor_path);
+    int syntax_state = 0;
+    if (language != editor_state->v_editor_syntax_language) {
+        memset(editor_state->v_editor_syntax_hash, 0, sizeof(editor_state->v_editor_syntax_hash));
+        editor_state->v_editor_syntax_language = language;
+    }
+    if (language) {
+        for (int row = 0; row < editor_top_line; ++row) {
+            uint64_t hash = UINT64_C(1469598103934665603);
+            for (const unsigned char *p = (const unsigned char *)editor_lines[row]; *p; ++p)
+                hash = (hash ^ *p) * UINT64_C(1099511628211);
+            if (hash != editor_state->v_editor_syntax_hash[row] ||
+                syntax_state != editor_state->v_editor_syntax_start[row]) {
+                editor_state->v_editor_syntax_start[row] = (unsigned char)syntax_state;
+                bw_syntax_line(language, editor_lines[row], &syntax_state, NULL);
+                editor_state->v_editor_syntax_hash[row] = hash;
+                editor_state->v_editor_syntax_end[row] = (unsigned char)syntax_state;
+            } else syntax_state = editor_state->v_editor_syntax_end[row];
+        }
+    }
+
     for (line = editor_top_line;
          line < editor_line_count && screen_row < visible_rows;
          ++line) {
         int len = (int)strlen(editor_lines[line]);
+        bw_syntax_line(language, editor_lines[line], &syntax_state, editor_syntax_styles);
 
         if (editor_wrap_enabled()) {
             int start = 0;
@@ -5398,7 +5461,7 @@ static void draw_editor_window(void)
     }
 
     {
-        char status_text[96];
+        char status_text[128];
         int status_y = editor_window.y + editor_window.h -
                        EDITOR_STATUS_H;
         int words = editor_word_count();
@@ -5417,7 +5480,8 @@ static void draw_editor_window(void)
                      editor_last_save);
         } else {
             snprintf(status_text, sizeof(status_text),
-                     "EDITOR  Ln %d  Col %d  Words %d  Saved %s",
+                     "EDITOR %.20s  Ln %d  Col %d  Words %d  Saved %s",
+                     language ? language->name : "Text",
                      editor_cursor_line + 1,
                      editor_cursor_col + 1,
                      words,
@@ -7089,10 +7153,10 @@ static int open_associated_file(const char *path)
     if (path == NULL) return 0;
 
     dot = strrchr(path, '.');
-    if (dot == NULL) return 0;
+    if (dot == NULL) return bw_syntax_for_path(path) ? bwa_open_editor_file(path) : 0;
 
     index = find_file_association(dot);
-    if (index < 0) return 0;
+    if (index < 0) return bw_syntax_for_path(path) ? bwa_open_editor_file(path) : 0;
 
     app_id = file_associations[index].app_id;
     if (app_id[0] == '\0') return 0;
@@ -9023,6 +9087,7 @@ static int text_file(const char *name)
 
 static int code_file(const char *name)
 {
+    if (bw_syntax_for_path(name)) return 1;
     static const char *extensions[] = {
         ".C", ".H", ".CPP", ".HPP", ".CC", ".CXX", ".ASM", ".INC",
         ".PAS", ".BAS", ".JAVA", ".JS", ".PY", ".CSS", ".HTM", ".HTML",
@@ -10567,9 +10632,18 @@ static int builtin_create_instance(int kind, int start_terminal)
         if (state) {
             editor_state = state;
             editor_history_reset();
-        } else state = malloc(sizeof(*state));
+        } else state = calloc(1, sizeof(*state));
         if (!state) { perror("BUDOWIN: Editor instance"); return 0; }
+        char (*lines)[EDITOR_MAX_COLS] = state->v_editor_lines;
+        if (!lines) lines = calloc(EDITOR_MAX_LINES, EDITOR_MAX_COLS);
+        if (!lines) {
+            perror("BUDOWIN: Editor document");
+            if (!editor_instances[slot]) free(state);
+            return 0;
+        }
         *state = editor_defaults;
+        state->v_editor_lines = lines;
+        memset(lines, 0, EDITOR_DOCUMENT_BYTES);
         editor_instances[slot] = editor_state = state;
         state->runtime_id = kind + slot * 3;
         load_editor_settings();
@@ -11521,6 +11595,10 @@ int main(int argc, char **argv)
     normalize_slashes(home_path);
     (void)remove(bw_state_file("modules.log"));
     load_editor_settings();
+    {
+        char languages[MAX_PATH];
+        if (join_path(languages, sizeof(languages), home_path, "languages")) bw_syntax_load(languages);
+    }
     bwa_load_external_apps();
     {
         FILE *file = fopen(bw_state_file("explorer-view.state"), "r");
@@ -11803,7 +11881,7 @@ int main(int argc, char **argv)
                         editor_delete_line();
                     else if (item == 3 && editor_history_before_edit()) {
                         editor_selection_clear();
-                        memset(editor_lines, 0, sizeof(editor_lines));
+                        memset(editor_lines, 0, EDITOR_DOCUMENT_BYTES);
                         editor_line_count = 1;
                         editor_cursor_line = 0;
                         editor_cursor_col = 0;
@@ -12608,8 +12686,8 @@ int main(int argc, char **argv)
                         if (spaces < 1) spaces = 1;
                     }
 
-                    for (i = 0; i < spaces; ++i)
-                        editor_insert_char(' ');
+                    if (!editor_writer_mode) editor_insert_char('\t');
+                    else for (i = 0; i < spaces; ++i) editor_insert_char(' ');
                     screen_dirty = 1;
                 } else if (key >= 32 && key != 127) {
                     editor_preferred_visual_col = -1;
@@ -12817,7 +12895,10 @@ application_exit:
         if (editor_instances[slot]) {
             editor_state = editor_instances[slot];
             editor_history_reset();
-            if (slot) free(editor_instances[slot]);
+            if (slot) {
+                free(editor_instances[slot]->v_editor_lines);
+                free(editor_instances[slot]);
+            }
         }
         if (slot) free(explorer_instances[slot]);
     }
@@ -12829,6 +12910,7 @@ application_exit:
     editor_file_items = NULL;
     free(editor_clipboard);
     set_text_mode();
+    bw_syntax_clear();
     bw_finish();
     return exit_status;
 }

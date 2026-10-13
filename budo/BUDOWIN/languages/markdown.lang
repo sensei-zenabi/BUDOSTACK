@@ -1,0 +1,12 @@
+name=Markdown
+extensions=.md .markdown .mdown
+span=comment|<!--|-->|multiline
+span=string|```|```|multiline
+span=string|~~~|~~~|multiline
+span=string|`|`|
+rule=heading|^[[:space:]]*#{1,6}[[:space:]].*
+rule=heading|^[[:space:]]*(===+|---+)[[:space:]]*$
+rule=keyword|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_
+rule=tag|!?\[[^]]*\]\([^)]*\)
+rule=directive|^[[:space:]]*([-*+]|[0-9]+[.])[[:space:]]
+rule=comment|^[[:space:]]*>.*

@@ -17,6 +17,14 @@ FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
 budo/BUDOWIN/build.sh
 "$COMPILER" "${FLAGS[@]}" -O2 tests/budowin_chess.c -o "$TEST_DIR/chess"
 "$TEST_DIR/chess"
+for game in SNAKE INVADERS TICTACTOE; do
+    "$COMPILER" "${FLAGS[@]}" -O2 -D"TEST_$game" tests/budowin_games.c -o "$TEST_DIR/$game"
+    "$TEST_DIR/$game"
+done
+mkdir -p "$TEST_DIR/flow"
+"$COMPILER" "${FLAGS[@]}" -O2 tests/budowin_flow.c -o "$TEST_DIR/flow-test"
+"$TEST_DIR/flow-test" "$TEST_DIR/flow"
+python3 tests/budowin_flow_exports.py "$TEST_DIR/flow"
 python3 tests/terminal_gfx_text.py
 make budostack apps/cmath apps/edit commands/_CALC utilities/do
 "$COMPILER" "${FLAGS[@]}" tests/budowin_instances.c -ldl -lm -o "$INSTANCE_EXE"

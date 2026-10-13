@@ -1,6 +1,6 @@
 # Native BWA modules
 
-BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.15 (`src/bwa.h`). Modules use
+BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.17 (`src/bwa.h`). Modules use
 `BwaHostApi` for drawing, managed windows, binary file access and allocation.
 The built-in Explorer, Editor, Terminal, Reader, Help and Recycle Bin launcher modules delegate to
 host-managed application implementations; Paint and Settings own their
@@ -271,3 +271,59 @@ up to eight packed words from `height` (low 16 bits Hz, high 16 bits ms).
 Reply type 9 returns an errno value in `format`, or zero on success.
 Clients reject unsupported hosts locally; unavailable audio does not close
 an otherwise valid graphics connection.
+
+## Idle callbacks and command-button delivery (ABI 1.16)
+
+`BwaAppDefinition.tick(int visible)` is appended to the application definition.
+Modules opt in by checking `host->abi_minor >= 16`, setting
+`BWA_FLAG_IDLE_TICK`, and supplying the callback. Older definition layouts and
+modules without that flag are never accessed beyond their existing fields.
+The host calls opted-in open applications once per desktop iteration, even
+when no input or repaint occurred. Return nonzero to request repaint; a zero
+return allows the host to remain idle. Keep work bounded and nonblocking.
+`visible` is false while the application's window is minimized or a shared
+file/confirmation dialog blocks the desktop. Recovery/autosave can still run
+with `visible == 0`; games suspend their deadlines until visibility returns.
+
+Use monotonic deadlines for simulation, not the number of draw calls. The
+bundled games accumulate microsecond deadlines from `get_time_ms()` and limit
+catch-up to eight steps per iteration. Drawing is side-effect-free for their
+simulation on 1.16 hosts. Earlier hosts retain the draw-driven fallback.
+
+Normal command buttons capture a mouse press and activate on release inside
+the same control. Native `mouse_down` callbacks receive logical left bit 1 for
+this activation, including when the physical button has already been released.
+`get_pointer_state` still reports the physical state. Immediate controls keep
+their existing press/drag semantics; cancel-on-release-outside is unchanged.
+
+Snake starts at 5.0/7.5/10.0 cells/s on Easy/Medium/Hard, awards 1/2/3 points per apple, and
+increase speed by 0.1/0.2/0.3 cells/s per apple, respectively. Microsecond
+intervals preserve each increase without a coarse millisecond speed plateau.
+Changing difficulty restarts the game, with confirmation after play begins.
+
+## Focused input carets (ABI 1.17)
+
+`BwaHostApi.draw_input_caret(x, y, height, color)` is appended to the host API.
+`sdk/ui.h` exposes the guarded `budo_text_caret` helper. A focused field registers
+its screen-coordinate caret during drawing, including while the blink is hidden.
+The host requests a repaint every 500 ms while an active caret is registered;
+keyboard input and pointer presses restart the visible phase. Background fields
+and fields behind shared dialogs do not register a caret. Closing/minimizing a
+field removes its registration on the next repaint. The helper has a guarded,
+draw-driven fallback for earlier hosts. Existing editor/terminal body carets
+retain their rendering; file pickers, find/replace, rename, and native numeric
+and property fields use the shared registration service.
+
+`budo_app_definition_clear` initializes only the application-definition bytes
+provided by the host. Modules accepting hosts before 1.16 must not clear or
+write the appended `tick` field. Regression tests guard the old structure's
+boundary with sentinel bytes.
+
+Snake queues up to two distinct legal turns, rejects reversal relative to the
+last queued heading, and executes one turn per simulation step. Auto-repeat
+cannot displace a queued turn or alter the clock. Invaders' formation period
+starts at 800 ms and is multiplied by 0.8 each descending row, with a 100 ms
+minimum. Bullet updates remain 100 ms. Tic-Tac-Toe uses threat-ranked nearby
+candidates, immediate win/block detection, and incremental three-ply alpha-beta
+search; open-three, open-four, and broken-four patterns receive tactical weights.
+Each desktop tick processes at most one root candidate search.

@@ -32,6 +32,48 @@ static void screenshot(const char *directory, const char *name)
     assert(fclose(file) == 0);
 }
 
+static void click_native(BwaLoadedApp *app, int x, int y)
+{
+    active_window = app->definition.runtime_id;
+    ui_pointer_x = x;
+    ui_pointer_y = y;
+    draw_desktop(0);
+    assert(ui_hit(x, y, 1) >= 0);
+    assert(!ui_button_event(x, y, 1, 0));
+    assert(ui_button_event(x, y, 0, 1));
+    /* Use the production dispatch with the physical button already released. */
+    assert(bwa_dispatch_left_press(app, x, y, 0));
+}
+static void press_native(BwaLoadedApp *app, int x, int y)
+{
+    active_window = app->definition.runtime_id;
+    draw_desktop(0);
+    if (ui_button_event(x, y, 1, 0)) assert(bwa_dispatch_left_press(app, x, y, 1));
+    if (ui_button_event(x, y, 0, 1)) assert(bwa_dispatch_left_press(app, x, y, 0));
+    if (app->open && app->definition.callbacks.mouse_up) {
+        bwa_callback_app = app;
+        app->definition.callbacks.mouse_up(x, y, 0);
+        bwa_callback_app = NULL;
+    }
+}
+static int native_label(BwaLoadedApp *app, const char *label)
+{
+    draw_desktop(0);
+    for (int i = 0; i < ui_region_count; ++i) {
+        if (ui_regions[i].owner == app->definition.runtime_id && !strcmp(ui_regions[i].tip, label)) return 1;
+    }
+    return 0;
+}
+static int snake_head_x(void)
+{
+    for (int y = 0; y < SCREEN_HEIGHT; ++y) {
+        for (int x = 0; x < SCREEN_WIDTH; ++x) {
+            int p = y * SCREEN_WIDTH + x;
+            if (rgb_mask[p] && (rgb_framebuffer[p] & 0xffffffU) == 0xb0e878) return x;
+        }
+    }
+    return -1;
+}
 int main(int argc, char **argv) {
     assert(argc == 2 || argc == 3);
     assert(chdir(getenv("BUDOWIN_TEST_DIR")) == 0);
@@ -39,7 +81,7 @@ int main(int argc, char **argv) {
     assert(chdir(argv[1]) == 0);
     assert(getcwd(home_path, sizeof(home_path)));
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 9);
+    assert(bwa_external_app_count == 13);
     load_file_associations();
     char path[MAX_PATH];
     assert(join_path(path, sizeof(path), "/", "tmp") && strcmp(path, "/tmp") == 0);
@@ -62,6 +104,103 @@ int main(int argc, char **argv) {
         if (app->definition.callbacks.draw) app->definition.callbacks.draw();
         bwa_callback_app = NULL;
     }
+    const char *games[] = {"snake", "invaders", "tictactoe"};
+    for (int g = 0; g < 3; ++g) {
+        BwaLoadedApp *game = NULL;
+        for (int i = 0; i < bwa_instance_count; ++i)
+            if (!strcmp(bwa_instances[i].definition.app_id, games[g])) game = &bwa_instances[i];
+        assert(game && game->managed_window);
+        bwa_callback_app = game;
+        active_window = game->definition.runtime_id;
+        int gx, gy, gw, gh;
+        assert(bwa_window_get_client_rect(&gx, &gy, &gw, &gh));
+        assert((game->definition.flags & BWA_FLAG_IDLE_TICK) && game->definition.tick);
+        click_native(game, gx + 85, gy + 12); /* Resume via actual capture/release. */
+        assert(native_label(game, "Pause"));
+        if (!strcmp(games[g], "snake")) {
+            int before = snake_head_x();
+            assert(before >= 0);
+            struct timespec delay = {0, 240000000};
+            assert(nanosleep(&delay, NULL) == 0);
+            assert(bwa_tick_external_apps()); /* No key/mouse/redraw triggers. */
+            draw_desktop(0);
+            assert(snake_head_x() > before);
+        }
+        click_native(game, gx + 155, gy + 12);
+        assert(native_label(game, "Sound off"));
+        click_native(game, gx + 225, gy + 12);
+        assert(native_label(game, "OK"));
+        click_native(game, gx + (gw - 340) / 2 + 150, gy + 65 + 122);
+        assert(!native_label(game, "OK"));
+        click_native(game, gx + 85, gy + 12);
+        assert(native_label(game, "Resume"));
+        click_native(game, gx + 25, gy + 12);
+        assert(confirm_kind == BUDO_CONFIRM_OVERWRITE);
+        desktop_confirm_result(BUDO_RESPONSE_CANCEL);
+        bwa_callback_app = game;
+        game->definition.callbacks.draw_icon(0, 0);
+        if (argc == 3) {
+            char name[64];
+            snprintf(name, sizeof(name), "%s.ppm", games[g]);
+            screenshot(argv[2], name);
+        }
+        bwa_callback_app = game;
+        assert(game->definition.callbacks.key(0x100 | 59));
+        game->definition.callbacks.draw();
+        assert(game->definition.callbacks.key(27));
+        click_native(game, gx + 295, gy + 12); /* Close also activates on release. */
+        assert(!game->open);
+        bwa_callback_app = NULL;
+    }
+    BwaLoadedApp *flow = NULL;
+    for (int i = 0; i < bwa_instance_count; ++i)
+        if (!strcmp(bwa_instances[i].definition.app_id, "flow")) flow = &bwa_instances[i];
+    assert(flow && flow->managed_window);
+    int assoc = find_file_association(".FLOW");
+    assert(assoc >= 0 && !strcmp(file_associations[assoc].app_id, "flow"));
+    bwa_callback_app = flow;
+    active_window = flow->definition.runtime_id;
+    int fx, fy, fw, fh;
+    assert(bwa_window_get_client_rect(&fx, &fy, &fw, &fh));
+    click_native(flow, fx + 20, fy + 277); /* Templates through capture/release. */
+    int overlay_x = fx + (fw - 380) / 2, overlay_y = fy + (fh - 264) / 2;
+    click_native(flow, overlay_x + 30, overlay_y + 46);
+    if (argc == 3) screenshot(argv[2], "flow.ppm");
+    press_native(flow, fx + 110, fy + 10); /* Diagram menu. */
+    press_native(flow, fx + 110, fy + 62); /* Properties. */
+    draw_desktop(0);
+    assert(input_caret_active);
+    input_caret_epoch = bwa_get_time_ms();
+    if (argc == 3) screenshot(argv[2], "flow-properties.ppm");
+    bwa_callback_app = flow;
+    assert(flow->definition.callbacks.key(27));
+    draw_desktop(0);
+    assert(!input_caret_active);
+    bwa_callback_app = flow;
+    assert(flow->definition.callbacks.key(0x100 | 59));
+    if (argc == 3) screenshot(argv[2], "flow-help.ppm");
+    bwa_callback_app = flow;
+    assert(flow->definition.callbacks.key(27));
+    assert(!flow->definition.request_close()); /* Dirty project cannot silently close. */
+    desktop_confirm_result(BUDO_RESPONSE_CANCEL);
+    bwa_callback_app = NULL;
+    BwaLoadedApp *settings = NULL;
+    for (int i = 0; i < bwa_instance_count; ++i)
+        if (!strcmp(bwa_instances[i].definition.app_id, "settings")) settings = &bwa_instances[i];
+    assert(settings && settings->open);
+    bwa_callback_app = settings;
+    active_window = settings->definition.runtime_id;
+    int sx, sy, sw, sh;
+    assert(bwa_window_get_rect(&sx, &sy, &sw, &sh));
+    press_native(settings, sx + 140, sy + 55);
+    press_native(settings, sx + 30, sy + sh - 36);
+    draw_desktop(0);
+    assert(input_caret_active);
+    bwa_callback_app = settings;
+    assert(settings->definition.callbacks.key(27));
+    draw_desktop(0);
+    assert(!input_caret_active);
+    bwa_callback_app = NULL;
     BwaLoadedApp *chess = NULL;
     for (int i = 0; i < bwa_instance_count; ++i)
         if (!strcmp(bwa_instances[i].definition.app_id, "chess")) chess = &bwa_instances[i];
@@ -85,6 +224,21 @@ int main(int argc, char **argv) {
     for (int i = 0; i < bwa_instance_count; ++i)
         if (!strcmp(bwa_instances[i].definition.app_id, "paint")) paint = &bwa_instances[i];
     assert(paint && paint->managed_window);
+    active_window = paint->definition.runtime_id;
+    bwa_callback_app = paint;
+    int px, py, pw, ph;
+    assert(bwa_window_get_client_rect(&px, &py, &pw, &ph));
+    press_native(paint, px + 20, py + 174); /* Stroke-width text input. */
+    draw_desktop(0);
+    assert(input_caret_active);
+    bwa_callback_app = paint;
+    assert(paint->definition.callbacks.key(27));
+    press_native(paint, px + 140, py + 10); /* Image menu. */
+    press_native(paint, px + 140, py + 30); /* Image-size text fields. */
+    draw_desktop(0);
+    assert(input_caret_active);
+    bwa_callback_app = paint;
+    assert(paint->definition.callbacks.key(27));
     bwa_callback_app = paint;
     active_window = paint->definition.runtime_id;
     assert(paint->definition.callbacks.key(19));

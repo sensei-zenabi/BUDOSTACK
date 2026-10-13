@@ -180,6 +180,30 @@ static void test_polish(void)
     budo_button_draw(&old, 10, 10, 80, 20, "Old ABI", 0);
 }
 
+static void test_input_caret(void)
+{
+    active_window = APP_EDITOR;
+    ui_draw_owner = APP_EDITOR;
+    ui_draw_scope = 0;
+    confirm_kind = editor_file_dialog = 0;
+    input_caret_active = 0;
+    input_caret_epoch = bwa_get_time_ms();
+    fill_rect(10, 10, 5, 12, FILE_COLOR);
+    bwa_draw_input_caret(10, 10, 10, TEXT_COLOR);
+    assert(input_caret_active && !input_caret_phase && framebuffer[10 * SCREEN_WIDTH + 10] == TEXT_COLOR);
+    input_caret_epoch = bwa_get_time_ms() - 600;
+    assert(input_caret_current_phase() != input_caret_phase); /* Triggers repaint without any input. */
+    fill_rect(10, 10, 5, 12, FILE_COLOR);
+    bwa_draw_input_caret(10, 10, 10, TEXT_COLOR);
+    assert(input_caret_phase && framebuffer[10 * SCREEN_WIDTH + 10] == FILE_COLOR);
+    ui_draw_owner = APP_EXPLORER;
+    input_caret_active = 0;
+    bwa_draw_input_caret(10, 10, 10, TEXT_COLOR);
+    assert(!input_caret_active); /* Background fields must not blink. */
+    ui_draw_owner = APP_EDITOR;
+    input_caret_epoch = bwa_get_time_ms();
+}
+
 int main(int argc, char **argv)
 {
     assert(argc == 2);
@@ -198,6 +222,7 @@ int main(int argc, char **argv)
     assert(desktop_ui_style.colors[0][0] == original.colors[0][0]);
     assert(desktop_apply_ui_style(&original));
     test_polish();
+    test_input_caret();
     const char *directory = argv[1];
     char path[MAX_PATH];
     BudoScrollbar bar = {.x=10, .y=20, .length=200, .total=100, .page=10};

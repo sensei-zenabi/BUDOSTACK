@@ -229,7 +229,14 @@ void budostack_apply_terminal_layout(void) {
     int cols = 0;
     /* The SDL terminal owns its PTY size, including resolution/font changes. */
     if (getenv("BUDOSTACK_TERM_ACTIVE") != NULL && read_terminal_size(&rows, &cols)) {
-        set_layout_env(rows, cols);
+        /* Embedded apps must query the live PTY rather than inherit a size
+         * snapshot that overrides SIGWINCH updates in curses applications. */
+        if (getenv("BUDOSTACK_EMBEDDED_TERMINAL") != NULL) {
+#if !defined(_WIN32)
+            (void)unsetenv("COLUMNS");
+            (void)unsetenv("LINES");
+#endif
+        } else set_layout_env(rows, cols);
         return;
     }
     get_desired_layout(&rows, &cols);

@@ -100,13 +100,13 @@ static void test_terminal_caret(void)
     terminal_input[0] = terminal_cwd[0] = '\0';
     int x, y;
     assert(text_caret_rect(&x, &y));
-    size_t offset = (size_t)(y - 1) * SCREEN_WIDTH + (size_t)x;
+    size_t offset = (size_t)y * SCREEN_WIDTH + (size_t)x;
     for (int color = 0; color < 256; ++color) {
         terminal_foreground = color;
         terminal_background = (color + 1) % 256;
         uint32_t fg = 0xff000000u | budo_palette_rgb(color);
         uint32_t bg = 0xff000000u | budo_palette_rgb(terminal_background);
-        for (int row = 0; row < TEXT_CELL_HEIGHT; ++row) {
+        for (int row = 0; row < TERMINAL_CELL_HEIGHT; ++row) {
             size_t start = offset + (size_t)row * SCREEN_WIDTH;
             for (int col = 0; col < TEXT_CELL_WIDTH; ++col) {
                 rgb_mask[start + col] = 1;
@@ -114,7 +114,7 @@ static void test_terminal_caret(void)
             }
         }
         draw_text_caret_vga();
-        for (int row = 0; row < TEXT_CELL_HEIGHT; ++row) {
+        for (int row = 0; row < TERMINAL_CELL_HEIGHT; ++row) {
             size_t start = offset + (size_t)row * SCREEN_WIDTH;
             assert(pixels[start] == bg);
             for (int col = 1; col < TEXT_CELL_WIDTH; ++col) assert(pixels[start + col] == fg);

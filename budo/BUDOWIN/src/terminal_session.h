@@ -4,11 +4,15 @@
 /* A real PTY keeps BUDOSTACK's command parser, line editor and applications
  * intact. The child has its own graphics endpoint, hosted inside this window. */
 #define SESSION_COLS 104
-#define SESSION_ROWS 48
+#define SESSION_ROWS 70
+
+#include "terminal_unicode.h"
 
 typedef struct TerminalCell {
-    unsigned char ch;
+    uint32_t ch;
     uint32_t fg, bg;
+    uint32_t combining[2];
+    unsigned char continuation;
 } TerminalCell;
 
 typedef struct SessionState {
@@ -23,28 +27,28 @@ typedef struct SessionState {
     int session_bold, session_inverse;
     int session_cursor_visible, session_alternate_active;
     int session_state, session_params[16], session_param_count, session_private;
-    unsigned int session_utf8, session_utf8_left;
+    unsigned int session_utf8, session_utf8_left, session_utf8_min;
     int session_scroll_top, session_scroll_bottom;
     int session_wrap_pending;
     int session_gfx_buttons;
 } SessionState;
 static SessionState session_contexts[BUILTIN_INSTANCE_MAX] = {{
     .session_fd = -1,
-    .session_cols = 80,
-    .session_rows = 24,
+    .session_cols = TERMINAL_DEFAULT_COLS,
+    .session_rows = TERMINAL_DEFAULT_ROWS,
     .session_fg = 5,
     .session_bg = 1,
     .session_cursor_visible = 1,
-    .session_scroll_bottom = 23
+    .session_scroll_bottom = TERMINAL_DEFAULT_ROWS - 1
 }};
 static const SessionState session_defaults = {
     .session_fd = -1,
-    .session_cols = 80,
-    .session_rows = 24,
+    .session_cols = TERMINAL_DEFAULT_COLS,
+    .session_rows = TERMINAL_DEFAULT_ROWS,
     .session_fg = 5,
     .session_bg = 1,
     .session_cursor_visible = 1,
-    .session_scroll_bottom = 23
+    .session_scroll_bottom = TERMINAL_DEFAULT_ROWS - 1
 };
 
 #define session_context (session_contexts[terminal_instance_slot])
@@ -71,6 +75,7 @@ static const SessionState session_defaults = {
 #define session_private (session_context.session_private)
 #define session_utf8 (session_context.session_utf8)
 #define session_utf8_left (session_context.session_utf8_left)
+#define session_utf8_min (session_context.session_utf8_min)
 #define session_scroll_top (session_context.session_scroll_top)
 #define session_scroll_bottom (session_context.session_scroll_bottom)
 #define session_wrap_pending (session_context.session_wrap_pending)
@@ -80,7 +85,7 @@ static void desktop_file_menu_draw(int app);
 
 static TerminalCell session_blank(void)
 {
-    return (TerminalCell){' ', session_fg, session_bg};
+    return (TerminalCell){.ch = ' ', .fg = session_fg, .bg = session_bg};
 }
 
 static void session_clear(void)
@@ -103,9 +108,15 @@ static void session_write(const char *data, size_t size)
 static void session_scroll_up(void)
 {
     if (!session_alternate_active && session_scroll_top == 0) {
-        char line[SESSION_COLS + 1];
-        int length = session_cols;
-        for (int x = 0; x < length; ++x) line[x] = (char)session_cells[0][x].ch;
+        char line[SESSION_COLS * 12 + 1];
+        size_t length = 0;
+        for (int x = 0; x < session_cols; ++x) {
+            TerminalCell cell = session_cells[0][x];
+            if (cell.continuation) continue;
+            length += terminal_utf8_encode(line + length, cell.ch);
+            for (int i = 0; i < 2 && cell.combining[i]; ++i)
+                length += terminal_utf8_encode(line + length, cell.combining[i]);
+        }
         while (length > 0 && line[length - 1] == ' ') --length;
         line[length] = 0;
         terminal_add_line(line);
@@ -282,36 +293,59 @@ static void session_csi(int command)
     if (session_y >= session_rows) session_y = session_rows - 1;
 }
 
-static unsigned char session_glyph(unsigned int ch)
-{
-    for (int i = 128; i < 256; ++i)
-        if (bw_text_unicode((unsigned char)i) == ch) return (unsigned char)i;
-    switch (ch) {
-        case 0x2500: return '-'; case 0x2502: return '|';
-        case 0x250c: case 0x2510: case 0x2514: case 0x2518: return '+';
-        default: return '?';
-    }
-}
-
 static int session_caret(int *x, int *y)
 {
     if (session_fd < 0) return -1;
     if (terminal_scroll || !session_cursor_visible || budo_gfx_host_active(session_gfx)) return 0;
     *x = terminal_window.x + 7 + session_x * 6;
-    *y = terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 6 + session_y * 9;
+    *y = terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 6 + session_y * TERMINAL_CELL_HEIGHT;
     return 1;
 }
 
 static void session_character(unsigned int ch)
 {
+    int width = terminal_unicode_width(ch);
+    if (!width) {
+        int previous = session_wrap_pending ? session_x : session_x - 1;
+        if (previous >= 0) {
+            if (session_cells[session_y][previous].continuation && previous > 0) --previous;
+            TerminalCell *cell = &session_cells[session_y][previous];
+            for (int i = 0; i < 2; ++i) {
+                if (!cell->combining[i]) {
+                    cell->combining[i] = ch;
+                    break;
+                }
+            }
+        }
+        return;
+    }
     if (session_wrap_pending) { session_x = 0; session_linefeed(); }
-    unsigned char glyph = ch < 128 ? (unsigned char)ch : session_glyph(ch);
-    if (!glyph) glyph = '?';
+    if (width > session_cols) {
+        ch = 0xfffd;
+        width = 1;
+    }
+    if (session_x + width > session_cols) {
+        session_x = 0;
+        session_linefeed();
+    }
+    /* Overwriting either half of a wide character clears its other half. */
+    if (session_cells[session_y][session_x].continuation && session_x > 0)
+        session_cells[session_y][session_x - 1] = session_blank();
+    for (int x = session_x; x < session_x + width; ++x)
+        if (x + 1 < session_cols && session_cells[session_y][x + 1].continuation)
+            session_cells[session_y][x + 1] = session_blank();
     uint32_t fg_color = session_bold && session_fg == 5 ? 4 : session_fg;
-    session_cells[session_y][session_x] = (TerminalCell){glyph,
-        (session_inverse ? session_bg : fg_color),
-        (session_inverse ? fg_color : session_bg)};
-    if (++session_x >= session_cols) { session_x = session_cols - 1; session_wrap_pending = 1; }
+    TerminalCell cell = {.ch = ch,
+        .fg = session_inverse ? session_bg : fg_color,
+        .bg = session_inverse ? fg_color : session_bg};
+    session_cells[session_y][session_x] = cell;
+    if (width == 2) {
+        cell.ch = 0;
+        cell.continuation = 1;
+        session_cells[session_y][session_x + 1] = cell;
+    }
+    session_x += width;
+    if (session_x >= session_cols) { session_x = session_cols - 1; session_wrap_pending = 1; }
 }
 
 static void session_byte(unsigned char c)
@@ -362,36 +396,60 @@ static void session_byte(unsigned char c)
         else if (c == 27) session_state = 1;
         return;
     }
-    if (c == 27) { session_state = 1; session_utf8_left = 0; }
+    if (session_utf8_left) {
+        if ((c & 0xc0) == 0x80) {
+            session_utf8 = (session_utf8 << 6) | (c & 63);
+            if (--session_utf8_left == 0) {
+                unsigned int ch = session_utf8;
+                if (ch < session_utf8_min || ch > 0x10ffff || (ch >= 0xd800 && ch <= 0xdfff)) ch = 0xfffd;
+                session_character(ch);
+            }
+            return;
+        }
+        session_utf8_left = 0;
+        session_character(0xfffd);
+    }
+    if (c == 27) session_state = 1;
     else if (c == '\r') { session_x = 0; session_wrap_pending = 0; }
     else if (c == '\n') session_linefeed();
     else if (c == '\b') { if (session_x > 0) --session_x; session_wrap_pending = 0; }
     else if (c == '\t') { int stop = (session_x / 8 + 1) * 8; while (session_x < stop && !session_wrap_pending) session_character(' '); }
     else if (c >= 32 && c != 127) {
-        if (session_utf8_left && (c & 0xc0) == 0x80) {
-            session_utf8 = (session_utf8 << 6) | (c & 63);
-            if (--session_utf8_left == 0) session_character(session_utf8);
-        } else if (c >= 0xc2 && c <= 0xf4) {
+        if (c >= 0xc2 && c <= 0xf4) {
             session_utf8_left = c < 0xe0 ? 1 : c < 0xf0 ? 2 : 3;
+            session_utf8_min = session_utf8_left == 1 ? 0x80 : session_utf8_left == 2 ? 0x800 : 0x10000;
             session_utf8 = c & (session_utf8_left == 1 ? 31 : session_utf8_left == 2 ? 15 : 7);
-        } else { session_utf8_left = 0; session_character(c); }
+        } else session_character(c < 128 ? c : 0xfffd);
     }
 }
 
 static void session_resize(void)
 {
-    int cols = (terminal_window.w - 30) / 6;
-    int rows = (terminal_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 12) / 9;
+    int cols = (terminal_window.w - 30) / TERMINAL_CELL_WIDTH;
+    int rows = (terminal_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 12) / TERMINAL_CELL_HEIGHT;
     if (cols < 1) cols = 1;
     if (rows < 1) rows = 1;
     if (cols > SESSION_COLS) cols = SESSION_COLS;
     if (rows > SESSION_ROWS) rows = SESSION_ROWS;
     if (cols == session_cols && rows == session_rows) return;
     terminal_clear_selection();
+    for (int y = 0; y < SESSION_ROWS; ++y)
+        for (int x = 0; x < SESSION_COLS; ++x)
+            if (x >= cols || y >= rows || x >= session_cols || y >= session_rows) {
+                session_cells[y][x] = session_blank();
+                session_alternate[y][x] = session_blank();
+            }
+    if (cols > 0)
+        for (int y = 0; y < rows; ++y)
+            if (session_cells[y][cols - 1].ch && terminal_unicode_width(session_cells[y][cols - 1].ch) == 2)
+                session_cells[y][cols - 1] = session_blank();
     session_cols = cols; session_rows = rows;
+    session_wrap_pending = 0;
     session_scroll_top = 0; session_scroll_bottom = rows - 1;
     if (session_x >= cols) session_x = cols - 1;
     if (session_y >= rows) session_y = rows - 1;
+    if (session_saved_x >= cols) session_saved_x = cols - 1;
+    if (session_saved_y >= rows) session_saved_y = rows - 1;
     struct winsize size = {.ws_row=(unsigned short)rows, .ws_col=(unsigned short)cols};
     if (session_fd >= 0 && ioctl(session_fd, TIOCSWINSZ, &size) != 0) perror("Terminal size");
 }
@@ -441,6 +499,15 @@ static int session_start_program(const char *program, const char *directory)
     }
     if (budo_gfx_host_open(&session_gfx) != 0) { perror("Terminal graphics endpoint"); close(master); return 0; }
     budo_gfx_host_clipboard(session_gfx, bw_clipboard_set, bw_clipboard_get, NULL);
+    session_cols = session_rows = 0;
+    session_resize();
+    struct winsize size = {.ws_row = (unsigned short)session_rows, .ws_col = (unsigned short)session_cols};
+    if (ioctl(master, TIOCSWINSZ, &size) != 0) {
+        perror("Terminal initial size");
+        close(master);
+        session_stop();
+        return 0;
+    }
     session_pid = fork();
     if (session_pid < 0) { perror("Terminal fork"); close(master); session_stop(); return 0; }
     if (session_pid == 0) {
@@ -449,6 +516,7 @@ static int session_start_program(const char *program, const char *directory)
         if (fd < 0 || ioctl(fd,TIOCSCTTY,0) < 0 || dup2(fd,0) < 0 || dup2(fd,1) < 0 || dup2(fd,2) < 0) _exit(126);
         if (fd > 2) close(fd);
         close(master);
+        if (unsetenv("COLUMNS") != 0 || unsetenv("LINES") != 0) _exit(126);
         if (chdir(directory ? directory : base) != 0 || setenv("PATH",command_path,1) != 0 || setenv("TERM","xterm-256color",1) != 0 ||
             setenv("BUDOSTACK_BASE",base,1) != 0 || setenv("BUDOSTACK_TERM_ACTIVE","TRUE",1) != 0 || setenv("BUDOSTACK_EMBEDDED_TERMINAL","1",1) != 0 ||
             setenv("BUDOSTACK_GFX_SOCKET",budo_gfx_host_path(session_gfx),1) != 0) _exit(126);
@@ -461,8 +529,6 @@ static int session_start_program(const char *program, const char *directory)
     session_cursor_visible = 1;
     terminal_line_count = terminal_scroll = 0;
     session_clear();
-    session_cols = session_rows = 0;
-    session_resize();
     return 1;
 }
 
@@ -541,7 +607,7 @@ static void session_gfx_rect(int *x, int *y, int *w, int *h)
     *x = terminal_window.x + 7;
     *y = terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 6;
     *w = terminal_window.w - 30;
-    *h = session_rows * 9;
+    *h = session_rows * TERMINAL_CELL_HEIGHT;
     int source_w, source_h, dirty_frame;
     (void)budo_gfx_host_pixels(session_gfx,&source_w,&source_h,&dirty_frame);
     if (source_w <= 0 || source_h <= 0) return;
@@ -639,31 +705,39 @@ static void session_draw(void)
                 if (index >= 0) {
                     for (int col = 0; col < session_cols; ++col) {
                         int selected = terminal_cell_selected(index, col);
-                        if (selected) fill_rect(x + col * 6, y + row * 9, 6, 9, TITLE_COLOR);
-                        char text[2] = {(char)terminal_selection_char(index, col), 0};
-                        terminal_rgb_text(x + col * 6, y + row * 9, text,
-                            budo_palette_rgb(selected ? 4 : terminal_foreground), 1);
+                        int cx = x + col * TERMINAL_CELL_WIDTH, cy = y + row * TERMINAL_CELL_HEIGHT;
+                        if (selected) fill_rect(cx, cy, TERMINAL_CELL_WIDTH, TERMINAL_CELL_HEIGHT, TITLE_COLOR);
+                        TerminalCell cell = terminal_selection_cell(index, col);
+                        int width = terminal_unicode_width(cell.ch);
+                        if (col + width > session_cols) width = 1;
+                        if (!cell.continuation) {
+                            unsigned int rgb = budo_palette_rgb(selected ? 4 : terminal_foreground);
+                            terminal_unicode_draw(cx, cy, cell.ch, rgb, width);
+                            for (int i = 0; i < 2 && cell.combining[i]; ++i)
+                                terminal_unicode_draw(cx, cy, cell.combining[i], rgb, width);
+                        }
                     }
                 }
                 continue;
             }
             for (int col = 0; col < session_cols; ++col) {
                 TerminalCell cell = session_cells[logical][col];
-                int cx = x + col * 6, cy = y + row * 9;
+                int cx = x + col * TERMINAL_CELL_WIDTH, cy = y + row * TERMINAL_CELL_HEIGHT;
                 if (cell.fg == 5) cell.fg = SESSION_RGB | budo_palette_rgb(terminal_foreground);
                 if (cell.bg == 1) cell.bg = SESSION_RGB | budo_palette_rgb(terminal_background);
                 if (terminal_cell_selected(terminal_line_count + logical, col)) {
                     cell.bg = TITLE_COLOR;
                     cell.fg = TITLE_TEXT_COLOR;
                 }
-                if (cell.bg & SESSION_RGB) fill_rect_rgb(cx, cy, 6, 9, cell.bg & 0xffffffu);
-                else fill_rect(cx, cy, 6, 9, (unsigned char)cell.bg);
-                if (cell.fg & SESSION_RGB) {
-                    const unsigned char *glyph = glyph_for((char)cell.ch);
-                    for (int gy = 0; gy < 7; ++gy)
-                        for (int gx = 0; gx < 5; ++gx)
-                            if (glyph[gy] & (0x10 >> gx)) put_rgb_pixel(cx + gx, cy + gy, cell.fg & 0xffffffu);
-                } else draw_char(cx, cy, (char)cell.ch, (unsigned char)cell.fg);
+                int width = cell.continuation ? 1 : terminal_unicode_width(cell.ch);
+                if (width < 1 || col + width > session_cols) width = 1;
+                if (cell.continuation) continue;
+                if (cell.bg & SESSION_RGB) fill_rect_rgb(cx, cy, width * TERMINAL_CELL_WIDTH, TERMINAL_CELL_HEIGHT, cell.bg & 0xffffffu);
+                else fill_rect(cx, cy, width * TERMINAL_CELL_WIDTH, TERMINAL_CELL_HEIGHT, (unsigned char)cell.bg);
+                unsigned int rgb = cell.fg & SESSION_RGB ? cell.fg & 0xffffffu : budo_palette_rgb(cell.fg);
+                terminal_unicode_draw(cx, cy, cell.ch, rgb, width);
+                for (int i = 0; i < 2 && cell.combining[i]; ++i)
+                    terminal_unicode_draw(cx, cy, cell.combining[i], rgb, width);
             }
         }
         session_art_draw();

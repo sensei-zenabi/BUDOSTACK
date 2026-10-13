@@ -399,8 +399,8 @@ static TerminalState terminal_initial = {
     .v_terminal_title = "Terminal - BUDOSTACK",
     .v_terminal_file_menu = 0,
     .v_terminal_window = {
-    110, 90, 500, 300,
-    110, 90, 500, 300,
+    65, 40, TERMINAL_DEFAULT_W, TERMINAL_DEFAULT_H,
+    65, 40, TERMINAL_DEFAULT_W, TERMINAL_DEFAULT_H,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 },
     .v_terminal_line_count = 0,
@@ -425,8 +425,8 @@ static const TerminalState terminal_defaults = {
     .v_terminal_title = "Terminal - BUDOSTACK",
     .v_terminal_file_menu = 0,
     .v_terminal_window = {
-    110, 90, 500, 300,
-    110, 90, 500, 300,
+    65, 40, TERMINAL_DEFAULT_W, TERMINAL_DEFAULT_H,
+    65, 40, TERMINAL_DEFAULT_W, TERMINAL_DEFAULT_H,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 },
     .v_terminal_line_count = 0,

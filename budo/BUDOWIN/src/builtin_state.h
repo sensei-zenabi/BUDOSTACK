@@ -35,6 +35,7 @@ typedef struct ExplorerState {
     int v_explorer_rename_item;
     char v_explorer_rename_input[MAX_NAME];
     int v_explorer_rename_len;
+    int v_explorer_rename_cursor;
     int v_explorer_drag_shortcut, v_explorer_shortcut_dragging;
     int v_explorer_drag_press_x, v_explorer_drag_press_y, v_explorer_drag_x, v_explorer_drag_y;
     int v_explorer_up_selected;
@@ -121,6 +122,7 @@ static ExplorerState *explorer_instances[BUILTIN_INSTANCE_MAX] = {&explorer_init
 #define explorer_rename_item (explorer_state->v_explorer_rename_item)
 #define explorer_rename_input (explorer_state->v_explorer_rename_input)
 #define explorer_rename_len (explorer_state->v_explorer_rename_len)
+#define explorer_rename_cursor (explorer_state->v_explorer_rename_cursor)
 #define explorer_drag_shortcut (explorer_state->v_explorer_drag_shortcut)
 #define explorer_shortcut_dragging (explorer_state->v_explorer_shortcut_dragging)
 #define explorer_drag_press_x (explorer_state->v_explorer_drag_press_x)

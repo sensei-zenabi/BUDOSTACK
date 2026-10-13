@@ -206,6 +206,12 @@ typedef struct AppWindow {
     int resize_x, resize_y;
 } AppWindow;
 
+static unsigned long window_pointer_press;
+static unsigned long window_title_press;
+static AppWindow *window_title_click;
+static clock_t window_title_click_time;
+static int window_title_click_x, window_title_click_y;
+
 #define WINDOW_FRAME_NONE      0
 #define WINDOW_FRAME_CLIENT    1
 #define WINDOW_FRAME_MINIMIZE  2
@@ -1228,6 +1234,26 @@ static void window_toggle_maximize_state(AppWindow *window)
     window->resizing = 0;
 }
 
+static int window_title_mouse_down(AppWindow *window, int x, int y)
+{
+    clock_t now = bw_clock();
+    if (window_title_click == window &&
+        window_pointer_press - window_title_press == 1 &&
+        now - window_title_click_time <= CLOCKS_PER_SEC / 2 &&
+        abs(x - window_title_click_x) <= 3 &&
+        abs(y - window_title_click_y) <= 3) {
+        window_title_click = NULL;
+        return WINDOW_FRAME_MAXIMIZE;
+    }
+    window_title_click = window;
+    window_title_press = window_pointer_press;
+    window_title_click_time = now;
+    window_title_click_x = x;
+    window_title_click_y = y;
+    window_begin_drag(window, x, y);
+    return WINDOW_FRAME_DRAG;
+}
+
 static int window_frame_mouse_down(AppWindow *window, int x, int y)
 {
     int min_x;
@@ -1254,8 +1280,7 @@ static int window_frame_mouse_down(AppWindow *window, int x, int y)
     if (window_begin_resize(window, x, y)) return WINDOW_FRAME_RESIZE;
     if (point_in_rect(x, y, window->x + 2, window->y + 2,
                       window->w - 52, WINDOW_TITLE_H - 2)) {
-        window_begin_drag(window, x, y);
-        return WINDOW_FRAME_DRAG;
+        return window_title_mouse_down(window, x, y);
     }
 
     return WINDOW_FRAME_CLIENT;
@@ -1268,6 +1293,9 @@ static int window_update_pointer(AppWindow *window,
     int changed = 0;
 
     if (window->dragging) {
+        if (window_title_click == window &&
+            (abs(mouse_x - window_title_click_x) > 3 ||
+             abs(mouse_y - window_title_click_y) > 3)) window_title_click = NULL;
         if (window->maximized) {
             if (mouse_x == window->resize_mouse_x && mouse_y == window->resize_mouse_y) return 0;
             int grab = window->drag_dx * window->restore_w / window->w;
@@ -2109,13 +2137,15 @@ static int text_caret_rect(int *x, int *y)
             explorer_window.x + (explorer_window.w - dialog_w) / 2;
         int dialog_y =
             explorer_window.y + (explorer_window.h - 66) / 2;
-        int caret_x = dialog_x + 12 + explorer_rename_len * 6;
+        int columns = (dialog_w - 24) / 6;
+        int offset = explorer_rename_cursor >= columns ? explorer_rename_cursor - columns + 1 : 0;
+        int caret_x = dialog_x + 12 + (explorer_rename_cursor - offset) * 6;
         int max_x = dialog_x + dialog_w - 12;
 
         if (caret_x >= max_x) return 0;
 
         *x = caret_x;
-        *y = dialog_y + 35;
+        *y = dialog_y + 34;
         return 1;
     }
 
@@ -3049,9 +3079,9 @@ static void draw_file_explorer_window(int page)
         draw_bevel(dialog_x + 8, dialog_y + 32,
                    dialog_w - 16, 15, 0);
         int rename_cols = (dialog_w - 24) / 6;
-        int rename_offset = explorer_rename_len >= rename_cols ? explorer_rename_len - rename_cols + 1 : 0;
+        int rename_offset = explorer_rename_cursor >= rename_cols ? explorer_rename_cursor - rename_cols + 1 : 0;
         draw_text(dialog_x + 12, dialog_y + 35, explorer_rename_input + rename_offset, TEXT_COLOR, rename_cols);
-        bwa_draw_input_caret(dialog_x + 12 + (explorer_rename_len - rename_offset) * 6, dialog_y + 34, 9, TEXT_COLOR);
+        bwa_draw_input_caret(dialog_x + 12 + (explorer_rename_cursor - rename_offset) * 6, dialog_y + 34, 9, TEXT_COLOR);
         draw_text(dialog_x + 8, dialog_y + 52,
                   "Enter=OK  Esc=Cancel",
                   TEXT_COLOR, 24);
@@ -9746,6 +9776,7 @@ static int explorer_begin_rename(void)
     bw_text_decode(explorer_rename_input, explorer_rename_input);
     explorer_rename_item = selected;
     explorer_rename_len = (int)strlen(explorer_rename_input);
+    explorer_rename_cursor = explorer_rename_len;
     explorer_rename_active = 1;
     text_caret_visible = 1;
     text_caret_last_toggle = bw_clock();
@@ -9759,6 +9790,38 @@ static void explorer_cancel_rename(void)
     explorer_rename_item = -1;
     explorer_rename_input[0] = '\0';
     explorer_rename_len = 0;
+    explorer_rename_cursor = 0;
+}
+
+static void explorer_rename_key(int key, int scan, int *page)
+{
+    if (key == 0) {
+        if (scan == 75 && explorer_rename_cursor > 0) --explorer_rename_cursor;
+        else if (scan == 77 && explorer_rename_cursor < explorer_rename_len) ++explorer_rename_cursor;
+        else if (scan == 71) explorer_rename_cursor = 0;
+        else if (scan == 79) explorer_rename_cursor = explorer_rename_len;
+        else if (scan == 83 && explorer_rename_cursor < explorer_rename_len) {
+            memmove(explorer_rename_input + explorer_rename_cursor,
+                    explorer_rename_input + explorer_rename_cursor + 1,
+                    (size_t)(explorer_rename_len - explorer_rename_cursor));
+            --explorer_rename_len;
+        }
+    } else if (key == 27) explorer_cancel_rename();
+    else if (key == 13) {
+        if (explorer_commit_rename()) clamp_page(page);
+    } else if (key == 8 && explorer_rename_cursor > 0) {
+        memmove(explorer_rename_input + explorer_rename_cursor - 1,
+                explorer_rename_input + explorer_rename_cursor,
+                (size_t)(explorer_rename_len - explorer_rename_cursor + 1));
+        --explorer_rename_cursor;
+        --explorer_rename_len;
+    } else if (key >= 32 && key <= 255 && key != 127 && explorer_rename_len < MAX_NAME - 1) {
+        memmove(explorer_rename_input + explorer_rename_cursor + 1,
+                explorer_rename_input + explorer_rename_cursor,
+                (size_t)(explorer_rename_len - explorer_rename_cursor + 1));
+        explorer_rename_input[explorer_rename_cursor++] = (char)key;
+        ++explorer_rename_len;
+    }
 }
 
 static int explorer_rename_name_valid(const char *name)
@@ -10092,6 +10155,7 @@ static int desktop_file_menu_click(int x, int y, int *page)
             explorer_rename_active = 1;
             explorer_rename_input[0] = '\0';
             explorer_rename_len = 0;
+            explorer_rename_cursor = 0;
         } else if (item == 3) {
             explorer_creating_folder = 0;
             (void)explorer_begin_rename();
@@ -11244,6 +11308,7 @@ static int desktop_selection_pointer(int x, int y, int buttons, int *page)
                 explorer_creating_folder = explorer_rename_active = 1;
                 explorer_rename_input[0] = 0;
                 explorer_rename_len = 0;
+                explorer_rename_cursor = 0;
             } else desktop_begin_picker(1);
         } else if (menu == 1) {
             if (choice == 1 && explorer_selected_item >= 0)
@@ -11536,6 +11601,7 @@ int main(int argc, char **argv)
         }
         int down = (buttons & 1) && !(previous_buttons & 1);
         int up = !(buttons & 1) && (previous_buttons & 1);
+        if (down) ++window_pointer_press;
         int text_pointer = terminal_text_pointer(mouse_x, mouse_y, buttons, previous_buttons);
         int graphics_pointer = text_pointer ? 1 : session_pointer(mouse_x, mouse_y, buttons, previous_buttons);
         if (text_pointer) screen_dirty = 1;
@@ -11859,7 +11925,9 @@ int main(int argc, char **argv)
                     screen_dirty = 1;
                 } else if (point_in_rect(mouse_x, mouse_y, editor_window.x + 2,
                                          editor_window.y + 2, editor_window.w - 52, WINDOW_TITLE_H - 2)) {
-                    window_begin_drag(&editor_window, mouse_x, mouse_y);
+                    if (window_title_mouse_down(&editor_window, mouse_x, mouse_y) == WINDOW_FRAME_MAXIMIZE)
+                        toggle_maximize_editor();
+                    screen_dirty = 1;
                 }
                 handled = 1;
             } else if (!handled && active_window == APP_EXPLORER &&
@@ -11899,7 +11967,11 @@ int main(int argc, char **argv)
                     screen_dirty = 1;
                 } else if (point_in_rect(mouse_x, mouse_y, explorer_window.x + 2,
                                          explorer_window.y + 2, explorer_window.w - 52, WINDOW_TITLE_H - 2)) {
-                    window_begin_drag(&explorer_window, mouse_x, mouse_y);
+                    if (window_title_mouse_down(&explorer_window, mouse_x, mouse_y) == WINDOW_FRAME_MAXIMIZE) {
+                        toggle_maximize_explorer();
+                        clamp_page(&page);
+                    }
+                    screen_dirty = 1;
                 } else if (explorer_folder_pointer(mouse_x, mouse_y, &page)) {
                     screen_dirty = 1;
                     last_target = -99;
@@ -11934,7 +12006,7 @@ int main(int argc, char **argv)
                             }
                         } else if (recycle_bin) {
                             if (bwa_open_reader_file(directory_items[target].path)) screen_dirty = 1;
-                        } else if (executable_file(directory_items[target].name)) {
+                        } else if (executable_path(directory_items[target].path)) {
                             if (request_launch(&directory_items[target], page)) screen_dirty = 1;
                         } else if (open_associated_file(directory_items[target].path)) {
                             screen_dirty = 1;
@@ -12548,27 +12620,9 @@ int main(int argc, char **argv)
                        explorer_window.open &&
                        !explorer_window.minimized) {
                 if (explorer_rename_active) {
-                    if (key == 27) {
-                        explorer_cancel_rename();
-                        screen_dirty = 1;
-                    } else if (key == 13) {
-                        if (explorer_commit_rename()) {
-                            clamp_page(&page);
-                        }
-                        screen_dirty = 1;
-                    } else if (key == 8) {
-                        if (explorer_rename_len > 0) {
-                            explorer_rename_input[--explorer_rename_len] =
-                                '\0';
-                            screen_dirty = 1;
-                        }
-                    } else if (key >= 32 && key != 127 &&
-                               explorer_rename_len < MAX_NAME - 1) {
-                        explorer_rename_input[explorer_rename_len++] =
-                            (char)key;
-                        explorer_rename_input[explorer_rename_len] = '\0';
-                        screen_dirty = 1;
-                    }
+                    int scan = key == 0 ? getch() : 0;
+                    explorer_rename_key(key, scan, &page);
+                    screen_dirty = 1;
                 } else if (key != 0 && explorer_folder_key(key, 0, &page)) {
                     screen_dirty = 1;
                     last_target = -99;

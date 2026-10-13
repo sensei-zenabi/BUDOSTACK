@@ -448,6 +448,15 @@ static void autosave(void)
     }
     autosave_at = host_api->get_time_ms() + 5000;
 }
+static int flow_tick(int visible)
+{
+    (void)visible;
+    if (!project) return 0;
+    char previous[sizeof(status)];
+    memcpy(previous, status, sizeof(previous));
+    autosave();
+    return strcmp(previous, status) != 0;
+}
 static int flow_load(const char *path)
 {
     FlowProject *loaded = calloc(1, sizeof(*loaded));
@@ -865,7 +874,7 @@ static void draw(void)
     if (!project) return;
     FlowLayout l;
     if (!layout(&l)) return;
-    autosave();
+    if (host_api->abi_minor < 16) autosave();
     host_api->fill_rect(l.x, l.y, l.w, l.h, color(BUDO_SYS_COLOR_FACE));
     const char *menus[] = {"File", "Edit", "Diagram", "View", "Help"};
     const int offsets[] = {4, 48, 92, 160, 204}, widths[] = {40, 40, 64, 40, 40};
@@ -1385,5 +1394,9 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
     app->request_close = request_close;
     app->file_selected = file_selected;
     app->confirm_result = confirm_result;
+    if (host->abi_minor >= 16) {
+        app->flags |= BWA_FLAG_IDLE_TICK;
+        app->tick = flow_tick;
+    }
     return 1;
 }

@@ -17,7 +17,14 @@ static void game_draw(const Layout *l);
 static int game_key(int key);
 static void game_click(const Layout *l, int x, int y);
 static void game_icon(int x, int y);
+/* Simulation intervals and next_tick are in microseconds; host clock is milliseconds. */
 static unsigned int game_interval(void);
+#ifdef GAME_EXTRA_UI
+static void game_toolbar_draw(const Layout *l);
+static int game_toolbar_click(const Layout *l, int x, int y);
+static void game_status_draw(const Layout *l, const char *line);
+static void game_cancel_new(void);
+#endif
 
 static unsigned char color(int role) { return host_api->get_system_color(role); }
 static inline unsigned int random_number(void)
@@ -72,7 +79,7 @@ static void new_game(void)
     finished = help_page = confirming = 0;
     paused = START_PAUSED;
     game_reset();
-    next_tick = host_api->get_time_ms() + game_interval();
+    next_tick = host_api->get_time_ms() * 1000ULL + game_interval();
     effect(0);
 }
 static void request_new(void)
@@ -93,14 +100,17 @@ static void confirm_result(int kind, int response)
     confirming = 0;
     if (response == BUDO_RESPONSE_SAVE) new_game();
     else {
+#ifdef GAME_EXTRA_UI
+        game_cancel_new();
+#endif
         paused = previous_pause;
-        next_tick = host_api->get_time_ms() + game_interval();
+        next_tick = host_api->get_time_ms() * 1000ULL + game_interval();
     }
 }
 static void toggle_pause(void)
 {
     paused = !paused;
-    next_tick = host_api->get_time_ms() + game_interval();
+    next_tick = host_api->get_time_ms() * 1000ULL + game_interval();
     if (paused) stop_sound();
 }
 static void toggle_sound(void)
@@ -111,27 +121,50 @@ static void toggle_sound(void)
     if (sound_enabled) effect(1);
     else stop_sound();
 }
+/* Deadlines, rather than redraws or key repeats, control simulation speed. */
+static int tick(int visible)
+{
+    unsigned long long now = host_api->get_time_ms() * 1000ULL;
+    if (!visible || paused || help_page || confirming || finished) {
+        next_tick = now + game_interval();
+        return 0;
+    }
+    int steps = 0;
+    while (now >= next_tick && !finished && steps < 8) {
+        unsigned long long deadline = next_tick;
+        game_tick();
+        if (next_tick == deadline) next_tick = deadline + game_interval();
+        ++steps;
+    }
+    /* Limit catch-up after a stalled desktop; never process an unbounded burst. */
+    if (steps == 8 && now >= next_tick) next_tick = now + game_interval();
+    return steps != 0;
+}
 static void draw(void)
 {
     Layout l;
     if (!layout(&l)) return;
-    unsigned long long now = host_api->get_time_ms();
-    if (paused || help_page || confirming || finished) next_tick = now + game_interval();
-    else if (now >= next_tick) {
-        game_tick();
-        next_tick = now + game_interval();
-    }
+    /* Older hosts have no idle callback. Preserve their draw-driven fallback. */
+    if (host_api->abi_minor < 16) (void)tick(1);
     const char *labels[] = {"New", paused ? "Resume" : "Pause", sound_enabled ? "Sound on" : "Sound off", "Help", "Close"};
     for (int i = 0; i < 5; ++i)
         budo_button_draw(host_api, l.x + 6 + i * 68, l.y + 5, 64, 22, labels[i],
                          i == 2 && !sound_available() ? BUDO_BUTTON_DISABLED : 0);
+#ifdef GAME_EXTRA_UI
+    game_toolbar_draw(&l);
+#else
     text(l.x + 8, l.y + 36, GAME_HINT, (l.w - 16) / 6);
+#endif
     game_draw(&l);
     host_api->fill_rect(l.x, l.y + l.h - l.status_h, l.w, l.status_h, color(BUDO_SYS_COLOR_STATUS_BG));
     char line[160];
     snprintf(line, sizeof(line), "%s%s", paused && !finished ? "Paused - " : "", status);
+#ifdef GAME_EXTRA_UI
+    game_status_draw(&l, line);
+#else
     host_api->draw_text(l.x + 4, l.y + l.h - l.status_h + 3, line,
                         color(BUDO_SYS_COLOR_STATUS_TEXT), (l.w - 8) / 6);
+#endif
     if (help_page) {
         int x = l.x + (l.w - 340) / 2, y = l.y + 65;
         host_api->draw_sunken_panel(x, y, 340, 144, color(BUDO_SYS_COLOR_FACE));
@@ -146,7 +179,7 @@ static int key(int k)
     if (confirming) return 1;
     if (help_page) {
         if (k == 27 || k == 13 || k == ' ' || k == (0x100 | 59)) help_page = 0;
-        next_tick = host_api->get_time_ms() + game_interval();
+        next_tick = host_api->get_time_ms() * 1000ULL + game_interval();
         return 1;
     }
     if (k == 'q' || k == 'Q') return host_api->window_close();
@@ -176,6 +209,9 @@ static int mouse_down(int x, int y, int buttons)
         else (void)host_api->window_close();
         return 1;
     }
+#ifdef GAME_EXTRA_UI
+    if (game_toolbar_click(&l, x, y)) return 1;
+#endif
     if (!paused && !finished && host_api->point_in_rect(x, y, l.bx, l.by, GRID_W * l.cell, GRID_H * l.cell))
         game_click(&l, x, y);
     return 1;
@@ -208,6 +244,10 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
     app->callbacks.key = key;
     app->callbacks.close = stop_sound;
     app->confirm_result = confirm_result;
+    if (host->abi_minor >= 16) {
+        app->flags |= BWA_FLAG_IDLE_TICK;
+        app->tick = tick;
+    }
     return 1;
 }
 /* Scale a 16x16 palette sprite to the desktop's 32x32 icon area. */

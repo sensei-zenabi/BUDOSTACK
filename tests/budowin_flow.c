@@ -310,6 +310,7 @@ static void recovery_checks(void)
     flow_add_node(diagram(), FLOW_BLOCK, 100, 100, "Recovered");
     changed();
     clock_ms += 3000;
+    (void)flow_tick(0); /* Autosave must run without input, even minimized. */
     draw();
     FlowProject *copy = calloc(1, sizeof(*copy));
     assert(copy);
@@ -318,6 +319,7 @@ static void recovery_checks(void)
     assert(!dirty && access(old, F_OK) != 0); /* Undo to save point must remove stale recovery. */
     key(25);
     clock_ms += 3000;
+    (void)flow_tick(0); /* Autosave must run without input, even minimized. */
     draw();
     assert(dirty && flow_read_project(copy, old));
 

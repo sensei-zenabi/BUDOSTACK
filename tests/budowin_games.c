@@ -192,10 +192,90 @@ static void rules_checks(void)
     key('p'); assert(paused); key(0x100 | 59); assert(help_page);
     clock_ms += 100000; draw(); key(27); assert(!help_page && paused);
 }
+static void timing_checks(void)
+{
+    BwaAppDefinition app;
+    assert(bwa_entry(&test_host, &app));
+    assert((app.flags & BWA_FLAG_IDLE_TICK) && app.tick);
+    new_game();
+    key(' ');
+#if defined(TEST_SNAKE)
+    fruit = (Point){0, 0};
+    int head_x = snake[0].x;
+    clock_ms += 99;
+    assert(!app.tick(1));
+    for (int i = 0; i < 200; ++i) { key(0x100 | 77); draw(); }
+    assert(snake[0].x == head_x); /* Redraws/auto-repeat cannot advance time. */
+    ++clock_ms;
+    assert(app.tick(1) && snake[0].x == head_x + 1);
+    for (int i = 0; i < 200; ++i) { key(0x100 | 77); assert(!app.tick(1)); }
+    clock_ms += 300;
+    assert(app.tick(1) && snake[0].x == head_x + 4); /* Elapsed time catches up. */
+    clock_ms += 10000;
+    assert(!app.tick(0));
+    assert(!app.tick(1) && snake[0].x == head_x + 4); /* Minimize cannot burst on restore. */
+    for (int level = 0; level < 3; ++level) {
+        difficulty = level;
+        new_game();
+        paused = 0;
+        unsigned int previous = interval;
+        for (int apples = 0; apples < 97; ++apples) {
+            length = 3 + apples;
+            for (int i = 0; i < length; ++i) snake[i] = (Point){i % 20, i / 20};
+            snake[0] = (Point){10, 10};
+            direction = pending_direction = 3;
+            fruit = (Point){11, 10};
+            game_tick();
+            assert(interval < previous && snake_score() == (apples + 1) * (level + 1));
+            previous = interval;
+        }
+        assert(finished);
+    }
+    difficulty = 0;
+    new_game();
+    Layout l;
+    assert(layout(&l));
+    assert(game_toolbar_click(&l, l.x + 145, l.y + 35));
+    assert(difficulty == 2 && paused && !snake_score());
+    key(' ');
+    fruit = (Point){0, 0};
+    game_tick();
+    set_difficulty(1);
+    assert(confirming && difficulty == 2 && pending_difficulty == 1);
+    confirm_result(BUDO_CONFIRM_OVERWRITE, BUDO_RESPONSE_CANCEL);
+    assert(difficulty == 2 && pending_difficulty == -1);
+    set_difficulty(1);
+    confirm_result(BUDO_CONFIRM_OVERWRITE, BUDO_RESPONSE_SAVE);
+    assert(difficulty == 1 && paused && !snake_score() && interval == 100000);
+#elif defined(TEST_INVADERS)
+    int original = offset_y;
+    clock_ms += 100;
+    assert(app.tick(1));
+    assert(offset_x != 3 || offset_y != original);
+    int frame_before = (int)frame;
+    for (int i = 0; i < 100; ++i) { draw(); assert(!app.tick(1)); }
+    assert((int)frame == frame_before);
+#else
+    mode = 3;
+    new_game();
+    paused = 0;
+    clock_ms += 250;
+    assert(app.tick(1) && move_count == 1);
+    for (int i = 0; i < 100 && move_count < 2; ++i) {
+        clock_ms += 16;
+        (void)app.tick(1);
+    }
+    assert(move_count >= 2); /* Computer demo advances without any input. */
+#endif
+    test_host.abi_minor = 15;
+    assert(bwa_entry(&test_host, &app) && !(app.flags & BWA_FLAG_IDLE_TICK) && !app.tick);
+    test_host.abi_minor = BWA_ABI_MINOR;
+}
 int main(void)
 {
     common_checks();
     rules_checks();
+    timing_checks();
     printf("PASS: %s rules, controls, timing, resized UI, icons, sound and legacy hosts\n", GAME_NAME);
     return 0;
 }

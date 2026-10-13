@@ -1,6 +1,9 @@
 # Flow native application architecture
 
-`appsrc/flow.c` provides the BWA 1.14 editor and host integration.
+`appsrc/flow.c` provides the native editor and host integration (minimum BWA 1.14).
+On 1.16 hosts, recovery autosaves run from the idle callback without input or
+repainting, including while the editor window is minimized. Earlier hosts use
+the existing draw-driven fallback.
 `flow_model.h` defines bounded graph/project records and orthogonal routing.
 `flow_io.h` implements transactional parsing and atomic project saves.
 `flow_render.h` draws the canvas and exports SVG/8-bit PCX.

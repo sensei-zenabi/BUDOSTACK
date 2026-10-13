@@ -14,7 +14,7 @@
 static int player_x, invaders[4][12], offset_x, offset_y, direction, score;
 static unsigned int frame;
 static struct { int active, x, y; } bullet;
-static unsigned int game_interval(void) { return 100; }
+static unsigned int game_interval(void) { return 100000; }
 static void game_reset(void)
 {
     player_x = GRID_W / 2;

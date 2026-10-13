@@ -127,7 +127,7 @@ static int evaluate_board(char board[BOARD_SIZE][BOARD_SIZE], char ai_marker,
 }
 
 
-static unsigned int game_interval(void) { return ai_active ? 1 : 250; }
+static unsigned int game_interval(void) { return ai_active ? 1000 : 250000; }
 static int computer_turn(void)
 {
     return mode == 3 || (mode == 1 && current_player != human_marker);
@@ -167,7 +167,7 @@ static void place(int square)
         effect(1);
     }
     /* Leave time for the move's sound before the next computer turn. */
-    next_tick = host_api->get_time_ms() + 250;
+    next_tick = host_api->get_time_ms() * 1000ULL + 250000;
 }
 static int winning_square(char marker)
 {

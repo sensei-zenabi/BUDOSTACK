@@ -6494,7 +6494,7 @@ static BwaAppDefinition bwa_builtin_apps[] = {
         "File Explorer",
         BWA_FLAG_NONE,
         {NULL, bwa_draw_explorer, NULL, NULL, NULL, NULL, NULL, NULL, NULL},
-        NULL, NULL, NULL
+        NULL, NULL, NULL, NULL
     },
     {
         BWA_HOST_APP_EDITOR,
@@ -6502,7 +6502,7 @@ static BwaAppDefinition bwa_builtin_apps[] = {
         "Editor",
         BWA_FLAG_NONE,
         {NULL, bwa_draw_editor, NULL, NULL, NULL, NULL, bwa_open_editor_file, NULL, NULL},
-        NULL, NULL, NULL
+        NULL, NULL, NULL, NULL
     },
     {
         BWA_HOST_APP_TERMINAL,
@@ -6510,7 +6510,7 @@ static BwaAppDefinition bwa_builtin_apps[] = {
         "Terminal",
         BWA_FLAG_NONE,
         {NULL, bwa_draw_terminal, NULL, NULL, NULL, NULL, NULL, NULL, NULL},
-        NULL, NULL, NULL
+        NULL, NULL, NULL, NULL
     }
 };
 
@@ -7284,6 +7284,30 @@ static void draw_bwa_app_icon(int x, int y, BwaLoadedApp *app)
     draw_rect(x + 6, y + 5, ICON_W - 12, ICON_H - 11, FOLDER_DARK);
     draw_text(center_x - label_width / 2,
               y + DESKTOP_ICON_H + 3, label, DESKTOP_TEXT_COLOR, len);
+}
+
+/* Command buttons activate on release; callbacks receive a logical left press. */
+static int bwa_dispatch_left_press(BwaLoadedApp *app, int x, int y, int buttons)
+{
+    if (!app || !app->definition.callbacks.mouse_down) return 0;
+    bwa_callback_app = app;
+    int handled = app->definition.callbacks.mouse_down(x, y, buttons | 1);
+    bwa_callback_app = NULL;
+    return handled;
+}
+
+static int bwa_tick_external_apps(void)
+{
+    int changed = 0;
+    for (int i = 0; i < bwa_instance_count; ++i) {
+        BwaLoadedApp *app = &bwa_instances[i];
+        if (!app->open || !(app->definition.flags & BWA_FLAG_IDLE_TICK) || !app->definition.tick) continue;
+        int visible = (!app->managed_window || !app->window.minimized) && ui_scope() == 0;
+        bwa_callback_app = app;
+        changed |= app->definition.tick(visible) != 0;
+        bwa_callback_app = NULL;
+    }
+    return changed;
 }
 
 static void bwa_draw_external_app(BwaLoadedApp *app)
@@ -11954,18 +11978,12 @@ int main(int argc, char **argv)
                         } else if (frame_action ==
                                    WINDOW_FRAME_CLIENT &&
                                    app->definition.callbacks.mouse_down != NULL) {
-                            bwa_callback_app = app;
-                            (void)app->definition.callbacks.mouse_down(
-                                mouse_x, mouse_y, buttons);
-                            bwa_callback_app = NULL;
+                            (void)bwa_dispatch_left_press(app, mouse_x, mouse_y, buttons);
                         }
                         screen_dirty = 1;
                     } else if (!app->managed_window &&
                                app->definition.callbacks.mouse_down != NULL) {
-                        bwa_callback_app = app;
-                        handled = app->definition.callbacks.mouse_down(
-                            mouse_x, mouse_y, buttons);
-                        bwa_callback_app = NULL;
+                        handled = bwa_dispatch_left_press(app, mouse_x, mouse_y, buttons);
                         if (handled) screen_dirty = 1;
                     }
                 }
@@ -12630,6 +12648,7 @@ int main(int argc, char **argv)
             screen_dirty = 1;
         if (caret_dirty && (editor_search_dialog_active() ||
                             editor_file_dialog != EDITOR_FILE_DIALOG_NONE)) screen_dirty = 1;
+        if (bwa_tick_external_apps()) screen_dirty = 1;
         if (screen_dirty) {
             clamp_page(&page);
             draw_desktop(page);

@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 15
+#define BWA_ABI_MINOR 16
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -19,6 +19,8 @@
 /* Legacy flag retained for ABI compatibility; launchers create new instances. */
 #define BWA_FLAG_SINGLETON  1U
 #define BWA_FLAG_LAUNCHER   2U
+/* ABI 1.16: definition.tick is initialized and safe to call. */
+#define BWA_FLAG_IDLE_TICK  4U
 
 #define BWA_HOST_APP_EXPLORER 1
 #define BWA_HOST_APP_EDITOR   2
@@ -228,6 +230,10 @@ typedef struct BwaAppDefinition {
     int (*request_close)(void);
     int (*file_selected)(int mode, const char *path);
     void (*confirm_result)(int kind, int response);
+    /* ABI 1.16: called every desktop iteration, independently of painting.
+     * visible is zero for minimized windows or a blocking desktop dialog.
+     * Return nonzero to request repaint. Requires BWA_FLAG_IDLE_TICK. */
+    int (*tick)(int visible);
 } BwaAppDefinition;
 
 typedef int (*BwaEntryPoint)(const BwaHostApi *host,

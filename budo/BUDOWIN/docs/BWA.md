@@ -1,6 +1,6 @@
 # Native BWA modules
 
-BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.15 (`src/bwa.h`). Modules use
+BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.16 (`src/bwa.h`). Modules use
 `BwaHostApi` for drawing, managed windows, binary file access and allocation.
 The built-in Explorer, Editor, Terminal, Reader, Help and Recycle Bin launcher modules delegate to
 host-managed application implementations; Paint and Settings own their
@@ -271,3 +271,32 @@ up to eight packed words from `height` (low 16 bits Hz, high 16 bits ms).
 Reply type 9 returns an errno value in `format`, or zero on success.
 Clients reject unsupported hosts locally; unavailable audio does not close
 an otherwise valid graphics connection.
+
+## Idle callbacks and command-button delivery (ABI 1.16)
+
+`BwaAppDefinition.tick(int visible)` is appended to the application definition.
+Modules opt in by checking `host->abi_minor >= 16`, setting
+`BWA_FLAG_IDLE_TICK`, and supplying the callback. Older definition layouts and
+modules without that flag are never accessed beyond their existing fields.
+The host calls opted-in open applications once per desktop iteration, even
+when no input or repaint occurred. Return nonzero to request repaint; a zero
+return allows the host to remain idle. Keep work bounded and nonblocking.
+`visible` is false while the application's window is minimized or a shared
+file/confirmation dialog blocks the desktop. Recovery/autosave can still run
+with `visible == 0`; games suspend their deadlines until visibility returns.
+
+Use monotonic deadlines for simulation, not the number of draw calls. The
+bundled games accumulate microsecond deadlines from `get_time_ms()` and limit
+catch-up to eight steps per iteration. Drawing is side-effect-free for their
+simulation on 1.16 hosts. Earlier hosts retain the draw-driven fallback.
+
+Normal command buttons capture a mouse press and activate on release inside
+the same control. Native `mouse_down` callbacks receive logical left bit 1 for
+this activation, including when the physical button has already been released.
+`get_pointer_state` still reports the physical state. Immediate controls keep
+their existing press/drag semantics; cancel-on-release-outside is unchanged.
+
+Snake starts at 10.0 cells/s. Easy/Medium/Hard award 1/2/3 points per apple and
+increase speed by 0.1/0.2/0.3 cells/s per apple, respectively. Microsecond
+intervals preserve each increase without a coarse millisecond speed plateau.
+Changing difficulty restarts the game, with confirmation after play begins.

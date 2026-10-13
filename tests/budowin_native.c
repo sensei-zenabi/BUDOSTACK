@@ -32,6 +32,36 @@ static void screenshot(const char *directory, const char *name)
     assert(fclose(file) == 0);
 }
 
+static void click_native(BwaLoadedApp *app, int x, int y)
+{
+    active_window = app->definition.runtime_id;
+    ui_pointer_x = x;
+    ui_pointer_y = y;
+    draw_desktop(0);
+    assert(ui_hit(x, y, 1) >= 0);
+    assert(!ui_button_event(x, y, 1, 0));
+    assert(ui_button_event(x, y, 0, 1));
+    /* Use the production dispatch with the physical button already released. */
+    assert(bwa_dispatch_left_press(app, x, y, 0));
+}
+static int native_label(BwaLoadedApp *app, const char *label)
+{
+    draw_desktop(0);
+    for (int i = 0; i < ui_region_count; ++i) {
+        if (ui_regions[i].owner == app->definition.runtime_id && !strcmp(ui_regions[i].tip, label)) return 1;
+    }
+    return 0;
+}
+static int snake_head_x(void)
+{
+    for (int y = 0; y < SCREEN_HEIGHT; ++y) {
+        for (int x = 0; x < SCREEN_WIDTH; ++x) {
+            int p = y * SCREEN_WIDTH + x;
+            if (rgb_mask[p] && (rgb_framebuffer[p] & 0xffffffU) == 0xb0e878) return x;
+        }
+    }
+    return -1;
+}
 int main(int argc, char **argv) {
     assert(argc == 2 || argc == 3);
     assert(chdir(getenv("BUDOWIN_TEST_DIR")) == 0);
@@ -70,7 +100,32 @@ int main(int argc, char **argv) {
         assert(game && game->managed_window);
         bwa_callback_app = game;
         active_window = game->definition.runtime_id;
-        assert(game->definition.callbacks.key(' '));
+        int gx, gy, gw, gh;
+        assert(bwa_window_get_client_rect(&gx, &gy, &gw, &gh));
+        assert((game->definition.flags & BWA_FLAG_IDLE_TICK) && game->definition.tick);
+        click_native(game, gx + 85, gy + 12); /* Resume via actual capture/release. */
+        assert(native_label(game, "Pause"));
+        if (!strcmp(games[g], "snake")) {
+            int before = snake_head_x();
+            assert(before >= 0);
+            struct timespec delay = {0, 140000000};
+            assert(nanosleep(&delay, NULL) == 0);
+            assert(bwa_tick_external_apps()); /* No key/mouse/redraw triggers. */
+            draw_desktop(0);
+            assert(snake_head_x() > before);
+        }
+        click_native(game, gx + 155, gy + 12);
+        assert(native_label(game, "Sound off"));
+        click_native(game, gx + 225, gy + 12);
+        assert(native_label(game, "OK"));
+        click_native(game, gx + (gw - 340) / 2 + 150, gy + 65 + 122);
+        assert(!native_label(game, "OK"));
+        click_native(game, gx + 85, gy + 12);
+        assert(native_label(game, "Resume"));
+        click_native(game, gx + 25, gy + 12);
+        assert(confirm_kind == BUDO_CONFIRM_OVERWRITE);
+        desktop_confirm_result(BUDO_RESPONSE_CANCEL);
+        bwa_callback_app = game;
         game->definition.callbacks.draw_icon(0, 0);
         if (argc == 3) {
             char name[64];
@@ -81,7 +136,8 @@ int main(int argc, char **argv) {
         assert(game->definition.callbacks.key(0x100 | 59));
         game->definition.callbacks.draw();
         assert(game->definition.callbacks.key(27));
-        assert(bwa_window_close());
+        click_native(game, gx + 295, gy + 12); /* Close also activates on release. */
+        assert(!game->open);
         bwa_callback_app = NULL;
     }
     BwaLoadedApp *flow = NULL;
@@ -94,9 +150,9 @@ int main(int argc, char **argv) {
     active_window = flow->definition.runtime_id;
     int fx, fy, fw, fh;
     assert(bwa_window_get_client_rect(&fx, &fy, &fw, &fh));
-    assert(flow->definition.callbacks.mouse_down(fx + 20, fy + 277, 1)); /* Templates. */
+    click_native(flow, fx + 20, fy + 277); /* Templates through capture/release. */
     int overlay_x = fx + (fw - 380) / 2, overlay_y = fy + (fh - 264) / 2;
-    assert(flow->definition.callbacks.mouse_down(overlay_x + 30, overlay_y + 46, 1));
+    click_native(flow, overlay_x + 30, overlay_y + 46);
     if (argc == 3) screenshot(argv[2], "flow.ppm");
     bwa_callback_app = flow;
     assert(flow->definition.callbacks.key(0x100 | 59));

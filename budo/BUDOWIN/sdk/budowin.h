@@ -8,6 +8,14 @@
  */
 
 #include "../src/bwa.h"
+#include <stddef.h>
+#include <string.h>
+
+static inline void budo_app_definition_clear(const BwaHostApi *host, BwaAppDefinition *app)
+{
+    size_t size = host->abi_minor >= 16 ? sizeof(*app) : offsetof(BwaAppDefinition, tick);
+    memset(app, 0, size);
+}
 
 #define BUDOWIN_SDK_ABI_MAJOR BWA_ABI_MAJOR
 #define BUDOWIN_SDK_ABI_MINOR BWA_ABI_MINOR

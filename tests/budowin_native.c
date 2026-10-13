@@ -44,6 +44,18 @@ static void click_native(BwaLoadedApp *app, int x, int y)
     /* Use the production dispatch with the physical button already released. */
     assert(bwa_dispatch_left_press(app, x, y, 0));
 }
+static void press_native(BwaLoadedApp *app, int x, int y)
+{
+    active_window = app->definition.runtime_id;
+    draw_desktop(0);
+    if (ui_button_event(x, y, 1, 0)) assert(bwa_dispatch_left_press(app, x, y, 1));
+    if (ui_button_event(x, y, 0, 1)) assert(bwa_dispatch_left_press(app, x, y, 0));
+    if (app->open && app->definition.callbacks.mouse_up) {
+        bwa_callback_app = app;
+        app->definition.callbacks.mouse_up(x, y, 0);
+        bwa_callback_app = NULL;
+    }
+}
 static int native_label(BwaLoadedApp *app, const char *label)
 {
     draw_desktop(0);
@@ -108,7 +120,7 @@ int main(int argc, char **argv) {
         if (!strcmp(games[g], "snake")) {
             int before = snake_head_x();
             assert(before >= 0);
-            struct timespec delay = {0, 140000000};
+            struct timespec delay = {0, 240000000};
             assert(nanosleep(&delay, NULL) == 0);
             assert(bwa_tick_external_apps()); /* No key/mouse/redraw triggers. */
             draw_desktop(0);
@@ -154,6 +166,16 @@ int main(int argc, char **argv) {
     int overlay_x = fx + (fw - 380) / 2, overlay_y = fy + (fh - 264) / 2;
     click_native(flow, overlay_x + 30, overlay_y + 46);
     if (argc == 3) screenshot(argv[2], "flow.ppm");
+    press_native(flow, fx + 110, fy + 10); /* Diagram menu. */
+    press_native(flow, fx + 110, fy + 62); /* Properties. */
+    draw_desktop(0);
+    assert(input_caret_active);
+    input_caret_epoch = bwa_get_time_ms();
+    if (argc == 3) screenshot(argv[2], "flow-properties.ppm");
+    bwa_callback_app = flow;
+    assert(flow->definition.callbacks.key(27));
+    draw_desktop(0);
+    assert(!input_caret_active);
     bwa_callback_app = flow;
     assert(flow->definition.callbacks.key(0x100 | 59));
     if (argc == 3) screenshot(argv[2], "flow-help.ppm");
@@ -161,6 +183,23 @@ int main(int argc, char **argv) {
     assert(flow->definition.callbacks.key(27));
     assert(!flow->definition.request_close()); /* Dirty project cannot silently close. */
     desktop_confirm_result(BUDO_RESPONSE_CANCEL);
+    bwa_callback_app = NULL;
+    BwaLoadedApp *settings = NULL;
+    for (int i = 0; i < bwa_instance_count; ++i)
+        if (!strcmp(bwa_instances[i].definition.app_id, "settings")) settings = &bwa_instances[i];
+    assert(settings && settings->open);
+    bwa_callback_app = settings;
+    active_window = settings->definition.runtime_id;
+    int sx, sy, sw, sh;
+    assert(bwa_window_get_rect(&sx, &sy, &sw, &sh));
+    press_native(settings, sx + 140, sy + 55);
+    press_native(settings, sx + 30, sy + sh - 36);
+    draw_desktop(0);
+    assert(input_caret_active);
+    bwa_callback_app = settings;
+    assert(settings->definition.callbacks.key(27));
+    draw_desktop(0);
+    assert(!input_caret_active);
     bwa_callback_app = NULL;
     BwaLoadedApp *chess = NULL;
     for (int i = 0; i < bwa_instance_count; ++i)
@@ -185,6 +224,21 @@ int main(int argc, char **argv) {
     for (int i = 0; i < bwa_instance_count; ++i)
         if (!strcmp(bwa_instances[i].definition.app_id, "paint")) paint = &bwa_instances[i];
     assert(paint && paint->managed_window);
+    active_window = paint->definition.runtime_id;
+    bwa_callback_app = paint;
+    int px, py, pw, ph;
+    assert(bwa_window_get_client_rect(&px, &py, &pw, &ph));
+    press_native(paint, px + 20, py + 174); /* Stroke-width text input. */
+    draw_desktop(0);
+    assert(input_caret_active);
+    bwa_callback_app = paint;
+    assert(paint->definition.callbacks.key(27));
+    press_native(paint, px + 140, py + 10); /* Image menu. */
+    press_native(paint, px + 140, py + 30); /* Image-size text fields. */
+    draw_desktop(0);
+    assert(input_caret_active);
+    bwa_callback_app = paint;
+    assert(paint->definition.callbacks.key(27));
     bwa_callback_app = paint;
     active_window = paint->definition.runtime_id;
     assert(paint->definition.callbacks.key(19));

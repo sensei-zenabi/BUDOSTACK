@@ -121,6 +121,9 @@ static void toggle_sound(void)
     if (sound_enabled) effect(1);
     else stop_sound();
 }
+#ifndef GAME_MAX_STEPS
+#define GAME_MAX_STEPS 8
+#endif
 /* Deadlines, rather than redraws or key repeats, control simulation speed. */
 static int tick(int visible)
 {
@@ -130,14 +133,14 @@ static int tick(int visible)
         return 0;
     }
     int steps = 0;
-    while (now >= next_tick && !finished && steps < 8) {
+    while (now >= next_tick && !finished && steps < GAME_MAX_STEPS) {
         unsigned long long deadline = next_tick;
         game_tick();
         if (next_tick == deadline) next_tick = deadline + game_interval();
         ++steps;
     }
     /* Limit catch-up after a stalled desktop; never process an unbounded burst. */
-    if (steps == 8 && now >= next_tick) next_tick = now + game_interval();
+    if (steps == GAME_MAX_STEPS && now >= next_tick) next_tick = now + game_interval();
     return steps != 0;
 }
 static void draw(void)
@@ -234,7 +237,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
         !host->draw_standard_button || !host->draw_button_state || !host->draw_sunken_panel ||
         !host->point_in_rect || !host->confirm_dialog || !host->get_time_ms) return 0;
     host_api = host;
-    memset(app, 0, sizeof(*app));
+    budo_app_definition_clear(host, app);
     app->app_id = GAME_ID;
     app->name = GAME_NAME;
     app->callbacks.open = open;

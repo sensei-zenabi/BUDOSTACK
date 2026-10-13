@@ -17,6 +17,14 @@ typedef struct BudoScrollbar {
     unsigned long long repeat_at;
 } BudoScrollbar;
 
+static inline void budo_text_caret(const BwaHostApi *host, int x, int y, int height, unsigned char color)
+{
+    if (host->abi_minor >= 17 && host->draw_input_caret)
+        host->draw_input_caret(x, y, height, color);
+    else if (host->abi_minor >= 12 && host->get_time_ms && (host->get_time_ms() / 500) % 2 == 0)
+        host->fill_rect(x, y, 1, height, color);
+}
+
 static inline int budo_scroll_limit(const BudoScrollbar *bar)
 {
     return bar->total > bar->page ? bar->total - bar->page : 0;

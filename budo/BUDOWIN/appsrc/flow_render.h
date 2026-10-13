@@ -88,7 +88,7 @@ static int flow_round_inset(int radius, int row, int height)
 }
 static void flow_node_render(FlowRender *r, const FlowNode *n)
 {
-    int fill = n->shape == FLOW_NOTE ? 4 : 2;
+    int fill = n->shape == FLOW_NOTE ? 4 : n->shape == FLOW_BLOCK ? 6 : n->shape == FLOW_PARTICIPANT ? 0 : 2;
     if (n->shape == FLOW_DECISION) {
         for (int row = 0; row <= n->h; ++row) {
             int half = n->w * flow_min(row, n->h - row) / n->h;
@@ -99,18 +99,24 @@ static void flow_node_render(FlowRender *r, const FlowNode *n)
         flow_line(r, n->x + n->w / 2, n->y + n->h, n->x, n->y + n->h / 2, 1, 0);
         flow_line(r, n->x, n->y + n->h / 2, n->x + n->w / 2, n->y, 1, 0);
     } else {
-        int round = n->shape == FLOW_STATE ? 10 : n->shape == FLOW_TERMINATOR ? n->h / 2 : 0;
+        int round = n->shape == FLOW_STATE ? 10 : n->shape == FLOW_TERMINATOR ? n->h / 2 : n->shape == FLOW_PARTICIPANT ? 6 : 0;
         for (int row = 0; row < n->h; ++row) {
             int inset = round ? flow_round_inset(round, row, n->h) : 0;
             flow_fill(r, n->x + inset, n->y + row, n->w - 2 * inset, 1, 1);
             if (row > 1 && row < n->h - 2) flow_fill(r, n->x + inset + 2, n->y + row, n->w - 2 * inset - 4, 1, fill);
+        }
+        if (n->shape == FLOW_BLOCK) {
+            flow_line(r, n->x + 8, n->y, n->x + 8, n->y + n->h - 1, 1, 0);
+            flow_line(r, n->x + n->w - 10, n->y, n->x + n->w - 10, n->y + n->h - 1, 1, 0);
+        } else if (n->shape == FLOW_PARTICIPANT) {
+            flow_fill(r, n->x + 6, n->y + 3, n->w - 12, 4, 3);
         }
         if (n->shape == FLOW_NOTE) {
             flow_line(r, n->x + n->w - 12, n->y, n->x + n->w - 12, n->y + 12, 1, 0);
             flow_line(r, n->x + n->w - 12, n->y + 12, n->x + n->w, n->y + 12, 1, 0);
         }
     }
-    int inset = n->shape == FLOW_DECISION ? n->w / 4 : 8;
+    int inset = n->shape == FLOW_DECISION ? n->w / 4 : n->shape == FLOW_BLOCK ? 16 : 8;
     int text_height = 20;
     flow_text(r, n->x + inset, n->y + (n->shape == FLOW_NOTE ? 8 : (n->h - 10) / 2),
               n->w - inset * 2, text_height, n->label, 1);
@@ -148,7 +154,7 @@ static void flow_diagram_render(FlowRender *r, const FlowDiagram *d, const FlowR
     for (int i = 0; i < d->node_count; ++i) {
         const FlowNode *n = &d->nodes[i];
         if (n->shape == FLOW_PARTICIPANT)
-            flow_line(r, n->x + n->w / 2, n->y + n->h, n->x + n->w / 2, FLOW_H - 30, 7, 1);
+            flow_line(r, n->x + n->w / 2, n->y + n->h, n->x + n->w / 2, FLOW_H - 30, 1, 1);
     }
     for (int i = 0; i < d->edge_count; ++i) {
         const FlowRoute *route = &routes[i];
@@ -159,7 +165,7 @@ static void flow_diagram_render(FlowRender *r, const FlowDiagram *d, const FlowR
         FlowPoint label = flow_edge_label(route);
         int font_scale = !r->pixels && r->zoom < 100 ? 100 : r->zoom;
         int width = flow_min(240, (int)strlen(d->edges[i].label) * 6 * font_scale / r->zoom + 1);
-        if (width) {
+        if (d->edges[i].label[0]) {
             flow_fill(r, label.x - width / 2 - 2, label.y - 12, width + 4, 10, 0);
             flow_text(r, label.x - width / 2, label.y - 11, width, 10, d->edges[i].label, 1);
         }
@@ -222,7 +228,7 @@ static int flow_export_svg(const FlowDiagram *d, const FlowRoute *routes, const 
     for (int i = 0; i < d->node_count; ++i) {
         const FlowNode *n = &d->nodes[i];
         if (n->shape == FLOW_PARTICIPANT)
-            fprintf(file, "<path d=\"M%d %d V%d\" stroke=\"#d0dde6\" stroke-dasharray=\"5 5\"/>\n", n->x + n->w / 2, n->y + n->h, FLOW_H - 30);
+            fprintf(file, "<path d=\"M%d %d V%d\" stroke=\"#304858\" stroke-dasharray=\"5 5\"/>\n", n->x + n->w / 2, n->y + n->h, FLOW_H - 30);
     }
     for (int i = 0; i < d->edge_count; ++i) {
         const FlowRoute *route = &routes[i];
@@ -238,7 +244,7 @@ static int flow_export_svg(const FlowDiagram *d, const FlowRoute *routes, const 
     }
     for (int i = 0; i < d->node_count; ++i) {
         const FlowNode *n = &d->nodes[i];
-        const char *fill = n->shape == FLOW_NOTE ? "#ffedb0" : "#e0edf4";
+        const char *fill = n->shape == FLOW_NOTE ? "#ffedb0" : n->shape == FLOW_BLOCK ? "#f5f8fa" : n->shape == FLOW_PARTICIPANT ? "white" : "#e0edf4";
         fputs("<g><desc>", file);
         flow_xml(file, n->description);
         fputs("</desc>", file);
@@ -247,8 +253,13 @@ static int flow_export_svg(const FlowDiagram *d, const FlowRoute *routes, const 
                     n->x + n->w / 2, n->y, n->x + n->w, n->y + n->h / 2, n->x + n->w / 2, n->y + n->h, n->x, n->y + n->h / 2, fill);
         else
             fprintf(file, "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" rx=\"%d\" fill=\"%s\" stroke=\"#304858\" stroke-width=\"2\"/>\n",
-                    n->x, n->y, n->w, n->h, n->shape == FLOW_STATE ? 10 : n->shape == FLOW_TERMINATOR ? n->h / 2 : 0, fill);
-        int inset = n->shape == FLOW_DECISION ? n->w / 4 : 8;
+                    n->x, n->y, n->w, n->h, n->shape == FLOW_STATE ? 10 : n->shape == FLOW_TERMINATOR ? n->h / 2 : n->shape == FLOW_PARTICIPANT ? 6 : 0, fill);
+        if (n->shape == FLOW_BLOCK)
+            fprintf(file, "<path d=\"M%d %d V%d M%d %d V%d\" stroke=\"#304858\" stroke-width=\"2\"/>\n",
+                    n->x + 8, n->y, n->y + n->h, n->x + n->w - 10, n->y, n->y + n->h);
+        else if (n->shape == FLOW_PARTICIPANT)
+            fprintf(file, "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"4\" fill=\"#2068a0\"/>\n", n->x + 6, n->y + 3, n->w - 12);
+        int inset = n->shape == FLOW_DECISION ? n->w / 4 : n->shape == FLOW_BLOCK ? 16 : 8;
         flow_svg_text(file, n->x + inset, n->y + (n->shape == FLOW_NOTE ? 15 : (n->h - 10) / 2 + 7),
                       (n->w - inset * 2) / 6, 2, n->label);
         if (n->shape == FLOW_NOTE && n->h >= 60)

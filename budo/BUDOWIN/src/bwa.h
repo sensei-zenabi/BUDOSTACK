@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 16
+#define BWA_ABI_MINOR 17
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -203,6 +203,8 @@ typedef struct BwaHostApi {
     /* Queues asynchronous PC-speaker-style audio through the terminal host.
      * Replaces the current effect; count=0 stops. Zero means unavailable/error. */
     int (*play_tones)(const BwaTone *tones, unsigned int count);
+    /* ABI 1.17: focused input registration and host-driven 500 ms caret blink. */
+    void (*draw_input_caret)(int x, int y, int height, unsigned char color);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

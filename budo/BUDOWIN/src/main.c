@@ -879,6 +879,8 @@ static int ui_tip_x = -1, ui_tip_y = -1, ui_tip_visible;
 static clock_t ui_tip_since;
 static int ui_tip_scope, ui_tip_owner;
 static int ui_busy;
+static int input_caret_active, input_caret_phase;
+static unsigned long long input_caret_epoch;
 static int desktop_point_owner(int x, int y);
 static int window_resize_cursor_at(int x, int y);
 static void bwa_draw_standard_button(int x, int y, int w, int h,
@@ -919,6 +921,20 @@ static void ui_register(int x, int y, int w, int h, int cursor,
 static unsigned long long bwa_get_time_ms(void)
 {
     return (unsigned long long)(bw_clock() / (CLOCKS_PER_SEC / 1000));
+}
+
+static int input_caret_current_phase(void)
+{
+    unsigned long long now = bwa_get_time_ms();
+    return now < input_caret_epoch ? 0 : (int)((now - input_caret_epoch) / 500 % 2);
+}
+static void bwa_draw_input_caret(int x, int y, int height, unsigned char ink)
+{
+    if (height <= 0 || height > 32 || ui_draw_scope != ui_scope() ||
+        (!ui_draw_scope && ui_draw_owner != active_window)) return;
+    input_caret_active = 1;
+    input_caret_phase = input_caret_current_phase();
+    if (!input_caret_phase) fill_rect(x, y, 1, height, ink);
 }
 
 static void bwa_pointer_region(int x, int y, int w, int h, int cursor,
@@ -2081,7 +2097,7 @@ static void ui_busy_end(int previous)
 
 static int text_caret_rect(int *x, int *y)
 {
-    if (confirm_kind || editor_file_dialog != EDITOR_FILE_DIALOG_NONE ||
+    if (input_caret_active || confirm_kind || editor_file_dialog != EDITOR_FILE_DIALOG_NONE ||
         explorer_file_menu || explorer_view_menu || terminal_file_menu) return 0;
     if (active_window == APP_EXPLORER &&
         explorer_window.open &&
@@ -3032,9 +3048,10 @@ static void draw_file_explorer_window(int page)
                   dialog_w - 16, 15, WINDOW_FACE_COLOR);
         draw_bevel(dialog_x + 8, dialog_y + 32,
                    dialog_w - 16, 15, 0);
-        draw_text(dialog_x + 12, dialog_y + 35,
-                  explorer_rename_input, TEXT_COLOR,
-                  (dialog_w - 24) / 6);
+        int rename_cols = (dialog_w - 24) / 6;
+        int rename_offset = explorer_rename_len >= rename_cols ? explorer_rename_len - rename_cols + 1 : 0;
+        draw_text(dialog_x + 12, dialog_y + 35, explorer_rename_input + rename_offset, TEXT_COLOR, rename_cols);
+        bwa_draw_input_caret(dialog_x + 12 + (explorer_rename_len - rename_offset) * 6, dialog_y + 34, 9, TEXT_COLOR);
         draw_text(dialog_x + 8, dialog_y + 52,
                   "Enter=OK  Esc=Cancel",
                   TEXT_COLOR, 24);
@@ -4976,9 +4993,10 @@ static void editor_draw_search_dialog(void)
         draw_text(x + 74, y + 29 + i * 24, value + offset,
                   editor_search_field == i && editor_search_selected ?
                   TITLE_TEXT_COLOR : TEXT_COLOR, cols);
-        if (editor_search_field == i && !editor_search_selected && text_caret_visible)
-            fill_rect(x + 74 + (editor_search_caret - offset) * 6,
-                      y + 28 + i * 24, 2, TEXT_CELL_HEIGHT, TEXT_COLOR);
+        if (editor_search_field == i)
+            bwa_draw_input_caret(x + 74 + (editor_search_caret - offset) * 6,
+                                 y + 28 + i * 24, TEXT_CELL_HEIGHT,
+                                 editor_search_selected ? TITLE_TEXT_COLOR : TEXT_COLOR);
     }
     bwa_draw_standard_button(x + 8, y + 73, 60, 16, "Case", editor_search_case);
     bwa_draw_standard_button(x + 76, y + 73, 60, 16, "Word", editor_search_word);
@@ -5464,9 +5482,10 @@ static void draw_editor_window(void)
                   label, TITLE_TEXT_COLOR, 20);
         draw_rect(dialog_x + 6, dialog_y + 24,
                   dialog_w - 12, 16, FOLDER_DARK);
-        draw_text(dialog_x + 10, dialog_y + 29,
-                  editor_dialog_input, TEXT_COLOR,
-                  (dialog_w - 20) / 6);
+        int input_cols = (dialog_w - 20) / 6;
+        int input_offset = editor_dialog_len >= input_cols ? editor_dialog_len - input_cols + 1 : 0;
+        draw_text(dialog_x + 10, dialog_y + 29, editor_dialog_input + input_offset, TEXT_COLOR, input_cols);
+        bwa_draw_input_caret(dialog_x + 10 + (editor_dialog_len - input_offset) * 6, dialog_y + 28, 9, TEXT_COLOR);
         draw_text(dialog_x + 6, dialog_y + 48,
                   "Enter=OK  Esc=Cancel",
                   FOLDER_COLOR, 20);
@@ -6913,7 +6932,8 @@ static const BwaHostApi bwa_host_api = {
     bwa_open_reader_file,
     bwa_set_system_color,
     bwa_reset_system_colors,
-    bw_play_tones
+    bw_play_tones,
+    bwa_draw_input_caret
 };
 
 static BwaLoadedApp *bwa_find_external_app(int runtime_id)
@@ -7504,6 +7524,7 @@ static void draw_desktop(int page)
     int editor_y;
 
     ui_region_count = 0;
+    input_caret_active = 0;
     ui_draw_scope = 0;
     ui_draw_owner = APP_NONE;
     if (desktop_background_loaded) {
@@ -8913,9 +8934,10 @@ static void editor_draw_file_dialog(void)
             fill_rect(dialog_x + 75, dialog_y + dialog_h - 51, dialog_w - 88, 12, TITLE_COLOR);
         draw_text(dialog_x + 77, dialog_y + dialog_h - 48, editor_file_name + offset,
                   picker_focus && picker_name_selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR, cols);
-        if (picker_focus && !picker_name_selected && text_caret_visible)
-            fill_rect(dialog_x + 77 + (picker_name_cursor - offset) * 6,
-                      dialog_y + dialog_h - 49, 2, TEXT_CELL_HEIGHT, TEXT_COLOR);
+        if (picker_focus)
+            bwa_draw_input_caret(dialog_x + 77 + (picker_name_cursor - offset) * 6,
+                                 dialog_y + dialog_h - 49, TEXT_CELL_HEIGHT,
+                                 picker_name_selected ? ui_color_indices[BUDO_SYS_COLOR_SELECTION_TEXT] : TEXT_COLOR);
     }
     {
         const char *types[4] = {"All files", "Text (.txt/.md)", "RTF (.rtf)", "PCX (.pcx)"};
@@ -11531,6 +11553,7 @@ int main(int argc, char **argv)
         int command_down = graphics_pointer || edge_capture ? 0 : ui_button_event(mouse_x, mouse_y, down, up);
         if (down || up || mouse_x != previous_mouse_x || mouse_y != previous_mouse_y)
             screen_dirty = 1;
+        if (down) input_caret_epoch = bwa_get_time_ms();
         if (mouse_x != ui_tip_x || mouse_y != ui_tip_y || buttons ||
             ui_tip_scope != ui_scope() || ui_tip_owner != active_window) {
             ui_tip_scope = ui_scope();
@@ -12334,6 +12357,7 @@ int main(int argc, char **argv)
 
         if (kbhit()) {
             int key = getch();
+            input_caret_epoch = bwa_get_time_ms();
 
             if (text_input_active()) {
                 text_caret_visible = 1;
@@ -12649,6 +12673,7 @@ int main(int argc, char **argv)
         if (caret_dirty && (editor_search_dialog_active() ||
                             editor_file_dialog != EDITOR_FILE_DIALOG_NONE)) screen_dirty = 1;
         if (bwa_tick_external_apps()) screen_dirty = 1;
+        if (input_caret_active && input_caret_current_phase() != input_caret_phase) screen_dirty = 1;
         if (screen_dirty) {
             clamp_page(&page);
             draw_desktop(page);

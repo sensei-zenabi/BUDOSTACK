@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <sys/wait.h>
 
+static int caret_calls, caret_x, caret_y;
 static int client_w = 596, client_h = 412, closes, confirms, dialogs;
 static unsigned int modifiers;
 static unsigned long long clock_ms = 1000;
@@ -91,6 +92,14 @@ static void pointer(int x, int y, int w, int h, int kind, const char *s) {
     (void)s;
     bounds(x, y, w, h);
 }
+static void input_caret(int x, int y, int height, unsigned char ink)
+{
+    (void)ink;
+    bounds(x, y, 1, height);
+    ++caret_calls;
+    caret_x = x;
+    caret_y = y;
+}
 static BwaHostApi test_host = {
     .abi_major = BWA_ABI_MAJOR, .abi_minor = BWA_ABI_MINOR,
     .fill_rect = fill, .draw_rect = fill, .fill_rect_rgb = rgb, .draw_text = text,
@@ -98,7 +107,7 @@ static BwaHostApi test_host = {
     .draw_standard_button = button, .draw_button_state = button_state, .draw_sunken_panel = fill,
     .window_create = create, .window_set_min_size = minimum, .window_get_client_rect = client,
     .window_close = close_window, .window_set_title = title, .get_time_ms = now, .confirm_dialog = confirm,
-    .file_dialog = file_dialog, .get_keyboard_modifiers = mods, .pointer_region = pointer
+    .file_dialog = file_dialog, .get_keyboard_modifiers = mods, .pointer_region = pointer, .draw_input_caret = input_caret
 };
 static void path(char *out, const char *name)
 {
@@ -235,6 +244,53 @@ static void routing_checks(void)
     flow_route(&d, &d.edges[0], &route);
     assert(route.count == 2 && route.points[0].y == d.edges[0].lane);
 }
+static void render_routing_checks(void)
+{
+    FlowDiagram d;
+    flow_blank(&d, FLOW_SYSTEM, "Exact ports");
+    flow_add_node(&d, FLOW_PROCESS, 40, 100, "A");
+    flow_add_node(&d, FLOW_BLOCK, 400, 100, "B");
+    flow_add_edge(&d, d.nodes[0].id, d.nodes[1].id, "");
+    FlowRoute path;
+    flow_route(&d, &d.edges[0], &path);
+    assert(!path.blocked && path.count == 2 && path.points[0].y == 125 && path.points[1].y == 125);
+    unsigned char *pixels = calloc(FLOW_W * FLOW_H, 1);
+    assert(pixels);
+    FlowRender r = {.w = FLOW_W, .h = FLOW_H, .zoom = 100, .pixels = pixels};
+    flow_diagram_render(&r, &d, &path);
+    for (int x = 143; x < 400; ++x) assert(pixels[125 * FLOW_W + x] == 1); /* No blank-label gap. */
+    d.nodes[0].y = d.nodes[1].y = 140;
+    flow_add_node(&d, FLOW_BLOCK, 220, 80, "Above");
+    flow_add_node(&d, FLOW_BLOCK, 220, 180, "Below");
+    d.nodes[2].h = 70;
+    flow_route(&d, &d.edges[0], &path);
+    assert(!path.blocked && path.count == 2 && path.points[0].y == 165); /* Exact narrow horizontal alley. */
+    for (int i = 0; i < d.node_count; ++i) {
+        int value = d.nodes[i].x; d.nodes[i].x = d.nodes[i].y; d.nodes[i].y = value;
+        value = d.nodes[i].w; d.nodes[i].w = d.nodes[i].h; d.nodes[i].h = value;
+    }
+    flow_route(&d, &d.edges[0], &path);
+    assert(!path.blocked && path.count == 2 && path.points[0].x == 165); /* Rotational symmetry. */
+    memset(pixels, 0, FLOW_W * FLOW_H);
+    FlowNode node = {.x = 40, .y = 40, .w = 100, .h = 50};
+    node.shape = FLOW_PROCESS; flow_node_render(&r, &node);
+    assert(pixels[65 * FLOW_W + 50] == 2);
+    node.x = 200; node.shape = FLOW_BLOCK; flow_node_render(&r, &node);
+    assert(pixels[65 * FLOW_W + 208] == 1 && pixels[65 * FLOW_W + 220] == 6);
+    node.x = 400; node.shape = FLOW_PARTICIPANT; flow_node_render(&r, &node);
+    assert(pixels[44 * FLOW_W + 420] == 3 && pixels[65 * FLOW_W + 420] == 0);
+    free(pixels);
+    client_w = 596; client_h = 412;
+    flow_properties(0, 0);
+    memset(edit_label, 'X', sizeof(edit_label) - 1); edit_label[sizeof(edit_label) - 1] = 0;
+    int before = caret_calls;
+    draw(); assert(caret_calls == before + 1 && caret_x < client_w);
+    edit_field = 1;
+    memset(edit_description, '\n', sizeof(edit_description) - 1); edit_description[sizeof(edit_description) - 1] = 0;
+    before = caret_calls;
+    draw(); assert(caret_calls == before + 1 && caret_y < client_h);
+    key(27);
+}
 static void io_checks(void)
 {
     char file[4096], bad[4096], svg[4096], pcx[4096];
@@ -360,6 +416,7 @@ int main(int argc, char **argv)
     assert(app.callbacks.open() && !dirty && recovery_enabled);
     editing_checks();
     routing_checks();
+    render_routing_checks();
     io_checks();
     recovery_checks();
     test_host.abi_minor = 13;

@@ -12,7 +12,13 @@
 #include "game_ui.h"
 
 static int player_x, invaders[4][12], offset_x, offset_y, direction, score;
-static unsigned int frame;
+static unsigned int frame, formation_elapsed;
+static unsigned int formation_interval(void)
+{
+    unsigned int period = 800;
+    for (int row = 1; row < offset_y; ++row) period = period * 4 / 5;
+    return period < 100 ? 100 : period;
+}
 static struct { int active, x, y; } bullet;
 static unsigned int game_interval(void) { return 100000; }
 static void game_reset(void)
@@ -21,6 +27,7 @@ static void game_reset(void)
     bullet.active = 0;
     score = 0;
     frame = 0;
+    formation_elapsed = 0;
     offset_x = 3;
     offset_y = 1;
     direction = 1;
@@ -51,7 +58,10 @@ static void game_tick(void)
         if (--bullet.y < 0) bullet.active = 0;
         else (void)hit_invader();
     }
-    if (!finished && frame++ % 5 == 0) {
+    ++frame;
+    formation_elapsed += 100;
+    if (!finished && formation_elapsed >= formation_interval()) {
+        formation_elapsed -= formation_interval();
         int left = GRID_W, right = -1;
         for (int r = 0; r < 4; ++r) {
             for (int c = 0; c < 12; ++c) {

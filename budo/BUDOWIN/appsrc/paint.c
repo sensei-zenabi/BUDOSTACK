@@ -1022,6 +1022,8 @@ static void paint_resize_draw(int cx, int cy, int cw, int ch)
         host_api->draw_text(x+12,y+37+i*26,i ? "Height" : "Width",1,8);
         host_api->draw_sunken_panel(x+76,y+30+i*26,100,22,resize_field == i && resize_selected ? 6 : 4);
         host_api->draw_text(x+80,y+37+i*26,i ? resize_height : resize_width,resize_field == i && resize_selected ? 4 : 1,8);
+        if (resize_field == i) budo_text_caret(host_api, x + 80 + (int)strlen(i ? resize_height : resize_width) * 6,
+                                               y + 35 + i * 26, 10, resize_selected ? 4 : 1);
     }
     host_api->draw_text(x+12,y+88,"1..2048 pixels",1,30);
     host_api->draw_standard_button(x+116,y+112,80,20,"OK",0);
@@ -1058,6 +1060,7 @@ static void paint_draw(void)
         char value[8];
         snprintf(value, sizeof(value), "%d", tool == TOOL_SPRAY ? spray_width : stroke_width);
         host_api->draw_text(cx + 10, cy + 174, width_focus ? width_text : value, width_focus && width_selected ? 4 : 1, 8);
+        if (width_focus) budo_text_caret(host_api, cx + 10 + (int)strlen(width_text) * 6, cy + 172, 10, width_selected ? 4 : 1);
         if (tool == TOOL_SPRAY) {
             snprintf(value, sizeof(value), "%d", spray_density);
             host_api->draw_text(cx + 6, cy + 198, "Density", 1, 10);

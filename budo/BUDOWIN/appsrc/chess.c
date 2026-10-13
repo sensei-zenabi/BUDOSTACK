@@ -636,7 +636,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
         !host->draw_standard_button || !host->draw_button_state || !host->draw_sunken_panel ||
         !host->point_in_rect || !host->confirm_dialog || !host->pointer_region || !host->get_time_ms) return 0;
     host_api = host;
-    memset(app, 0, sizeof(*app));
+    budo_app_definition_clear(host, app);
     app->app_id = "chess";
     app->name = "Chess";
     app->callbacks.open = chess_open;

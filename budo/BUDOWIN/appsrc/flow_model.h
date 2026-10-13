@@ -143,10 +143,7 @@ static void flow_starter(FlowDiagram *d, int type)
     }
 }
 
-/* Orthogonal shortest paths on the ten-pixel grid, avoiding node interiors. */
-#define FLOW_COLS (FLOW_W / 10 + 1)
-#define FLOW_ROWS (FLOW_H / 10 + 1)
-#define FLOW_CELLS (FLOW_COLS * FLOW_ROWS)
+/* Orthogonal visibility routing preserves exact ports and avoids node interiors. */
 #define FLOW_ROUTE_POINTS 96
 typedef struct FlowPoint {
     int x, y;
@@ -184,10 +181,9 @@ static FlowPoint flow_port(const FlowNode *n, int side)
         n->x, n->y + n->h / 2
     };
 }
+#include "flow_routing.h"
 static void flow_route(const FlowDiagram *d, const FlowEdge *e, FlowRoute *route)
 {
-    static int parent[FLOW_CELLS], queue[FLOW_CELLS], reverse[FLOW_CELLS];
-    static unsigned char blocked[FLOW_CELLS];
     memset(route, 0, sizeof(*route));
     const FlowNode *a = &d->nodes[flow_node_index(d, e->from)];
     const FlowNode *b = &d->nodes[flow_node_index(d, e->to)];
@@ -206,60 +202,23 @@ static void flow_route(const FlowDiagram *d, const FlowEdge *e, FlowRoute *route
     int dx = b->x + b->w / 2 - a->x - a->w / 2;
     int dy = b->y + b->h / 2 - a->y - a->h / 2;
     int side = flow_abs(dx) > flow_abs(dy) ? (dx >= 0 ? 1 : 3) : (dy >= 0 ? 2 : 0);
+    int other = a == b ? 0 : (side + 2) % 4;
     for (int i = 0; i < d->edge_count && &d->edges[i] != e; ++i) {
         if ((d->edges[i].from == e->to && d->edges[i].to == e->from) ||
             (d->edges[i].from == e->from && d->edges[i].to == e->to)) {
-            side = (side + 1) % 4;
+            side = other = flow_abs(dx) > flow_abs(dy) ? 2 : 3;
             break;
         }
     }
-    int other = a == b ? 0 : (side + 2) % 4;
     FlowPoint start = flow_port(a, side), end = flow_port(b, other);
-    static const int sx[] = {0, 10, 0, -10}, sy[] = {-10, 0, 10, 0};
-    FlowPoint first = {flow_snap(start.x + sx[side]), flow_snap(start.y + sy[side])};
-    FlowPoint last = {flow_snap(end.x + sx[other]), flow_snap(end.y + sy[other])};
-    memset(blocked, 0, sizeof(blocked));
-    for (int i = 0; i < d->node_count; ++i) {
-        const FlowNode *n = &d->nodes[i];
-        for (int y = n->y / 10; y <= (n->y + n->h) / 10; ++y) {
-            for (int x = n->x / 10; x <= (n->x + n->w) / 10; ++x) blocked[y * FLOW_COLS + x] = 1;
-        }
-    }
-    int begin = first.y / 10 * FLOW_COLS + first.x / 10;
-    int goal = last.y / 10 * FLOW_COLS + last.x / 10;
-    for (int i = 0; i < FLOW_CELLS; ++i) parent[i] = -1;
-    int head = 0, tail = 0;
-    if (begin >= 0 && begin < FLOW_CELLS && goal >= 0 && goal < FLOW_CELLS && !blocked[begin] && !blocked[goal]) {
-        parent[begin] = begin;
-        queue[tail++] = begin;
-        while (head < tail && parent[goal] < 0) {
-            int cell = queue[head++], x = cell % FLOW_COLS, y = cell / FLOW_COLS;
-            const int neighbors[4] = {x + 1 < FLOW_COLS ? cell + 1 : -1, y + 1 < FLOW_ROWS ? cell + FLOW_COLS : -1,
-                                      x > 0 ? cell - 1 : -1, y > 0 ? cell - FLOW_COLS : -1
-                                      };
-            for (int k = 0; k < 4; ++k) {
-                int next = neighbors[k];
-                if (next < 0 || blocked[next] || parent[next] >= 0) continue;
-                parent[next] = cell;
-                queue[tail++] = next;
-            }
-        }
-    }
+    static const int sx[] = {0, 12, 0, -12}, sy[] = {-12, 0, 12, 0};
+    FlowPoint first = {start.x + sx[side], start.y + sy[side]};
+    FlowPoint last = {end.x + sx[other], end.y + sy[other]};
     flow_route_point(route, start.x, start.y);
-    if (goal >= 0 && goal < FLOW_CELLS && parent[goal] >= 0) {
-        int count = 0, cell = goal;
-        while (cell != begin) {
-            reverse[count++] = cell;
-            cell = parent[cell];
-        }
-        reverse[count++] = begin;
-        flow_route_point(route, first.x, start.y);
-        for (int i = count - 1; i >= 0; --i)
-            flow_route_point(route, reverse[i] % FLOW_COLS * 10, reverse[i] / FLOW_COLS * 10);
-        flow_route_point(route, end.x, last.y);
-    } else {
-        /* Keep unroutable connections visible and explicitly marked. */
+    if (!flow_visibility_route(d, first, last, side, other, route)) {
+        route->count = 0;
         route->blocked = 1;
+        flow_route_point(route, start.x, start.y);
         flow_route_point(route, start.x, end.y);
     }
     flow_route_point(route, end.x, end.y);

@@ -821,6 +821,39 @@ static int menu_items(int which, BudoMenuItem *items)
     }
     return count;
 }
+static void property_text(FlowRender *r, const char *value, int focused)
+{
+    const int cols = 56;
+    int rows = r->h / 10, column = 0, row = 0;
+    const char *starts[FLOW_DESCRIPTION + 1];
+    starts[0] = value;
+    const char *p = value;
+    while (*p) {
+        const char *before = p;
+        unsigned char ch = bw_text_cell(&p);
+        if (ch == '\n' || column == cols) {
+            ++row;
+            starts[row] = ch == '\n' ? p : before;
+            column = 0;
+            if (ch == '\n') continue;
+        }
+        ++column;
+    }
+    if (column == cols) { ++row; starts[row] = p; column = 0; }
+    int first = row >= rows ? row - rows + 1 : 0;
+    if (rows == 1) {
+        int cells = 0;
+        const char *end = value;
+        while (*end) { (void)bw_text_cell(&end); ++cells; }
+        int skip = cells >= cols ? cells - cols + 1 : 0;
+        p = value;
+        for (int i = 0; i < skip; ++i) (void)bw_text_cell(&p);
+        flow_text(r, 0, 0, 336, r->h, p, 1);
+        column = cells - skip;
+        row = first = 0;
+    } else flow_text(r, 0, 0, 336, r->h, starts[first], 1);
+    if (focused) budo_text_caret(host_api, r->x + column * 6, r->y + (row - first) * 10 - 1, 9, color(BUDO_SYS_COLOR_TEXT));
+}
 static void draw_overlay(const FlowLayout *l)
 {
     int x = l->x + (l->w - 380) / 2, y = l->y + (l->h - 264) / 2;
@@ -836,7 +869,7 @@ static void draw_overlay(const FlowLayout *l)
             if (edit_field == i) host_api->draw_rect(x + 13, fy + 1, 354, height - 2, color(BUDO_SYS_COLOR_ACCENT));
             if (edit_field == i && edit_select) ui_text(x + 280, y + 12, "Selected", 12);
             FlowRender r = {.x = x + 16, .y = fy + 6, .w = 344, .h = height - 10, .zoom = 100, .host = host_api};
-            flow_text(&r, 0, 0, 344, height - 10, i ? edit_description : edit_label, 1);
+            property_text(&r, i ? edit_description : edit_label, edit_field == i);
         }
         ui_text(x + 12, y + 214, "Tab: next field. Enter: apply. Esc: cancel.", 57);
         budo_button_draw(host_api, x + 194, y + 234, 80, 22, "Apply", BUDO_BUTTON_DEFAULT);
@@ -1379,7 +1412,7 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
         !host->point_in_rect || !host->confirm_dialog || !host->file_dialog || !host->pointer_region ||
         !host->get_keyboard_modifiers || !host->get_time_ms) return 0;
     host_api = host;
-    memset(app, 0, sizeof(*app));
+    budo_app_definition_clear(host, app);
     app->app_id = "flow";
     app->name = "Flow";
     app->callbacks.open = flow_open;

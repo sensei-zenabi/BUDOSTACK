@@ -17,11 +17,13 @@ typedef struct Point { int x, y; } Point;
 static Point snake[MAX_LENGTH], fruit;
 static int length, direction, pending_direction, turn_queued;
 static unsigned int interval;
+static int turns[2], turn_count;
+static const int starting_speed[] = {50, 75, 100};
 static int difficulty, pending_difficulty = -1, steps_played;
 static const char *difficulty_names[] = {"Easy", "Medium", "Hard"};
 static const int dx[] = {0, 0, -1, 1}, dy[] = {-1, 1, 0, 0};
 
-static unsigned int game_interval(void) { return interval ? interval : 100000; }
+static unsigned int game_interval(void) { return interval ? interval : 200000; }
 static int snake_score(void) { return (length - 3) * (difficulty + 1); }
 static void snake_status(void)
 {
@@ -59,7 +61,7 @@ static int game_toolbar_click(const Layout *l, int x, int y)
 static void game_status_draw(const Layout *l, const char *line)
 {
     char speed[32];
-    snprintf(speed, sizeof(speed), "Speed: %.1f", 10.0 + (length - 3) * (difficulty + 1) / 10.0);
+    snprintf(speed, sizeof(speed), "Speed: %.1f", (starting_speed[difficulty] + (length - 3) * (difficulty + 1)) / 10.0);
     int width = (int)strlen(speed) * 6;
     host_api->draw_text(l->x + 4, l->y + l->h - l->status_h + 3, line,
                         color(BUDO_SYS_COLOR_STATUS_TEXT), (l->w - width - 16) / 6);
@@ -88,8 +90,8 @@ static void game_reset(void)
     steps_played = 0;
     length = 3;
     direction = pending_direction = 3;
-    turn_queued = 0;
-    interval = 100000;
+    turn_queued = turn_count = 0;
+    interval = 10000000U / (unsigned int)starting_speed[difficulty];
     for (int i = 0; i < length; ++i) snake[i] = (Point){10 - i, 10};
     place_fruit();
     snake_status();
@@ -97,8 +99,13 @@ static void game_reset(void)
 static void game_tick(void)
 {
     ++steps_played;
-    direction = pending_direction;
-    turn_queued = 0;
+    if (turn_count) {
+        direction = turns[0];
+        turns[0] = turns[1];
+        --turn_count;
+    }
+    pending_direction = turn_count ? turns[turn_count - 1] : direction;
+    turn_queued = turn_count != 0;
     Point head = {snake[0].x + dx[direction], snake[0].y + dy[direction]};
     int growing = head.x == fruit.x && head.y == fruit.y;
     int collision = head.x < 0 || head.x >= GRID_W || head.y < 0 || head.y >= GRID_H;
@@ -117,7 +124,7 @@ static void game_tick(void)
         ++length;
         /* Linear speed growth: +0.1 cells/s per apple, multiplied by level.
          * Microsecond deadlines retain the increase even below one millisecond. */
-        interval = 10000000U / (unsigned int)(100 + (length - 3) * (difficulty + 1));
+        interval = 10000000U / (unsigned int)(starting_speed[difficulty] + (length - 3) * (difficulty + 1));
         if (length == MAX_LENGTH) finished = 1;
         else place_fruit();
         effect(finished ? 4 : 2);
@@ -134,8 +141,11 @@ static int game_key(int key)
     else if (key == (0x100 | 75) || key == 'a' || key == 'A') next = 2;
     else if (key == (0x100 | 77) || key == 'd' || key == 'D') next = 3;
     if (next < 0) return 0;
-    /* One turn per simulation step prevents rapid keys reversing into the neck. */
-    if (!turn_queued && next != (direction ^ 1) && next != direction) {
+    /* Keep two sequential turns; validate against the last queued heading.
+     * Repeats do not consume the queue and no turn reverses into the neck. */
+    int previous = turn_count ? turns[turn_count - 1] : direction;
+    if (turn_count < 2 && next != previous && next != (previous ^ 1)) {
+        turns[turn_count++] = next;
         pending_direction = next;
         turn_queued = 1;
     }

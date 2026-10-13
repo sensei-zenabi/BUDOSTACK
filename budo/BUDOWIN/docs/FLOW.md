@@ -21,12 +21,28 @@ on a 1200×800 pixel page. IDs are unique within a diagram. Labels/names hold
 Group copy preserves internal edges and paste allocates new IDs. Deleting a
 node removes incident edges in the same undoable edit.
 
-Coordinates snap to a ten-pixel grid. Dragging also aligns nearby node edges
-and centers. Routes use shortest paths on the ten-pixel grid, treating node
-bounding boxes as obstacles, then compress collinear points. Opposite-direction
-edges use different ports. Unroutable paths remain visible as red dashed lines.
-Routes are cached until diagram geometry changes. Sequence participants have
-lifelines; message edges use explicit vertical lanes, adjustable by dragging.
+Node coordinates snap to a ten-pixel editing grid. Dragging also aligns nearby
+node edges and centers. Routing independently preserves exact integer ports,
+including half-cell centers from odd dimensions. `flow_routing.h` builds a
+coordinate-compressed orthogonal visibility graph using obstacle boundaries,
+12-pixel clearance coordinates, and exact source/destination stubs. Shapes have
+an 8-pixel obstacle buffer. A* states retain the incoming direction and minimize
+length plus a 24-pixel bend penalty, including stub bends. Shared reverse edges
+use external same-side ports to form separate return paths. Routes are cached
+until geometry changes; failed paths remain visibly red and dashed.
+
+The approach follows the visibility-graph/direction-aware search described in
+[Wybrow, Marriott and Stuckey, Orthogonal Connector Routing (2009)](https://people.eng.unimelb.edu.au/pstuckey/papers/gd09.pdf).
+This bounded implementation uses at most 134 coordinates per axis and 71,824
+directed states. It does not implement libavoid's global multi-edge nudging.
+Unlabeled connections have no text-background cutout. Sequence participants
+have dark dashed lifelines; message edges use explicit adjustable vertical lanes.
+
+Process nodes are plain blue rectangles. Blocks use a lighter fill and paired
+vertical subsystem bars. Participants use white rounded headers with a blue
+identity band and a lifeline. SVG and PCX preserve these distinctions. Focused
+property fields use the 1.17 caret service; long names scroll horizontally and
+wrapped descriptions scroll vertically to keep the end cursor visible.
 
 ## Editable project format (version 1)
 

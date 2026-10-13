@@ -128,8 +128,9 @@ static void rules_checks(void)
     fruit = (Point){11, 10}; game_tick(); assert(length == 4 && snake[0].x == 11);
     for (int i = 0; i < length; ++i) assert(fruit.x != snake[i].x || fruit.y != snake[i].y);
     key('a'); assert(pending_direction == 3); /* Reject reverse. */
-    key('w'); key('a'); assert(pending_direction == 0); /* Reject two turns in one tick. */
-    game_tick(); assert(snake[0].y == 9);
+    key('w'); key('a'); assert(turn_count == 2 && pending_direction == 2);
+    game_tick(); assert(snake[0].y == 9 && direction == 0);
+    game_tick(); assert(snake[0].x == 10 && direction == 2 && !turn_count);
     snake[0] = (Point){19, 10}; direction = pending_direction = 3;
     game_tick(); assert(finished && strstr(status, "Game over"));
     new_game(); paused = 0;
@@ -148,13 +149,13 @@ static void rules_checks(void)
     bullet.active = 1; bullet.x = offset_x; bullet.y = offset_y + 1;
     game_tick(); assert(score == 10); /* Collision after bullet motion. */
     new_game(); paused = 0;
-    offset_x = 4; game_tick(); assert(offset_y == 2 && direction == -1);
+    offset_x = 4; formation_elapsed = formation_interval() - 100; game_tick(); assert(offset_y == 2 && direction == -1);
     new_game(); paused = 0;
     memset(invaders, 0, sizeof(invaders)); invaders[0][0] = 1;
     score = 470; bullet.active = 1; bullet.x = offset_x; bullet.y = offset_y;
     game_tick(); assert(finished && score == 480 && strstr(status, "You win"));
     new_game(); paused = 0;
-    offset_y = 13; offset_x = 4; game_tick(); assert(finished && strstr(status, "Game over"));
+    offset_y = 13; offset_x = 4; formation_elapsed = formation_interval() - 100; game_tick(); assert(finished && strstr(status, "Game over"));
     new_game(); paused = 0;
     Layout l; assert(layout(&l)); game_click(&l, l.bx, l.by);
     assert(player_x == 0 && bullet.active && bullet.x == 0);
@@ -202,14 +203,14 @@ static void timing_checks(void)
 #if defined(TEST_SNAKE)
     fruit = (Point){0, 0};
     int head_x = snake[0].x;
-    clock_ms += 99;
+    clock_ms += 199;
     assert(!app.tick(1));
     for (int i = 0; i < 200; ++i) { key(0x100 | 77); draw(); }
     assert(snake[0].x == head_x); /* Redraws/auto-repeat cannot advance time. */
     ++clock_ms;
     assert(app.tick(1) && snake[0].x == head_x + 1);
     for (int i = 0; i < 200; ++i) { key(0x100 | 77); assert(!app.tick(1)); }
-    clock_ms += 300;
+    clock_ms += 600;
     assert(app.tick(1) && snake[0].x == head_x + 4); /* Elapsed time catches up. */
     clock_ms += 10000;
     assert(!app.tick(0));
@@ -246,10 +247,10 @@ static void timing_checks(void)
     assert(difficulty == 2 && pending_difficulty == -1);
     set_difficulty(1);
     confirm_result(BUDO_CONFIRM_OVERWRITE, BUDO_RESPONSE_SAVE);
-    assert(difficulty == 1 && paused && !snake_score() && interval == 100000);
+    assert(difficulty == 1 && paused && !snake_score() && interval == 133333);
 #elif defined(TEST_INVADERS)
     int original = offset_y;
-    clock_ms += 100;
+    clock_ms += 800;
     assert(app.tick(1));
     assert(offset_x != 3 || offset_y != original);
     int frame_before = (int)frame;
@@ -268,14 +269,68 @@ static void timing_checks(void)
     assert(move_count >= 2); /* Computer demo advances without any input. */
 #endif
     test_host.abi_minor = 15;
-    assert(bwa_entry(&test_host, &app) && !(app.flags & BWA_FLAG_IDLE_TICK) && !app.tick);
+    assert(bwa_entry(&test_host, &app) && !(app.flags & BWA_FLAG_IDLE_TICK));
+    union { max_align_t alignment; unsigned char bytes[sizeof(BwaAppDefinition) + 16]; } legacy;
+    memset(legacy.bytes, 0xa5, sizeof(legacy.bytes));
+    assert(bwa_entry(&test_host, (BwaAppDefinition *)legacy.bytes));
+    for (size_t i = offsetof(BwaAppDefinition, tick); i < sizeof(legacy.bytes); ++i) assert(legacy.bytes[i] == 0xa5);
     test_host.abi_minor = BWA_ABI_MINOR;
+}
+static void behavior_checks(void)
+{
+#if defined(TEST_SNAKE)
+    for (int level = 0; level < 3; ++level) {
+        difficulty = level;
+        new_game();
+        assert(interval == 10000000U / (unsigned int)starting_speed[level]);
+    }
+    new_game(); paused = 0;
+    key('w'); key('w'); key('a'); key('s');
+    assert(turn_count == 2 && turns[0] == 0 && turns[1] == 2);
+    fruit = (Point){0, 0};
+    game_tick(); assert(direction == 0);
+    game_tick(); assert(direction == 2);
+    key('d'); assert(!turn_count); /* No reversal into neck. */
+#elif defined(TEST_INVADERS)
+    new_game(); paused = 0;
+    for (int i = 0; i < 7; ++i) game_tick();
+    assert(offset_x == 3 && offset_y == 1 && formation_interval() == 800);
+    game_tick(); assert(offset_x == 4);
+    formation_elapsed = formation_interval() - 100;
+    game_tick(); assert(offset_y == 2 && formation_interval() == 640);
+    unsigned int before = formation_interval();
+    for (offset_y = 3; offset_y < 10; ++offset_y) {
+        assert(formation_interval() < before);
+        before = formation_interval();
+    }
+#else
+    for (int orientation = 0; orientation < 4; ++orientation) {
+        new_game(); paused = 0; mode = 1; human_marker = 'X'; current_player = 'O';
+        static const int dr[] = {1,0,1,1}, dc[] = {0,1,1,-1};
+        for (int i = 0; i < 3; ++i) board[6 + i * dr[orientation]][8 + i * dc[orientation]] = 'X';
+        board[0][0] = board[0][1] = 'O';
+        move_count = 5;
+        for (int steps = 0; steps < 32 && current_player == 'O'; ++steps) game_tick();
+        assert(current_player == 'X');
+        int r0 = 6 - dr[orientation], c0 = 8 - dc[orientation];
+        int r1 = 6 + 3 * dr[orientation], c1 = 8 + 3 * dc[orientation];
+        assert(board[r0][c0] == 'O' || board[r1][c1] == 'O'); /* Block the open three before an unstoppable four. */
+    }
+    new_game(); paused = 0; mode = 1; human_marker = 'X';
+    for (int row = 5; row < 12 && !finished; ++row) {
+        if (board[row][8] != ' ') continue;
+        place(row * 17 + 8);
+        for (int steps = 0; steps < 32 && current_player == 'O' && !finished; ++steps) game_tick();
+        assert(check_winner(board) != 'X'); /* Reported straight-down opening. */
+    }
+#endif
 }
 int main(void)
 {
     common_checks();
     rules_checks();
     timing_checks();
+    behavior_checks();
     printf("PASS: %s rules, controls, timing, resized UI, icons, sound and legacy hosts\n", GAME_NAME);
     return 0;
 }

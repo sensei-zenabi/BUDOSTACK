@@ -266,6 +266,7 @@ static void draw_list(void)
     if (adding_association) {
         host_api->draw_sunken_panel(wx + 156, wy + wh - 46, 72, 20, ui_color(BUDO_SYS_COLOR_HIGHLIGHT));
         host_api->draw_text(wx + 160, wy + wh - 40, new_extension, ui_color(BUDO_SYS_COLOR_TEXT), 8);
+        budo_text_caret(host_api, wx + 160 + (int)extension_len * 6, wy + wh - 42, 10, ui_color(BUDO_SYS_COLOR_TEXT));
         host_api->pointer_region(wx + 156, wy + wh - 46, 72, 20, BUDO_CURSOR_TEXT, "Extension, e.g. .TXT; Enter adds it");
     }
     host_api->draw_text(wx + 16, wy + wh - 20,

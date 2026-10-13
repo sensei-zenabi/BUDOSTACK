@@ -7,10 +7,12 @@
 #define MIN_W 400
 #define MIN_H 350
 #define START_PAUSED 1
+#define GAME_MAX_STEPS 1
 #define GAME_HINT "Arrows: move. Enter: place. B: mode. H: first."
 #define GAME_HELP "17x17 board: connect five in any direction."
 #include "game_ui.h"
 #include <limits.h>
+#include <stdlib.h>
 
 #define BOARD_SIZE 17
 #define WIN_CONDITION 5
@@ -181,6 +183,120 @@ static int winning_square(char marker)
     }
     return -1;
 }
+#define AI_ROOT_CANDIDATES 16
+#define AI_SEARCH_CANDIDATES 10
+typedef struct AiCandidate { int square, score; } AiCandidate;
+static AiCandidate ai_candidates[AI_ROOT_CANDIDATES];
+static int ai_count;
+
+/* Tactical pattern scoring includes open threes/fours and broken fours. */
+static int move_threat(int square, char marker)
+{
+    int row = square / BOARD_SIZE, col = square % BOARD_SIZE;
+    if (board[row][col] != ' ') return -1;
+    static const int dr[] = {0, 1, 1, 1}, dc[] = {1, 0, 1, -1};
+    board[row][col] = marker;
+    int score = 0;
+    for (int d = 0; d < 4; ++d) {
+        int count = 1, open = 0;
+        for (int sign = -1; sign <= 1; sign += 2) {
+            int r = row + dr[d] * sign, c = col + dc[d] * sign;
+            while (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && board[r][c] == marker) {
+                ++count;
+                r += dr[d] * sign;
+                c += dc[d] * sign;
+            }
+            if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && board[r][c] == ' ') ++open;
+        }
+        if (count >= 5) score += 1000000;
+        else if (count == 4) score += open == 2 ? 200000 : open == 1 ? 50000 : 0;
+        else if (count == 3) score += open == 2 ? 18000 : open == 1 ? 1200 : 0;
+        else if (count == 2) score += open == 2 ? 600 : open == 1 ? 80 : 0;
+        else score += open * 8;
+        for (int offset = -4; offset <= 0; ++offset) {
+            int marks = 0, empty = 0, valid = 1;
+            for (int step = 0; step < 5; ++step) {
+                int r = row + (offset + step) * dr[d], c = col + (offset + step) * dc[d];
+                if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) { valid = 0; break; }
+                if (board[r][c] == marker) ++marks;
+                else if (board[r][c] == ' ') ++empty;
+                else { valid = 0; break; }
+            }
+            if (valid && marks == 4 && empty == 1) score += 30000;
+        }
+    }
+    board[row][col] = ' ';
+    return score;
+}
+static int nearby(int square)
+{
+    int row = square / BOARD_SIZE, col = square % BOARD_SIZE;
+    for (int r = row - 2; r <= row + 2; ++r) {
+        for (int c = col - 2; c <= col + 2; ++c) {
+            if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE && board[r][c] != ' ') return 1;
+        }
+    }
+    return 0;
+}
+static int candidates(char marker, AiCandidate *out, int capacity)
+{
+    char other = marker == 'X' ? 'O' : 'X';
+    int count = 0;
+    for (int square = 0; square < BOARD_SIZE * BOARD_SIZE; ++square) {
+        if (board[square / BOARD_SIZE][square % BOARD_SIZE] != ' ' || !nearby(square)) continue;
+        int attack = move_threat(square, marker), defense = move_threat(square, other);
+        int score = attack + defense * 11 / 10 - (abs(square / BOARD_SIZE - 8) + abs(square % BOARD_SIZE - 8));
+        int at = count;
+        if (at == capacity) at = capacity - 1;
+        if (count == capacity && score <= out[at].score) continue;
+        while (at > 0 && score > out[at - 1].score) {
+            if (at < capacity) out[at] = out[at - 1];
+            --at;
+        }
+        out[at] = (AiCandidate){square, score};
+        if (count < capacity) ++count;
+    }
+    return count;
+}
+static int tactical_evaluation(char ai)
+{
+    char other = ai == 'X' ? 'O' : 'X';
+    int attack = 0, defense = 0;
+    for (int square = 0; square < BOARD_SIZE * BOARD_SIZE; ++square) {
+        if (board[square / BOARD_SIZE][square % BOARD_SIZE] != ' ' || !nearby(square)) continue;
+        int value = move_threat(square, ai);
+        if (value > attack) attack = value;
+        value = move_threat(square, other);
+        if (value > defense) defense = value;
+    }
+    return attack - defense * 11 / 10 + evaluate_board(board, ai, other);
+}
+static int search(int depth, char side, char ai, int alpha, int beta)
+{
+    char winner = check_winner(board);
+    if (winner) return winner == ai ? 5000000 + depth : -5000000 - depth;
+    if (!depth || board_full(board)) return tactical_evaluation(ai);
+    AiCandidate moves[AI_SEARCH_CANDIDATES];
+    int count = candidates(side, moves, AI_SEARCH_CANDIDATES);
+    int best = side == ai ? INT_MIN : INT_MAX;
+    if (!count) return 0;
+    for (int i = 0; i < count; ++i) {
+        int square = moves[i].square;
+        board[square / BOARD_SIZE][square % BOARD_SIZE] = side;
+        int score = search(depth - 1, side == 'X' ? 'O' : 'X', ai, alpha, beta);
+        board[square / BOARD_SIZE][square % BOARD_SIZE] = ' ';
+        if (side == ai) {
+            if (score > best) best = score;
+            if (best > alpha) alpha = best;
+        } else {
+            if (score < best) best = score;
+            if (best < beta) beta = best;
+        }
+        if (alpha >= beta) break;
+    }
+    return best;
+}
+
 static void game_tick(void)
 {
     if (!computer_turn()) return;
@@ -194,20 +310,20 @@ static void game_tick(void)
         ai_index = 0;
         ai_best = -1;
         ai_score = INT_MIN;
+        ai_count = candidates(current_player, ai_candidates, AI_ROOT_CANDIDATES);
     }
-    /* Four candidate evaluations per draw, keeping desktop input responsive. */
-    for (int budget = 0; budget < 4 && ai_index < BOARD_SIZE * BOARD_SIZE; ++budget) {
-        int square = ai_index++, r = square / BOARD_SIZE, c = square % BOARD_SIZE;
-        if (board[r][c] != ' ') continue;
-        board[r][c] = current_player;
-        int score = evaluate_board(board, current_player, opponent);
-        board[r][c] = ' ';
-        if (score > ai_score || (score == ai_score && (random_number() & 1))) {
+    /* One three-ply root search per tick keeps desktop input responsive. */
+    if (ai_index < ai_count) {
+        int square = ai_candidates[ai_index++].square;
+        board[square / BOARD_SIZE][square % BOARD_SIZE] = current_player;
+        int score = search(2, opponent, current_player, ai_score == INT_MIN ? INT_MIN + 1 : ai_score, INT_MAX);
+        board[square / BOARD_SIZE][square % BOARD_SIZE] = ' ';
+        if (score > ai_score) {
             ai_score = score;
             ai_best = square;
         }
     }
-    if (ai_index == BOARD_SIZE * BOARD_SIZE && ai_best >= 0) place(ai_best);
+    if (ai_index == ai_count && ai_best >= 0) place(ai_best);
 }
 static int game_key(int key)
 {

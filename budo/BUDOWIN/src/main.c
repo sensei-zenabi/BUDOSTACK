@@ -143,13 +143,7 @@ static unsigned char ui_color_indices[BUDO_SYS_COLOR_COUNT] = {0, 1, 2, 3, 4, 5,
 #define EDITOR_FILE_DIALOG_EXPORT 3
 
 #define TERMINAL_MAX_LINES 256
-#define TERMINAL_LINE_LEN 1249
-#define TERMINAL_CELL_WIDTH 6
-#define TERMINAL_CELL_HEIGHT 6
-#define TERMINAL_DEFAULT_COLS 80
-#define TERMINAL_DEFAULT_ROWS 60
-#define TERMINAL_DEFAULT_W (TERMINAL_DEFAULT_COLS * TERMINAL_CELL_WIDTH + 30)
-#define TERMINAL_DEFAULT_H (TERMINAL_DEFAULT_ROWS * TERMINAL_CELL_HEIGHT + WINDOW_TITLE_H + EDITOR_MENU_H + 12)
+#define TERMINAL_LINE_LEN 128
 #define TERMINAL_HISTORY_MAX 32
 #define TERMINAL_INPUT_LEN 120
 #define TERMINAL_COMPLETION_MAX 64
@@ -2253,7 +2247,7 @@ static int text_caret_rect(int *x, int *y)
 
         *x = text_x + caret_col * 6;
         *y = terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 6 +
-             ((terminal_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 12) / TERMINAL_CELL_HEIGHT - 1) * TERMINAL_CELL_HEIGHT;
+             ((terminal_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 12) / 9 - 1) * 9;
         return 1;
     }
 
@@ -2267,10 +2261,9 @@ static void restore_text_caret_vga(void)
     int row;
 
     if (!text_caret_rect(&x, &y)) return;
-    int height = active_window == APP_TERMINAL ? TERMINAL_CELL_HEIGHT : TEXT_CELL_HEIGHT;
-    if (active_window != APP_TERMINAL) --y;
+    --y;
 
-    for (row = 0; row < height; ++row) {
+    for (row = 0; row < TEXT_CELL_HEIGHT; ++row) {
         int sy = y + row;
         int start_x = x;
         int end_x = x + TEXT_CELL_WIDTH;
@@ -2300,10 +2293,9 @@ static void draw_text_caret_vga(void)
     int col;
 
     if (!text_caret_rect(&x, &y)) return;
-    int height = active_window == APP_TERMINAL ? TERMINAL_CELL_HEIGHT : TEXT_CELL_HEIGHT;
-    if (active_window != APP_TERMINAL) --y;
+    --y;
 
-    for (row = 0; row < height; ++row) {
+    for (row = 0; row < TEXT_CELL_HEIGHT; ++row) {
         int sy = y + row;
         int start_x = x;
         int end_x = x + TEXT_CELL_WIDTH;
@@ -6194,7 +6186,7 @@ static void terminal_execute(void)
 
 static int terminal_visible_rows(void)
 {
-    int rows = (terminal_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 18) / TERMINAL_CELL_HEIGHT;
+    int rows = (terminal_window.h - WINDOW_TITLE_H - EDITOR_MENU_H - 18) / 9;
     return rows > 1 ? rows - 1 : 1;
 }
 
@@ -6246,9 +6238,10 @@ static void draw_terminal_window(void)
                 start + i < terminal_line_count; ++i) {
         for (int col = 0; col < session_cols; ++col) {
             int selected = terminal_cell_selected(start + i, col);
-            if (selected) fill_rect(text_x + col * 6, text_y + i * TERMINAL_CELL_HEIGHT, 6, TERMINAL_CELL_HEIGHT, TITLE_COLOR);
-            terminal_unicode_draw(text_x + col * 6, text_y + i * TERMINAL_CELL_HEIGHT,
-                terminal_selection_char(start + i, col), budo_palette_rgb(selected ? 4 : terminal_foreground), 1);
+            if (selected) fill_rect(text_x + col * 6, text_y + i * 9, 6, 9, TITLE_COLOR);
+            char text[2] = {(char)terminal_selection_char(start + i, col), 0};
+            terminal_rgb_text(text_x + col * 6, text_y + i * 9, text,
+                budo_palette_rgb(selected ? 4 : terminal_foreground), 1);
         }
     }
 
@@ -6277,9 +6270,9 @@ static void draw_terminal_window(void)
 
     for (int col = 0; col < cols && prompt[visible_start + col]; ++col) {
         int selected = terminal_cell_selected(terminal_line_count + session_rows - 1, visible_start + col);
-        if (selected) fill_rect(text_x + col * 6, text_y + (session_rows - 1) * TERMINAL_CELL_HEIGHT, 6, TERMINAL_CELL_HEIGHT, TITLE_COLOR);
+        if (selected) fill_rect(text_x + col * 6, text_y + (session_rows - 1) * 9, 6, 9, TITLE_COLOR);
         char text[2] = {prompt[visible_start + col], 0};
-        terminal_rgb_text(text_x + col * 6, text_y + (session_rows - 1) * TERMINAL_CELL_HEIGHT, text,
+        terminal_rgb_text(text_x + col * 6, text_y + (session_rows - 1) * 9, text,
             budo_palette_rgb(selected ? 4 : terminal_foreground), 1);
     }
 
@@ -8651,13 +8644,9 @@ static int editor_file_accept(void)
                 while (length > 0 && session_cells[row][length - 1].ch == ' ') --length;
                 if (!length && row > session_y) break;
                 for (int col = 0; col < length; ++col) {
-                    TerminalCell cell = session_cells[row][col];
-                    if (cell.continuation) continue;
-                    char encoded[12];
-                    size_t size = terminal_utf8_encode(encoded, cell.ch);
-                    for (int i = 0; i < 2 && cell.combining[i]; ++i)
-                        size += terminal_utf8_encode(encoded + size, cell.combining[i]);
-                    if (fwrite(encoded, 1, size, file) != size) break;
+                    char encoded[8];
+                    char cell[2] = {(char)session_cells[row][col].ch, 0};
+                    if (bw_text_encode(encoded, sizeof(encoded), cell)) fputs(encoded, file);
                 }
                 fputc('\n', file);
             }
@@ -10616,8 +10605,6 @@ static int builtin_create_instance(int kind, int start_terminal)
     int offset = (slot % 6) * 12;
     window->x += offset;
     window->y += offset;
-    if (window->x + window->w > SCREEN_WIDTH) window->x = SCREEN_WIDTH - window->w;
-    if (window->y + window->h > SCREEN_HEIGHT) window->y = SCREEN_HEIGHT - window->h;
     return 1;
 }
 

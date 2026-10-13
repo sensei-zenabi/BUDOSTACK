@@ -135,7 +135,7 @@ static void session_art_rect(int *x, int *y, int *w, int *h)
     *x = terminal_window.x + 7;
     *y = terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 6;
     *w = terminal_window.w - 30;
-    *h = session_rows * TERMINAL_CELL_HEIGHT;
+    *h = session_rows * 9;
     if (*w * SESSION_ART_H > *h * SESSION_ART_W) {
         int width = *h * SESSION_ART_W / SESSION_ART_H;
         *x += (*w - width) / 2;

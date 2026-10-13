@@ -87,46 +87,8 @@ static void await_text(const char *needle)
     assert(0);
 }
 
-static volatile sig_atomic_t probe_resized;
-
-static void probe_winch(int signal_number)
-{
-    (void)signal_number;
-    probe_resized = 1;
-}
-
-static int resize_probe(void)
-{
-    struct sigaction action = {0};
-    action.sa_handler = probe_winch;
-    sigemptyset(&action.sa_mask);
-    assert(sigaction(SIGWINCH, &action, NULL) == 0);
-    assert(!getenv("COLUMNS") && !getenv("LINES"));
-    probe_resized = 1;
-    for (;;) {
-        if (probe_resized) {
-            probe_resized = 0;
-            struct winsize size;
-            assert(ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0);
-            printf("\r\nSIZE-%u-%u\r\n", size.ws_col, size.ws_row);
-            fflush(stdout);
-        }
-        char key;
-        ssize_t count = read(STDIN_FILENO, &key, 1);
-        if (count == 1 && key == 'q') return 0;
-        if (count < 0 && errno == EINTR) continue;
-        if (count <= 0) return 1;
-    }
-}
-
-static void feed(const char *text)
-{
-    for (const unsigned char *p = (const unsigned char *)text; *p; ++p) session_byte(*p);
-}
-
 int main(int argc, char **argv)
 {
-    if (argc == 1) return resize_probe();
     assert(argc == 2);
     char assets[MAX_PATH];
     assert(join_path(assets,sizeof(assets),argv[1],"budo/BUDOWIN"));
@@ -138,7 +100,6 @@ int main(int argc, char **argv)
     assert(session_start());
     pid_t launcher = session_pid;
     await_text("BUDOSTACK OPERATING SYSTEM");
-    assert(session_cols == 80 && session_rows == 60);
     assert(!contains("Start BUDOWIN?"));
     session_write("cmath\r",6);
     await_text("math>");
@@ -150,53 +111,6 @@ int main(int argc, char **argv)
     for (int i = 0; i < 50; ++i) { session_poll(); pause_ms(); }
     session_write("echo PTY-RETURN-OK\r",19);
     await_text("PTY-RETURN-OK");
-    /* The echoed command contains the marker before read_input has restored
-     * its raw mode; allow its TCSAFLUSH transition to finish before typing. */
-    for (int i = 0; i < 100; ++i) { session_poll(); pause_ms(); }
-    /* The application launched by BUDOSTACK inherits no stale size override,
-     * sees the startup geometry and receives kernel SIGWINCH notifications. */
-    char probe_command[MAX_PATH + 8];
-    int probe_length = snprintf(probe_command, sizeof(probe_command), "run %s\r", argv[0]);
-    assert(probe_length > 0 && (size_t)probe_length < sizeof(probe_command));
-    session_write(probe_command, (size_t)probe_length);
-    await_text("SIZE-80-60");
-    terminal_window.w -= 60;
-    terminal_window.h -= 60;
-    session_resize();
-    await_text("SIZE-70-50");
-    window_toggle_maximize_state(&terminal_window);
-    session_resize();
-    assert(session_cols == 101 && session_rows == 69);
-    await_text("SIZE-101-69");
-    session_clear();
-    terminal_line_count = 0;
-    window_toggle_maximize_state(&terminal_window);
-    session_resize();
-    await_text("SIZE-70-50");
-    session_write("q\r", 2);
-    for (int i = 0; i < 100; ++i) { session_poll(); pause_ms(); }
-    /* Restarting an application also picks up the current dimensions. */
-    session_clear();
-    terminal_line_count = 0;
-    session_write(probe_command, (size_t)probe_length);
-    await_text("SIZE-70-50");
-    session_write("q\r", 2);
-    for (int i = 0; i < 100; ++i) { session_poll(); pause_ms(); }
-    terminal_window = terminal_defaults.v_terminal_window;
-    terminal_window.open = 1;
-    session_resize();
-    session_write("snake\r", 6);
-    await_text("SNAKE");
-    int head = 0, body = 0, border = 0;
-    for (int row = 0; row < session_rows; ++row)
-        for (int col = 0; col < session_cols; ++col) {
-            head += session_cells[row][col].ch == 0x2588;
-            body += session_cells[row][col].ch == 0x2593;
-            border += session_cells[row][col].ch == 0x2500;
-        }
-    assert(head && body && border);
-    session_write("q", 1);
-    for (int i = 0; i < 100; ++i) { session_poll(); pause_ms(); }
     /* Run the reported application and check its actual highlighted keyword. */
     for (int i = 0; i < 100; ++i) { session_poll(); pause_ms(); }
     char syntax_path[MAX_PATH], edit_command[MAX_PATH + 16];
@@ -239,44 +153,10 @@ int main(int argc, char **argv)
     const char *sample = "abc\033[2DXY\r\n\303\244\303\266\303\245";
     for (const unsigned char *p = (const unsigned char *)sample; *p; ++p) session_byte(*p);
     assert(session_cells[0][0].ch == 'a' && session_cells[0][1].ch == 'X' && session_cells[0][2].ch == 'Y');
-    assert(session_cells[1][0].ch == 228 && session_cells[1][1].ch == 246 && session_cells[1][2].ch == 229);
+    assert(session_cells[1][0].ch == 132 && session_cells[1][1].ch == 148 && session_cells[1][2].ch == 134);
     const char *alternate = "\033[?1049hother\033[?1049l";
     for (const unsigned char *p = (const unsigned char *)alternate; *p; ++p) session_byte(*p);
-    assert(session_cells[0][1].ch == 'X' && session_cells[1][0].ch == 228);
-
-    session_clear();
-    feed("\342\224\214\342\224\200\342\226\210\342\226\223\342\202\254e\314\201\344\270\255Z");
-    assert(session_cells[0][0].ch == 0x250c && session_cells[0][1].ch == 0x2500);
-    assert(session_cells[0][2].ch == 0x2588 && session_cells[0][3].ch == 0x2593);
-    assert(session_cells[0][4].ch == 0x20ac && session_cells[0][5].combining[0] == 0x301);
-    assert(session_cells[0][6].ch == 0x4e2d && session_cells[0][7].continuation && session_cells[0][8].ch == 'Z');
-    assert(session_x == 9);
-    int selection_pipe[2];
-    assert(pipe(selection_pipe) == 0);
-    session_fd = selection_pipe[1];
-    terminal_line_count = 0;
-    terminal_anchor = 0;
-    terminal_selection_end = 9;
-    terminal_copy_selection(0);
-    const char *unicode = "\342\224\214\342\224\200\342\226\210\342\226\223\342\202\254e\314\201\344\270\255Z";
-    assert(!strcmp(editor_clipboard, unicode));
-    terminal_clear_selection();
-    terminal_paste_text();
-    char pasted[128];
-    ssize_t paste_length = read(selection_pipe[0], pasted, sizeof(pasted));
-    assert(paste_length == (ssize_t)strlen(unicode) && !memcmp(pasted, unicode, (size_t)paste_length));
-    session_fd = -1;
-    close(selection_pipe[0]);
-    close(selection_pipe[1]);
-    session_scroll_up();
-    assert(!strcmp(terminal_lines[0], unicode));
-    assert(terminal_selection_char(0, 4) == 0x20ac && terminal_selection_char(0, 6) == 0x4e2d);
-    session_clear();
-    feed("\340\200\200A\355\240\200B\364\220\200\200C\303D");
-    assert(session_cells[0][0].ch == 0xfffd && session_cells[0][1].ch == 'A');
-    assert(session_cells[0][2].ch == 0xfffd && session_cells[0][3].ch == 'B');
-    assert(session_cells[0][4].ch == 0xfffd && session_cells[0][5].ch == 'C');
-    assert(session_cells[0][6].ch == 0xfffd && session_cells[0][7].ch == 'D');
+    assert(session_cells[0][1].ch == 'X' && session_cells[1][0].ch == 132);
 
     /* libedit emits RGB foreground sequences; their components are not SGR attributes. */
     session_clear();
@@ -292,25 +172,14 @@ int main(int argc, char **argv)
     session_draw();
     int tx = terminal_window.x + 7;
     int ty = terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 6;
-    assert(rgb_mask[(ty + TERMINAL_CELL_HEIGHT) * SCREEN_WIDTH + tx]);
-    assert(rgb_framebuffer[(ty + TERMINAL_CELL_HEIGHT) * SCREEN_WIDTH + tx] ==
+    assert(rgb_mask[(ty + 8) * SCREEN_WIDTH + tx]);
+    assert(rgb_framebuffer[(ty + 8) * SCREEN_WIDTH + tx] ==
            (0xff000000u | budo_palette_rgb(terminal_background))); /* Defaults use the selected Paint palette. */
-    int colored_pixels = 0;
-    for (int gy = 0; gy < TERMINAL_CELL_HEIGHT; ++gy)
-        for (int gx = 0; gx < TERMINAL_CELL_WIDTH; ++gx)
-            colored_pixels += rgb_framebuffer[(ty + gy) * SCREEN_WIDTH + tx + gx] == 0xffcc66ff;
-    assert(colored_pixels > 0 && colored_pixels < TERMINAL_CELL_WIDTH * TERMINAL_CELL_HEIGHT);
-    session_clear();
-    session_fg = SESSION_RGB | 0x123456;
-    feed("\342\226\210\342\226\223");
-    session_draw();
-    int shade_pixels = 0;
-    for (int gy = 0; gy < TERMINAL_CELL_HEIGHT; ++gy)
-        for (int gx = 0; gx < TERMINAL_CELL_WIDTH; ++gx) {
-            assert(rgb_framebuffer[(ty + gy) * SCREEN_WIDTH + tx + gx] == 0xff123456);
-            shade_pixels += rgb_framebuffer[(ty + gy) * SCREEN_WIDTH + tx + TERMINAL_CELL_WIDTH + gx] == 0xff123456;
-        }
-    assert(shade_pixels > 0 && shade_pixels < TERMINAL_CELL_WIDTH * TERMINAL_CELL_HEIGHT);
+    const unsigned char *letter = glyph_for('A');
+    for (int gy = 0; gy < 7; ++gy)
+        for (int gx = 0; gx < 5; ++gx)
+            if (letter[gy] & (0x10 >> gx))
+                assert(rgb_framebuffer[(ty + gy) * SCREEN_WIDTH + tx + gx] == 0xffcc66ff);
 
     /* OSC graphics survive fragmented reads and both sequence terminators. */
     const char *art = "\033]777;pixel=rect;pixel_x=2;pixel_y=3;pixel_w=4;pixel_h=2;pixel_r=18;pixel_g=52;pixel_b=86;pixel_layer=2\a"
@@ -374,6 +243,6 @@ int main(int argc, char **argv)
     session_stop();
     close(endpoints[0]);
     close(endpoints[1]);
-    puts("PASS: real BUDOSTACK PTY, Snake Unicode graphics, 80x60 default, resize/maximize/restore SIGWINCH and restart, UTF-8/clipboard/history, cmath/edit and embedded graphics");
+    puts("PASS: real BUDOSTACK PTY, interactive cmath/edit with RGB syntax/return, resize, ANSI/Nordic output and embedded graphics/input");
     return 0;
 }

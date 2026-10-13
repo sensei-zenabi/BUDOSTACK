@@ -66,16 +66,11 @@ static void terminal_history_trimmed(void)
 
 static void terminal_rgb_text(int x, int y, const char *text, unsigned int rgb, int cols)
 {
-    for (int i = 0; i < cols && *text;) {
-        uint32_t ch = terminal_utf8_next(&text);
-        int width = terminal_unicode_width(ch);
-        if (!width) {
-            if (i > 0) terminal_unicode_draw(x + (i - 1) * TERMINAL_CELL_WIDTH, y, ch, rgb, 1);
-            continue;
-        }
-        if (i + width > cols) break;
-        terminal_unicode_draw(x + i * TERMINAL_CELL_WIDTH, y, ch, rgb, width);
-        i += width;
+    for (int i = 0; i < cols && *text; ++i) {
+        const unsigned char *glyph = glyph_for((char)bw_text_cell(&text));
+        for (int gy = 0; gy < 7; ++gy)
+            for (int gx = 0; gx < 5; ++gx)
+                if (glyph[gy] & (0x10 >> gx)) put_rgb_pixel(x + i * 6 + gx, y + gy, rgb);
     }
 }
 
@@ -100,51 +95,21 @@ static int terminal_cell_selected(int row, int col)
     return terminal_has_selection() && index >= terminal_selection_low() && index < terminal_selection_high();
 }
 
-static TerminalCell terminal_history_cell(const char *text, int col)
+static unsigned char terminal_selection_char(int row, int col)
 {
-    TerminalCell cell = session_blank();
-    for (int column = 0; *text;) {
-        uint32_t ch = terminal_utf8_next(&text);
-        int width = terminal_unicode_width(ch);
-        if (!width) continue;
-        cell = (TerminalCell){.ch = ch};
-        while (*text) {
-            const char *next = text;
-            uint32_t mark = terminal_utf8_next(&next);
-            if (terminal_unicode_width(mark)) break;
-            for (int i = 0; i < 2; ++i)
-                if (!cell.combining[i]) {
-                    cell.combining[i] = mark;
-                    break;
-                }
-            text = next;
-        }
-        if (column == col) return cell;
-        if (column < col && column + width > col) return (TerminalCell){.continuation = 1};
-        column += width;
-    }
-    return session_blank();
-}
-
-static TerminalCell terminal_selection_cell(int row, int col)
-{
-    if (row < 0 || col < 0 || col >= session_cols) return session_blank();
+    if (row < 0) return ' ';
     if (row < terminal_line_count) {
-        return terminal_history_cell(terminal_lines[row], col);
+        size_t length = strlen(terminal_lines[row]);
+        return col < (int)length ? (unsigned char)terminal_lines[row][col] : ' ';
     }
     row -= terminal_line_count;
-    if (session_fd >= 0) return row < session_rows ? session_cells[row][col] : session_blank();
+    if (session_fd >= 0) return row < session_rows ? session_cells[row][col].ch : ' ';
     if (row == session_rows - 1) {
         char prompt[MAX_PATH + TERMINAL_INPUT_LEN + 2];
         snprintf(prompt, sizeof(prompt), "%s>%s", terminal_cwd, terminal_input);
-        return terminal_history_cell(prompt, col);
+        return col < (int)strlen(prompt) ? (unsigned char)prompt[col] : ' ';
     }
-    return session_blank();
-}
-
-static uint32_t terminal_selection_char(int row, int col)
-{
-    return terminal_selection_cell(row, col).ch;
+    return ' ';
 }
 
 static void terminal_delete_selection(void)
@@ -185,7 +150,7 @@ static void terminal_copy_selection(int cut)
 {
     if (!terminal_has_selection()) return;
     int low = terminal_selection_low(), high = terminal_selection_high();
-    size_t capacity = (size_t)(high - low) * 12 + (size_t)((high - low) / session_cols) + 2;
+    size_t capacity = (size_t)(high - low) + (size_t)((high - low) / session_cols) + 2;
     char *text = malloc(capacity);
     if (!text) { perror("Terminal clipboard"); return; }
     size_t length = 0, row_start = 0;
@@ -195,11 +160,7 @@ static void terminal_copy_selection(int cut)
             text[length++] = '\n';
             row_start = length;
         }
-        TerminalCell cell = terminal_selection_cell(index / session_cols, index % session_cols);
-        if (cell.continuation) continue;
-        length += terminal_utf8_encode(text + length, cell.ch);
-        for (int i = 0; i < 2 && cell.combining[i]; ++i)
-            length += terminal_utf8_encode(text + length, cell.combining[i]);
+        text[length++] = (char)terminal_selection_char(index / session_cols, index % session_cols);
     }
     while (length > row_start && text[length - 1] == ' ') --length;
     text[length] = 0;
@@ -215,17 +176,11 @@ static void terminal_paste_text(void)
     if (!editor_clipboard) return;
     terminal_delete_selection();
     if (session_fd >= 0) {
-        size_t capacity = strlen(editor_clipboard) * 4 + 1;
-        char *encoded = malloc(capacity);
-        if (!encoded) {
-            perror("Terminal paste");
-            return;
+        char encoded[8];
+        for (const char *p = editor_clipboard; *p; ++p) {
+            char cell[2] = {*p == '\n' ? '\r' : *p, 0};
+            if (bw_text_encode(encoded, sizeof(encoded), cell)) session_write(encoded, strlen(encoded));
         }
-        if (bw_text_encode(encoded, capacity, editor_clipboard)) {
-            for (char *p = encoded; *p; ++p) if (*p == '\n') *p = '\r';
-            session_write(encoded, strlen(encoded));
-        }
-        free(encoded);
     } else {
         for (const char *p = editor_clipboard; *p && terminal_input_len + 1 < TERMINAL_INPUT_LEN; ++p) {
             if ((unsigned char)*p < 32) continue;
@@ -383,7 +338,7 @@ static int terminal_text_pointer(int x, int y, int buttons, int previous)
         terminal_color_dialog || terminal_settings_menu || terminal_edit_menu || terminal_context_menu || terminal_file_menu ||
         budo_gfx_host_active(session_gfx) || session_overlay) return 0;
     int tx = terminal_window.x + 7, ty = terminal_window.y + WINDOW_TITLE_H + EDITOR_MENU_H + 6;
-    int inside = point_in_rect(x, y, tx, ty, session_cols * TERMINAL_CELL_WIDTH, session_rows * TERMINAL_CELL_HEIGHT) && desktop_point_owner(x, y) == APP_TERMINAL;
+    int inside = point_in_rect(x, y, tx, ty, session_cols * 6, session_rows * 9) && desktop_point_owner(x, y) == APP_TERMINAL;
     if (inside && (buttons & 2) && !(previous & 2)) {
         active_window = APP_TERMINAL;
         terminal_context_menu = 1;
@@ -392,7 +347,7 @@ static int terminal_text_pointer(int x, int y, int buttons, int previous)
         return 1;
     }
     if (!inside && !terminal_selecting) return 0;
-    int col = (x - tx + TERMINAL_CELL_WIDTH / 2) / TERMINAL_CELL_WIDTH, row = (y - ty) / TERMINAL_CELL_HEIGHT;
+    int col = (x - tx + 3) / 6, row = (y - ty) / 9;
     if (col < 0) col = 0;
     if (col > session_cols) col = session_cols;
     if (row < 0) { row = 0; if (terminal_selecting && terminal_scroll < terminal_line_count) ++terminal_scroll; }

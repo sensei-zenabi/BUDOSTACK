@@ -15,9 +15,9 @@ static int player_x, invaders[4][12], offset_x, offset_y, direction, score;
 static unsigned int frame, formation_elapsed;
 static unsigned int formation_interval(void)
 {
-    unsigned int period = 800;
-    for (int row = 1; row < offset_y; ++row) period = period * 4 / 5;
-    return period < 100 ? 100 : period;
+    unsigned int period = 1200;
+    for (int row = 1; row < offset_y; ++row) period = period * 19 / 20;
+    return period < 600 ? 600 : period;
 }
 static struct { int active, x, y; } bullet;
 static unsigned int game_interval(void) { return 100000; }
@@ -54,7 +54,8 @@ static int hit_invader(void)
 }
 static void game_tick(void)
 {
-    if (bullet.active && !hit_invader()) {
+    /* Check every crossed cell so faster shots cannot skip an alien. */
+    for (int step = 0; step < 2 && bullet.active && !hit_invader(); ++step) {
         if (--bullet.y < 0) bullet.active = 0;
         else (void)hit_invader();
     }

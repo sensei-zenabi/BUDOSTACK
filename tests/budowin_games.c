@@ -149,6 +149,14 @@ static void rules_checks(void)
     bullet.active = 1; bullet.x = offset_x; bullet.y = offset_y + 1;
     game_tick(); assert(score == 10); /* Collision after bullet motion. */
     new_game(); paused = 0;
+    bullet.active = 1; bullet.x = offset_x; bullet.y = offset_y + 2;
+    game_tick(); assert(score == 10 && !bullet.active); /* Second crossed cell. */
+    for (int y = 0; y < 2; ++y) {
+        new_game(); paused = 0;
+        bullet.active = 1; bullet.x = 0; bullet.y = y;
+        game_tick(); assert(!bullet.active && bullet.y == -1 && score == 0);
+    }
+    new_game(); paused = 0;
     offset_x = 4; formation_elapsed = formation_interval() - 100; game_tick(); assert(offset_y == 2 && direction == -1);
     new_game(); paused = 0;
     memset(invaders, 0, sizeof(invaders)); invaders[0][0] = 1;
@@ -250,7 +258,9 @@ static void timing_checks(void)
     assert(difficulty == 1 && paused && !snake_score() && interval == 133333);
 #elif defined(TEST_INVADERS)
     int original = offset_y;
-    clock_ms += 800;
+    clock_ms += 600;
+    assert(app.tick(1) && offset_x == 3 && offset_y == original);
+    clock_ms += 600;
     assert(app.tick(1));
     assert(offset_x != 3 || offset_y != original);
     int frame_before = (int)frame;
@@ -276,6 +286,48 @@ static void timing_checks(void)
     for (size_t i = offsetof(BwaAppDefinition, tick); i < sizeof(legacy.bytes); ++i) assert(legacy.bytes[i] == 0xa5);
     test_host.abi_minor = BWA_ABI_MINOR;
 }
+#if defined(TEST_INVADERS)
+static void invaders_playability_checks(void)
+{
+    /* Ordinary keyboard input at 200/300 ms intervals, with no trajectory
+       prediction, teleporting, or changes to the formation or score. */
+    for (int cadence = 2; cadence <= 3; ++cadence) {
+        new_game();
+        paused = 0;
+        for (int steps = 0; !finished && steps < 2000; ++steps) {
+            if (steps % cadence == 0) {
+                int target = -1, distance = GRID_W;
+                for (int r = 3; r >= 0 && target < 0; --r) {
+                    for (int c = 0; c < 12; ++c) {
+                        int x = offset_x + c * 3;
+                        int delta = x > player_x ? x - player_x : player_x - x;
+                        if (invaders[r][c] && delta < distance) {
+                            target = x;
+                            distance = delta;
+                        }
+                    }
+                }
+                if (target < player_x) key('a');
+                else if (target > player_x) key('d');
+                key(' ');
+            }
+            clock_ms += 100;
+            assert(tick(1));
+        }
+        assert(finished && score == 480 && strstr(status, "You win"));
+        assert(!bullet.active);
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 12; ++c) assert(!invaders[r][c]);
+        }
+    }
+    /* Slower descent still ends an unattended game. */
+    new_game();
+    paused = 0;
+    while (!finished && frame < 2000) game_tick();
+    assert(finished && score == 0 && strstr(status, "Game over"));
+    assert(frame >= 450 && frame < 600);
+}
+#endif
 static void behavior_checks(void)
 {
 #if defined(TEST_SNAKE)
@@ -293,16 +345,18 @@ static void behavior_checks(void)
     key('d'); assert(!turn_count); /* No reversal into neck. */
 #elif defined(TEST_INVADERS)
     new_game(); paused = 0;
-    for (int i = 0; i < 7; ++i) game_tick();
-    assert(offset_x == 3 && offset_y == 1 && formation_interval() == 800);
+    for (int i = 0; i < 11; ++i) game_tick();
+    assert(offset_x == 3 && offset_y == 1 && formation_interval() == 1200);
     game_tick(); assert(offset_x == 4);
     formation_elapsed = formation_interval() - 100;
-    game_tick(); assert(offset_y == 2 && formation_interval() == 640);
+    game_tick(); assert(offset_y == 2 && formation_interval() == 1140);
     unsigned int before = formation_interval();
-    for (offset_y = 3; offset_y < 10; ++offset_y) {
-        assert(formation_interval() < before);
+    for (offset_y = 3; offset_y < GRID_H; ++offset_y) {
+        assert(formation_interval() <= before && formation_interval() >= 600);
         before = formation_interval();
     }
+    assert(formation_interval() == 600);
+    invaders_playability_checks();
 #else
     for (int orientation = 0; orientation < 4; ++orientation) {
         new_game(); paused = 0; mode = 1; human_marker = 'X'; current_player = 'O';

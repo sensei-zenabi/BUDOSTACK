@@ -1,0 +1,7 @@
+name=JSON
+extensions=.json .jsonc
+keywords=true false null
+span=string|"|"|escape
+span=comment|/*|*/|multiline
+rule=comment|//.*
+rule=number|-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?

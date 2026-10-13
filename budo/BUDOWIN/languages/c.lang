@@ -1,0 +1,9 @@
+name=C
+extensions=.c .h
+keywords=auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while _Alignas _Alignof _Atomic _Bool _Complex _Generic _Imaginary _Noreturn _Static_assert _Thread_local alignas alignof bool constexpr false nullptr static_assert thread_local true typeof typeof_unqual
+span=comment|/*|*/|multiline
+span=string|"|"|escape
+span=string|'|'|escape
+rule=comment|//.*
+rule=directive|^[[:space:]]*#[[:space:]]*[[:alpha:]_][[:alnum:]_]*
+rule=number|(0[xX][[:xdigit:]]+|0[bB][01]+|([0-9]+([.][0-9]*)?|[.][0-9]+)([eEpP][+-]?[0-9]+)?)[uUlLfF]*

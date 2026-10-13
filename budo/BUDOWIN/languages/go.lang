@@ -1,0 +1,9 @@
+name=Go
+extensions=.go
+keywords=break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var true false nil
+span=comment|/*|*/|multiline
+span=string|`|`|multiline
+span=string|"|"|escape
+span=string|'|'|escape
+rule=comment|//.*
+rule=number|0[xX][[:xdigit:]]+|[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?

@@ -1,0 +1,8 @@
+name=SQL
+extensions=.sql
+keywords=SELECT select FROM from WHERE where INSERT insert INTO into VALUES values UPDATE update SET set DELETE delete CREATE create TABLE table ALTER alter DROP drop JOIN join LEFT left RIGHT right INNER inner OUTER outer ON on AS as AND and OR or NOT not NULL null IS is IN in LIKE like ORDER order BY by GROUP group HAVING having LIMIT limit DISTINCT distinct UNION union ALL all CASE case WHEN when THEN then ELSE else END end PRIMARY primary KEY key REFERENCES references INDEX index TRUE true FALSE false
+span=comment|/*|*/|multiline
+span=string|'|'|multiline
+span=string|"|"|multiline
+rule=comment|--.*
+rule=number|[0-9]+([.][0-9]+)?

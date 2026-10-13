@@ -1,0 +1,9 @@
+name=Java / C#
+extensions=.java .cs
+keywords=abstract as assert async await base bool boolean break byte case catch char checked class const continue decimal default delegate do double else enum event explicit extends extern false final finally fixed float for foreach goto if implements implicit import in instanceof int interface internal is lock long namespace native new null object operator out override package params partial private protected public readonly record ref return sbyte sealed short sizeof stackalloc static strictfp string struct super switch synchronized this throw throws transient true try typeof uint ulong unchecked unsafe ushort using var virtual void volatile while yield
+span=comment|/*|*/|multiline
+span=string|"|"|escape
+span=string|'|'|escape
+rule=comment|//.*
+rule=directive|@[[:alpha:]_][[:alnum:]_.]*|^[[:space:]]*#[[:alpha:]]+
+rule=number|(0[xX][[:xdigit:]]+|[0-9]+([.][0-9]*)?([eE][+-]?[0-9]+)?)[uUlLfFdDmM]*

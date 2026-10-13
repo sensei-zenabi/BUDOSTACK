@@ -1,0 +1,9 @@
+name=JavaScript / TypeScript
+extensions=.js .jsx .mjs .cjs .ts .tsx
+keywords=abstract any as async await boolean break case catch class const constructor continue debugger declare default delete do else enum export extends false finally for from function get if implements import in infer instanceof interface keyof let module namespace never new null number of private protected public readonly require return set static string super switch symbol this throw true try type typeof undefined unknown var void while with yield
+span=comment|/*|*/|multiline
+span=string|`|`|multiline escape
+span=string|"|"|escape
+span=string|'|'|escape
+rule=comment|//.*
+rule=number|(0[xX][[:xdigit:]]+|0[bB][01]+|[0-9]+([.][0-9]*)?([eE][+-]?[0-9]+)?)[n]?

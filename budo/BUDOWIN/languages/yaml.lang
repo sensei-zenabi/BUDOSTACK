@@ -1,0 +1,9 @@
+name=YAML
+extensions=.yaml .yml
+keywords=true false null True False Null yes no on off
+span=string|"|"|escape
+span=string|'|'|
+rule=comment|#.*
+rule=tag|[[:alpha:]_][[:alnum:]_-]*:
+rule=directive|^[[:space:]]*(---|\.\.\.)[[:space:]]*$|[&*!][[:alnum:]_-]+
+rule=number|-?[0-9]+([.][0-9]+)?

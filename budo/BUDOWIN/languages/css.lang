@@ -1,0 +1,9 @@
+name=CSS
+extensions=.css .scss .sass
+keywords=important inherit initial unset revert auto none solid block inline flex grid relative absolute fixed sticky
+span=comment|/*|*/|multiline
+span=string|"|"|escape
+span=string|'|'|escape
+rule=directive|@[[:alpha:]-]+
+rule=number|#[[:xdigit:]]{3,8}|[0-9]+([.][0-9]+)?(%|[[:alpha:]]+)?
+rule=tag|[.#]?[[:alpha:]_][[:alnum:]_-]*

@@ -1,0 +1,10 @@
+name=Python
+extensions=.py .pyw .pyi
+keywords=False None True and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield match case type
+span=string|"""|"""|multiline escape
+span=string|'''|'''|multiline escape
+span=string|"|"|escape
+span=string|'|'|escape
+rule=comment|#.*
+rule=directive|@[[:alpha:]_][[:alnum:]_.]*
+rule=number|(0[xX][[:xdigit:]_]+|0[bB][01_]+|0[oO][0-7_]+|([0-9][0-9_]*([.][0-9_]*)?|[.][0-9_]+)([eE][+-]?[0-9_]+)?)[jJ]?

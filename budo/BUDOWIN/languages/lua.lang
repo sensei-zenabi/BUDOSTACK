@@ -1,0 +1,9 @@
+name=Lua
+extensions=.lua
+keywords=and break do else elseif end false for function goto if in local nil not or repeat return then true until while
+span=comment|--[[|]]|multiline
+span=string|[[|]]|multiline
+span=string|"|"|escape
+span=string|'|'|escape
+rule=comment|--.*
+rule=number|0[xX][[:xdigit:]]+|[0-9]+([.][0-9]+)?

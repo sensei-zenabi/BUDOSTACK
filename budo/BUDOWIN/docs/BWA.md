@@ -322,8 +322,10 @@ boundary with sentinel bytes.
 Snake queues up to two distinct legal turns, rejects reversal relative to the
 last queued heading, and executes one turn per simulation step. Auto-repeat
 cannot displace a queued turn or alter the clock. Invaders' formation period
-starts at 800 ms and is multiplied by 0.8 each descending row, with a 100 ms
-minimum. Bullet updates remain 100 ms. Tic-Tac-Toe uses threat-ranked nearby
+starts at 1200 ms and is multiplied by 0.95 each descending row, with a 600 ms
+minimum. Bullet updates remain 100 ms and advance two cells per update, checking
+every crossed cell for hits. Only one shot can be active at a time.
+Tic-Tac-Toe uses threat-ranked nearby
 candidates, immediate win/block detection, and incremental three-ply alpha-beta
 search; open-three, open-four, and broken-four patterns receive tactical weights.
 Each desktop tick processes at most one root candidate search.

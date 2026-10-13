@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     assert(chdir(argv[1]) == 0);
     assert(getcwd(home_path, sizeof(home_path)));
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 9);
+    assert(bwa_external_app_count == 12);
     load_file_associations();
     char path[MAX_PATH];
     assert(join_path(path, sizeof(path), "/", "tmp") && strcmp(path, "/tmp") == 0);
@@ -60,6 +60,28 @@ int main(int argc, char **argv) {
         assert(app->definition.callbacks.open());
         app->open = 1;
         if (app->definition.callbacks.draw) app->definition.callbacks.draw();
+        bwa_callback_app = NULL;
+    }
+    const char *games[] = {"snake", "invaders", "tictactoe"};
+    for (int g = 0; g < 3; ++g) {
+        BwaLoadedApp *game = NULL;
+        for (int i = 0; i < bwa_instance_count; ++i)
+            if (!strcmp(bwa_instances[i].definition.app_id, games[g])) game = &bwa_instances[i];
+        assert(game && game->managed_window);
+        bwa_callback_app = game;
+        active_window = game->definition.runtime_id;
+        assert(game->definition.callbacks.key(' '));
+        game->definition.callbacks.draw_icon(0, 0);
+        if (argc == 3) {
+            char name[64];
+            snprintf(name, sizeof(name), "%s.ppm", games[g]);
+            screenshot(argv[2], name);
+        }
+        bwa_callback_app = game;
+        assert(game->definition.callbacks.key(0x100 | 59));
+        game->definition.callbacks.draw();
+        assert(game->definition.callbacks.key(27));
+        assert(bwa_window_close());
         bwa_callback_app = NULL;
     }
     BwaLoadedApp *chess = NULL;

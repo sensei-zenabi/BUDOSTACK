@@ -367,7 +367,7 @@ int main(int argc, char **argv)
     set_classic_gui_palette();
     ui_colors_load();
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 13);
+    assert(bwa_external_app_count == 14);
     editor_checks(argv[2]);
     recycle_checks(argv[2]);
     desktop_checks();

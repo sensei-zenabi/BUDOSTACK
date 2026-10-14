@@ -538,6 +538,152 @@ static void test_date_figures(const char *root)
     chart_view = 0;
 }
 
+static void test_axis_settings(const char *root)
+{
+    char fields[4][32] = {"2020-01-31","2020-06-30","1mo","1w"};
+    SheetAxis axis;
+    assert(sheet_axis_parse(fields,1,&axis));
+    assert(sheet_axis_resolve(&axis,1,2));
+    double date;
+    assert(sheet_iso_date("2020-02-29",&date) && sheet_axis_tick(&axis,2,1) == date);
+    assert(sheet_iso_date("2020-03-31",&date) && sheet_axis_tick(&axis,2,2) == date);
+    strcpy(fields[0],"2020-02-29");
+    strcpy(fields[1],"2024-03-01");
+    strcpy(fields[2],"1y");
+    assert(sheet_axis_parse(fields,1,&axis) && sheet_axis_resolve(&axis,1,2));
+    assert(sheet_iso_date("2021-02-28",&date) && sheet_axis_tick(&axis,2,1) == date);
+    assert(sheet_iso_date("2024-02-29",&date) && sheet_axis_tick(&axis,2,4) == date);
+    strcpy(fields[2],"0");
+    assert(!sheet_axis_parse(fields,1,&axis));
+    strcpy(fields[2],"1.5mo");
+    assert(!sheet_axis_parse(fields,1,&axis));
+    strcpy(fields[2],"nan");
+    assert(!sheet_axis_parse(fields,1,&axis));
+    strcpy(fields[0],"2020-02-30");
+    assert(!sheet_axis_parse(fields,1,&axis));
+    memset(fields,0,sizeof(fields));
+    strcpy(fields[2],"0.00001");
+    assert(sheet_axis_parse(fields,0,&axis) && !sheet_axis_resolve(&axis,0,1));
+    strcpy(fields[2],"1e-30");
+    assert(sheet_axis_parse(fields,0,&axis) && !sheet_axis_resolve(&axis,100,101));
+    sheet_new(book);
+    active_sheet = 0;
+    menu = -1;
+    chart_view = help_view = editing = data_choosing = axes_choosing = 0;
+    put(0,0,0,"Date");
+    put(0,0,1,"Bench");
+    for (int i = 0; i < 7; ++i) {
+        char raw[32];
+        snprintf(raw,sizeof(raw),"2020-%02d-01",i+1);
+        put(0,i+1,0,raw);
+        snprintf(raw,sizeof(raw),"%d",70+i*10);
+        put(0,i+1,1,raw);
+    }
+    row = col = anchor_col = 0;
+    anchor_col = 1;
+    anchor_row = 7;
+    sheet_history_reset();
+    sheet_chart_create(1);
+    SheetChart *chart = &book->charts[0];
+    SheetChart before = *chart;
+    sheet_menu_action(4,14);
+    assert(axes_choosing);
+    static const char *const values[] = {"2020-01-01","2020-07-01","1mo","1w","60","140","20","5"};
+    for (int i = 0; i < 8; ++i) {
+        for (const char *p = values[i]; *p; ++p) assert(sheet_key_input(*p));
+        if (i < 7) assert(sheet_key_input(9));
+    }
+    for (int width = 452; width <= 900; width += 112) {
+        client_w = width;
+        client_h = 294;
+        sheet_draw();
+    }
+    client_w = 612;
+    client_h = 424;
+    sheet_key_input(13);
+    assert(!axes_choosing && !strcmp(chart->axes[0][2],"1mo"));
+    sheet_undo(-1);
+    assert(!memcmp(chart,&before,sizeof(before)));
+    sheet_undo(1);
+    assert(!strcmp(chart->axes[1][3],"5"));
+    sheet_axes_open();
+    strcpy(axes_draft.axes[1][0],"200");
+    sheet_axes_apply();
+    assert(axes_choosing && *axes_status && !strcmp(chart->axes[1][0],"60"));
+    sheet_axes_key(27);
+    sheet_axes_open();
+    SheetLayout l;
+    assert(sheet_layout(&l));
+    SheetDataLayout d = sheet_data_layout(&l);
+    assert(sheet_axes_mouse(&l,d.x+16,d.y+d.h-20));
+    assert(!*axes_draft.axes[0][0]);
+    sheet_axes_key(27);
+    assert(!strcmp(chart->axes[0][0],"2020-01-01"));
+    chart->grids = 15;
+    char path[4096];
+    path_name(path,root,"axes-monthly.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    path_name(path,root,"axes-monthly.pcx");
+    assert(sheet_chart_export_pcx(calculation,chart,path));
+    path_name(path,root,"axes-v4.bsheet");
+    assert(sheet_write(book,path) && sheet_read(staging,path) && !memcmp(book,staging,sizeof(*book)));
+    /* A v3 workbook has mappings but no axis fields; migration remains automatic. */
+    path_name(path,root,"axes-legacy-v3.bsheet");
+    FILE *f = fopen(path,"wb");
+    assert(f);
+    fputs("BUDOSHEET 3\n1 0\n4f6c64\n0 0 0 0 0 0 0\n\n\n\n1\n",f);
+    unsigned short sizes[SHEET_ROWS] = {0};
+    sheet_sizes_write(f,sizes,SHEET_COLS);
+    sheet_sizes_write(f,sizes,SHEET_ROWS);
+    fputs("0 0 0 0 0 0 0 0 0 0 0 0 0\n",f);
+    assert(!fclose(f) && sheet_read(staging,path) && !*staging->charts[0].axes[0][0]);
+    /* Numeric negative bounds survive persistence, and excluded markers disappear. */
+    chart->x_mode = SHEET_X_NUMBER;
+    chart->source.r1 = 5;
+    memset(chart->axes,0,sizeof(chart->axes));
+    for (int i = 0; i < 5; ++i) {
+        char raw[32];
+        snprintf(raw,sizeof(raw),"%d",i-2);
+        put(0,i+1,0,raw);
+        snprintf(raw,sizeof(raw),"%d",(i-2)*10);
+        put(0,i+1,1,raw);
+    }
+    strcpy(chart->axes[0][0],"-1");
+    strcpy(chart->axes[0][1],"1");
+    strcpy(chart->axes[0][2],"1");
+    strcpy(chart->axes[0][3],"0.5");
+    strcpy(chart->axes[1][0],"-10");
+    strcpy(chart->axes[1][1],"10");
+    strcpy(chart->axes[1][2],"10");
+    strcpy(chart->axes[1][3],"5");
+    path_name(path,root,"axes-negative-v4.bsheet");
+    assert(sheet_write(book,path) && sheet_read(staging,path) && !memcmp(book,staging,sizeof(*book)));
+    chart->type = 0;
+    path_name(path,root,"axes-clipped.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    chart->type = 2;
+    path_name(path,root,"axes-clipped-bar.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    strcpy(chart->axes[0][2],"nan");
+    path_name(path,root,"axes-invalid-v4.bsheet");
+    assert(sheet_write(book,path) && !sheet_read(staging,path));
+    /* Y-date axes use the same calendar settings and labels as X-date axes. */
+    memset(chart->axes,0,sizeof(chart->axes));
+    chart->type = 1;
+    chart->source.r1 = 2;
+    put(0,1,0,"1");
+    put(0,2,0,"2");
+    put(0,1,1,"2020-01-01");
+    put(0,2,1,"2020-02-01");
+    assert(chart_y_date_axis(calculation,chart));
+    strcpy(chart->axes[1][0],"2020-01-01");
+    strcpy(chart->axes[1][1],"2020-03-01");
+    strcpy(chart->axes[1][2],"1mo");
+    path_name(path,root,"axes-y-date.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    chart_view = 0;
+}
+
 int main(int argc,char **argv)
 {
     assert(argc == 2);
@@ -770,6 +916,7 @@ int main(int argc,char **argv)
     assert(!sheet_write(book,"/nonexistent-directory/book.bsheet"));
     test_layout_changes(argv[1]);
     test_date_figures(argv[1]);
+    test_axis_settings(argv[1]);
     /* Exercise malformed token streams under sanitizers as well as normal builds. */
     unsigned int random_state = 12345;
     const char alphabet[] = "A1$!+-*/^%<>=(,)\"' ._&0123456789";

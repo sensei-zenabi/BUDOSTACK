@@ -31,8 +31,8 @@ for flags in range(16):
         "vminor": 16 if flags & 8 else 0,
     }
 
-for kind in range(5):
-    data = (root / f"figure-{kind}.pcx").read_bytes()
+for kind in range(6):
+    data = (root / (f"figure-{kind}.pcx" if kind < 5 else "axes-monthly.pcx")).read_bytes()
     assert data[:4] == bytes((10, 5, 1, 8)) and data[65] == 3
     xmin, ymin, xmax, ymax = struct.unpack_from("<4H", data, 4)
     width, height = xmax - xmin + 1, ymax - ymin + 1
@@ -58,6 +58,10 @@ for kind in range(5):
     assert position == len(data)
     colors = {bytes(pixels[i:i+3]) for i in range(0, len(pixels), 3)}
     assert b"\xff\xff\xff" in colors and b"\x20\x60\xb0" in colors
+    if kind == 5:
+        # The Feb 1 / 80 marker lies exactly on both major grids in PCX too.
+        px, py = 76 + int(31 / 182 * 706), 434 - int(20 / 80 * 404)
+        assert pixels[(py * width + px) * 3:(py * width + px) * 3 + 3] == b"\x20\x60\xb0"
     if kind == 1:
         # Rotated Y label is entirely to the left of the tick labels and plot.
         dark = [
@@ -115,3 +119,41 @@ print("PASS: date/weight/bench plots, exact series choices and proportional leap
 _, missing = plot_points("dates-missing-line.svg", blue)
 assert len(missing) == 6
 assert [point[0] for point in missing] == [max(76, min(780, 76 + int(day / 182 * 706) - 1)) for i, day in enumerate(expected_days) if i != 1]
+
+svg, points = plot_points("axes-monthly.svg", blue)
+assert len(points) == 7
+paths = svg.findall("svg:path", namespace)
+major_x, minor_x, major_y, minor_y = [], [], [], []
+for node in paths:
+    color = node.attrib.get("stroke")
+    if color not in ("#c8c8c8", "#e8e8e8"):
+        continue
+    x0, y0, x1, y1 = map(int, node.attrib["d"].replace("M", "").replace("L", "").split())
+    target = (major_x if color == "#c8c8c8" else minor_x) if x0 == x1 else (major_y if color == "#c8c8c8" else minor_y)
+    target.append(x0 if x0 == x1 else y0)
+assert len(major_x) == 5 and len(minor_x) == 24
+assert len(major_y) == 3 and len(minor_y) == 12
+assert [x + 1 for x, _ in points[1:-1]] == major_x
+assert [points[i][1] + 1 for i in (1, 3, 5)] == sorted(major_y, reverse=True)
+labels = [node.text for node in svg.findall("svg:text", namespace)]
+assert all(f"2020-{month:02d}-01" in labels for month in range(1, 8))
+assert all(str(value) in labels for value in (60, 80, 100, 120, 140))
+
+svg, points = plot_points("axes-clipped.svg", blue)
+assert len(points) == 3  # Excluded endpoints are clipped, never pinned to the border.
+for node in svg.findall("svg:path", namespace):
+    if node.attrib.get("stroke") != blue:
+        continue
+    x0, y0, x1, y1 = map(int, node.attrib["d"].replace("M", "").replace("L", "").split())
+    assert 76 <= x0 <= 782 and 76 <= x1 <= 782
+    assert 30 <= y0 <= 434 and 30 <= y1 <= 434
+svg = ET.parse(root / "axes-clipped-bar.svg").getroot()
+for node in svg.findall("svg:rect", namespace):
+    if node.attrib.get("fill") != blue or node.attrib.get("width") == "6":
+        continue
+    x, y, width, height = (int(node.attrib[k]) for k in ("x", "y", "width", "height"))
+    assert 76 <= x < x + width <= 782 and 30 <= y < y + height <= 434
+svg = ET.parse(root / "axes-y-date.svg").getroot()
+labels = [node.text for node in svg.findall("svg:text", namespace)]
+assert all(f"2020-{month:02d}-01" in labels for month in (1, 2, 3))
+print("PASS: manual bounds, numeric/calendar major/minor alignment, clipping and Y-date axes")

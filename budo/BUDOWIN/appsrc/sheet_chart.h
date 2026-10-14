@@ -72,13 +72,74 @@ static inline void chart_grids(SheetCanvas *v, const SheetChart *chart, int left
         }
     }
 }
+/* A tick drives its mark, label and grid line through the same transform. */
+static inline void chart_axis_draw(SheetCanvas *v, const SheetChart *chart, const SheetAxis *a,
+                                  int horizontal, int dates, int left, int top, int pw, int ph)
+{
+    int last_label = -10000;
+    for (int field = 3; field >= 2; --field) {
+        int major_index = 0;
+        unsigned int flag = horizontal ? (field == 2 ? SHEET_GRID_V_MAJOR : SHEET_GRID_V_MINOR) :
+                                            (field == 2 ? SHEET_GRID_H_MAJOR : SHEET_GRID_H_MINOR);
+        for (int i = 0; i < SHEET_AXIS_TICKS; ++i) {
+            double tick = sheet_axis_tick(a,field,i);
+            if (!isfinite(tick) || tick > a->max+(a->max-a->min)*1e-12) break;
+            if (field == 3) {
+                while (major_index < SHEET_AXIS_TICKS && sheet_axis_tick(a,2,major_index) < tick-(a->max-a->min)*1e-12) ++major_index;
+                if (fabs(sheet_axis_tick(a,2,major_index)-tick) <= (a->max-a->min)*1e-12) continue;
+            }
+            double fraction = fmin(1,fmax(0,(tick-a->min)/(a->max-a->min)));
+            int pixel = (int)(fraction*(horizontal ? pw : ph));
+            int at = horizontal ? left+pixel : top+ph-pixel;
+            if (i && fraction < 1 && (chart->grids & flag)) {
+                if (horizontal) chart_line(v,at,top,at,top+ph,field == 2 ? 0xc8c8c8 : 0xe8e8e8);
+                else chart_line(v,left,at,left+pw,at,field == 2 ? 0xc8c8c8 : 0xe8e8e8);
+            }
+            if (horizontal) chart_line(v,at,top+ph,at,top+ph+(field == 2 ? 3 : 1),0x303030);
+            else chart_line(v,left-(field == 2 ? 3 : 1),at,left,at,0x303030);
+            if (field != 2) continue;
+            char label[24];
+            if (dates) sheet_display(sv_date(tick),0,label,sizeof(label));
+            else snprintf(label,sizeof(label),"%.5g",tick);
+            if (!horizontal && !dates && strlen(label) > 9) snprintf(label,sizeof(label),"%.3g",tick);
+            int label_pos = horizontal ? sheet_clamp(at-(int)strlen(label)*3,left,left+pw-(int)strlen(label)*6) : pixel;
+            int spacing = horizontal ? (int)strlen(label)*6+6 : 12;
+            if (label_pos < last_label+spacing) continue;
+            last_label = label_pos;
+            if (horizontal) chart_text(v,label_pos,top+ph+8,label,0x303030);
+            else chart_text(v,left-(dates ? 64 : 58),at-(fraction == 1 ? 0 : 4),label,0x303030);
+        }
+    }
+}
+/* Clip in normalized coordinates before integer conversion, including segments
+ * whose endpoints both lie outside the viewport. */
+static inline void chart_segment(SheetCanvas *v, long double x0, long double y0,
+                                 long double x1, long double y1,
+                                 int left, int top, int pw, int ph, unsigned int color)
+{
+    long double dx = x1-x0, dy = y1-y0, start = 0, end = 1;
+    long double p[4] = {-dx,dx,-dy,dy}, q[4] = {x0,1-x0,y0,1-y0};
+    for (int i = 0; i < 4; ++i) {
+        if (p[i] == 0) { if (q[i] < 0) return; }
+        else {
+            long double t = q[i]/p[i];
+            if (p[i] < 0) start = fmaxl(start,t);
+            else end = fminl(end,t);
+        }
+    }
+    if (start > end) return;
+    chart_line(v,left+(int)(fminl(1,fmaxl(0,x0+start*dx))*pw),
+               top+ph-(int)(fminl(1,fmaxl(0,y0+start*dy))*ph),
+               left+(int)(fminl(1,fmaxl(0,x0+end*dx))*pw),
+               top+ph-(int)(fminl(1,fmaxl(0,y0+end*dy))*ph),color);
+}
 static int sheet_chart_xy(SheetCanvas *v, SheetCalc *calc, const SheetChart *chart, int x, int y, int w, int h)
 {
     int left = x + 76, top = y + 30, pw = w - 94, ph = h - 96;
     if (pw < 60 || ph < 40) return 0;
     SheetRange a = chart->source;
     int series = chart_series_count(chart), count = 0;
-    int dates = chart_date_axis(calc,chart);
+    int dates = chart_date_axis(calc,chart), ydates = chart_y_date_axis(calc,chart);
     SheetChart coordinates = *chart;
     if (coordinates.configured) coordinates.x_mode = chart_x_mode(calc,chart);
     double xmin = 0, xmax = 0, ymin = 0, ymax = 0;
@@ -98,7 +159,7 @@ static int sheet_chart_xy(SheetCanvas *v, SheetCalc *calc, const SheetChart *cha
         chart_text(v, left, top + 20, "No numeric data in selected range", 0x802020);
         return 0;
     }
-    if (chart->type == 2) {
+    if (chart->type == 2 && !ydates) {
         ymin = fmin(0, ymin);
         ymax = fmax(0, ymax);
     }
@@ -107,57 +168,59 @@ static int sheet_chart_xy(SheetCanvas *v, SheetCalc *calc, const SheetChart *cha
         xmax = dates ? fmin(2958465,xmax+1) : xmax+0.5;
     }
     if (ymin == ymax) {
-        double pad = fmax(1, fabs(ymin) * 0.1);
+        double pad = ydates ? 1 : fmax(1, fabs(ymin) * 0.1);
         ymin -= pad;
         ymax += pad;
+        if (ydates) { ymin = fmax(1,ymin); ymax = fmin(2958465,ymax); }
     }
-    /* Reject unrepresentable spans before converting floating point to pixels. */
-    if (!isfinite(xmax - xmin) || !isfinite(ymax - ymin)) {
-        chart_text(v, left, top + 20, "Data span too large to plot", 0x802020);
+    SheetAxis axes[2];
+    if (!sheet_axis_parse(chart->axes[0],dates,&axes[0]) || !sheet_axis_parse(chart->axes[1],ydates,&axes[1]) ||
+        !sheet_axis_resolve(&axes[0],xmin,xmax) || !sheet_axis_resolve(&axes[1],ymin,ymax)) {
+        chart_text(v,left,top+20,"Invalid axes or too many ticks (limit 2048)",0x802020);
         return 0;
     }
-    chart_grids(v,chart,left,top,pw,ph);
-    for (int i = 0; i <= 4; ++i) {
-        int gy = top + ph - ph * i / 4;
-        chart_line(v,left-3,gy,left,gy,0x303030);
-        char label[24];
-        double ytick = ymin+(ymax-ymin)*i/4;
-        snprintf(label,sizeof(label),"%.5g",ytick);
-        if (strlen(label) > 9) snprintf(label,sizeof(label),"%.3g",ytick);
-        chart_text(v, x + 18, gy - (i == 4 ? 0 : 4), label, 0x303030);
-        double tick = xmin+(xmax-xmin)*i/4;
-        if (dates) sheet_display(sv_date(tick),0,label,sizeof(label));
-        else snprintf(label,sizeof(label),"%.5g",tick);
-        int label_x = sheet_clamp(left+pw*i/4-(int)strlen(label)*3,left,left+pw-(int)strlen(label)*6);
-        chart_text(v,label_x,top+ph+8,label,0x303030);
-    }
+    xmin = axes[0].min;
+    xmax = axes[0].max;
+    ymin = axes[1].min;
+    ymax = axes[1].max;
+    chart_axis_draw(v,chart,&axes[0],1,dates,left,top,pw,ph);
+    chart_axis_draw(v,chart,&axes[1],0,ydates,left,top,pw,ph);
     chart_line(v, left, top, left, top + ph, 0x303030);
     chart_line(v, left, top + ph, left + pw, top + ph, 0x303030);
     chart_x_label(v,chart->xlabel,left,top+ph+25,pw);
     chart_y_label(v,chart->ylabel,x+5,top,ph);
     for (int s = 0; s < series; ++s) {
         unsigned int color = sheet_series_colors[s];
-        int prev = 0, px = 0, py = 0;
+        int prev = 0;
+        long double px = 0, py = 0;
         for (int r = chart_first_row(chart); r <= a.r1; ++r) {
             double xx, yy;
             if (!chart_point(calc, &coordinates, r, s, &xx, &yy)) {
                 prev = 0;
                 continue;
             }
-            int cx = left + (int)((xx - xmin) / (xmax - xmin) * pw);
-            int cy = top + ph - (int)((yy - ymin) / (ymax - ymin) * ph);
+            long double nx = ((long double)xx-xmin)/((long double)xmax-xmin);
+            long double ny = ((long double)yy-ymin)/((long double)ymax-ymin);
+            if (!isfinite(nx) || !isfinite(ny)) { prev = 0; continue; }
             if (chart->type == 2) {
-                int step = sheet_max(1, pw / sheet_max(1, a.r1 - a.r0 + 1));
-                int bw = sheet_max(1, step / (series + 1));
-                int base = top + ph - (int)((0 - ymin) / (ymax - ymin) * ph);
-                int bx = sheet_clamp(cx - step / 2 + s * bw, left, left + pw - 1);
-                chart_rect(v, bx, sheet_min(base, cy), sheet_min(bw, left + pw - bx), sheet_max(1, abs(base - cy)), color);
+                if (nx < 0 || nx > 1) continue;
+                int cx = left+(int)(nx*pw);
+                int cy = top+ph-(int)(fminl(1,fmaxl(0,ny))*ph);
+                int step = sheet_max(1,pw/sheet_max(1,a.r1-a.r0+1));
+                int bw = sheet_max(1,step/(series+1));
+                double zero = fmin(1,fmax(0,(0-ymin)/(ymax-ymin)));
+                int base = top+ph-(int)(zero*ph);
+                int bx = sheet_clamp(cx-step/2+s*bw,left,left+pw-1);
+                chart_rect(v,bx,sheet_min(base,cy),sheet_min(bw,left+pw-bx),abs(base-cy),color);
             } else {
-                if (chart->type == 0 && prev) chart_line(v, px, py, cx, cy, color);
-                chart_rect(v, sheet_clamp(cx - 1, left, left + pw - 2), sheet_clamp(cy - 1, top, top + ph - 2), 3, 3, color);
+                if (chart->type == 0 && prev) chart_segment(v,px,py,nx,ny,left,top,pw,ph,color);
+                if (nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1) {
+                    int cx = left+(int)(nx*pw), cy = top+ph-(int)(ny*ph);
+                    chart_rect(v,sheet_clamp(cx-1,left,left+pw-2),sheet_clamp(cy-1,top,top+ph-2),3,3,color);
+                }
             }
-            px = cx;
-            py = cy;
+            px = nx;
+            py = ny;
             prev = 1;
         }
         char label[32];

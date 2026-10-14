@@ -35,6 +35,7 @@ typedef struct SheetChart {
     int enabled, type;
     unsigned int grids;
     int configured, x_col, x_mode, header, y_count, y_cols[SHEET_SERIES];
+    char axes[2][4][32]; /* X/Y: minimum, maximum, major interval, minor interval; blank = auto. */
     SheetRange source;
     char title[64], xlabel[32], ylabel[32];
 } SheetChart;

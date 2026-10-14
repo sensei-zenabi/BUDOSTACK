@@ -22,6 +22,9 @@ static unsigned long long last_cell_click;
 static int last_cell_key = -1;
 static int resize_axis, resize_index, resize_start, resize_original;
 static int data_choosing, data_offset;
+static int axes_choosing, axes_focus, axes_select;
+static SheetChart axes_draft;
+static char axes_status[96];
 static SheetChart data_draft;
 static char data_status[96];
 enum { SD_OPEN = 1, SD_SAVE, SD_CSV, SD_TSV, SD_SVG, SD_PCX };
@@ -267,6 +270,8 @@ static void sheet_chart_create(int type)
     chart->enabled = 1;
     chart->type = type;
     chart->source = a;
+    if (memcmp(&a,&previous.source,sizeof(a)) || type >= 3 || previous.type >= 3)
+        memset(chart->axes,0,sizeof(chart->axes));
     if (!*chart->title) sheet_string(chart->title,sizeof(chart->title),"Figure");
     if (!*chart->xlabel) sheet_string(chart->xlabel,sizeof(chart->xlabel),type == 1 ? "X" : "Sample");
     if (!*chart->ylabel) sheet_string(chart->ylabel,sizeof(chart->ylabel),"Value");
@@ -325,7 +330,7 @@ static int sheet_load(const char *path)
     if (!csv && !tsv) sheet_string(filename,sizeof(filename),path);
     active_sheet = row = col = anchor_row = anchor_col = 0;
     sheet_hscroll.position = sheet_vscroll.position = 0;
-    chart_view = editing = data_choosing = 0;
+    chart_view = editing = data_choosing = axes_choosing = 0;
     saved_hash = sheet_hash();
     sheet_history_reset();
     if (csv || tsv) saved_hash = 0;
@@ -357,6 +362,7 @@ static void sheet_action(int action)
 {
     if (confirming || dialog_kind) return;
     data_choosing = 0;
+    axes_choosing = 0;
     if (editing) sheet_edit_commit();
     if (editing) return;
     menu = -1;
@@ -421,6 +427,7 @@ static int sheet_request_close(void)
 {
     if (allow_close) return 1;
     data_choosing = 0;
+    axes_choosing = 0;
     if (dialog_kind || confirming) return 0;
     if (editing) sheet_edit_commit();
     if (editing) return 0;
@@ -502,8 +509,13 @@ static void sheet_data_apply(void)
     }
     SheetChart previous = book->charts[active_sheet];
     sheet_chart_labels(&data_draft,&previous);
+    if (data_draft.x_col != previous.x_col || chart_x_mode(calculation,&data_draft) != chart_x_mode(calculation,&previous))
+        memset(data_draft.axes[0],0,sizeof(data_draft.axes[0]));
+    if (chart_y_date_axis(calculation,&data_draft) != chart_y_date_axis(calculation,&previous))
+        memset(data_draft.axes[1],0,sizeof(data_draft.axes[1]));
     book->charts[active_sheet] = data_draft;
     data_choosing = 0;
+    axes_choosing = 0;
     chart_view = 1;
     sheet_changed();
     sheet_status("Figure data updated. Date axes use calendar dates and elapsed time.");
@@ -596,17 +608,140 @@ static int sheet_data_key(int key)
     return 1;
 }
 
+static void sheet_axes_open(void)
+{
+    if (!book->charts[active_sheet].enabled || book->charts[active_sheet].type >= 3) {
+        sheet_status("Create a line, scatter or bar figure first.");
+        return;
+    }
+    axes_draft = book->charts[active_sheet];
+    axes_choosing = axes_select = 1;
+    axes_focus = 0;
+    *axes_status = 0;
+    menu = -1;
+}
+static void sheet_axes_apply(void)
+{
+    SheetAxis axes[2];
+    int dates = chart_date_axis(calculation,&axes_draft);
+    int ydates = chart_y_date_axis(calculation,&axes_draft);
+    if (!sheet_axis_parse(axes_draft.axes[0],dates,&axes[0]) || !sheet_axis_parse(axes_draft.axes[1],ydates,&axes[1])) {
+        sheet_string(axes_status,sizeof(axes_status),"Check bounds and positive intervals; date units: d/w/mo/y.");
+        return;
+    }
+    double lo[2] = {0,0}, hi[2] = {0,0};
+    int count = 0;
+    SheetChart coordinates = axes_draft;
+    if (coordinates.configured) coordinates.x_mode = chart_x_mode(calculation,&coordinates);
+    for (int series = 0; series < chart_series_count(&coordinates); ++series) {
+        for (int r = chart_first_row(&coordinates); r <= coordinates.source.r1; ++r) {
+            double point[2];
+            if (!chart_point(calculation,&coordinates,r,series,&point[0],&point[1])) continue;
+            for (int a = 0; a < 2; ++a) {
+                if (!count || point[a] < lo[a]) lo[a] = point[a];
+                if (!count || point[a] > hi[a]) hi[a] = point[a];
+            }
+            ++count;
+        }
+    }
+    if (coordinates.type == 2 && !ydates) { lo[1] = fmin(0,lo[1]); hi[1] = fmax(0,hi[1]); }
+    for (int a = 0; a < 2; ++a) {
+        if (lo[a] == hi[a]) {
+            double pad = a ? ydates ? 1 : fmax(1,fabs(lo[a])*0.1) : dates ? 1 : 0.5;
+            lo[a] -= pad;
+            hi[a] += pad;
+            if ((!a && dates) || (a && ydates)) { lo[a] = fmax(1,lo[a]); hi[a] = fmin(2958465,hi[a]); }
+        }
+        if (count && !sheet_axis_resolve(&axes[a],lo[a],hi[a])) {
+            sheet_string(axes_status,sizeof(axes_status),"Bounds must increase; use fewer than 2048 ticks per interval.");
+            return;
+        }
+    }
+    book->charts[active_sheet] = axes_draft;
+    sheet_changed();
+    axes_choosing = 0;
+    chart_view = 1;
+    sheet_status("Axis intervals start at the minimum. Blank fields use automatic settings.");
+}
+static void sheet_axes_draw(const SheetLayout *l)
+{
+    SheetDataLayout d = sheet_data_layout(l);
+    sheet_host->draw_standard_button(d.x,d.y,d.w,d.h,"",0);
+    sheet_host->pointer_region(d.x,d.y,d.w,d.h,BUDO_CURSOR_ARROW|BUDO_CURSOR_OVERLAY,NULL);
+    ui_text(d.x+12,d.y+8,"Figure axes - blank fields = automatic",(d.w-24)/6);
+    ui_text(d.x+12,d.y+28,"Dates: YYYY-MM-DD; intervals: 7d, 1w, 1mo, 1y",(d.w-24)/6);
+    ui_text(d.x+12,d.y+40,"Ticks start at minimum. Tab: next; Enter: apply.",(d.w-24)/6);
+    static const char *const labels[] = {"Minimum","Maximum","Major interval","Minor interval"};
+    int width = (d.w-36)/2;
+    for (int a = 0; a < 2; ++a) {
+        int x = d.x+12+a*(width+12);
+        ui_text(x,d.y+58,a ? "Y axis" : "X axis",width/6);
+        for (int f = 0; f < 4; ++f) {
+            ui_text(x,d.y+76+f*34,labels[f],width/6);
+            char label[40];
+            snprintf(label,sizeof(label),"%s%s",axes_focus == a*4+f ? "> " : "",*axes_draft.axes[a][f] ? axes_draft.axes[a][f] : "Auto");
+            budo_button_draw(sheet_host,x,d.y+88+f*34,width,22,label,axes_focus == a*4+f ? BUDO_BUTTON_PRESSED : 0);
+        }
+    }
+    ui_text(d.x+12,d.y+d.h-52,axes_status,(d.w-24)/6);
+    budo_button_draw(sheet_host,d.x+12,d.y+d.h-30,80,22,"Reset auto",0);
+    budo_button_draw(sheet_host,d.x+d.w-184,d.y+d.h-30,80,22,"Apply",BUDO_BUTTON_DEFAULT);
+    budo_button_draw(sheet_host,d.x+d.w-96,d.y+d.h-30,80,22,"Cancel",0);
+}
+static int sheet_axes_mouse(const SheetLayout *l, int x, int y)
+{
+    SheetDataLayout d = sheet_data_layout(l);
+    int width = (d.w-36)/2;
+    for (int a = 0; a < 2; ++a) {
+        for (int f = 0; f < 4; ++f) {
+            if (sheet_host->point_in_rect(x,y,d.x+12+a*(width+12),d.y+88+f*34,width,22)) {
+                axes_focus = a*4+f;
+                axes_select = 1;
+                return 1;
+            }
+        }
+    }
+    if (sheet_host->point_in_rect(x,y,d.x+12,d.y+d.h-30,80,22)) {
+        memset(axes_draft.axes,0,sizeof(axes_draft.axes));
+        axes_select = 1;
+        *axes_status = 0;
+    } else if (sheet_host->point_in_rect(x,y,d.x+d.w-184,d.y+d.h-30,80,22)) sheet_axes_apply();
+    else if (sheet_host->point_in_rect(x,y,d.x+d.w-96,d.y+d.h-30,80,22)) axes_choosing = 0;
+    return 1;
+}
+static int sheet_axes_key(int key)
+{
+    char *field = axes_draft.axes[axes_focus/4][axes_focus%4];
+    size_t length = strlen(field);
+    if (key == 27) axes_choosing = 0;
+    else if (key == 13) sheet_axes_apply();
+    else if (key == 9) { axes_focus = (axes_focus+1)%8; axes_select = 1; }
+    else if (key == 1) axes_select = 1;
+    else if (key == 8 || key == 127) {
+        if (axes_select) memset(field,0,32);
+        else if (length) field[length-1] = 0;
+        axes_select = 0;
+    } else if (key >= 32 && key <= 126) {
+        if (axes_select) {
+            length = 0;
+            memset(field,0,32);
+        }
+        axes_select = 0;
+        if (length < 31) { field[length] = (char)key; field[length+1] = 0; }
+    }
+    return 1;
+}
 static const char *const menu_labels[] = {"File","Edit","Format","Sheet","Figure","Help"};
 static const int menu_offsets[] = {4,48,92,148,198,254};
 static const char *const file_items[] = {"New  Ctrl+N","Open  Ctrl+O","Save  Ctrl+S","Save as...","Export CSV values...","Export TSV values...","Export figure SVG...","Export figure PCX..."};
 static const char *const edit_items[] = {"Undo  Ctrl+Z","Redo  Ctrl+Y","Copy  Ctrl+C","Cut  Ctrl+X","Paste  Ctrl+V","Clear  Delete","Fill down  Ctrl+D","Fill right  Ctrl+R","Sort ascending","Sort descending"};
 static const char *const format_items[] = {"General","Fixed (2 decimals)","Percent","Scientific","Money (2 decimals)","Date (YYYY-MM-DD)","Align automatic","Align left","Align center","Align right","Align middle","Align top","Align bottom","Column width...","Row height..."};
 static const char *const tab_items[] = {"Add sheet","Rename sheet...","Previous sheet","Next sheet","Insert row","Delete row","Insert column","Delete column"};
-static const char *const chart_items[] = {"Line from selection","Scatter from selection","Bar from selection","Histogram from selection","Pie from selection","Grid / Figure","Title...","X axis label...","Y axis label...","Horizontal major grid","Vertical major grid","Horizontal minor grid","Vertical minor grid","Data series..."};
+static const char *const chart_items[] = {"Line from selection","Scatter from selection","Bar from selection","Histogram from selection","Pie from selection","Grid / Figure","Title...","X axis label...","Y axis label...","Horizontal major grid","Vertical major grid","Horizontal minor grid","Vertical minor grid","Data series...","Axes..."};
 static const char *const help_items[] = {"Keyboard and formulas","Function catalog"};
 static const char *const *sheet_menu_items(int which, int *count)
 {
-    static const int counts[] = {8,10,15,8,14,2};
+    static const int counts[] = {8,10,15,8,15,2};
     static const char *const *const lists[] = {file_items,edit_items,format_items,tab_items,chart_items,help_items};
     *count = counts[which];
     return lists[which];
@@ -675,6 +810,7 @@ static void sheet_menu_action(int which, int item)
         else if (item == 5) chart_view = book->charts[active_sheet].enabled ? !chart_view : 0;
         else if (item < 9) sheet_begin_edit(item - 4,0);
         else if (item == 13) sheet_data_open();
+        else if (item == 14) sheet_axes_open();
         else {
             static const unsigned int flags[] = {SHEET_GRID_H_MAJOR,SHEET_GRID_V_MAJOR,SHEET_GRID_H_MINOR,SHEET_GRID_V_MINOR};
             book->charts[active_sheet].grids ^= flags[item-9];
@@ -856,6 +992,7 @@ static void sheet_draw(void)
     ui_text(l.x+4,l.status+3,text,(l.w-8)/6);
     if (help_view) sheet_draw_help(&l);
     if (data_choosing) sheet_data_draw(&l);
+    if (axes_choosing) sheet_axes_draw(&l);
     if (menu >= 0) {
         int count_items;
         const char *const *items = sheet_menu_items(menu,&count_items);
@@ -883,6 +1020,7 @@ static int sheet_mouse_down(int x,int y,int buttons)
     SheetLayout l;
     if (!(buttons&1) || !book || !sheet_layout(&l)) return 0;
     if (confirming || dialog_kind) return 1;
+    if (axes_choosing) return sheet_axes_mouse(&l,x,y);
     if (data_choosing) return sheet_data_mouse(&l,x,y);
     if (editing) {
         sheet_edit_commit();
@@ -998,7 +1136,7 @@ static int sheet_mouse_down(int x,int y,int buttons)
 static int sheet_mouse_move(int x,int y,int buttons)
 {
     SheetLayout l;
-    if (!book || confirming || dialog_kind || editing || data_choosing || chart_view || help_view || menu >= 0 || !sheet_layout(&l)) return 0;
+    if (!book || confirming || dialog_kind || editing || data_choosing || axes_choosing || chart_view || help_view || menu >= 0 || !sheet_layout(&l)) return 0;
     if (resize_axis) {
         unsigned short *size = resize_axis == 1 ? &book->widths[active_sheet][resize_index] : &book->heights[active_sheet][resize_index];
         int original = resize_original ? resize_original : resize_axis == 1 ? SHEET_COL_WIDTH : SHEET_ROW_HEIGHT;
@@ -1115,6 +1253,7 @@ static int sheet_key_input(int k)
 {
     if (!book) return 0;
     if (dialog_kind || confirming) return 1;
+    if (axes_choosing) return sheet_axes_key(k);
     if (data_choosing) return sheet_data_key(k);
     if (resize_axis) {
         if (k == 27) {

@@ -1,6 +1,6 @@
 #ifndef BUDO_SHEET_IO_H
 #define BUDO_SHEET_IO_H
-#include "sheet_model.h"
+#include "sheet_axis.h"
 #include <unistd.h>
 
 /* All writers stage next to the destination and atomically rename on success. */
@@ -73,7 +73,7 @@ static inline int sheet_write(const SheetBook *b, const char *path)
     char temp[4096];
     FILE *f = sheet_stage(path, temp, sizeof(temp));
     if (!f) return 0;
-    fprintf(f, "BUDOSHEET 3\n%d %d\n", b->tabs, b->count);
+    fprintf(f, "BUDOSHEET 4\n%d %d\n", b->tabs, b->count);
     for (int i = 0; i < b->tabs; ++i) {
         sheet_hex_write(f, b->names[i]);
         const SheetChart *c = &b->charts[i];
@@ -87,6 +87,8 @@ static inline int sheet_write(const SheetBook *b, const char *path)
         fprintf(f,"%d %d %d %d %d",c->configured,c->x_col,c->x_mode,c->header,c->y_count);
         for (int j = 0; j < SHEET_SERIES; ++j) fprintf(f," %d",c->y_cols[j]);
         fputc('\n',f);
+        for (int axis = 0; axis < 2; ++axis)
+            for (int field = 0; field < 4; ++field) sheet_hex_write(f,c->axes[axis][field]);
     }
     for (int i = 0; i < b->count; ++i) {
         fprintf(f, "%d %d %d %d\n", b->cells[i].key, b->cells[i].format, b->cells[i].align_h, b->cells[i].align_v);
@@ -129,7 +131,7 @@ static inline int sheet_read(SheetBook *b, const char *path)
     sheet_new(b);
     char line[256];
     int ok = fgets(line, sizeof(line), f) != NULL;
-    int version = ok && !strcmp(line,"BUDOSHEET 1\n") ? 1 : ok && !strcmp(line,"BUDOSHEET 2\n") ? 2 : ok && !strcmp(line,"BUDOSHEET 3\n") ? 3 : 0;
+    int version = ok && !strcmp(line,"BUDOSHEET 1\n") ? 1 : ok && !strcmp(line,"BUDOSHEET 2\n") ? 2 : ok && !strcmp(line,"BUDOSHEET 3\n") ? 3 : ok && !strcmp(line,"BUDOSHEET 4\n") ? 4 : 0;
     ok = version != 0;
     int tabs = 0, count = 0;
     if (ok) ok = fgets(line, sizeof(line), f) && sscanf(line, "%d %d", &tabs, &count) == 2 &&
@@ -150,6 +152,14 @@ static inline int sheet_read(SheetBook *b, const char *path)
                  sheet_sizes_read(f,b->widths[i],SHEET_COLS) && sheet_sizes_read(f,b->heights[i],SHEET_ROWS);
         }
         if (ok && version >= 3) ok = sheet_chart_read_mapping(f,c);
+        if (ok && version >= 4) {
+            for (int axis = 0; ok && axis < 2; ++axis) {
+                SheetAxis parsed;
+                for (int field = 0; ok && field < 4; ++field)
+                    ok = sheet_hex_read(f,c->axes[axis][field],32);
+                if (ok) ok = sheet_axis_parse(c->axes[axis],-1,&parsed);
+            }
+        }
         for (int j = 0; ok && j < i; ++j) if (!strcmp(b->names[i], b->names[j])) ok = 0;
     }
     for (int i = 0; ok && i < count; ++i) {

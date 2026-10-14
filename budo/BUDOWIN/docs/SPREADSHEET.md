@@ -115,9 +115,9 @@ exact chart colors without palette quantization. SVG retains native rotated text
 Both exporters stage output atomically and preserve an existing destination when
 rendering or writing fails. Selection aggregates visit only populated cells.
 
-## Native file format (versions 1, 2 and 3)
+## Native file format (versions 1, 2, 3 and 4)
 
-The writer emits `BUDOSHEET 3\n`; the reader accepts versions 1, 2 and 3.
+The writer emits `BUDOSHEET 4\n`; the reader accepts versions 1, 2, 3 and 4.
 Both use UTF-8/ASCII records. Version 1 has header `BUDOSHEET 1\n`, followed by decimal `tabs cells\n`.
 For each sheet, write:
 
@@ -146,7 +146,7 @@ line. Horizontal alignment IDs are 0 automatic, 1 left, 2 center, 3 right. Verti
 IDs are 0 middle, 1 top, 2 bottom. Styled empty cells remain stored records.
 
 The version 1 reader supplies default dimensions/alignment and enables horizontal
-major grids, preserving the original figure appearance. Saving upgrades to v3.
+major grids, preserving the original figure appearance. Saving upgrades to v4.
 Unsupported versions and invalid dimensions, alignment IDs or grid bits are
 rejected before replacing the current workbook. Resize, alignment, rename and
 grid configuration are content changes covered by save confirmation and undo.
@@ -225,3 +225,33 @@ and v1/v2 migration. `tests/budowin_native.c` exercises module discovery,
 managed-window interaction and `.BSHEET` association through the real host.
 The spreadsheet test is part of `tests/run_budowin.sh` and also runs under
 AddressSanitizer/UndefinedBehaviorSanitizer.
+
+## Axis settings and tick generation
+
+Line, scatter and bar figures expose Figure > Axes with independent X/Y minimum,
+maximum, major interval and minor interval fields. Empty fields select automatic
+bounds or four major/twenty minor divisions. Numeric bounds and intervals accept
+scientific notation. Date axes accept ISO bounds or date serials and intervals
+in days (bare numbers or `d`), weeks (`w`), calendar months (`mo`) or years (`y`).
+Month/year intervals must be whole numbers. Date-valued Y data is detected too.
+Calendar ticks are calculated from the minimum's original day, clamped to each
+month's last day, so January 31 -> February 29 -> March 31 and leap-year annual
+ticks do not drift. Intervals are anchored at the resolved axis minimum.
+
+Ticks, labels and grid lines share one value-to-pixel transform on screen and in
+SVG/PCX. Coincident minor/major ticks use the major style; grid switches remain
+independent. Dense labels are suppressed to avoid overlap without moving ticks.
+Each interval must produce fewer than 2048 ticks; excessive density, non-finite
+values, non-increasing bounds and unrepresentable spacing are rejected. Lines
+are clipped in normalized coordinates before integer conversion; excluded markers
+are omitted and bars are clipped. No clipped points are pinned to plot borders.
+
+Version 4 adds eight hexadecimal lines after each sheet's mapping record: X min,
+max, major, minor, then Y min, max, major, minor. Each field has at most 31 bytes;
+empty lines mean automatic. Readers validate the field syntax and retain v1-v3
+migration with all fields automatic. Axis settings participate in undo, dirty
+tracking and atomic saves. Applying the dialog validates settings against current
+data before committing; cancel and Reset auto operate on a draft. Changing X
+column/coordinate mode resets its settings; changing between numeric/date Y data
+resets Y settings. Creating a chart from a different selection resets both axes.
+The axis parser/tick generator is isolated in `sheet_axis.h` for future axis types.

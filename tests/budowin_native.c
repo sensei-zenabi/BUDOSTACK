@@ -299,6 +299,18 @@ int main(int argc, char **argv) {
     press_native(spreadsheet,bx+220,by+42);
     if (argc == 3) screenshot(argv[2],"spreadsheet-date-both.ppm");
     press_native(spreadsheet,bx+212,by+10);
+    press_native(spreadsheet,bx+220,by+256);
+    assert(native_label(spreadsheet,"Reset auto"));
+    if (argc == 3) screenshot(argv[2],"spreadsheet-axes-dialog.ppm");
+    static const char *const axis_values[] = {"2020-01-01","2020-07-01","1mo","1w","60","120","20","5"};
+    bwa_callback_app = spreadsheet;
+    for (int i = 0; i < 8; ++i) {
+        for (const char *p = axis_values[i]; *p; ++p) assert(spreadsheet->definition.callbacks.key(*p));
+        if (i < 7) assert(spreadsheet->definition.callbacks.key(9));
+    }
+    assert(spreadsheet->definition.callbacks.key(13));
+    if (argc == 3) screenshot(argv[2],"spreadsheet-manual-date-axes.ppm");
+    press_native(spreadsheet,bx+212,by+10);
     press_native(spreadsheet,bx+220,by+240);
     assert(native_label(spreadsheet,"Apply"));
     if (argc == 3) screenshot(argv[2],"spreadsheet-data-series.ppm");

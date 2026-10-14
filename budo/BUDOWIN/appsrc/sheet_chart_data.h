@@ -69,6 +69,18 @@ static inline int chart_date_axis(SheetCalc *calc, const SheetChart *chart)
     }
     return 0;
 }
+static inline int chart_y_date_axis(SheetCalc *calc, const SheetChart *chart)
+{
+    for (int s = 0; s < chart_series_count(chart); ++s) {
+        int column = chart_series_column(chart,s);
+        for (int row = chart_first_row(chart); row <= chart->source.r1; ++row) {
+            SheetValue value = sheet_eval(calc,chart->source.sheet,row,column);
+            const SheetCell *cell = sheet_cell(calc->book,chart->source.sheet,row,column);
+            if (value.type == SV_NUMBER && (value.date || (cell && cell->format == 5))) return 1;
+        }
+    }
+    return 0;
+}
 /* Resolve once per renderer so a date column cannot mix dates and row indices. */
 static inline int chart_x_mode(SheetCalc *calc, const SheetChart *chart)
 {

@@ -279,6 +279,25 @@ static inline int sheet_structure(SheetBook *dst, const SheetBook *src, int s, i
     for (int i=0; i<dst->tabs; ++i) {
         SheetChart *chart = &dst->charts[i];
         if (!chart->enabled || chart->source.sheet != s) continue;
+        if (chart->configured && axis) {
+            if (delta < 0 && chart->x_col == at) chart->enabled = 0;
+            else if (chart->x_col >= at) chart->x_col += delta;
+            int count = 0;
+            for (int j = 0; j < chart->y_count; ++j) {
+                int column = chart->y_cols[j];
+                if (delta < 0 && column == at) continue;
+                if (column >= at) column += delta;
+                if (column >= SHEET_COLS) { chart->enabled = 0; continue; }
+                chart->y_cols[count++] = column;
+            }
+            chart->y_count = count;
+            if (!count || chart->x_col >= SHEET_COLS) chart->enabled = 0;
+            if (!chart->enabled) {
+                chart->configured = chart->y_count = chart->x_col = chart->x_mode = chart->header = 0;
+                memset(chart->y_cols,0,sizeof(chart->y_cols));
+            }
+        }
+        if (!axis && delta < 0 && at == chart->source.r0) chart->header = 0;
         int *lo = axis ? &chart->source.c0 : &chart->source.r0, *hi = axis ? &chart->source.c1 : &chart->source.r1;
         if (delta>0) {
             if (at<=*lo) ++*lo;

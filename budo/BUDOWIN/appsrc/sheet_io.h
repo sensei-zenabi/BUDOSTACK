@@ -73,7 +73,7 @@ static inline int sheet_write(const SheetBook *b, const char *path)
     char temp[4096];
     FILE *f = sheet_stage(path, temp, sizeof(temp));
     if (!f) return 0;
-    fprintf(f, "BUDOSHEET 2\n%d %d\n", b->tabs, b->count);
+    fprintf(f, "BUDOSHEET 3\n%d %d\n", b->tabs, b->count);
     for (int i = 0; i < b->tabs; ++i) {
         sheet_hex_write(f, b->names[i]);
         const SheetChart *c = &b->charts[i];
@@ -84,12 +84,43 @@ static inline int sheet_write(const SheetBook *b, const char *path)
         fprintf(f,"%u\n",c->grids);
         sheet_sizes_write(f,b->widths[i],SHEET_COLS);
         sheet_sizes_write(f,b->heights[i],SHEET_ROWS);
+        fprintf(f,"%d %d %d %d %d",c->configured,c->x_col,c->x_mode,c->header,c->y_count);
+        for (int j = 0; j < SHEET_SERIES; ++j) fprintf(f," %d",c->y_cols[j]);
+        fputc('\n',f);
     }
     for (int i = 0; i < b->count; ++i) {
         fprintf(f, "%d %d %d %d\n", b->cells[i].key, b->cells[i].format, b->cells[i].align_h, b->cells[i].align_v);
         sheet_hex_write(f, b->cells[i].raw);
     }
     return sheet_finish(f, path, temp, 1);
+}
+static inline int sheet_chart_read_mapping(FILE *f, SheetChart *c)
+{
+    char line[256];
+    int fields[5+SHEET_SERIES];
+    if (!fgets(line,sizeof(line),f)) return 0;
+    char *p = line;
+    for (int i = 0; i < 5+SHEET_SERIES; ++i) {
+        char *end;
+        long value = strtol(p,&end,10);
+        if (end == p || value < 0 || value >= SHEET_COLS) return 0;
+        fields[i] = (int)value;
+        p = end;
+    }
+    while (isspace((unsigned char)*p)) ++p;
+    if (*p || fields[0] > 1 || fields[2] > SHEET_X_SAMPLE || fields[3] > 1 || fields[4] > SHEET_SERIES ||
+        (fields[0] && (fields[4] < 1 || fields[1] < c->source.c0 || fields[1] > c->source.c1))) return 0;
+    for (int i = 0; fields[0] && i < fields[4]; ++i) {
+        if (fields[5+i] < c->source.c0 || fields[5+i] > c->source.c1) return 0;
+        for (int j = 0; j < i; ++j) if (fields[5+j] == fields[5+i]) return 0;
+    }
+    c->configured = fields[0];
+    c->x_col = fields[1];
+    c->x_mode = fields[2];
+    c->header = fields[3];
+    c->y_count = fields[4];
+    memcpy(c->y_cols,fields+5,sizeof(c->y_cols));
+    return 1;
 }
 static inline int sheet_read(SheetBook *b, const char *path)
 {
@@ -98,7 +129,7 @@ static inline int sheet_read(SheetBook *b, const char *path)
     sheet_new(b);
     char line[256];
     int ok = fgets(line, sizeof(line), f) != NULL;
-    int version = ok && !strcmp(line,"BUDOSHEET 1\n") ? 1 : ok && !strcmp(line,"BUDOSHEET 2\n") ? 2 : 0;
+    int version = ok && !strcmp(line,"BUDOSHEET 1\n") ? 1 : ok && !strcmp(line,"BUDOSHEET 2\n") ? 2 : ok && !strcmp(line,"BUDOSHEET 3\n") ? 3 : 0;
     ok = version != 0;
     int tabs = 0, count = 0;
     if (ok) ok = fgets(line, sizeof(line), f) && sscanf(line, "%d %d", &tabs, &count) == 2 &&
@@ -118,6 +149,7 @@ static inline int sheet_read(SheetBook *b, const char *path)
             ok = fgets(line,sizeof(line),f) && sscanf(line,"%u",&c->grids) == 1 && c->grids <= 15 &&
                  sheet_sizes_read(f,b->widths[i],SHEET_COLS) && sheet_sizes_read(f,b->heights[i],SHEET_ROWS);
         }
+        if (ok && version >= 3) ok = sheet_chart_read_mapping(f,c);
         for (int j = 0; ok && j < i; ++j) if (!strcmp(b->names[i], b->names[j])) ok = 0;
     }
     for (int i = 0; ok && i < count; ++i) {

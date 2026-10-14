@@ -1,6 +1,6 @@
 #ifndef BUDO_SHEET_CHART_H
 #define BUDO_SHEET_CHART_H
-#include "sheet_formula.h"
+#include "sheet_chart_data.h"
 #include "sheet_io.h"
 #include "../sdk/font.h"
 
@@ -72,29 +72,20 @@ static inline void chart_grids(SheetCanvas *v, const SheetChart *chart, int left
         }
     }
 }
-static inline int chart_point(SheetCalc *calc, const SheetChart *chart, int row, int series, double *x, double *y)
-{
-    SheetRange a = chart->source;
-    int c = a.c0 + (a.c1 > a.c0 ? series + 1 : 0);
-    SheetValue xv = sheet_eval(calc, a.sheet, row, a.c0);
-    SheetValue yv = sheet_eval(calc, a.sheet, row, c);
-    if (yv.type != SV_NUMBER) return 0;
-    if (chart->type == 1 && xv.type != SV_NUMBER) return 0;
-    *x = chart->type == 1 ? xv.number : row - a.r0;
-    *y = yv.number;
-    return 1;
-}
 static int sheet_chart_xy(SheetCanvas *v, SheetCalc *calc, const SheetChart *chart, int x, int y, int w, int h)
 {
     int left = x + 76, top = y + 30, pw = w - 94, ph = h - 96;
     if (pw < 60 || ph < 40) return 0;
     SheetRange a = chart->source;
-    int series = sheet_min(SHEET_SERIES, sheet_max(1, a.c1 - a.c0)), count = 0;
+    int series = chart_series_count(chart), count = 0;
+    int dates = chart_date_axis(calc,chart);
+    SheetChart coordinates = *chart;
+    if (coordinates.configured) coordinates.x_mode = chart_x_mode(calc,chart);
     double xmin = 0, xmax = 0, ymin = 0, ymax = 0;
     for (int s = 0; s < series; ++s) {
-        for (int r = a.r0; r <= a.r1; ++r) {
+        for (int r = chart_first_row(chart); r <= a.r1; ++r) {
             double xx, yy;
-            if (!chart_point(calc, chart, r, s, &xx, &yy)) continue;
+            if (!chart_point(calc, &coordinates, r, s, &xx, &yy)) continue;
             if (!count || xx < xmin) xmin = xx;
             if (!count || xx > xmax) xmax = xx;
             if (!count || yy < ymin) ymin = yy;
@@ -112,8 +103,8 @@ static int sheet_chart_xy(SheetCanvas *v, SheetCalc *calc, const SheetChart *cha
         ymax = fmax(0, ymax);
     }
     if (xmin == xmax) {
-        xmin -= 0.5;
-        xmax += 0.5;
+        xmin = dates ? fmax(1,xmin-1) : xmin-0.5;
+        xmax = dates ? fmin(2958465,xmax+1) : xmax+0.5;
     }
     if (ymin == ymax) {
         double pad = fmax(1, fabs(ymin) * 0.1);
@@ -130,10 +121,15 @@ static int sheet_chart_xy(SheetCanvas *v, SheetCalc *calc, const SheetChart *cha
         int gy = top + ph - ph * i / 4;
         chart_line(v,left-3,gy,left,gy,0x303030);
         char label[24];
-        snprintf(label, sizeof(label), "%.3g", ymin + (ymax - ymin) * i / 4);
+        double ytick = ymin+(ymax-ymin)*i/4;
+        snprintf(label,sizeof(label),"%.5g",ytick);
+        if (strlen(label) > 9) snprintf(label,sizeof(label),"%.3g",ytick);
         chart_text(v, x + 18, gy - (i == 4 ? 0 : 4), label, 0x303030);
-        snprintf(label, sizeof(label), "%.3g", xmin + (xmax - xmin) * i / 4);
-        chart_text(v, left + pw * i / 4 - (i == 4 ? 24 : 0), top + ph + 8, label, 0x303030);
+        double tick = xmin+(xmax-xmin)*i/4;
+        if (dates) sheet_display(sv_date(tick),0,label,sizeof(label));
+        else snprintf(label,sizeof(label),"%.5g",tick);
+        int label_x = sheet_clamp(left+pw*i/4-(int)strlen(label)*3,left,left+pw-(int)strlen(label)*6);
+        chart_text(v,label_x,top+ph+8,label,0x303030);
     }
     chart_line(v, left, top, left, top + ph, 0x303030);
     chart_line(v, left, top + ph, left + pw, top + ph, 0x303030);
@@ -142,9 +138,9 @@ static int sheet_chart_xy(SheetCanvas *v, SheetCalc *calc, const SheetChart *cha
     for (int s = 0; s < series; ++s) {
         unsigned int color = sheet_series_colors[s];
         int prev = 0, px = 0, py = 0;
-        for (int r = a.r0; r <= a.r1; ++r) {
+        for (int r = chart_first_row(chart); r <= a.r1; ++r) {
             double xx, yy;
-            if (!chart_point(calc, chart, r, s, &xx, &yy)) {
+            if (!chart_point(calc, &coordinates, r, s, &xx, &yy)) {
                 prev = 0;
                 continue;
             }
@@ -165,13 +161,8 @@ static int sheet_chart_xy(SheetCanvas *v, SheetCalc *calc, const SheetChart *cha
             prev = 1;
         }
         char label[32];
-        const SheetCell *heading = sheet_cell(calc->book, a.sheet, a.r0, a.c0 + (a.c1 > a.c0 ? s + 1 : 0));
-        if (heading && *heading->raw && *heading->raw != '=') {
-            char *end;
-            (void)strtod(heading->raw, &end);
-            if (*end) snprintf(label, sizeof(label), "%.12s", heading->raw);
-            else snprintf(label, sizeof(label), "Series %d", s + 1);
-        } else snprintf(label, sizeof(label), "Series %d", s + 1);
+        chart_column_label(calc,chart,chart_series_column(chart,s),label,sizeof(label));
+        label[12] = 0;
         int lx = left + (s % 4) * (pw / 4), ly = y + h - 26 + (s / 4) * 12;
         chart_rect(v, lx, ly, 6, 6, color);
         chart_text(v, lx + 9, ly, label, color);

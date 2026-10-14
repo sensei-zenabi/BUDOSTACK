@@ -7,7 +7,7 @@ enum { SV_NUMBER, SV_TEXT, SV_BLANK, SV_RANGE, SV_ERROR };
 enum { SE_REF = 1, SE_VALUE, SE_DIV, SE_NAME, SE_NUM, SE_CYCLE, SE_LIMIT };
 static const char *const sheet_errors[] = {"", "#REF!", "#VALUE!", "#DIV/0!", "#NAME?", "#NUM!", "#CYCLE!", "#LIMIT!"};
 typedef struct SheetValue {
-    int type, error;
+    int type, error, date;
     double number;
     SheetRange range;
     char text[SHEET_TEXT];
@@ -193,6 +193,24 @@ static inline int sheet_date_parts(double serial, int *year, int *month, int *da
     }
     *day = n;
     return 1;
+}
+/* Strict ISO calendar input; date metadata is evaluated, never serialized. */
+static inline int sheet_iso_date(const char *text, double *serial)
+{
+    if (strlen(text) != 10 || text[4] != '-' || text[7] != '-') return 0;
+    for (int i = 0; i < 10; ++i)
+        if (i != 4 && i != 7 && !isdigit((unsigned char)text[i])) return 0;
+    int year = (text[0]-'0')*1000+(text[1]-'0')*100+(text[2]-'0')*10+text[3]-'0';
+    int month = (text[5]-'0')*10+text[6]-'0', day = (text[8]-'0')*10+text[9]-'0';
+    if (year < 1900 || year > 9999 || month < 1 || month > 12 || day < 1 || day > sheet_month_days(year,month)) return 0;
+    *serial = sheet_date_first(year,month)+day-1;
+    return 1;
+}
+static inline SheetValue sv_date(double serial)
+{
+    SheetValue value = sv_number(serial);
+    value.date = value.type == SV_NUMBER;
+    return value;
 }
 static inline int sheet_compare_values(SheetValue a, SheetValue b)
 {
@@ -394,7 +412,7 @@ median_done:
         a[i] = sheet_scalar(calc, args[i]);
         if (a[i].type == SV_ERROR) return a[i];
     }
-    if (op == SF_TODAY) return sv_number(calc->today);
+    if (op == SF_TODAY) return sv_date(calc->today);
     if (op == SF_PI) return sv_number(acos(-1));
     if (op == SF_NOT) return sv_number(!sheet_truth(a[0]));
     if (op >= SF_LEN && op <= SF_CONCAT) {
@@ -424,7 +442,7 @@ median_done:
         int year = months/12, month = months%12+1;
         if (year < 1900 || year > 9999) return sv_error(SE_NUM);
         double serial = sheet_date_first(year,month)+floor(day)-1;
-        return serial >= 1 && serial < 2958466 ? sv_number(serial) : sv_error(SE_NUM);
+        return serial >= 1 && serial < 2958466 ? sv_date(serial) : sv_error(SE_NUM);
     }
     if (op == SF_YEAR || op == SF_MONTH || op == SF_DAY) {
         int year,month,day;
@@ -755,6 +773,7 @@ static SheetValue sheet_eval(SheetCalc *calc, int s, int r, int c)
             ++end;
         }
         if (end != cell->raw && !*end) v = sv_number(value);
+        else if (sheet_iso_date(cell->raw,&value)) v = sv_date(value);
         else {
             v.type = SV_TEXT;
             sheet_string(v.text, sizeof(v.text), cell->raw + (*cell->raw == '\''));
@@ -774,7 +793,7 @@ static inline void sheet_display(SheetValue v, int format, char *out, size_t siz
     else if (format == 2) snprintf(out, size, "%.2f%%", v.number * 100);
     else if (format == 3) snprintf(out, size, "%.6e", v.number);
     else if (format == 4) snprintf(out, size, "%.2f", v.number);
-    else if (format == 5) {
+    else if (format == 5 || (!format && v.date)) {
         int year,month,day;
         if (sheet_date_parts(v.number,&year,&month,&day)) snprintf(out,size,"%04d-%02d-%02d",year,month,day);
         else sheet_string(out,size,"#NUM!");

@@ -349,6 +349,195 @@ static void test_layout_changes(const char *root)
     assert(!sheet_chart_export_pcx(calculation,chart,path));
 }
 
+static void test_date_figures(const char *root)
+{
+    /* Exact table from the user's attachment, including the leap-year month. */
+    static const char *const dates[] = {"2020-01-01","2020-02-01","2020-03-01","2020-04-01","2020-05-01","2020-06-01","2020-07-01"};
+    static const char *const weights[] = {"110.20","110.00","109.00","108.70","105.00","106.20","106.00"};
+    static const char *const benches[] = {"70.00","82.00","88.00","92.00","98.00","102.00","108.00"};
+    char legacy_path[4096];
+    path_name(legacy_path,root,"legacy-v2.bsheet");
+    FILE *legacy = fopen(legacy_path,"wb");
+    assert(legacy);
+    fputs("BUDOSHEET 2\n1 2\n4f6c64\n1 0 0 0 0 0 1\n\n\n\n1\n",legacy);
+    unsigned short old_sizes[SHEET_ROWS] = {0};
+    old_sizes[0] = 120;
+    sheet_sizes_write(legacy,old_sizes,SHEET_COLS);
+    old_sizes[0] = 32;
+    sheet_sizes_write(legacy,old_sizes,SHEET_ROWS);
+    fputs("0 0 0 0\n32\n1 0 0 0\n34\n",legacy);
+    assert(!fclose(legacy));
+    assert(sheet_read(staging,legacy_path));
+    assert(!staging->charts[0].configured && sheet_width(staging,0,0) == 120 && sheet_height(staging,0,0) == 32);
+    SheetCalc *old_calc = calloc(1,sizeof(*old_calc));
+    assert(old_calc);
+    sheet_calc_reset(old_calc,staging);
+    double old_x,old_y;
+    assert(chart_point(old_calc,&staging->charts[0],0,0,&old_x,&old_y) && old_x == 0 && old_y == 4);
+    free(old_calc);
+    sheet_new(book);
+    filename[0] = 0;
+    active_sheet = row = col = anchor_row = anchor_col = 0;
+    sheet_hscroll.position = sheet_vscroll.position = 0;
+    menu = -1;
+    editing = data_choosing = chart_view = help_view = 0;
+    put(0,0,0,"Date");
+    put(0,0,1,"Weight");
+    put(0,0,2,"Bench");
+    for (int i = 0; i < 7; ++i) {
+        put(0,i+1,0,dates[i]);
+        put(0,i+1,1,weights[i]);
+        put(0,i+1,2,benches[i]);
+    }
+    sheet_history_reset();
+    double serial;
+    assert(sheet_iso_date("2020-01-01",&serial) && serial == 43831);
+    assert(sheet_iso_date("2020-02-29",&serial) && serial == 43890);
+    assert(!sheet_iso_date("2020-02-30",&serial));
+    assert(!sheet_iso_date("1900-02-29",&serial));
+    assert(!sheet_iso_date("2020-1-01",&serial));
+    SheetValue date = sheet_eval(calculation,0,1,0);
+    char displayed[32];
+    sheet_display(date,0,displayed,sizeof(displayed));
+    assert(date.type == SV_NUMBER && date.date && !strcmp(displayed,"2020-01-01"));
+    formula("=YEAR(A2)",2020);
+    formula("=MONTH(A3)",2);
+    formula("=DAY(A4)",1);
+    put(0,20,20,"");
+    anchor_row = 7;
+    anchor_col = 2;
+    /* Both series vs date: line and scatter use the actual elapsed days. */
+    sheet_chart_create(0);
+    SheetChart *chart = &book->charts[0];
+    assert(chart->configured && chart->header && chart->x_col == 0 && chart->y_count == 2);
+    assert(chart_date_axis(calculation,chart));
+    assert(!strcmp(chart->xlabel,"Date") && !strcmp(chart->ylabel,"Value"));
+    double x,y;
+    assert(!chart_point(calculation,chart,0,0,&x,&y));
+    assert(chart_point(calculation,chart,1,0,&x,&y) && x == 43831 && fabs(y-110.2) < 1e-9);
+    assert(chart_point(calculation,chart,1,1,&x,&y) && x == 43831 && y == 70);
+    assert(chart_point(calculation,chart,2,0,&x,&y) && x == 43862 && y == 110);
+    assert(chart_point(calculation,chart,3,0,&x,&y) && x == 43891 && y == 109);
+    assert(chart_point(calculation,chart,7,1,&x,&y) && x == 44013 && y == 108);
+    char path[4096];
+    path_name(path,root,"dates-both-line.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    put(0,2,0,"N/A");
+    assert(!chart_point(calculation,chart,2,0,&x,&y));
+    path_name(path,root,"dates-missing-line.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    put(0,2,0,"2020-02-01");
+    sheet_chart_create(1);
+    path_name(path,root,"dates-both-scatter.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    /* Either series vs date without moving or duplicating spreadsheet columns. */
+    sheet_data_open();
+    assert(data_choosing);
+    sheet_data_toggle(2);
+    sheet_data_apply();
+    assert(!data_choosing && chart->y_count == 1 && chart->y_cols[0] == 1 && !strcmp(chart->ylabel,"Weight"));
+    path_name(path,root,"dates-weight.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    sheet_data_open();
+    assert(sheet_data_key('2'));
+    assert(sheet_data_key('3'));
+    assert(sheet_data_key(13));
+    assert(chart->x_col == 0 && chart->y_count == 1 && chart->y_cols[0] == 2 && !strcmp(chart->ylabel,"Bench"));
+    path_name(path,root,"dates-bench.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    path_name(path,root,"dates-bench.pcx");
+    assert(sheet_chart_export_pcx(calculation,chart,path));
+    *clipboard = *book;
+    sheet_data_open();
+    sheet_data_toggle(2);
+    sheet_data_apply();
+    assert(data_choosing && !memcmp(book,clipboard,sizeof(*book)));
+    assert(sheet_data_key(27) && !data_choosing && !memcmp(book,clipboard,sizeof(*book)));
+    sheet_data_open();
+    sheet_data_x(1);
+    sheet_data_apply();
+    assert(chart->x_col == 1 && chart->y_count == 1 && chart->y_cols[0] == 2);
+    assert(!chart_date_axis(calculation,chart) && !strcmp(chart->xlabel,"Weight") && !strcmp(chart->ylabel,"Bench"));
+    assert(chart_point(calculation,chart,1,0,&x,&y) && fabs(x-110.2) < 1e-9 && y == 70);
+    path_name(path,root,"weight-bench.svg");
+    assert(sheet_chart_export(calculation,chart,path));
+    sheet_undo(-1);
+    assert(chart->x_col == 0 && chart_date_axis(calculation,chart));
+    sheet_undo(1);
+    assert(chart->x_col == 1);
+    /* Numeric serials with date formatting and dates produced by formulas. */
+    put(0,1,0,"=DATE(2020,1,1)");
+    date = sheet_eval(calculation,0,1,0);
+    assert(date.date && date.number == 43831);
+    put(0,2,0,"43862");
+    assert(sheet_set(book,0,2,0,"43862",5));
+    sheet_calc_reset(calculation,book);
+    chart->x_col = 0;
+    chart->x_mode = SHEET_X_DATE;
+    assert(chart_date_axis(calculation,chart));
+    assert(chart_point(calculation,chart,2,0,&x,&y) && x == 43862);
+    put(0,2,0,"'2020-02-01");
+    assert(chart_point(calculation,chart,2,0,&x,&y) && x == 43862);
+    put(0,2,0,"not a date");
+    assert(!chart_point(calculation,chart,2,0,&x,&y));
+    put(0,2,0,"2020-02-01");
+    path_name(path,root,"data-series-v3.bsheet");
+    assert(sheet_write(book,path) && sheet_read(staging,path) && !memcmp(book,staging,sizeof(*book)));
+    assert(staging->charts[0].x_col == 0 && staging->charts[0].y_cols[0] == 2);
+    assert(sheet_structure(staging,book,0,1,1,1));
+    assert(staging->charts[0].x_col == 0 && staging->charts[0].y_cols[0] == 3);
+    assert(sheet_structure(staging,book,0,1,1,-1));
+    assert(staging->charts[0].enabled && staging->charts[0].y_cols[0] == 1);
+    assert(sheet_structure(staging,book,0,1,0,-1));
+    assert(!staging->charts[0].enabled && !staging->charts[0].configured);
+    path_name(path,root,"deleted-x-v3.bsheet");
+    assert(sheet_write(staging,path));
+    /* All chooser controls, clipping, cancellation and wide-table pagination. */
+    for (int width = 452; width <= 900; width += 112) {
+        client_w = width;
+        client_h = 294;
+        sheet_data_open();
+        sheet_draw();
+        SheetLayout l;
+        assert(sheet_layout(&l));
+        SheetDataLayout d = sheet_data_layout(&l);
+        assert(sheet_data_mouse(&l,d.x+d.w-40,d.y+36));
+        assert(sheet_data_mouse(&l,d.x+40,d.y+60));
+        assert(sheet_data_mouse(&l,d.x+40,d.y+88));
+        sheet_draw();
+        assert(sheet_data_mouse(&l,d.x+d.w-64,d.y+d.h-20));
+        assert(!data_choosing);
+    }
+    client_w = 612;
+    client_h = 424;
+    chart->source.c1 = SHEET_COLS-1;
+    sheet_data_open();
+    for (int i = 0; i < 40; ++i) assert(sheet_data_key(0x100|80));
+    sheet_draw();
+    assert(data_offset > 0 && data_draft.source.c0+data_offset <= data_draft.source.c1);
+    assert(sheet_data_key(27));
+    chart->source.c1 = 2;
+    chart_view = 0;
+    /* Selecting B:C directly is sufficient for Bench vs Weight. */
+    row = anchor_row = 0;
+    col = 1;
+    anchor_col = 2;
+    anchor_row = 7;
+    sheet_chart_create(1);
+    assert(chart->x_col == 1 && chart->y_count == 1 && chart->y_cols[0] == 2);
+    assert(!strcmp(chart->xlabel,"Weight") && !strcmp(chart->ylabel,"Bench"));
+    put(0,0,4,"Values");
+    put(0,1,4,"3");
+    row = 0;
+    anchor_row = 1;
+    col = anchor_col = 4;
+    sheet_chart_create(3);
+    assert(!chart->configured);
+    path_name(path,root,"histogram-after-scatter.bsheet");
+    assert(sheet_write(book,path) && sheet_read(staging,path) && !memcmp(book,staging,sizeof(*book)));
+    chart_view = 0;
+}
+
 int main(int argc,char **argv)
 {
     assert(argc == 2);
@@ -580,6 +769,7 @@ int main(int argc,char **argv)
     app.confirm_result(BUDO_CONFIRM_SAVE,BUDO_RESPONSE_CANCEL);
     assert(!sheet_write(book,"/nonexistent-directory/book.bsheet"));
     test_layout_changes(argv[1]);
+    test_date_figures(argv[1]);
     /* Exercise malformed token streams under sanitizers as well as normal builds. */
     unsigned int random_state = 12345;
     const char alphabet[] = "A1$!+-*/^%<>=(,)\"' ._&0123456789";

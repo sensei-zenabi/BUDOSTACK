@@ -68,3 +68,50 @@ for kind in range(5):
         assert max(x for x, _ in dark) - min(x for x, _ in dark) <= 6
         assert max(y for _, y in dark) - min(y for _, y in dark) > 50
 print("PASS: spreadsheet SVG axis rotation, 16 grid combinations and five RGB PCX exports")
+
+# Exact source table: dates must position points by elapsed days, never by row.
+expected_days = (0, 31, 60, 91, 121, 152, 182)
+blue, red = "#2060b0", "#c04030"
+
+def plot_points(name, color):
+    svg = ET.parse(root / name).getroot()
+    points = [
+        (int(node.attrib["x"]), int(node.attrib["y"]))
+        for node in svg.findall("svg:rect", namespace)
+        if node.attrib.get("fill") == color and node.attrib.get("width") == "3"
+        and node.attrib.get("height") == "3"
+    ]
+    return svg, points
+
+for name, count in (("dates-both-line.svg", 2), ("dates-both-scatter.svg", 2),
+                    ("dates-weight.svg", 1), ("dates-bench.svg", 1)):
+    svg, points = plot_points(name, blue)
+    assert len(points) == 7
+    expected_x = [max(76, min(780, 76 + int(day / 182 * 706) - 1)) for day in expected_days]
+    assert [point[0] for point in points] == expected_x
+    _, second = plot_points(name, red)
+    assert len(second) == (7 if count == 2 else 0)
+    labels = svg.findall("svg:text", namespace)
+    text = [node.text for node in labels]
+    assert "2020-01-01" in text and "2020-07-01" in text and "Date" in text
+    if name == "dates-weight.svg":
+        assert "110.2" in text
+    legend = [node.text for node in labels if "transform" not in node.attrib]
+    assert ("Weight" in legend) == (count == 2 or name == "dates-weight.svg")
+    assert ("Bench" in legend) == (count == 2 or name == "dates-bench.svg")
+    if name == "dates-both-line.svg":
+        series_lines = [node for node in svg.findall("svg:path", namespace) if node.attrib.get("stroke") in (blue, red)]
+        assert len(series_lines) == 12
+
+svg, points = plot_points("weight-bench.svg", blue)
+assert len(points) == 7
+weights = (110.2, 110, 109, 108.7, 105, 106.2, 106)
+expected_x = [max(76, min(780, 76 + int((weight - 105) / (110.2 - 105) * 706) - 1)) for weight in weights]
+assert [point[0] for point in points] == expected_x
+labels = [node.text for node in svg.findall("svg:text", namespace)]
+assert "Weight" in labels and "Bench" in labels and not any(label and label.startswith("2020-") for label in labels)
+print("PASS: date/weight/bench plots, exact series choices and proportional leap-year date spacing")
+
+_, missing = plot_points("dates-missing-line.svg", blue)
+assert len(missing) == 6
+assert [point[0] for point in missing] == [max(76, min(780, 76 + int(day / 182 * 706) - 1)) for i, day in enumerate(expected_days) if i != 1]

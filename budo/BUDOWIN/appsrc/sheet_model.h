@@ -23,6 +23,10 @@
 #define SHEET_GRID_V_MAJOR 2U
 #define SHEET_GRID_H_MINOR 4U
 #define SHEET_GRID_V_MINOR 8U
+#define SHEET_X_AUTO 0
+#define SHEET_X_NUMBER 1
+#define SHEET_X_DATE 2
+#define SHEET_X_SAMPLE 3
 
 typedef struct SheetRange {
     int sheet, r0, c0, r1, c1;
@@ -30,6 +34,7 @@ typedef struct SheetRange {
 typedef struct SheetChart {
     int enabled, type;
     unsigned int grids;
+    int configured, x_col, x_mode, header, y_count, y_cols[SHEET_SERIES];
     SheetRange source;
     char title[64], xlabel[32], ylabel[32];
 } SheetChart;

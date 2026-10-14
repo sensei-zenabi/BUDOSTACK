@@ -13,6 +13,7 @@ associations remain configurable; the spreadsheet's Open dialog imports them.
 | `sheet_formula.h` | Bounded parser, typed values, evaluation cache | `SheetFunction` registry and callback |
 | `sheet_edit.h` | Reference-aware copy, fill, structural edits and stable row sorting | Transactional workbook operations |
 | `sheet_io.h` | Native persistence and CSV/TSV interchange | Versioned format reader/writer |
+| `sheet_chart_data.h` | X/Y column mappings, header detection and calendar axes | Independent series selection |
 | `sheet_chart.h` | Chart types and shared drawing/export canvas | `SheetChartType` registry and canvas callbacks |
 | `spreadsheet.c` | UI state, selection, history and asynchronous dialogs | Menus and UI interactions |
 
@@ -59,6 +60,12 @@ formula values are invalidated on a UTC day change during evaluation. Dates are
 numbers; date formatting displays YYYY-MM-DD.
 
 Unquoted numeric input is parsed as a finite double (including a trailing `%`).
+Strict ISO `YYYY-MM-DD` input is parsed as a Gregorian date serial, displayed
+as ISO in General format. DATE/TODAY and direct references preserve evaluated
+date metadata; an explicit number format can override display. The raw input
+remains the persisted value. Invalid ISO dates remain text; a leading apostrophe
+can force date-looking input to text. Chart date axes also accept strict ISO
+text returned by formulas or imported as literal text.
 A leading apostrophe forces text. Blank arithmetic operands coerce to zero;
 aggregate functions ignore text/blanks. Error values include `#REF!`, `#VALUE!`,
 `#DIV/0!`, `#NAME?`, `#NUM!`, `#CYCLE!` and `#LIMIT!`.
@@ -72,10 +79,25 @@ labels, viewport and `SheetCanvas`. Use the same renderer for screen and SVG;
 new diagram types need no formula or grid changes. Additional chart metadata
 requires a workbook schema version change, with a reader for previous versions.
 
-One live figure is stored per sheet. Line/bar use row positions for X; scatter
-uses numeric X from the first column. For multi-column sources, subsequent
-columns are Y series, up to eight. Text headers and missing/error values are
-skipped; line gaps break the connecting path. Histogram uses ten equal bins of
+One live figure is stored per sheet. New Cartesian figures map the first selected
+column to X and the following columns to up to eight Y series. First-row text
+headers are detected. For a single selected column, line/bar use sample positions
+and scatter plots the column against itself. Figure > Data series provides an
+app-owned chooser for the X column, independent Y columns (including nonadjacent
+columns), header inclusion and X mode: Auto, Numbers, Dates or Sample positions.
+Wide selections open the chooser automatically. Each Y series shares the selected
+source row range and X column; no copy or rearrangement of source cells is needed.
+Apply is a single undoable content change; Cancel/Escape leaves the book untouched.
+Header names supply legends and default axis labels, while custom axis labels
+are preserved when data mappings change.
+
+Line/scatter/bar Auto mode uses numeric X values, including date serials, with
+proportional elapsed-time spacing. Strict ISO input, DATE/TODAY, date-formatted
+numbers and ISO text can trigger date axes. Calendar axes display ISO tick labels;
+explicit Dates mode rejects invalid date values. Numbers mode displays serials
+numerically; Sample positions restores row-based spacing. Text categories may
+use row positions for line/bar. Header rows and missing/error values are skipped;
+line gaps break the connecting path. Histogram uses ten equal bins of
 the first column. Pie accepts at most eight rows of nonnegative values; the
 first column supplies labels when a second value column is selected. Titles and
 axis labels are persisted. SVG output escapes user text and shares chart geometry
@@ -93,9 +115,9 @@ exact chart colors without palette quantization. SVG retains native rotated text
 Both exporters stage output atomically and preserve an existing destination when
 rendering or writing fails. Selection aggregates visit only populated cells.
 
-## Native file format (versions 1 and 2)
+## Native file format (versions 1, 2 and 3)
 
-The writer emits `BUDOSHEET 2\n`; the reader accepts versions 1 and 2.
+The writer emits `BUDOSHEET 3\n`; the reader accepts versions 1, 2 and 3.
 Both use UTF-8/ASCII records. Version 1 has header `BUDOSHEET 1\n`, followed by decimal `tabs cells\n`.
 For each sheet, write:
 
@@ -124,10 +146,22 @@ line. Horizontal alignment IDs are 0 automatic, 1 left, 2 center, 3 right. Verti
 IDs are 0 middle, 1 top, 2 bottom. Styled empty cells remain stored records.
 
 The version 1 reader supplies default dimensions/alignment and enables horizontal
-major grids, preserving the original figure appearance. Saving upgrades to v2.
+major grids, preserving the original figure appearance. Saving upgrades to v3.
 Unsupported versions and invalid dimensions, alignment IDs or grid bits are
 rejected before replacing the current workbook. Resize, alignment, rename and
 grid configuration are content changes covered by save confirmation and undo.
+
+Version 3 adds one decimal chart-mapping record after each sheet's dimension
+arrays: `configured x_column x_mode header y_count y0 y1 y2 y3 y4 y5 y6 y7\n`.
+Columns are absolute zero-based sheet indices within the source rectangle. X mode
+IDs are 0 Auto, 1 Numbers, 2 Dates, 3 Sample positions. Configured figures require
+one to eight distinct Y columns; header is boolean. Inactive trailing Y slots are
+ignored. Readers reject invalid modes, flags, duplicate Y columns and out-of-range
+active mappings before loading. Versions 1/2 initialize unconfigured mappings and
+preserve their original row-based line/bar behavior; opening the data chooser
+upgrades an old figure to an explicit mapping. Column insertion/deletion updates
+mapped indices, removes deleted Y series and disables a figure whose X column or
+all Y columns were deleted. Row deletion removes the header flag when appropriate.
 
 Writers use `mkstemp` in the destination directory, flush and sync the staged
 file, then rename it atomically. Errors remove the staged file and preserve the
@@ -183,7 +217,11 @@ and smaller/resized clients. Additional layout regressions cover dragging
 header edges, size limits/cancellation, all cell alignments, formula-safe renaming,
 legacy workbook migration and all sixteen grid configurations.
 `tests/budowin_spreadsheet_exports.py` independently parses SVG and decodes all
-five RGB PCX chart types, validating axis rotation and grid orientation/counts. `tests/budowin_native.c` exercises module discovery,
+five RGB PCX chart types, validating axis rotation and grid orientation/counts. The user's Date/Weight/Bench
+table is reproduced in calculation, native UI and SVG/PCX export regressions.
+Tests verify either/both Y series against dates, Bench against Weight, proportional
+31-/29-day spacing, header/legend naming, chooser cancellation, mapping persistence,
+and v1/v2 migration. `tests/budowin_native.c` exercises module discovery,
 managed-window interaction and `.BSHEET` association through the real host.
 The spreadsheet test is part of `tests/run_budowin.sh` and also runs under
 AddressSanitizer/UndefinedBehaviorSanitizer.

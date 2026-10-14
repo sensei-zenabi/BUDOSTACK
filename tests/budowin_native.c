@@ -270,6 +270,49 @@ int main(int argc, char **argv) {
     click_native(spreadsheet,bx+342,by+36); /* Toggle to saved figure. */
     if (argc == 3) screenshot(argv[2],"spreadsheet-axis-grids.ppm");
     bwa_callback_app = NULL;
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.key(14));
+    assert(confirm_kind == BUDO_CONFIRM_SAVE);
+    desktop_confirm_result(BUDO_RESPONSE_DISCARD);
+    static const char *const training_table[8][3] = {
+        {"Date","Weight","Bench"},
+        {"2020-01-01","110.20","70.00"}, {"2020-02-01","110.00","82.00"},
+        {"2020-03-01","109.00","88.00"}, {"2020-04-01","108.70","92.00"},
+        {"2020-05-01","105.00","98.00"}, {"2020-06-01","106.20","102.00"},
+        {"2020-07-01","106.00","108.00"}
+    };
+    bwa_callback_app = spreadsheet;
+    for (int r = 0; r < 8; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            int x = bx+38+c*88+10, y = by+92+r*20+6;
+            assert(spreadsheet->definition.callbacks.mouse_down(x,y,1));
+            assert(spreadsheet->definition.callbacks.mouse_up(x,y,0));
+            for (const char *p = training_table[r][c]; *p; ++p) assert(spreadsheet->definition.callbacks.key(*p));
+            assert(spreadsheet->definition.callbacks.key(13));
+        }
+    }
+    assert(spreadsheet->definition.callbacks.mouse_down(bx+42,by+96,1));
+    assert(spreadsheet->definition.callbacks.mouse_move(bx+38+2*88+5,by+92+7*20+4,1));
+    assert(spreadsheet->definition.callbacks.mouse_up(bx+38+2*88+5,by+92+7*20+4,0));
+    if (argc == 3) screenshot(argv[2],"spreadsheet-training-table.ppm");
+    press_native(spreadsheet,bx+212,by+10);
+    press_native(spreadsheet,bx+220,by+42);
+    if (argc == 3) screenshot(argv[2],"spreadsheet-date-both.ppm");
+    press_native(spreadsheet,bx+212,by+10);
+    press_native(spreadsheet,bx+220,by+240);
+    assert(native_label(spreadsheet,"Apply"));
+    if (argc == 3) screenshot(argv[2],"spreadsheet-data-series.ppm");
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.key('2'));
+    assert(spreadsheet->definition.callbacks.key(13));
+    if (argc == 3) screenshot(argv[2],"spreadsheet-date-bench.ppm");
+    press_native(spreadsheet,bx+212,by+10);
+    press_native(spreadsheet,bx+220,by+240);
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.key(0x100|77));
+    assert(spreadsheet->definition.callbacks.key(13));
+    if (argc == 3) screenshot(argv[2],"spreadsheet-weight-bench.ppm");
+    bwa_callback_app = NULL;
     BwaLoadedApp *settings = NULL;
     for (int i = 0; i < bwa_instance_count; ++i)
         if (!strcmp(bwa_instances[i].definition.app_id, "settings")) settings = &bwa_instances[i];

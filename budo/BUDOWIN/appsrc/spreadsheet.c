@@ -21,6 +21,9 @@ static int help_offset;
 static unsigned long long last_cell_click;
 static int last_cell_key = -1;
 static int resize_axis, resize_index, resize_start, resize_original;
+static int data_choosing, data_offset;
+static SheetChart data_draft;
+static char data_status[96];
 enum { SD_OPEN = 1, SD_SAVE, SD_CSV, SD_TSV, SD_SVG, SD_PCX };
 enum { SA_NEW = 1, SA_OPEN, SA_CLOSE, SA_PATH };
 typedef struct SheetLayout {
@@ -31,6 +34,9 @@ static void sheet_continue(void);
 static void sheet_action(int action);
 static int sheet_save(void);
 static void sheet_edit_commit(void);
+static void ui_text(int x,int y,const char *s,int chars);
+static void sheet_chart_labels(SheetChart *chart,const SheetChart *previous);
+static void sheet_data_open(void);
 static unsigned char ui_color(int role)
 {
     return sheet_host->get_system_color(role);
@@ -255,20 +261,26 @@ static void sheet_copy(void)
 static void sheet_chart_create(int type)
 {
     SheetRange a = selection();
-    if (a.c1 - a.c0 > SHEET_SERIES && type < 3) {
-        sheet_status("Select at most 8 Y series plus an X column.");
-        return;
-    }
+    int choose_data = type < 3 && a.c1-a.c0 > SHEET_SERIES;
     SheetChart *chart = &book->charts[active_sheet];
+    SheetChart previous = *chart;
     chart->enabled = 1;
     chart->type = type;
     chart->source = a;
     if (!*chart->title) sheet_string(chart->title,sizeof(chart->title),"Figure");
     if (!*chart->xlabel) sheet_string(chart->xlabel,sizeof(chart->xlabel),type == 1 ? "X" : "Sample");
     if (!*chart->ylabel) sheet_string(chart->ylabel,sizeof(chart->ylabel),"Value");
+    if (type < 3) {
+        chart_configure(calculation,chart);
+        sheet_chart_labels(chart,&previous);
+    } else {
+        chart->configured = chart->x_col = chart->x_mode = chart->header = chart->y_count = 0;
+        memset(chart->y_cols,0,sizeof(chart->y_cols));
+    }
     sheet_changed();
     chart_view = 1;
     sheet_status("Figure updates from the source cells. Esc returns to the grid.");
+    if (choose_data) sheet_data_open();
 }
 static void sheet_dialog(int kind)
 {
@@ -313,7 +325,7 @@ static int sheet_load(const char *path)
     if (!csv && !tsv) sheet_string(filename,sizeof(filename),path);
     active_sheet = row = col = anchor_row = anchor_col = 0;
     sheet_hscroll.position = sheet_vscroll.position = 0;
-    chart_view = editing = 0;
+    chart_view = editing = data_choosing = 0;
     saved_hash = sheet_hash();
     sheet_history_reset();
     if (csv || tsv) saved_hash = 0;
@@ -344,6 +356,7 @@ static void sheet_continue(void)
 static void sheet_action(int action)
 {
     if (confirming || dialog_kind) return;
+    data_choosing = 0;
     if (editing) sheet_edit_commit();
     if (editing) return;
     menu = -1;
@@ -407,6 +420,7 @@ static int sheet_file_selected(int mode, const char *path)
 static int sheet_request_close(void)
 {
     if (allow_close) return 1;
+    data_choosing = 0;
     if (dialog_kind || confirming) return 0;
     if (editing) sheet_edit_commit();
     if (editing) return 0;
@@ -415,17 +429,184 @@ static int sheet_request_close(void)
     sheet_action(SA_CLOSE);
     return 0;
 }
+static void sheet_chart_labels(SheetChart *chart, const SheetChart *previous)
+{
+    SheetChart old_defaults = *previous, new_defaults = *chart;
+    chart_default_labels(calculation,&old_defaults);
+    chart_default_labels(calculation,&new_defaults);
+    if (!*previous->xlabel || !strcmp(previous->xlabel,"X") || !strcmp(previous->xlabel,"Sample") ||
+        !strcmp(previous->xlabel,old_defaults.xlabel))
+        sheet_string(chart->xlabel,sizeof(chart->xlabel),new_defaults.xlabel);
+    if (!*previous->ylabel || !strcmp(previous->ylabel,"Value") || !strcmp(previous->ylabel,old_defaults.ylabel))
+        sheet_string(chart->ylabel,sizeof(chart->ylabel),new_defaults.ylabel);
+}
+typedef struct SheetDataLayout {
+    int x, y, w, h, rows;
+} SheetDataLayout;
+static SheetDataLayout sheet_data_layout(const SheetLayout *l)
+{
+    SheetDataLayout d = {l->x+10,l->y+8,l->w-20,l->h-16,0};
+    d.rows = sheet_clamp((d.h-198)/20,1,SHEET_SERIES);
+    return d;
+}
+static void sheet_data_open(void)
+{
+    const SheetChart *chart = &book->charts[active_sheet];
+    if (!chart->enabled || chart->type >= 3) {
+        sheet_status("Create a line, scatter or bar figure from the table first.");
+        return;
+    }
+    data_draft = *chart;
+    if (!data_draft.configured) chart_configure(calculation,&data_draft);
+    data_offset = 0;
+    data_choosing = 1;
+    menu = -1;
+    sheet_string(data_status,sizeof(data_status),"Left/right: X; 1-8: Y; M: axis mode; H: headers; Enter: apply.");
+}
+static void sheet_data_x(int direction)
+{
+    int count = data_draft.source.c1-data_draft.source.c0+1;
+    if (count == 1) return;
+    data_draft.x_col = data_draft.source.c0+(data_draft.x_col-data_draft.source.c0+count+direction)%count;
+    for (int i = 0; i < data_draft.y_count; ++i) {
+        if (data_draft.y_cols[i] != data_draft.x_col) continue;
+        memmove(data_draft.y_cols+i,data_draft.y_cols+i+1,(size_t)(data_draft.y_count-i-1)*sizeof(int));
+        data_draft.y_cols[--data_draft.y_count] = 0;
+        break;
+    }
+}
+static void sheet_data_toggle(int column)
+{
+    for (int i = 0; i < data_draft.y_count; ++i) {
+        if (data_draft.y_cols[i] != column) continue;
+        memmove(data_draft.y_cols+i,data_draft.y_cols+i+1,(size_t)(data_draft.y_count-i-1)*sizeof(int));
+        data_draft.y_cols[--data_draft.y_count] = 0;
+        return;
+    }
+    if (data_draft.y_count == SHEET_SERIES) {
+        sheet_string(data_status,sizeof(data_status),"At most eight Y series may be plotted together.");
+        return;
+    }
+    int i = data_draft.y_count++;
+    while (i > 0 && data_draft.y_cols[i-1] > column) {
+        data_draft.y_cols[i] = data_draft.y_cols[i-1];
+        --i;
+    }
+    data_draft.y_cols[i] = column;
+}
+static void sheet_data_apply(void)
+{
+    if (!data_draft.y_count || chart_first_row(&data_draft) > data_draft.source.r1) {
+        sheet_string(data_status,sizeof(data_status),"Select at least one Y column and one data row.");
+        return;
+    }
+    SheetChart previous = book->charts[active_sheet];
+    sheet_chart_labels(&data_draft,&previous);
+    book->charts[active_sheet] = data_draft;
+    data_choosing = 0;
+    chart_view = 1;
+    sheet_changed();
+    sheet_status("Figure data updated. Date axes use calendar dates and elapsed time.");
+}
+static void sheet_data_page(int direction, int rows)
+{
+    int count = data_draft.source.c1-data_draft.source.c0+1;
+    data_offset = sheet_clamp(data_offset+direction*rows,0,((count-1)/rows)*rows);
+}
+static void sheet_data_draw(const SheetLayout *l)
+{
+    SheetDataLayout d = sheet_data_layout(l);
+    sheet_host->draw_standard_button(d.x,d.y,d.w,d.h,"",0);
+    sheet_host->pointer_region(d.x,d.y,d.w,d.h,BUDO_CURSOR_ARROW|BUDO_CURSOR_OVERLAY,NULL);
+    ui_text(d.x+12,d.y+8,"Figure data - choose X and one or more Y columns",(d.w-24)/6);
+    char label[128], name[32], address[24];
+    chart_column_label(calculation,&data_draft,data_draft.x_col,name,sizeof(name));
+    sheet_address(0,data_draft.x_col,address,sizeof(address));
+    char *digit = address;
+    while (isalpha((unsigned char)*digit)) ++digit;
+    *digit = 0;
+    snprintf(label,sizeof(label),"X: %s - %.31s",address,name);
+    ui_text(d.x+12,d.y+36,label,(d.w-100)/6);
+    budo_button_draw(sheet_host,d.x+d.w-72,d.y+28,28,22,"<",0);
+    budo_button_draw(sheet_host,d.x+d.w-40,d.y+28,28,22,">",0);
+    static const char *const modes[] = {"Auto (numbers / dates)","Numbers","Dates","Sample positions"};
+    snprintf(label,sizeof(label),"X axis: %s",modes[data_draft.x_mode]);
+    budo_button_draw(sheet_host,d.x+12,d.y+54,d.w-24,22,label,0);
+    snprintf(label,sizeof(label),"[%c] First row contains headers",data_draft.header ? 'x' : ' ');
+    budo_button_draw(sheet_host,d.x+12,d.y+80,d.w-24,22,label,0);
+    for (int i = 0; i < d.rows; ++i) {
+        int column = data_draft.source.c0+data_offset+i;
+        if (column > data_draft.source.c1) break;
+        int selected = 0;
+        for (int j = 0; j < data_draft.y_count; ++j) if (data_draft.y_cols[j] == column) selected = 1;
+        chart_column_label(calculation,&data_draft,column,name,sizeof(name));
+        sheet_address(0,column,address,sizeof(address));
+        digit = address;
+        while (isalpha((unsigned char)*digit)) ++digit;
+        *digit = 0;
+        snprintf(label,sizeof(label),"%d [%c] Y: %s - %.31s",i+1,selected ? 'x' : ' ',address,name);
+        budo_button_draw(sheet_host,d.x+12,d.y+108+i*20,d.w-24,18,label,selected ? BUDO_BUTTON_PRESSED : 0);
+    }
+    ui_text(d.x+12,d.y+d.h-76,data_status,(d.w-24)/6);
+    budo_button_draw(sheet_host,d.x+12,d.y+d.h-56,28,20,"<",0);
+    budo_button_draw(sheet_host,d.x+d.w-40,d.y+d.h-56,28,20,">",0);
+    int count = data_draft.source.c1-data_draft.source.c0+1;
+    snprintf(label,sizeof(label),"Y columns %d-%d / %d",data_offset+1,sheet_min(count,data_offset+d.rows),count);
+    ui_text(d.x+48,d.y+d.h-50,label,(d.w-96)/6);
+    budo_button_draw(sheet_host,d.x+d.w-184,d.y+d.h-30,80,22,"Apply",BUDO_BUTTON_DEFAULT);
+    budo_button_draw(sheet_host,d.x+d.w-96,d.y+d.h-30,80,22,"Cancel",0);
+}
+static int sheet_data_mouse(const SheetLayout *l, int x, int y)
+{
+    SheetDataLayout d = sheet_data_layout(l);
+    if (sheet_host->point_in_rect(x,y,d.x+d.w-72,d.y+28,28,22)) sheet_data_x(-1);
+    else if (sheet_host->point_in_rect(x,y,d.x+d.w-40,d.y+28,28,22)) sheet_data_x(1);
+    else if (sheet_host->point_in_rect(x,y,d.x+12,d.y+54,d.w-24,22)) data_draft.x_mode = (data_draft.x_mode+1)%4;
+    else if (sheet_host->point_in_rect(x,y,d.x+12,d.y+80,d.w-24,22)) data_draft.header = !data_draft.header;
+    else if (sheet_host->point_in_rect(x,y,d.x+12,d.y+d.h-56,28,20)) sheet_data_page(-1,d.rows);
+    else if (sheet_host->point_in_rect(x,y,d.x+d.w-40,d.y+d.h-56,28,20)) sheet_data_page(1,d.rows);
+    else if (sheet_host->point_in_rect(x,y,d.x+d.w-184,d.y+d.h-30,80,22)) sheet_data_apply();
+    else if (sheet_host->point_in_rect(x,y,d.x+d.w-96,d.y+d.h-30,80,22)) data_choosing = 0;
+    else for (int i = 0; i < d.rows; ++i) {
+        int column = data_draft.source.c0+data_offset+i;
+        if (column <= data_draft.source.c1 && sheet_host->point_in_rect(x,y,d.x+12,d.y+108+i*20,d.w-24,18)) {
+            sheet_data_toggle(column);
+            break;
+        }
+    }
+    return 1;
+}
+static int sheet_data_key(int key)
+{
+    SheetLayout l;
+    if (!sheet_layout(&l)) return 1;
+    SheetDataLayout d = sheet_data_layout(&l);
+    if (key == 27) data_choosing = 0;
+    else if (key == 13) sheet_data_apply();
+    else if (key == (0x100|75)) sheet_data_x(-1);
+    else if (key == (0x100|77)) sheet_data_x(1);
+    else if (key == (0x100|72)) sheet_data_page(-1,d.rows);
+    else if (key == (0x100|80)) sheet_data_page(1,d.rows);
+    else if (key == 'm' || key == 'M') data_draft.x_mode = (data_draft.x_mode+1)%4;
+    else if (key == 'h' || key == 'H') data_draft.header = !data_draft.header;
+    else if (key >= '1' && key < '1'+d.rows) {
+        int column = data_draft.source.c0+data_offset+key-'1';
+        if (column <= data_draft.source.c1) sheet_data_toggle(column);
+    }
+    return 1;
+}
+
 static const char *const menu_labels[] = {"File","Edit","Format","Sheet","Figure","Help"};
 static const int menu_offsets[] = {4,48,92,148,198,254};
 static const char *const file_items[] = {"New  Ctrl+N","Open  Ctrl+O","Save  Ctrl+S","Save as...","Export CSV values...","Export TSV values...","Export figure SVG...","Export figure PCX..."};
 static const char *const edit_items[] = {"Undo  Ctrl+Z","Redo  Ctrl+Y","Copy  Ctrl+C","Cut  Ctrl+X","Paste  Ctrl+V","Clear  Delete","Fill down  Ctrl+D","Fill right  Ctrl+R","Sort ascending","Sort descending"};
 static const char *const format_items[] = {"General","Fixed (2 decimals)","Percent","Scientific","Money (2 decimals)","Date (YYYY-MM-DD)","Align automatic","Align left","Align center","Align right","Align middle","Align top","Align bottom","Column width...","Row height..."};
 static const char *const tab_items[] = {"Add sheet","Rename sheet...","Previous sheet","Next sheet","Insert row","Delete row","Insert column","Delete column"};
-static const char *const chart_items[] = {"Line from selection","Scatter from selection","Bar from selection","Histogram from selection","Pie from selection","Grid / Figure","Title...","X axis label...","Y axis label...","Horizontal major grid","Vertical major grid","Horizontal minor grid","Vertical minor grid"};
+static const char *const chart_items[] = {"Line from selection","Scatter from selection","Bar from selection","Histogram from selection","Pie from selection","Grid / Figure","Title...","X axis label...","Y axis label...","Horizontal major grid","Vertical major grid","Horizontal minor grid","Vertical minor grid","Data series..."};
 static const char *const help_items[] = {"Keyboard and formulas","Function catalog"};
 static const char *const *sheet_menu_items(int which, int *count)
 {
-    static const int counts[] = {8,10,15,8,13,2};
+    static const int counts[] = {8,10,15,8,14,2};
     static const char *const *const lists[] = {file_items,edit_items,format_items,tab_items,chart_items,help_items};
     *count = counts[which];
     return lists[which];
@@ -493,6 +674,7 @@ static void sheet_menu_action(int which, int item)
         if (item < 5) sheet_chart_create(item);
         else if (item == 5) chart_view = book->charts[active_sheet].enabled ? !chart_view : 0;
         else if (item < 9) sheet_begin_edit(item - 4,0);
+        else if (item == 13) sheet_data_open();
         else {
             static const unsigned int flags[] = {SHEET_GRID_H_MAJOR,SHEET_GRID_V_MAJOR,SHEET_GRID_H_MINOR,SHEET_GRID_V_MINOR};
             book->charts[active_sheet].grids ^= flags[item-9];
@@ -550,7 +732,7 @@ static void sheet_draw_help(const SheetLayout *l)
             "Operators: + - * / ^ % & = <> < > <= >=; radians for trig.",
             "IF and IFERROR evaluate only the branch that is required.",
             "Figures: select X/labels in first column, Y in following columns.",
-            "Scatter uses numeric X; line/bar use row positions.",
+            "Date/number X axes: choose columns in Figure > Data series.",
             "Histogram uses first column; pie supports 8 nonnegative rows.",
             "CSV/TSV import literal data; native .bsheet keeps all content.",
             "Limits: 8 sheets, 1024 rows x 128 columns, 8192 stored cells.",
@@ -673,13 +855,14 @@ static void sheet_draw(void)
     snprintf(text,sizeof(text),"n=%d Sum=%.8g Avg=%.8g  %.90s",count,sum,count ? sum/count : 0,status);
     ui_text(l.x+4,l.status+3,text,(l.w-8)/6);
     if (help_view) sheet_draw_help(&l);
+    if (data_choosing) sheet_data_draw(&l);
     if (menu >= 0) {
         int count_items;
         const char *const *items = sheet_menu_items(menu,&count_items);
         BudoMenuItem entries[16];
         for (int i = 0; i < count_items; ++i) {
             entries[i] = (BudoMenuItem){items[i],1,0};
-            if (menu == 4 && i >= 9) entries[i].checked = (book->charts[active_sheet].grids & (1U << (i-9))) != 0;
+            if (menu == 4 && i >= 9 && i < 13) entries[i].checked = (book->charts[active_sheet].grids & (1U << (i-9))) != 0;
         }
         budo_menu_items_draw(sheet_host,l.x+sheet_min(menu_offsets[menu],l.w-214),l.y+22,214,entries,count_items);
     }
@@ -700,6 +883,7 @@ static int sheet_mouse_down(int x,int y,int buttons)
     SheetLayout l;
     if (!(buttons&1) || !book || !sheet_layout(&l)) return 0;
     if (confirming || dialog_kind) return 1;
+    if (data_choosing) return sheet_data_mouse(&l,x,y);
     if (editing) {
         sheet_edit_commit();
         if (editing) return 1;
@@ -814,7 +998,7 @@ static int sheet_mouse_down(int x,int y,int buttons)
 static int sheet_mouse_move(int x,int y,int buttons)
 {
     SheetLayout l;
-    if (!book || confirming || dialog_kind || editing || chart_view || help_view || menu >= 0 || !sheet_layout(&l)) return 0;
+    if (!book || confirming || dialog_kind || editing || data_choosing || chart_view || help_view || menu >= 0 || !sheet_layout(&l)) return 0;
     if (resize_axis) {
         unsigned short *size = resize_axis == 1 ? &book->widths[active_sheet][resize_index] : &book->heights[active_sheet][resize_index];
         int original = resize_original ? resize_original : resize_axis == 1 ? SHEET_COL_WIDTH : SHEET_ROW_HEIGHT;
@@ -931,6 +1115,7 @@ static int sheet_key_input(int k)
 {
     if (!book) return 0;
     if (dialog_kind || confirming) return 1;
+    if (data_choosing) return sheet_data_key(k);
     if (resize_axis) {
         if (k == 27) {
             unsigned short *size = resize_axis == 1 ? &book->widths[active_sheet][resize_index] : &book->heights[active_sheet][resize_index];

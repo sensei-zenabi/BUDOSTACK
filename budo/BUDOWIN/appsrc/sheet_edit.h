@@ -340,14 +340,46 @@ static inline int sheet_rename_formula(const SheetBook *b, const char *raw, int 
                 if (count+1 < sizeof(qualifier)) qualifier[count++] = *p;
                 ++p;
             }
-            if (*p == '!') { ++p; match = sheet_named_index(b,qualifier) == target; }
+            const char *bang = p;
+            while (isspace((unsigned char)*bang)) ++bang;
+            if (*bang == '!') {
+                p = bang+1;
+                match = sheet_named_index(b,qualifier) == target;
+            }
         } else if (isalpha((unsigned char)*p) || *p == '_') {
             while (isalnum((unsigned char)*p) || *p == '_' || *p == '.') {
                 if (count+1 < sizeof(qualifier)) qualifier[count++] = *p;
                 ++p;
             }
-            if (*p == '!') { ++p; match = sheet_named_index(b,qualifier) == target; }
+            const char *bang = p;
+            while (isspace((unsigned char)*bang)) ++bang;
+            if (*bang == '!') {
+                p = bang+1;
+                match = sheet_named_index(b,qualifier) == target;
+            }
         } else ++p;
+        /* A null replacement removes the entire qualified cell/range reference.
+         * Keeping an unresolved sheet name alone would rebind if reused later. */
+        if (match && !name) {
+            const char *end = p;
+            int r,c,ar,ac;
+            while (isspace((unsigned char)*end)) ++end;
+            if (sheet_reference(&end,&r,&c,&ar,&ac) && *end != '(') {
+                const char *range = end;
+                while (isspace((unsigned char)*range)) ++range;
+                if (*range == ':') {
+                    ++range;
+                    while (isspace((unsigned char)*range)) ++range;
+                    if (sheet_reference(&range,&r,&c,&ar,&ac)) end = range;
+                }
+                if (used+5 >= SHEET_TEXT) return 0;
+                memcpy(out+used,"#REF!",5);
+                used += 5;
+                p = end;
+                continue;
+            }
+            match = 0;
+        }
         if (match) {
             char escaped[68];
             size_t n = 0;
@@ -381,6 +413,39 @@ static inline int sheet_rename(SheetBook *dst, const SheetBook *src, int tab, co
     for (int i = 0; i < src->count; ++i)
         if (!sheet_rename_formula(src,src->cells[i].raw,tab,name,dst->cells[i].raw)) return 0;
     sheet_string(dst->names[tab],sizeof(dst->names[tab]),name);
+    return 1;
+}
+
+/* Compact sheet indices and all dependent metadata in a staged workbook. */
+static inline int sheet_delete_tab(SheetBook *dst, const SheetBook *src, int tab)
+{
+    if (src->tabs <= 1 || tab < 0 || tab >= src->tabs || dst == src) return 0;
+    sheet_new(dst);
+    dst->tabs = src->tabs-1;
+    for (int old = 0; old < src->tabs; ++old) {
+        if (old == tab) continue;
+        int next = old-(old > tab);
+        memcpy(dst->names[next],src->names[old],sizeof(dst->names[next]));
+        memcpy(dst->widths[next],src->widths[old],sizeof(dst->widths[next]));
+        memcpy(dst->heights[next],src->heights[old],sizeof(dst->heights[next]));
+        dst->charts[next] = src->charts[old];
+        SheetChart *chart = &dst->charts[next];
+        if (chart->source.sheet == tab) {
+            memset(chart,0,sizeof(*chart));
+            chart->grids = SHEET_GRID_H_MAJOR;
+        } else if (chart->source.sheet > tab) --chart->source.sheet;
+    }
+    for (int i = 0; i < src->count; ++i) {
+        const SheetCell *cell = &src->cells[i];
+        int owner = cell->key/(SHEET_ROWS*SHEET_COLS);
+        if (owner == tab) continue;
+        SheetCell *next = &dst->cells[dst->count];
+        *next = *cell;
+        next->key -= owner > tab ? SHEET_ROWS*SHEET_COLS : 0;
+        memset(next->raw,0,sizeof(next->raw));
+        if (!sheet_rename_formula(src,cell->raw,tab,NULL,next->raw)) return 0;
+        ++dst->count;
+    }
     return 1;
 }
 

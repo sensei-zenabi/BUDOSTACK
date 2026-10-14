@@ -684,6 +684,110 @@ static void test_axis_settings(const char *root)
     chart_view = 0;
 }
 
+static void test_delete_sheet(const char *root)
+{
+    sheet_new(book);
+    book->tabs = 3;
+    sheet_string(book->names[0],32,"Left");
+    sheet_string(book->names[1],32,"O'Brien");
+    sheet_string(book->names[2],32,"Last");
+    put(0,0,0,"5");
+    put(1,0,0,"11");
+    put(1,0,1,"2");
+    put(2,0,0,"17");
+    put(2,0,1,"=Left!A1+A1");
+    put(2,1,0,"='O''Brien'!$A$1");
+    put(2,2,0,"=SUM('o''brien' ! A1 : B2)");
+    put(2,3,0,"=\"O'Brien!A1\"");
+    put(2,4,0,"=IFERROR('O''Brien'!A1,99)");
+    put(2,5,0,"='Left'!A1");
+    assert(sheet_set_full(book,2,9,9,"",4,3,2));
+    book->widths[2][3] = 123;
+    book->heights[2][4] = 42;
+    book->charts[0].enabled = 1;
+    book->charts[0].source.sheet = 1;
+    book->charts[2].enabled = 1;
+    book->charts[2].type = 1;
+    book->charts[2].source = sheet_range(2,0,0,0,1);
+    strcpy(book->charts[2].axes[0][0],"0");
+    SheetBook *original = malloc(sizeof(*original));
+    assert(original);
+    *original = *book;
+    active_sheet = 1;
+    row = col = anchor_row = anchor_col = 4;
+    chart_view = 1;
+    clipboard_valid = 1;
+    sheet_history_reset();
+    saved_hash = sheet_hash();
+    sheet_menu_action(3,8);
+    assert(book->tabs == 2 && active_sheet == 1 && !strcmp(book->names[1],"Last"));
+    assert(!row && !col && !anchor_row && !anchor_col && !chart_view && !clipboard_valid && dirty);
+    assert(!book->charts[0].enabled && book->charts[1].enabled && book->charts[1].source.sheet == 1);
+    assert(!strcmp(book->charts[1].axes[0][0],"0"));
+    assert(book->widths[1][3] == 123 && book->heights[1][4] == 42);
+    const SheetCell *cell = sheet_cell(book,1,9,9);
+    assert(cell && cell->format == 4 && cell->align_h == 3 && cell->align_v == 2);
+    assert(!strcmp(sheet_cell(book,1,1,0)->raw,"=#REF!"));
+    assert(!strcmp(sheet_cell(book,1,2,0)->raw,"=SUM(#REF!)"));
+    assert(!strcmp(sheet_cell(book,1,0,1)->raw,"=Left!A1+A1"));
+    SheetValue value = sheet_eval(calculation,1,0,1);
+    assert(value.type == SV_NUMBER && value.number == 22);
+    value = sheet_eval(calculation,1,1,0);
+    assert(value.type == SV_ERROR && value.error == SE_REF);
+    value = sheet_eval(calculation,1,4,0);
+    assert(value.type == SV_NUMBER && value.number == 99);
+    value = sheet_eval(calculation,1,3,0);
+    assert(value.type == SV_TEXT && !strcmp(value.text,"O'Brien!A1"));
+    sheet_undo(-1);
+    assert(!memcmp(book,original,sizeof(*book)) && !dirty);
+    sheet_undo(1);
+    assert(book->tabs == 2 && dirty);
+    char path[4096];
+    path_name(path,root,"deleted-sheet.bsheet");
+    assert(sheet_write(book,path) && sheet_read(staging,path) && !memcmp(book,staging,sizeof(*book)));
+    /* Reusing a deleted name cannot resurrect broken references. */
+    sheet_menu_action(3,0);
+    sheet_string(book->names[2],32,"O'Brien");
+    put(2,0,0,"999");
+    value = sheet_eval(calculation,1,1,0);
+    assert(value.type == SV_ERROR && value.error == SE_REF);
+    /* Delete last, then first; surviving unqualified formulas stay local. */
+    sheet_menu_action(3,8);
+    assert(book->tabs == 2 && active_sheet == 1);
+    active_sheet = 0;
+    sheet_menu_action(3,8);
+    assert(book->tabs == 1 && active_sheet == 0 && !strcmp(book->names[0],"Last"));
+    value = sheet_eval(calculation,0,0,1);
+    assert(value.type == SV_ERROR && value.error == SE_REF);
+    value = sheet_eval(calculation,0,0,0);
+    assert(value.type == SV_NUMBER && value.number == 17);
+    *original = *book;
+    sheet_menu_action(3,8);
+    assert(!memcmp(book,original,sizeof(*book)));
+    assert(!sheet_delete_tab(staging,book,-1) && !sheet_delete_tab(staging,book,1));
+    /* If rewriting would exceed a cell's limit, deletion is atomic. */
+    sheet_new(book);
+    book->tabs = 2;
+    sheet_string(book->names[0],32,"D");
+    sheet_string(book->names[1],32,"Keep");
+    char raw[SHEET_TEXT] = "=";
+    for (int i = 0; i < 38; ++i) strcat(raw,i ? "+D!A1" : "D!A1");
+    put(1,0,0,raw);
+    active_sheet = 0;
+    sheet_history_reset();
+    *original = *book;
+    sheet_menu_action(3,8);
+    assert(!memcmp(book,original,sizeof(*book)) && history_count == 1);
+    /* Unquoted qualifiers, whitespace and text literals use the same lexer. */
+    char rewritten[SHEET_TEXT];
+    assert(sheet_rename_formula(book,"=D ! $A$1 + SUM(d! A1:B2)+\"D!A1\"",0,NULL,rewritten));
+    assert(!strcmp(rewritten,"=#REF! + SUM(#REF!)+\"D!A1\""));
+    free(original);
+    sheet_new(book);
+    active_sheet = 0;
+    sheet_history_reset();
+}
+
 int main(int argc,char **argv)
 {
     assert(argc == 2);
@@ -917,6 +1021,7 @@ int main(int argc,char **argv)
     test_layout_changes(argv[1]);
     test_date_figures(argv[1]);
     test_axis_settings(argv[1]);
+    test_delete_sheet(argv[1]);
     /* Exercise malformed token streams under sanitizers as well as normal builds. */
     unsigned int random_state = 12345;
     const char alphabet[] = "A1$!+-*/^%<>=(,)\"' ._&0123456789";

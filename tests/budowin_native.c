@@ -324,6 +324,19 @@ int main(int argc, char **argv) {
     assert(spreadsheet->definition.callbacks.key(0x100|77));
     assert(spreadsheet->definition.callbacks.key(13));
     if (argc == 3) screenshot(argv[2],"spreadsheet-weight-bench.ppm");
+    /* Add/delete and undo/redo a tab through the production Sheet menu. */
+    press_native(spreadsheet,bx+160,by+10);
+    press_native(spreadsheet,bx+160,by+32);
+    assert(native_label(spreadsheet,"Sheet2"));
+    press_native(spreadsheet,bx+160,by+10);
+    press_native(spreadsheet,bx+160,by+160);
+    assert(!native_label(spreadsheet,"Sheet2") && native_label(spreadsheet,"Sheet1"));
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.key(26));
+    assert(native_label(spreadsheet,"Sheet2"));
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.key(25));
+    assert(!native_label(spreadsheet,"Sheet2"));
     bwa_callback_app = NULL;
     BwaLoadedApp *settings = NULL;
     for (int i = 0; i < bwa_instance_count; ++i)

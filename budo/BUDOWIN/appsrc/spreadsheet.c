@@ -736,12 +736,12 @@ static const int menu_offsets[] = {4,48,92,148,198,254};
 static const char *const file_items[] = {"New  Ctrl+N","Open  Ctrl+O","Save  Ctrl+S","Save as...","Export CSV values...","Export TSV values...","Export figure SVG...","Export figure PCX..."};
 static const char *const edit_items[] = {"Undo  Ctrl+Z","Redo  Ctrl+Y","Copy  Ctrl+C","Cut  Ctrl+X","Paste  Ctrl+V","Clear  Delete","Fill down  Ctrl+D","Fill right  Ctrl+R","Sort ascending","Sort descending"};
 static const char *const format_items[] = {"General","Fixed (2 decimals)","Percent","Scientific","Money (2 decimals)","Date (YYYY-MM-DD)","Align automatic","Align left","Align center","Align right","Align middle","Align top","Align bottom","Column width...","Row height..."};
-static const char *const tab_items[] = {"Add sheet","Rename sheet...","Previous sheet","Next sheet","Insert row","Delete row","Insert column","Delete column"};
+static const char *const tab_items[] = {"Add sheet","Rename sheet...","Previous sheet","Next sheet","Insert row","Delete row","Insert column","Delete column","Delete sheet"};
 static const char *const chart_items[] = {"Line from selection","Scatter from selection","Bar from selection","Histogram from selection","Pie from selection","Grid / Figure","Title...","X axis label...","Y axis label...","Horizontal major grid","Vertical major grid","Horizontal minor grid","Vertical minor grid","Data series...","Axes..."};
 static const char *const help_items[] = {"Keyboard and formulas","Function catalog"};
 static const char *const *sheet_menu_items(int which, int *count)
 {
-    static const int counts[] = {8,10,15,8,15,2};
+    static const int counts[] = {8,10,15,9,15,2};
     static const char *const *const lists[] = {file_items,edit_items,format_items,tab_items,chart_items,help_items};
     *count = counts[which];
     return lists[which];
@@ -773,7 +773,26 @@ static void sheet_menu_action(int which, int item)
         else sheet_begin_edit(item == 13 ? 5 : 6,0);
     }
     else if (which == 3) {
-        if (item >= 4) {
+        if (item == 8) {
+            if (book->tabs == 1) {
+                sheet_status("A workbook must contain at least one sheet.");
+                return;
+            }
+            if (!sheet_delete_tab(staging,book,active_sheet)) {
+                sheet_status("Deleting this sheet would exceed formula limits; workbook preserved.");
+                return;
+            }
+            *book = *staging;
+            active_sheet = sheet_min(active_sheet,book->tabs-1);
+            row = col = anchor_row = anchor_col = 0;
+            sheet_hscroll.position = sheet_vscroll.position = 0;
+            clipboard_valid = dragging = fill_drag = resize_axis = 0;
+            chart_view = 0;
+            sheet_changed();
+            sheet_status("Sheet deleted. References became #REF!; Ctrl+Z restores the sheet.");
+            return;
+        }
+        if (item >= 4 && item < 8) {
             int axis = item >= 6, delta = item%2 ? -1 : 1;
             if (!sheet_structure(staging,book,active_sheet,axis,axis ? col : row,delta)) {
                 sheet_status("Structural edit would lose cells or exceed limits; workbook preserved.");
@@ -999,6 +1018,7 @@ static void sheet_draw(void)
         BudoMenuItem entries[16];
         for (int i = 0; i < count_items; ++i) {
             entries[i] = (BudoMenuItem){items[i],1,0};
+            if (menu == 3 && i == 8 && book->tabs == 1) entries[i].enabled = 0;
             if (menu == 4 && i >= 9 && i < 13) entries[i].checked = (book->charts[active_sheet].grids & (1U << (i-9))) != 0;
         }
         budo_menu_items_draw(sheet_host,l.x+sheet_min(menu_offsets[menu],l.w-214),l.y+22,214,entries,count_items);

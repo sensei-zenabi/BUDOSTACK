@@ -255,3 +255,18 @@ data before committing; cancel and Reset auto operate on a draft. Changing X
 column/coordinate mode resets its settings; changing between numeric/date Y data
 resets Y settings. Creating a chart from a different selection resets both axes.
 The axis parser/tick generator is isolated in `sheet_axis.h` for future axis types.
+
+## Sheet deletion
+
+Sheet > Delete sheet removes the active sheet while retaining at least one sheet.
+The mutation is staged and committed as one undo step. It compacts stored cell
+keys, sheet names, dimensions and chart ownership/source indices; figures sourcing
+the deleted sheet are cleared. References to its cells/ranges become explicit
+`#REF!` tokens, preserving quoted strings, unqualified local references and links
+to other sheets. This prevents accidental reconnection when a deleted sheet name
+is reused. Rewriting beyond the cell text limit refuses the entire operation.
+Selection/scroll state resets to the neighboring sheet and the internal clipboard
+is invalidated to avoid stale source indices. The existing workbook schema remains
+unchanged. Tests cover first/middle/last deletion, last-sheet protection, quoted
+and unquoted qualifiers/ranges, undo/redo, formatting, chart sources, round-trip
+persistence, name reuse, atomic refusal and the production Sheet menu.

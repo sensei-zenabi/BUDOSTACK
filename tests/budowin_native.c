@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
     assert(chdir(argv[1]) == 0);
     assert(getcwd(home_path, sizeof(home_path)));
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 13);
+    assert(bwa_external_app_count == 14);
     load_file_associations();
     char path[MAX_PATH];
     assert(join_path(path, sizeof(path), "/", "tmp") && strcmp(path, "/tmp") == 0);
@@ -182,6 +182,44 @@ int main(int argc, char **argv) {
     bwa_callback_app = flow;
     assert(flow->definition.callbacks.key(27));
     assert(!flow->definition.request_close()); /* Dirty project cannot silently close. */
+    desktop_confirm_result(BUDO_RESPONSE_CANCEL);
+    bwa_callback_app = NULL;
+    BwaLoadedApp *spreadsheet = NULL;
+    for (int i = 0; i < bwa_instance_count; ++i)
+        if (!strcmp(bwa_instances[i].definition.app_id, "spreadsheet")) spreadsheet = &bwa_instances[i];
+    assert(spreadsheet && spreadsheet->managed_window);
+    int sheet_assoc = find_file_association(".BSHEET");
+    assert(sheet_assoc >= 0 && !strcmp(file_associations[sheet_assoc].app_id, "spreadsheet"));
+    bwa_callback_app = spreadsheet;
+    active_window = spreadsheet->definition.runtime_id;
+    const char *sheet_values[] = {"0", "1", "2", "3", "4"};
+    for (int i = 0; i < 5; ++i) {
+        assert(spreadsheet->definition.callbacks.key(sheet_values[i][0]));
+        assert(spreadsheet->definition.callbacks.key(13));
+    }
+    assert(spreadsheet->definition.callbacks.key(0x100 | 71));
+    for (int i = 0; i < 5; ++i) assert(spreadsheet->definition.callbacks.key(0x100 | 72));
+    assert(spreadsheet->definition.callbacks.key(0x100 | 77));
+    const char *equation = "=A1^2";
+    for (const char *p = equation; *p; ++p) assert(spreadsheet->definition.callbacks.key(*p));
+    assert(spreadsheet->definition.callbacks.key(13));
+    int bx, by, bw, bh;
+    assert(bwa_window_get_client_rect(&bx, &by, &bw, &bh));
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.mouse_down(bx + 130, by + 93, 1));
+    assert(spreadsheet->definition.callbacks.mouse_move(bx + 130, by + 176, 1));
+    assert(spreadsheet->definition.callbacks.mouse_up(bx + 130, by + 176, 0));
+    assert(spreadsheet->definition.callbacks.key(4));
+    assert(spreadsheet->definition.callbacks.mouse_down(bx + 40, by + 93, 1));
+    assert(spreadsheet->definition.callbacks.mouse_move(bx + 38 + 88 + 4, by + 92 + 4 * 20 + 4, 1));
+    assert(spreadsheet->definition.callbacks.mouse_up(bx + 38 + 88 + 4, by + 92 + 4 * 20 + 4, 0));
+    if (argc == 3) screenshot(argv[2], "spreadsheet.ppm");
+    press_native(spreadsheet, bx + 212, by + 10); /* Figure menu. */
+    press_native(spreadsheet, bx + 220, by + 42); /* Numeric scatter chart. */
+    if (argc == 3) screenshot(argv[2], "spreadsheet-scatter.ppm");
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.key(27));
+    assert(!spreadsheet->definition.request_close());
     desktop_confirm_result(BUDO_RESPONSE_CANCEL);
     bwa_callback_app = NULL;
     BwaLoadedApp *settings = NULL;

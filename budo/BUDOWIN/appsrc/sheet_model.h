@@ -15,23 +15,34 @@
 #define SHEET_HISTORY 16
 #define SHEET_SERIES 8
 #define SHEET_CHART_TYPES 5
+#define SHEET_COL_WIDTH 88
+#define SHEET_ROW_HEIGHT 20
+#define SHEET_SIZE_MIN 16
+#define SHEET_SIZE_MAX 512
+#define SHEET_GRID_H_MAJOR 1U
+#define SHEET_GRID_V_MAJOR 2U
+#define SHEET_GRID_H_MINOR 4U
+#define SHEET_GRID_V_MINOR 8U
 
 typedef struct SheetRange {
     int sheet, r0, c0, r1, c1;
 } SheetRange;
 typedef struct SheetChart {
     int enabled, type;
+    unsigned int grids;
     SheetRange source;
     char title[64], xlabel[32], ylabel[32];
 } SheetChart;
 typedef struct SheetCell {
-    int key, format;
+    int key, format, align_h, align_v;
     char raw[SHEET_TEXT];
 } SheetCell;
 typedef struct SheetBook {
     int tabs, count;
     char names[SHEET_TABS][32];
     SheetChart charts[SHEET_TABS];
+    unsigned short widths[SHEET_TABS][SHEET_COLS];
+    unsigned short heights[SHEET_TABS][SHEET_ROWS];
     SheetCell cells[SHEET_CELLS];
 } SheetBook;
 static inline int sheet_min(int a, int b)
@@ -79,7 +90,7 @@ static inline int sheet_set(SheetBook *b, int s, int r, int c, const char *raw, 
         strlen(raw) >= SHEET_TEXT || format < 0 || format > 5) return 0;
     int key = sheet_key(s, r, c), i = sheet_find(b, key);
     int exists = i < b->count && b->cells[i].key == key;
-    if (!*raw && !format) {
+    if (!*raw && !format && (!exists || (!b->cells[i].align_h && !b->cells[i].align_v))) {
         if (exists) {
             memmove(b->cells + i, b->cells + i + 1, (size_t)(b->count - i - 1) * sizeof(SheetCell));
             memset(&b->cells[--b->count], 0, sizeof(SheetCell));
@@ -98,10 +109,35 @@ static inline int sheet_set(SheetBook *b, int s, int r, int c, const char *raw, 
     sheet_string(b->cells[i].raw, SHEET_TEXT, raw);
     return 1;
 }
+/* Zero dimensions use the default, keeping old workbooks and new tabs compact. */
+static inline int sheet_width(const SheetBook *b, int s, int c)
+{
+    return b->widths[s][c] ? b->widths[s][c] : SHEET_COL_WIDTH;
+}
+static inline int sheet_height(const SheetBook *b, int s, int r)
+{
+    return b->heights[s][r] ? b->heights[s][r] : SHEET_ROW_HEIGHT;
+}
+static inline int sheet_set_full(SheetBook *b, int s, int r, int c, const char *raw,
+                                 int format, int horizontal, int vertical)
+{
+    if (horizontal < 0 || horizontal > 3 || vertical < 0 || vertical > 2) return 0;
+    int blank_style = !*raw && !format && (horizontal || vertical);
+    if (!sheet_set(b, s, r, c, blank_style ? "'" : raw, format)) return 0;
+    int i = sheet_find(b, sheet_key(s, r, c));
+    if (i < b->count && b->cells[i].key == sheet_key(s, r, c)) {
+        b->cells[i].align_h = horizontal;
+        b->cells[i].align_v = vertical;
+        if (blank_style) b->cells[i].raw[0] = 0;
+        if (!*raw && !format && !horizontal && !vertical) return sheet_set(b,s,r,c,"",0);
+    }
+    return 1;
+}
 static inline void sheet_new(SheetBook *b)
 {
     memset(b, 0, sizeof(*b));
     b->tabs = 1;
+    for (int i = 0; i < SHEET_TABS; ++i) b->charts[i].grids = SHEET_GRID_H_MAJOR;
     sheet_string(b->names[0], 32, "Sheet1");
 }
 static inline void sheet_address(int r, int c, char *out, size_t size)

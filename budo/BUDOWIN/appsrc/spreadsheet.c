@@ -20,10 +20,12 @@ static SheetRange fill_seed;
 static int help_offset;
 static unsigned long long last_cell_click;
 static int last_cell_key = -1;
-enum { SD_OPEN = 1, SD_SAVE, SD_CSV, SD_TSV, SD_SVG };
+static int resize_axis, resize_index, resize_start, resize_original;
+enum { SD_OPEN = 1, SD_SAVE, SD_CSV, SD_TSV, SD_SVG, SD_PCX };
 enum { SA_NEW = 1, SA_OPEN, SA_CLOSE, SA_PATH };
 typedef struct SheetLayout {
     int x,y,w,h,gx,gy,gw,gh,rows,cols,tabs,status;
+    int xs[SHEET_COLS+1], ys[SHEET_ROWS+1];
 } SheetLayout;
 static void sheet_continue(void);
 static void sheet_action(int action);
@@ -92,17 +94,29 @@ static int sheet_layout(SheetLayout *l)
     if (l->w < 440 || l->h < 260) return 0;
     l->gx = l->x + 38;
     l->gy = l->y + 92;
-    l->cols = (l->w - 38 - BUDO_SCROLL_WIDTH) / 88;
     l->status = l->y + l->h - sheet_host->get_system_metric(BUDO_SYS_METRIC_STATUS_HEIGHT);
     l->tabs = l->status - 24;
-    l->rows = (l->tabs - l->gy - BUDO_SCROLL_WIDTH) / 20;
-    l->gw = l->cols * 88;
-    l->gh = l->rows * 20;
+    l->gw = l->w - 38 - BUDO_SCROLL_WIDTH;
+    l->gh = l->tabs - l->gy - BUDO_SCROLL_WIDTH;
+    sheet_hscroll.position = sheet_clamp(sheet_hscroll.position,0,SHEET_COLS-1);
+    sheet_vscroll.position = sheet_clamp(sheet_vscroll.position,0,SHEET_ROWS-1);
+    first_col = sheet_hscroll.position;
+    first_row = sheet_vscroll.position;
+    l->cols = l->rows = 0;
+    l->xs[0] = l->ys[0] = 0;
+    while (first_col+l->cols < SHEET_COLS && l->xs[l->cols] < l->gw) {
+        l->xs[l->cols+1] = sheet_min(l->gw,l->xs[l->cols]+sheet_width(book,active_sheet,first_col+l->cols));
+        ++l->cols;
+    }
+    while (first_row+l->rows < SHEET_ROWS && l->ys[l->rows] < l->gh) {
+        l->ys[l->rows+1] = sheet_min(l->gh,l->ys[l->rows]+sheet_height(book,active_sheet,first_row+l->rows));
+        ++l->rows;
+    }
     sheet_hscroll = (BudoScrollbar){.x=l->gx,.y=l->gy+l->gh,.length=l->gw,.horizontal=1,
-        .total=SHEET_COLS,.page=l->cols,.position=sheet_hscroll.position,.dragging=sheet_hscroll.dragging,.grab=sheet_hscroll.grab,
+        .total=SHEET_COLS+l->cols-1,.page=l->cols,.position=sheet_hscroll.position,.dragging=sheet_hscroll.dragging,.grab=sheet_hscroll.grab,
         .held=sheet_hscroll.held,.armed=sheet_hscroll.armed,.repeat_at=sheet_hscroll.repeat_at};
     sheet_vscroll = (BudoScrollbar){.x=l->gx+l->gw,.y=l->gy,.length=l->gh,
-        .total=SHEET_ROWS,.page=l->rows,.position=sheet_vscroll.position,.dragging=sheet_vscroll.dragging,.grab=sheet_vscroll.grab,
+        .total=SHEET_ROWS+l->rows-1,.page=l->rows,.position=sheet_vscroll.position,.dragging=sheet_vscroll.dragging,.grab=sheet_vscroll.grab,
         .held=sheet_vscroll.held,.armed=sheet_vscroll.armed,.repeat_at=sheet_vscroll.repeat_at};
     budo_scroll_clamp(&sheet_hscroll);
     budo_scroll_clamp(&sheet_vscroll);
@@ -114,10 +128,24 @@ static void sheet_reveal(void)
 {
     SheetLayout l;
     if (!sheet_layout(&l)) return;
-    if (row < first_row) sheet_vscroll.position = row;
-    if (row >= first_row + l.rows) sheet_vscroll.position = row - l.rows + 1;
-    if (col < first_col) sheet_hscroll.position = col;
-    if (col >= first_col + l.cols) sheet_hscroll.position = col - l.cols + 1;
+    int row_visible = row >= first_row && row < first_row+l.rows &&
+        l.ys[row-first_row+1]-l.ys[row-first_row] == sheet_height(book,active_sheet,row);
+    int col_visible = col >= first_col && col < first_col+l.cols &&
+        l.xs[col-first_col+1]-l.xs[col-first_col] == sheet_width(book,active_sheet,col);
+    if (!row_visible) {
+        int start = row, extent = sheet_height(book,active_sheet,row);
+        while (start > 0 && extent+sheet_height(book,active_sheet,start-1) <= l.gh) {
+            extent += sheet_height(book,active_sheet,--start);
+        }
+        sheet_vscroll.position = start;
+    }
+    if (!col_visible) {
+        int start = col, extent = sheet_width(book,active_sheet,col);
+        while (start > 0 && extent+sheet_width(book,active_sheet,start-1) <= l.gw) {
+            extent += sheet_width(book,active_sheet,--start);
+        }
+        sheet_hscroll.position = start;
+    }
 }
 static void sheet_begin_edit(int kind, int replace)
 {
@@ -129,6 +157,8 @@ static void sheet_begin_edit(int kind, int replace)
         else if (kind == 2) sheet_string(edit_buffer,sizeof(edit_buffer),book->charts[active_sheet].title);
         else if (kind == 3) sheet_string(edit_buffer,sizeof(edit_buffer),book->charts[active_sheet].xlabel);
         else if (kind == 4) sheet_string(edit_buffer,sizeof(edit_buffer),book->charts[active_sheet].ylabel);
+        else if (kind == 5) snprintf(edit_buffer,sizeof(edit_buffer),"%d",sheet_width(book,active_sheet,col));
+        else if (kind == 6) snprintf(edit_buffer,sizeof(edit_buffer),"%d",sheet_height(book,active_sheet,row));
         else if (cell) sheet_string(edit_buffer,sizeof(edit_buffer),cell->raw);
     }
     editing = 1;
@@ -143,26 +173,24 @@ static void sheet_edit_commit(void)
             sheet_status("Sheet names require 1 to 31 characters.");
             return;
         }
-        /* Names are stable once used by formulas; no silent reference rewrite. */
-        for (int i = 0; i < book->tabs; ++i) {
-            if (i == active_sheet) continue;
-            char a[32], b[32];
-            sheet_string(a,sizeof(a),book->names[i]);
-            sheet_string(b,sizeof(b),edit_buffer);
-            for (int j = 0; a[j]; ++j) a[j] = (char)toupper((unsigned char)a[j]);
-            for (int j = 0; b[j]; ++j) b[j] = (char)toupper((unsigned char)b[j]);
-            if (!strcmp(a,b)) {
-                sheet_status("Sheet name already exists.");
-                return;
-            }
+        if (!sheet_rename(staging,book,active_sheet,edit_buffer)) {
+            sheet_status("Rename failed: duplicate name or a rewritten formula exceeds the cell limit.");
+            return;
         }
-        for (int i = 0; i < book->count; ++i) {
-            if (book->cells[i].raw[0] == '=') {
-                sheet_status("Rename sheets before entering formulas to preserve references.");
-                return;
-            }
+        *book = *staging;
+    } else if (edit_kind >= 5) {
+        char *end;
+        long size = strtol(edit_buffer,&end,10);
+        if (end == edit_buffer || *end || size < SHEET_SIZE_MIN || size > SHEET_SIZE_MAX) {
+            sheet_status("Row/column sizes must be 16 to 512 pixels.");
+            return;
         }
-        sheet_string(book->names[active_sheet],32,edit_buffer);
+        SheetRange a = selection();
+        if (edit_kind == 5) {
+            for (int c = a.c0; c <= a.c1; ++c) book->widths[active_sheet][c] = (unsigned short)size;
+        } else {
+            for (int r = a.r0; r <= a.r1; ++r) book->heights[active_sheet][r] = (unsigned short)size;
+        }
     } else if (edit_kind >= 2) {
         SheetChart *c = &book->charts[active_sheet];
         size_t size = edit_kind == 2 ? sizeof(c->title) : sizeof(c->xlabel);
@@ -191,6 +219,15 @@ static void sheet_mutate(int action)
     else if (action == 3) {
         if (!clipboard_valid) return;
         ok = sheet_copy_range(staging,clipboard,copied_range,active_sheet,a.r0,a.c0);
+    } else if (action >= 20) {
+        for (int r = a.r0; ok && r <= a.r1; ++r) {
+            for (int c = a.c0; ok && c <= a.c1; ++c) {
+                const SheetCell *cell = sheet_cell(book,active_sheet,r,c);
+                int horizontal = action <= 23 ? action-20 : cell ? cell->align_h : 0;
+                int vertical = action >= 24 ? action-24 : cell ? cell->align_v : 0;
+                ok = sheet_set_full(staging,active_sheet,r,c,cell ? cell->raw : "",cell ? cell->format : 0,horizontal,vertical);
+            }
+        }
     } else if (action == 5 || action == 6) ok = sheet_sort(staging,calculation,a,action == 6);
     else {
         for (int r = a.r0; ok && r <= a.r1; ++r) {
@@ -237,7 +274,7 @@ static void sheet_dialog(int kind)
 {
     dialog_kind = kind;
     const char *initial = kind == SD_OPEN ? filename : kind == SD_CSV ? "SHEET.csv" : kind == SD_TSV ? "SHEET.tsv" :
-        kind == SD_SVG ? "FIGURE.svg" : *filename ? filename : "WORKBOOK.bsheet";
+        kind == SD_SVG ? "FIGURE.svg" : kind == SD_PCX ? "FIGURE.pcx" : *filename ? filename : "WORKBOOK.bsheet";
     if (!sheet_host->file_dialog(kind == SD_OPEN ? BUDO_FILE_OPEN : BUDO_FILE_SAVE_AS,initial)) {
         dialog_kind = pending_action = 0;
         sheet_status("Unable to open file dialog.");
@@ -359,6 +396,7 @@ static int sheet_file_selected(int mode, const char *path)
         }
     } else if (kind == SD_CSV || kind == SD_TSV) ok = sheet_csv_write(calculation,active_sheet,path,kind == SD_TSV ? '\t' : ',');
     else if (kind == SD_SVG) ok = sheet_chart_export(calculation,&book->charts[active_sheet],path);
+    else if (kind == SD_PCX) ok = sheet_chart_export_pcx(calculation,&book->charts[active_sheet],path);
     if (ok) {
         dialog_kind = 0;
         sheet_status(kind == SD_OPEN ? "File loaded." : "File saved.");
@@ -379,15 +417,15 @@ static int sheet_request_close(void)
 }
 static const char *const menu_labels[] = {"File","Edit","Format","Sheet","Figure","Help"};
 static const int menu_offsets[] = {4,48,92,148,198,254};
-static const char *const file_items[] = {"New  Ctrl+N","Open  Ctrl+O","Save  Ctrl+S","Save as...","Export CSV values...","Export TSV values...","Export figure SVG..."};
+static const char *const file_items[] = {"New  Ctrl+N","Open  Ctrl+O","Save  Ctrl+S","Save as...","Export CSV values...","Export TSV values...","Export figure SVG...","Export figure PCX..."};
 static const char *const edit_items[] = {"Undo  Ctrl+Z","Redo  Ctrl+Y","Copy  Ctrl+C","Cut  Ctrl+X","Paste  Ctrl+V","Clear  Delete","Fill down  Ctrl+D","Fill right  Ctrl+R","Sort ascending","Sort descending"};
-static const char *const format_items[] = {"General","Fixed (2 decimals)","Percent","Scientific","Money (2 decimals)","Date (YYYY-MM-DD)"};
+static const char *const format_items[] = {"General","Fixed (2 decimals)","Percent","Scientific","Money (2 decimals)","Date (YYYY-MM-DD)","Align automatic","Align left","Align center","Align right","Align middle","Align top","Align bottom","Column width...","Row height..."};
 static const char *const tab_items[] = {"Add sheet","Rename sheet...","Previous sheet","Next sheet","Insert row","Delete row","Insert column","Delete column"};
-static const char *const chart_items[] = {"Line from selection","Scatter from selection","Bar from selection","Histogram from selection","Pie from selection","Grid / Figure","Title...","X axis label...","Y axis label..."};
+static const char *const chart_items[] = {"Line from selection","Scatter from selection","Bar from selection","Histogram from selection","Pie from selection","Grid / Figure","Title...","X axis label...","Y axis label...","Horizontal major grid","Vertical major grid","Horizontal minor grid","Vertical minor grid"};
 static const char *const help_items[] = {"Keyboard and formulas","Function catalog"};
 static const char *const *sheet_menu_items(int which, int *count)
 {
-    static const int counts[] = {7,10,6,8,9,2};
+    static const int counts[] = {8,10,15,8,13,2};
     static const char *const *const lists[] = {file_items,edit_items,format_items,tab_items,chart_items,help_items};
     *count = counts[which];
     return lists[which];
@@ -401,7 +439,7 @@ static void sheet_menu_action(int which, int item)
         else if (item == 3) sheet_dialog(SD_SAVE);
         else if (item == 4) sheet_dialog(SD_CSV);
         else if (item == 5) sheet_dialog(SD_TSV);
-        else if (book->charts[active_sheet].enabled) sheet_dialog(SD_SVG);
+        else if (book->charts[active_sheet].enabled) sheet_dialog(item == 6 ? SD_SVG : SD_PCX);
         else sheet_status("Create a figure from a selection first.");
     } else if (which == 1) {
         if (item < 2) sheet_undo(item ? 1 : -1);
@@ -413,7 +451,11 @@ static void sheet_menu_action(int which, int item)
         else if (item == 5) sheet_mutate(4);
         else if (item < 8) sheet_mutate(item == 6 ? 1 : 2);
         else sheet_mutate(item == 8 ? 5 : 6);
-    } else if (which == 2) sheet_mutate(10 + item);
+    } else if (which == 2) {
+        if (item < 6) sheet_mutate(10+item);
+        else if (item < 13) sheet_mutate(20+item-6);
+        else sheet_begin_edit(item == 13 ? 5 : 6,0);
+    }
     else if (which == 3) {
         if (item >= 4) {
             int axis = item >= 6, delta = item%2 ? -1 : 1;
@@ -450,7 +492,12 @@ static void sheet_menu_action(int which, int item)
     } else if (which == 4) {
         if (item < 5) sheet_chart_create(item);
         else if (item == 5) chart_view = book->charts[active_sheet].enabled ? !chart_view : 0;
-        else sheet_begin_edit(item - 4,0);
+        else if (item < 9) sheet_begin_edit(item - 4,0);
+        else {
+            static const unsigned int flags[] = {SHEET_GRID_H_MAJOR,SHEET_GRID_V_MAJOR,SHEET_GRID_H_MINOR,SHEET_GRID_V_MINOR};
+            book->charts[active_sheet].grids ^= flags[item-9];
+            sheet_changed();
+        }
     } else help_view = item + 1;
 }
 static void ui_text(int x,int y,const char *s,int chars)
@@ -508,6 +555,8 @@ static void sheet_draw_help(const SheetLayout *l)
             "CSV/TSV import literal data; native .bsheet keeps all content.",
             "Limits: 8 sheets, 1024 rows x 128 columns, 8192 stored cells.",
             "192-byte cell storage; 16 undo snapshots; formulas depth <=64.",
+            "Drag header edges to resize rows/columns; Format sets alignment.",
+            "Figure menu toggles major/minor grids; File exports SVG or PCX.",
             "Money uses decimal display; calculations use double precision."
         };
         for (size_t i = 0; i < sizeof(lines)/sizeof(*lines) && y+12+(int)i*16+8 < l->tabs; ++i)
@@ -542,39 +591,61 @@ static void sheet_draw(void)
     if (editing) budo_text_caret(sheet_host,l.x+49+(edit_cursor-offset)*6,l.y+57,15,ui_color(BUDO_SYS_COLOR_TEXT));
     sheet_host->pointer_region(l.x+44,l.y+53,l.w-48,23,BUDO_CURSOR_TEXT,"Edit cell, sheet name, or figure label. Enter applies; Esc cancels.");
     if (chart_view && book->charts[active_sheet].enabled && !help_view) {
-        SheetCanvas v = {&l,sheet_screen_line,sheet_screen_rect,sheet_screen_text};
+        SheetCanvas v = {.context=&l,.line=sheet_screen_line,.rect=sheet_screen_rect,.text=sheet_screen_text};
         (void)sheet_chart_render(&v,calculation,&book->charts[active_sheet],l.x+4,l.y+80,l.w-8,l.tabs-l.y-84);
     } else if (!help_view) {
         SheetRange a = selection();
         for (int c = 0; c < l.cols; ++c) {
+            int x = l.gx+l.xs[c], width = l.xs[c+1]-l.xs[c];
             sheet_address(0,first_col+c,address,sizeof(address));
             char *digit = address;
             while (isalpha((unsigned char)*digit)) ++digit;
             *digit = 0;
-            budo_button_draw(sheet_host,l.gx+c*88,l.gy-16,88,16,address,0);
+            if (width >= 12) budo_button_draw(sheet_host,x,l.gy-16,width,16,address,0);
         }
         for (int r = 0; r < l.rows; ++r) {
+            int y = l.gy+l.ys[r], height = l.ys[r+1]-l.ys[r];
             snprintf(text,sizeof(text),"%d",first_row+r+1);
-            budo_button_draw(sheet_host,l.x+2,l.gy+r*20,34,20,text,0);
+            if (height >= 12) budo_button_draw(sheet_host,l.x+2,y,34,height,text,0);
             for (int c = 0; c < l.cols; ++c) {
-                int rr = first_row+r, cc = first_col+c, x = l.gx+c*88, y = l.gy+r*20;
+                int rr = first_row+r, cc = first_col+c, x = l.gx+l.xs[c], width = l.xs[c+1]-l.xs[c];
                 int selected = rr >= a.r0 && rr <= a.r1 && cc >= a.c0 && cc <= a.c1;
-                sheet_host->fill_rect(x,y,88,20,ui_color(selected ? BUDO_SYS_COLOR_SELECTION_BG : BUDO_SYS_COLOR_SURFACE));
-                sheet_host->draw_rect(x,y,88,20,ui_color(BUDO_SYS_COLOR_MIDGRAY));
+                sheet_host->fill_rect(x,y,width,height,ui_color(selected ? BUDO_SYS_COLOR_SELECTION_BG : BUDO_SYS_COLOR_SURFACE));
+                sheet_host->draw_rect(x,y,width,height,ui_color(BUDO_SYS_COLOR_MIDGRAY));
                 const SheetCell *cell = sheet_cell(book,active_sheet,rr,cc);
                 SheetValue v = sheet_eval(calculation,active_sheet,rr,cc);
                 sheet_display(v,cell ? cell->format : 0,text,sizeof(text));
-                if (v.type == SV_NUMBER && strlen(text) > 13) sheet_string(text,sizeof(text),"#############");
-                int tx = x+4;
-                if (v.type == SV_NUMBER) tx = x+84-sheet_min(13,(int)strlen(text))*6;
-                sheet_host->draw_text(tx,y+6,text,ui_color(selected ? BUDO_SYS_COLOR_SELECTION_TEXT : BUDO_SYS_COLOR_TEXT),13);
-                if (rr == row && cc == col) sheet_host->draw_rect(x+1,y+1,86,18,ui_color(BUDO_SYS_COLOR_TEXT));
+                int chars = sheet_min(SHEET_TEXT-1,(width-8)/6);
+                if (chars > 0 && height >= 12) {
+                    if (v.type == SV_NUMBER && (int)strlen(text) > chars) {
+                        memset(text,'#',(size_t)chars);
+                        text[chars] = 0;
+                    }
+                    int length = sheet_min(chars,(int)strlen(text));
+                    int horizontal = cell ? cell->align_h : 0, vertical = cell ? cell->align_v : 0;
+                    if (!horizontal) horizontal = v.type == SV_NUMBER ? 3 : 1;
+                    int tx = horizontal == 3 ? x+width-4-length*6 : horizontal == 2 ? x+(width-length*6)/2 : x+4;
+                    int ty = vertical == 1 ? y+3 : vertical == 2 ? y+height-11 : y+(height-8)/2;
+                    sheet_host->draw_text(tx,ty,text,ui_color(selected ? BUDO_SYS_COLOR_SELECTION_TEXT : BUDO_SYS_COLOR_TEXT),chars);
+                }
+                if (rr == row && cc == col && width > 3 && height > 3)
+                    sheet_host->draw_rect(x+1,y+1,width-2,height-2,ui_color(BUDO_SYS_COLOR_TEXT));
             }
         }
-        if (a.r1 >= first_row && a.r1 < first_row+l.rows && a.c1 >= first_col && a.c1 < first_col+l.cols) {
-            int hx = l.gx+(a.c1-first_col+1)*88-5, hy = l.gy+(a.r1-first_row+1)*20-5;
+        if (a.r1 >= first_row && a.r1 < first_row+l.rows && a.c1 >= first_col && a.c1 < first_col+l.cols &&
+            l.xs[a.c1-first_col+1]-l.xs[a.c1-first_col] >= 7 && l.ys[a.r1-first_row+1]-l.ys[a.r1-first_row] >= 7) {
+            int hx = l.gx+l.xs[a.c1-first_col+1]-5, hy = l.gy+l.ys[a.r1-first_row+1]-5;
             sheet_host->fill_rect(hx,hy,5,5,ui_color(BUDO_SYS_COLOR_TEXT));
             sheet_host->pointer_region(hx-2,hy-2,7,7,BUDO_CURSOR_CROSSHAIR,"Drag right or down to autofill formulas, patterns, or a two-number series.");
+        }
+        /* Register splitters after all header buttons so both sides drag immediately. */
+        for (int c = 0; c < l.cols; ++c) {
+            if (l.xs[c+1]-l.xs[c] == sheet_width(book,active_sheet,first_col+c))
+                sheet_host->pointer_region(l.gx+l.xs[c+1]-3,l.gy-16,6,16,BUDO_CURSOR_RESIZE_EW,"Drag to resize column");
+        }
+        for (int r = 0; r < l.rows; ++r) {
+            if (l.ys[r+1]-l.ys[r] == sheet_height(book,active_sheet,first_row+r))
+                sheet_host->pointer_region(l.x+2,l.gy+l.ys[r+1]-3,34,6,BUDO_CURSOR_RESIZE_NS,"Drag to resize row");
         }
         budo_scroll_draw(sheet_host,&sheet_hscroll);
         budo_scroll_draw(sheet_host,&sheet_vscroll);
@@ -605,14 +676,23 @@ static void sheet_draw(void)
     if (menu >= 0) {
         int count_items;
         const char *const *items = sheet_menu_items(menu,&count_items);
-        budo_menu_draw(sheet_host,l.x+sheet_min(menu_offsets[menu],l.w-214),l.y+22,214,items,count_items);
+        BudoMenuItem entries[16];
+        for (int i = 0; i < count_items; ++i) {
+            entries[i] = (BudoMenuItem){items[i],1,0};
+            if (menu == 4 && i >= 9) entries[i].checked = (book->charts[active_sheet].grids & (1U << (i-9))) != 0;
+        }
+        budo_menu_items_draw(sheet_host,l.x+sheet_min(menu_offsets[menu],l.w-214),l.y+22,214,entries,count_items);
     }
 }
 static int sheet_hit_cell(const SheetLayout *l,int x,int y,int *r,int *c)
 {
     if (x < l->gx || x >= l->gx+l->gw || y < l->gy || y >= l->gy+l->gh) return 0;
-    *r = first_row+(y-l->gy)/20;
-    *c = first_col+(x-l->gx)/88;
+    int ri = 0, ci = 0;
+    while (ri < l->rows && y-l->gy >= l->ys[ri+1]) ++ri;
+    while (ci < l->cols && x-l->gx >= l->xs[ci+1]) ++ci;
+    if (ri == l->rows || ci == l->cols) return 0;
+    *r = first_row+ri;
+    *c = first_col+ci;
     return 1;
 }
 static int sheet_mouse_down(int x,int y,int buttons)
@@ -671,12 +751,36 @@ static int sheet_mouse_down(int x,int y,int buttons)
         return 1;
     }
     if (chart_view) return 1;
+    for (int c = 0; c < l.cols; ++c) {
+        int edge = l.gx+l.xs[c+1];
+        if (l.xs[c+1]-l.xs[c] == sheet_width(book,active_sheet,first_col+c) &&
+            sheet_host->point_in_rect(x,y,edge-3,l.gy-16,6,16)) {
+            resize_axis = 1;
+            resize_index = first_col+c;
+            resize_start = x;
+            resize_original = book->widths[active_sheet][resize_index];
+            return 1;
+        }
+    }
+    for (int r = 0; r < l.rows; ++r) {
+        int edge = l.gy+l.ys[r+1];
+        if (l.ys[r+1]-l.ys[r] == sheet_height(book,active_sheet,first_row+r) &&
+            sheet_host->point_in_rect(x,y,l.x+2,edge-3,34,6)) {
+            resize_axis = 2;
+            resize_index = first_row+r;
+            resize_start = y;
+            resize_original = book->heights[active_sheet][resize_index];
+            return 1;
+        }
+    }
     if (budo_scroll_pointer_host(sheet_host,&sheet_hscroll,x,y,BUDO_POINTER_DOWN) ||
         budo_scroll_pointer_host(sheet_host,&sheet_vscroll,x,y,BUDO_POINTER_DOWN)) return 1;
     SheetRange a = selection();
-    int hx = l.gx+(a.c1-first_col+1)*88-5, hy = l.gy+(a.r1-first_row+1)*20-5;
-    if (a.r1 >= first_row && a.r1 < first_row+l.rows && a.c1 >= first_col && a.c1 < first_col+l.cols &&
-        sheet_host->point_in_rect(x,y,hx-2,hy-2,7,7)) {
+    int visible_end = a.r1 >= first_row && a.r1 < first_row+l.rows && a.c1 >= first_col && a.c1 < first_col+l.cols;
+    int hx = visible_end ? l.gx+l.xs[a.c1-first_col+1]-5 : -100;
+    int hy = visible_end ? l.gy+l.ys[a.r1-first_row+1]-5 : -100;
+    if (visible_end && l.xs[a.c1-first_col+1]-l.xs[a.c1-first_col] >= 7 &&
+        l.ys[a.r1-first_row+1]-l.ys[a.r1-first_row] >= 7 && sheet_host->point_in_rect(x,y,hx-2,hy-2,7,7)) {
         fill_seed = a;
         fill_drag = dragging = 1;
         fill_horizontal = 0;
@@ -711,6 +815,12 @@ static int sheet_mouse_move(int x,int y,int buttons)
 {
     SheetLayout l;
     if (!book || confirming || dialog_kind || editing || chart_view || help_view || menu >= 0 || !sheet_layout(&l)) return 0;
+    if (resize_axis) {
+        unsigned short *size = resize_axis == 1 ? &book->widths[active_sheet][resize_index] : &book->heights[active_sheet][resize_index];
+        int original = resize_original ? resize_original : resize_axis == 1 ? SHEET_COL_WIDTH : SHEET_ROW_HEIGHT;
+        *size = (unsigned short)sheet_clamp(original+(resize_axis == 1 ? x : y)-resize_start,SHEET_SIZE_MIN,SHEET_SIZE_MAX);
+        return 1;
+    }
     if (budo_scroll_pointer_host(sheet_host,&sheet_hscroll,x,y,BUDO_POINTER_MOVE) ||
         budo_scroll_pointer_host(sheet_host,&sheet_vscroll,x,y,BUDO_POINTER_MOVE)) return 1;
     if (!dragging || !(buttons&1)) return 0;
@@ -719,8 +829,12 @@ static int sheet_mouse_move(int x,int y,int buttons)
     if (y < l.gy) --sheet_vscroll.position;
     if (y >= l.gy+l.gh) ++sheet_vscroll.position;
     (void)sheet_layout(&l);
-    row = first_row+sheet_clamp((y-l.gy)/20,0,l.rows-1);
-    col = first_col+sheet_clamp((x-l.gx)/88,0,l.cols-1);
+    int hit_r, hit_c;
+    if (sheet_hit_cell(&l,sheet_clamp(x,l.gx,l.gx+l.xs[l.cols]-1),
+                       sheet_clamp(y,l.gy,l.gy+l.ys[l.rows]-1),&hit_r,&hit_c)) {
+        row = hit_r;
+        col = hit_c;
+    }
     if (fill_drag) {
         fill_horizontal = col > fill_seed.c1 && (row <= fill_seed.r1 || col-fill_seed.c1 > row-fill_seed.r1);
         anchor_row = fill_seed.r0;
@@ -739,6 +853,12 @@ static int sheet_mouse_move(int x,int y,int buttons)
 static int sheet_mouse_up(int x,int y,int buttons)
 {
     (void)buttons;
+    if (resize_axis) {
+        (void)sheet_mouse_move(x,y,1);
+        resize_axis = 0;
+        sheet_changed();
+        return 1;
+    }
     if (fill_drag) {
         *staging = *book;
         if (sheet_extend_fill(staging,book,fill_seed,selection(),fill_horizontal)) {
@@ -811,6 +931,14 @@ static int sheet_key_input(int k)
 {
     if (!book) return 0;
     if (dialog_kind || confirming) return 1;
+    if (resize_axis) {
+        if (k == 27) {
+            unsigned short *size = resize_axis == 1 ? &book->widths[active_sheet][resize_index] : &book->heights[active_sheet][resize_index];
+            *size = (unsigned short)resize_original;
+            resize_axis = 0;
+        }
+        return 1;
+    }
     if (editing) return sheet_edit_key(k);
     if (help_view) {
         if (k == 27) help_view = 0;

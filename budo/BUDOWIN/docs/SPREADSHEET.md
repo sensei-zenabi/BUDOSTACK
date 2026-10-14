@@ -9,7 +9,7 @@ associations remain configurable; the spreadsheet's Open dialog imports them.
 
 | Module | Responsibility | Extension point |
 | --- | --- | --- |
-| `sheet_model.h` | Sparse workbook, cell coordinates, formats, chart metadata | Storage limits and workbook records |
+| `sheet_model.h` | Sparse workbook, cell coordinates, dimensions, alignment, chart metadata | Storage limits and workbook records |
 | `sheet_formula.h` | Bounded parser, typed values, evaluation cache | `SheetFunction` registry and callback |
 | `sheet_edit.h` | Reference-aware copy, fill, structural edits and stable row sorting | Transactional workbook operations |
 | `sheet_io.h` | Native persistence and CSV/TSV interchange | Versioned format reader/writer |
@@ -79,11 +79,24 @@ skipped; line gaps break the connecting path. Histogram uses ten equal bins of
 the first column. Pie accepts at most eight rows of nonnegative values; the
 first column supplies labels when a second value column is selected. Titles and
 axis labels are persisted. SVG output escapes user text and shares chart geometry
-with the UI. Selection aggregates visit only populated cells.
+with the UI. Cartesian figures have independently switchable horizontal/vertical
+major/minor grids; axes and ticks remain visible when grids are disabled. Major
+intervals contain four minor grid lines. Y captions rotate counterclockwise beside
+the Y axis; X captions center horizontally below the X axis. The shared canvas
+provides an optional vertical-text callback for backends with native rotation;
+the default renders rotated SDK bitmap glyphs. The 5x7 bitmap font lives in
+`sdk/font.h` and is shared with Flow.
 
-## Native file format (version 1)
+PCX exports render the same canvas at 800x500, then write PCX v5 with 8-bit RGB
+planes, an even 800-byte stride, and bounded per-plane RLE runs. This preserves
+exact chart colors without palette quantization. SVG retains native rotated text.
+Both exporters stage output atomically and preserve an existing destination when
+rendering or writing fails. Selection aggregates visit only populated cells.
 
-UTF-8/ASCII header `BUDOSHEET 1\n`, followed by decimal `tabs cells\n`.
+## Native file format (versions 1 and 2)
+
+The writer emits `BUDOSHEET 2\n`; the reader accepts versions 1 and 2.
+Both use UTF-8/ASCII records. Version 1 has header `BUDOSHEET 1\n`, followed by decimal `tabs cells\n`.
 For each sheet, write:
 
 1. Name as lowercase hexadecimal bytes followed by newline.
@@ -100,6 +113,22 @@ IDs, duplicate/out-of-order cells, truncated strings and trailing content. A
 future schema must introduce a new header version and explicit migration;
 never serialize C structs, enum layouts or evaluation caches.
 
+Version 2 retains the version 1 sheet/chart records and adds, after the three
+chart label lines, a decimal grid-mask line and two dimension arrays. The mask
+uses bits 1 horizontal major, 2 vertical major, 4 horizontal minor, 8 vertical
+minor. Dimensions are unsigned decimal integers, sixteen per line: 128 column
+widths followed by 1024 row heights, per sheet. Zero means the default (88 pixels
+wide, 20 pixels high); explicit sizes are 16..512 pixels. Cell record headers are
+`key format horizontal vertical\n`, followed by the same hexadecimal raw-input
+line. Horizontal alignment IDs are 0 automatic, 1 left, 2 center, 3 right. Vertical
+IDs are 0 middle, 1 top, 2 bottom. Styled empty cells remain stored records.
+
+The version 1 reader supplies default dimensions/alignment and enables horizontal
+major grids, preserving the original figure appearance. Saving upgrades to v2.
+Unsupported versions and invalid dimensions, alignment IDs or grid bits are
+rejected before replacing the current workbook. Resize, alignment, rename and
+grid configuration are content changes covered by save confirmation and undo.
+
 Writers use `mkstemp` in the destination directory, flush and sync the staged
 file, then rename it atomically. Errors remove the staged file and preserve the
 previous destination. CSV/TSV exports evaluated values from the active sheet;
@@ -115,7 +144,7 @@ Eight sheets; 1024 rows and 128 columns per sheet; 8192 stored cells per workboo
 count 32; range evaluation budget two million visits per root calculation.
 These are explicit resource bounds for the native desktop, not format promises
 for future versions. Undo includes sixteen snapshots and consumes approximately
-26 MB; each instance has its own allocations.
+26 MiB; each instance has its own allocations.
 
 Row/column insertion and deletion update absolute and relative references across
 all sheets, resize referenced ranges and update live chart source ranges. Insertion
@@ -127,16 +156,22 @@ Autofill translates relative references, preserves absolute axes, repeats patter
 and extrapolates two-number seeds. Copy/cut/paste is an internal per-instance
 range clipboard because the host ABI has no system clipboard service. Sorting
 is stable and sorts selected rows by the first selected column; formulas relocate
-with relative references. Rename sheets before entering formulas; later renames
-are refused to avoid silently breaking cross-sheet references.
+with relative references. Sheet renaming rewrites matching named qualifiers across all formulas, including
+quoted names and apostrophe escaping. Formula strings and unqualified references
+remain unchanged. The entire rename is staged and refused if any rewritten
+formula would exceed the cell limit, or if the name is invalid or already used.
 
 Calculations use binary double precision, including monetary cells. Monetary
 formatting does not provide decimal accounting arithmetic. There is no XLS/XLSX
 compatibility, dynamic array formulas,
 external workbook linking, macros, filtering, printing or recovery journal in
 this version. These require separate implementations behind the module boundaries
-above. Grid columns use a fixed width; numeric values that cannot fit display
-hash marks rather than a misleading truncated number. The formula bar retains
+above. Row/column sizes can be changed by dragging header edges or using the Format
+menu. Rendering, hit testing, navigation, scrolling and autofill share the same
+variable-size geometry. Resize drags form one undo step; Escape restores the
+original size. Structural row/column edits move stored sizes with the cells.
+Numeric values that cannot fit display hash marks rather than a misleading
+truncated number. The formula bar retains
 the complete raw input.
 
 ## Verification
@@ -144,7 +179,11 @@ the complete raw input.
 `tests/budowin_spreadsheet.c` exercises the formula families, errors, lazy branches,
 cycles, reference translation, autofill, structural edits, dates, sorting, undo/redo, native round-trips,
 CSV escaping, malformed files, chart export, save/close transitions, drawing bounds
-and smaller/resized clients. `tests/budowin_native.c` exercises module discovery,
+and smaller/resized clients. Additional layout regressions cover dragging
+header edges, size limits/cancellation, all cell alignments, formula-safe renaming,
+legacy workbook migration and all sixteen grid configurations.
+`tests/budowin_spreadsheet_exports.py` independently parses SVG and decodes all
+five RGB PCX chart types, validating axis rotation and grid orientation/counts. `tests/budowin_native.c` exercises module discovery,
 managed-window interaction and `.BSHEET` association through the real host.
 The spreadsheet test is part of `tests/run_budowin.sh` and also runs under
 AddressSanitizer/UndefinedBehaviorSanitizer.

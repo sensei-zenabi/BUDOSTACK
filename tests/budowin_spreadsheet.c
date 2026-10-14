@@ -3,6 +3,15 @@
 
 static int client_w = 612, client_h = 424, closes, dialogs, confirmations;
 static unsigned int modifiers;
+static const char *capture_text;
+static int captured_x, captured_y;
+static int grid_h_major, grid_v_major, grid_h_minor, grid_v_minor;
+static void count_grid_line(void *context,int x,int y,int xx,int yy,unsigned int color_value)
+{
+    (void)context;
+    if (color_value == 0xc8c8c8) { if (y == yy) ++grid_h_major; if (x == xx) ++grid_v_major; }
+    if (color_value == 0xe8e8e8) { if (y == yy) ++grid_h_minor; if (x == xx) ++grid_v_minor; }
+}
 static int client(int *x,int *y,int *w,int *h)
 {
     *x=0;
@@ -55,6 +64,7 @@ static void rgb(int x,int y,int w,int h,unsigned int color)
 static void text(int x,int y,const char *s,unsigned char color,int chars)
 {
     (void)color;
+    if (capture_text && !strcmp(s,capture_text)) { captured_x = x; captured_y = y; }
     assert(s && chars>0);
     bounds(x,y,1,8);
 }
@@ -133,6 +143,212 @@ static void path_name(char *out,const char *root,const char *name)
 {
     assert(snprintf(out,4096,"%s/%s",root,name)<4096);
 }
+static void test_layout_changes(const char *root)
+{
+    sheet_new(book);
+    active_sheet = row = col = anchor_row = anchor_col = 0;
+    sheet_hscroll.position = sheet_vscroll.position = 0;
+    menu = -1;
+    chart_view = editing = help_view = 0;
+    sheet_history_reset();
+    SheetLayout l;
+    assert(sheet_layout(&l));
+    int edge = l.gx+l.xs[1];
+    assert(sheet_mouse_down(edge,l.gy-8,1) && resize_axis == 1);
+    assert(sheet_mouse_move(edge+52,l.gy-8,1));
+    assert(sheet_width(book,0,0) == 140);
+    assert(sheet_mouse_up(edge+52,l.gy-8,0));
+    assert(!resize_axis && history_at == 1);
+    sheet_undo(-1);
+    assert(sheet_width(book,0,0) == 88);
+    sheet_undo(1);
+    assert(sheet_width(book,0,0) == 140);
+    assert(sheet_layout(&l));
+    edge = l.gy+l.ys[1];
+    assert(sheet_mouse_down(l.x+12,edge,1) && resize_axis == 2);
+    assert(sheet_mouse_move(l.x+12,edge+40,1));
+    assert(sheet_mouse_up(l.x+12,edge+40,0));
+    assert(sheet_height(book,0,0) == 60);
+    assert(sheet_layout(&l));
+    edge = l.gx+l.xs[1];
+    assert(sheet_mouse_down(edge,l.gy-8,1));
+    assert(sheet_mouse_move(edge+100,l.gy-8,1));
+    assert(sheet_key_input(27));
+    assert(sheet_width(book,0,0) == 140 && !resize_axis);
+    sheet_begin_edit(5,0);
+    sheet_string(edit_buffer,sizeof(edit_buffer),"160");
+    sheet_edit_commit();
+    assert(!editing && sheet_width(book,0,0) == 160);
+    sheet_begin_edit(6,0);
+    sheet_string(edit_buffer,sizeof(edit_buffer),"10");
+    sheet_edit_commit();
+    assert(editing && sheet_height(book,0,0) == 60);
+    assert(sheet_key_input(27));
+    put(0,0,0,"Align");
+    capture_text = "Align";
+    for (int horizontal = 0; horizontal <= 3; ++horizontal) {
+        for (int vertical = 0; vertical <= 2; ++vertical) {
+            sheet_mutate(20+horizontal);
+            sheet_mutate(24+vertical);
+            assert(sheet_layout(&l));
+            sheet_draw();
+            int x = horizontal == 3 ? l.gx+160-4-30 : horizontal == 2 ? l.gx+(160-30)/2 : l.gx+4;
+            int y = vertical == 1 ? l.gy+3 : vertical == 2 ? l.gy+60-11 : l.gy+(60-8)/2;
+            if (captured_x != x || captured_y != y) fprintf(stderr,"Alignment %d,%d: got %d,%d expected %d,%d size=%d,%d row=%d col=%d\n",horizontal,vertical,captured_x,captured_y,x,y,sheet_width(book,0,0),sheet_height(book,0,0),row,col);
+            assert(captured_x == x && captured_y == y);
+        }
+    }
+    capture_text = NULL;
+    row = anchor_row = 1;
+    col = anchor_col = 1;
+    sheet_mutate(22);
+    sheet_mutate(26);
+    const SheetCell *blank = sheet_cell(book,0,1,1);
+    assert(blank && blank->align_h == 2 && blank->align_v == 2 && !*blank->raw);
+    row = anchor_row = col = anchor_col = 0;
+    *staging = *book;
+    assert(sheet_copy_range(staging,book,selection(),0,2,2));
+    const SheetCell *copied = sheet_cell(staging,0,2,2);
+    assert(copied && copied->align_h == 3 && copied->align_v == 2);
+    assert(sheet_structure(staging,book,0,0,0,1));
+    assert(staging->heights[0][1] == 60 && staging->heights[0][0] == 0);
+    assert(sheet_cell(staging,0,1,0)->align_h == 3);
+    assert(sheet_structure(staging,book,0,1,0,-1));
+    assert(staging->widths[0][0] == 0);
+    /* Variable geometry must be used by hit testing, autofill and navigation. */
+    assert(sheet_layout(&l));
+    int rr,cc;
+    assert(sheet_hit_cell(&l,l.gx+159,l.gy+59,&rr,&cc) && rr == 0 && cc == 0);
+    assert(sheet_hit_cell(&l,l.gx+161,l.gy+61,&rr,&cc) && rr == 1 && cc == 1);
+    book->heights[0][1] = 512;
+    row = 10;
+    col = 100;
+    sheet_reveal();
+    assert(sheet_layout(&l) && row >= first_row && row < first_row+l.rows && col >= first_col && col < first_col+l.cols);
+    book->heights[0][1] = 0;
+    sheet_hscroll.position = sheet_vscroll.position = 0;
+    row = anchor_row = col = anchor_col = 0;
+    put(0,0,0,"1");
+    put(0,1,0,"2");
+    anchor_row = 1;
+    assert(sheet_layout(&l));
+    int hx = l.gx+l.xs[1]-2, hy = l.gy+l.ys[2]-2;
+    assert(sheet_mouse_down(hx,hy,1) && fill_drag);
+    assert(sheet_mouse_move(l.gx+30,l.gy+l.ys[4]+5,1));
+    assert(sheet_mouse_up(l.gx+30,l.gy+l.ys[4]+5,0));
+    assert(!strcmp(sheet_cell(book,0,4,0)->raw,"5"));
+    /* Formula-safe rename across tabs, quoted names, ranges and text literals. */
+    book->tabs = 2;
+    sheet_string(book->names[1],32,"Data");
+    put(0,0,1,"=A1*2");
+    put(1,0,0,"=Sheet1!$A$1+SUM('Sheet1'!A1:A2)");
+    put(1,0,1,"=\"Sheet1!A1\"&'Data'!A1");
+    sheet_history_reset();
+    active_sheet = 0;
+    sheet_begin_edit(1,0);
+    sheet_string(edit_buffer,sizeof(edit_buffer),"Test's data");
+    sheet_edit_commit();
+    assert(!editing && !strcmp(book->names[0],"Test's data"));
+    assert(!strcmp(sheet_cell(book,0,0,1)->raw,"=A1*2"));
+    assert(!strcmp(sheet_cell(book,1,0,0)->raw,"='Test''s data'!$A$1+SUM('Test''s data'!A1:A2)"));
+    assert(!strcmp(sheet_cell(book,1,0,1)->raw,"=\"Sheet1!A1\"&'Data'!A1"));
+    SheetValue value = sheet_eval(calculation,1,0,0);
+    assert(value.type == SV_NUMBER && value.number == 4);
+    sheet_undo(-1);
+    assert(!strcmp(book->names[0],"Sheet1") && !strcmp(sheet_cell(book,1,0,0)->raw,"=Sheet1!$A$1+SUM('Sheet1'!A1:A2)"));
+    sheet_undo(1);
+    assert(!strcmp(book->names[0],"Test's data"));
+    *clipboard = *book;
+    assert(!sheet_rename(staging,book,0,"dAtA") && !memcmp(clipboard,book,sizeof(*book)));
+    char long_formula[SHEET_TEXT];
+    sheet_string(long_formula,sizeof(long_formula),"='Test''s data'!A1&\"");
+    size_t start = strlen(long_formula);
+    memset(long_formula+start,'x',SHEET_TEXT-start-3);
+    long_formula[SHEET_TEXT-3] = '"';
+    long_formula[SHEET_TEXT-2] = 0;
+    put(1,2,0,long_formula);
+    *clipboard = *book;
+    assert(!sheet_rename(staging,book,0,"An extremely long renamed sheet") && !memcmp(clipboard,book,sizeof(*book)));
+    put(1,2,0,"");
+    /* Grid switches are independent, undoable and persistent. */
+    row = col = anchor_col = 0;
+    anchor_row = 4;
+    active_sheet = 0;
+    sheet_chart_create(1);
+    SheetChart *chart = &book->charts[0];
+    sheet_string(chart->title,sizeof(chart->title),"Grid and axis test");
+    sheet_string(chart->xlabel,sizeof(chart->xlabel),"Time [s]");
+    sheet_string(chart->ylabel,sizeof(chart->ylabel),"Voltage [V]");
+    unsigned int previous = chart->grids;
+    for (int i = 0; i < 4; ++i) {
+        sheet_menu_action(4,9+i);
+        assert(chart->grids == (previous^(1U<<i)));
+        previous = chart->grids;
+    }
+    sheet_undo(-1);
+    assert(chart->grids == (previous^SHEET_GRID_V_MINOR));
+    sheet_undo(1);
+    for (unsigned int flags = 0; flags < 16; ++flags) {
+        chart->grids = flags;
+        grid_h_major = grid_v_major = grid_h_minor = grid_v_minor = 0;
+        SheetCanvas canvas = {.line=count_grid_line};
+        chart_grids(&canvas,chart,0,0,400,200);
+        assert(grid_h_major == ((flags&SHEET_GRID_H_MAJOR) ? 3 : 0));
+        assert(grid_v_major == ((flags&SHEET_GRID_V_MAJOR) ? 3 : 0));
+        assert(grid_h_minor == ((flags&SHEET_GRID_H_MINOR) ? 16 : 0));
+        assert(grid_v_minor == ((flags&SHEET_GRID_V_MINOR) ? 16 : 0));
+    }
+    char path[4096];
+    path_name(path,root,"layout-v2.bsheet");
+    assert(sheet_write(book,path));
+    assert(sheet_read(staging,path) && !memcmp(staging,book,sizeof(*book)));
+    path_name(path,root,"legacy-v1.bsheet");
+    FILE *file = fopen(path,"wb");
+    assert(file);
+    fputs("BUDOSHEET 1\n1 2\n536865657431\n0 0 0 0 0 0 0\n\n\n\n0 0\n37\n1 0\n3d41312a32\n",file);
+    assert(!fclose(file));
+    assert(sheet_read(staging,path) && sheet_width(staging,0,0) == 88 && sheet_height(staging,0,0) == 20);
+    assert(staging->charts[0].grids == SHEET_GRID_H_MAJOR && staging->cells[0].align_h == 0);
+    SheetCalc *legacy_calc = calloc(1,sizeof(*legacy_calc));
+    assert(legacy_calc);
+    sheet_calc_reset(legacy_calc,staging);
+    value = sheet_eval(legacy_calc,0,0,1);
+    assert(value.type == SV_NUMBER && value.number == 14);
+    free(legacy_calc);
+    /* Export all types for an independent Python PCX and SVG check. */
+    for (int type = 0; type < SHEET_CHART_TYPES; ++type) {
+        chart->type = type;
+        snprintf(path,sizeof(path),"%s/figure-%d.pcx",root,type);
+        assert(sheet_chart_export_pcx(calculation,chart,path));
+    }
+    chart->type = 1;
+    sheet_menu_action(0,7);
+    assert(dialog_kind == SD_PCX);
+    path_name(path,root,"figure-ui.pcx");
+    assert(sheet_file_selected(BUDO_FILE_SAVE_AS,path) && !dialog_kind);
+    for (unsigned int flags = 0; flags < 16; ++flags) {
+        chart->grids = flags;
+        snprintf(path,sizeof(path),"%s/grid-%u.svg",root,flags);
+        assert(sheet_chart_export(calculation,chart,path));
+    }
+    chart_view = 0;
+    for (int width = 452; width <= 900; width += 112) {
+        client_w = width;
+        for (int size = 16; size <= 512; size += 31) {
+            book->widths[0][0] = (unsigned short)size;
+            book->heights[0][0] = (unsigned short)size;
+            sheet_draw();
+        }
+        chart_view = 1;
+        sheet_draw();
+        chart_view = 0;
+    }
+    client_w = 612;
+    chart_view = 0;
+    path_name(path,root,"/missing/figure.pcx");
+    assert(!sheet_chart_export_pcx(calculation,chart,path));
+}
+
 int main(int argc,char **argv)
 {
     assert(argc == 2);
@@ -363,6 +579,7 @@ int main(int argc,char **argv)
     assert(!app.request_close() && !editing && dirty);
     app.confirm_result(BUDO_CONFIRM_SAVE,BUDO_RESPONSE_CANCEL);
     assert(!sheet_write(book,"/nonexistent-directory/book.bsheet"));
+    test_layout_changes(argv[1]);
     /* Exercise malformed token streams under sanitizers as well as normal builds. */
     unsigned int random_state = 12345;
     const char alphabet[] = "A1$!+-*/^%<>=(,)\"' ._&0123456789";

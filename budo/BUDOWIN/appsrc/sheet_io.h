@@ -46,12 +46,34 @@ static inline int sheet_hex_read(FILE *f, char *s, size_t size)
         s[n++] = (char)(a * 16 + b);
     }
 }
+static inline void sheet_sizes_write(FILE *f, const unsigned short *sizes, int n)
+{
+    for (int i = 0; i < n; ++i) fprintf(f,"%u%c",(unsigned int)sizes[i],i%16 == 15 ? '\n' : ' ');
+}
+static inline int sheet_sizes_read(FILE *f, unsigned short *sizes, int n)
+{
+    char line[256];
+    for (int i = 0; i < n; i += 16) {
+        if (!fgets(line,sizeof(line),f)) return 0;
+        char *p = line;
+        for (int j = 0; j < 16; ++j) {
+            char *end;
+            long value = strtol(p,&end,10);
+            if (end == p || (value && (value < SHEET_SIZE_MIN || value > SHEET_SIZE_MAX))) return 0;
+            sizes[i+j] = (unsigned short)value;
+            p = end;
+        }
+        while (isspace((unsigned char)*p)) ++p;
+        if (*p) return 0;
+    }
+    return 1;
+}
 static inline int sheet_write(const SheetBook *b, const char *path)
 {
     char temp[4096];
     FILE *f = sheet_stage(path, temp, sizeof(temp));
     if (!f) return 0;
-    fprintf(f, "BUDOSHEET 1\n%d %d\n", b->tabs, b->count);
+    fprintf(f, "BUDOSHEET 2\n%d %d\n", b->tabs, b->count);
     for (int i = 0; i < b->tabs; ++i) {
         sheet_hex_write(f, b->names[i]);
         const SheetChart *c = &b->charts[i];
@@ -59,9 +81,12 @@ static inline int sheet_write(const SheetBook *b, const char *path)
         sheet_hex_write(f, c->title);
         sheet_hex_write(f, c->xlabel);
         sheet_hex_write(f, c->ylabel);
+        fprintf(f,"%u\n",c->grids);
+        sheet_sizes_write(f,b->widths[i],SHEET_COLS);
+        sheet_sizes_write(f,b->heights[i],SHEET_ROWS);
     }
     for (int i = 0; i < b->count; ++i) {
-        fprintf(f, "%d %d\n", b->cells[i].key, b->cells[i].format);
+        fprintf(f, "%d %d %d %d\n", b->cells[i].key, b->cells[i].format, b->cells[i].align_h, b->cells[i].align_v);
         sheet_hex_write(f, b->cells[i].raw);
     }
     return sheet_finish(f, path, temp, 1);
@@ -72,7 +97,9 @@ static inline int sheet_read(SheetBook *b, const char *path)
     if (!f) return 0;
     sheet_new(b);
     char line[256];
-    int ok = fgets(line, sizeof(line), f) && !strcmp(line, "BUDOSHEET 1\n");
+    int ok = fgets(line, sizeof(line), f) != NULL;
+    int version = ok && !strcmp(line,"BUDOSHEET 1\n") ? 1 : ok && !strcmp(line,"BUDOSHEET 2\n") ? 2 : 0;
+    ok = version != 0;
     int tabs = 0, count = 0;
     if (ok) ok = fgets(line, sizeof(line), f) && sscanf(line, "%d %d", &tabs, &count) == 2 &&
                  tabs >= 1 && tabs <= SHEET_TABS && count >= 0 && count <= SHEET_CELLS;
@@ -87,17 +114,25 @@ static inline int sheet_read(SheetBook *b, const char *path)
              c->source.r1 >= c->source.r0 && c->source.c0 >= 0 && c->source.c1 < SHEET_COLS && c->source.c1 >= c->source.c0 &&
              sheet_hex_read(f, c->title, sizeof(c->title)) && sheet_hex_read(f, c->xlabel, sizeof(c->xlabel)) &&
              sheet_hex_read(f, c->ylabel, sizeof(c->ylabel));
+        if (ok && version >= 2) {
+            ok = fgets(line,sizeof(line),f) && sscanf(line,"%u",&c->grids) == 1 && c->grids <= 15 &&
+                 sheet_sizes_read(f,b->widths[i],SHEET_COLS) && sheet_sizes_read(f,b->heights[i],SHEET_ROWS);
+        }
         for (int j = 0; ok && j < i; ++j) if (!strcmp(b->names[i], b->names[j])) ok = 0;
     }
     for (int i = 0; ok && i < count; ++i) {
-        int key = -1, format = -1;
+        int key = -1, format = -1, horizontal = 0, vertical = 0;
         char raw[SHEET_TEXT];
-        ok = fgets(line, sizeof(line), f) && sscanf(line, "%d %d", &key, &format) == 2 && key >= 0 &&
+        ok = fgets(line, sizeof(line), f) && (version == 1 ? sscanf(line,"%d %d",&key,&format) == 2 :
+             sscanf(line,"%d %d %d %d",&key,&format,&horizontal,&vertical) == 4) &&
+             horizontal >= 0 && horizontal <= 3 && vertical >= 0 && vertical <= 2 && key >= 0 &&
              key < tabs * SHEET_ROWS * SHEET_COLS && (i == 0 || key > b->cells[i - 1].key) &&
              format >= 0 && format <= 5 && sheet_hex_read(f, raw, sizeof(raw));
         if (ok) {
             b->cells[i].key = key;
             b->cells[i].format = format;
+            b->cells[i].align_h = horizontal;
+            b->cells[i].align_v = vertical;
             sheet_string(b->cells[i].raw, SHEET_TEXT, raw);
             ++b->count;
         }

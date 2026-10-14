@@ -222,6 +222,54 @@ int main(int argc, char **argv) {
     assert(!spreadsheet->definition.request_close());
     desktop_confirm_result(BUDO_RESPONSE_CANCEL);
     bwa_callback_app = NULL;
+    active_window = spreadsheet->definition.runtime_id;
+    draw_desktop(0);
+    int divider_x = bx+38+88, divider_y = by+84;
+    assert(ui_cursor_kind(divider_x,divider_y) == BUDO_CURSOR_RESIZE_EW);
+    assert(ui_hit(divider_x,divider_y,1) < 0);
+    assert(ui_button_event(divider_x,divider_y,1,0));
+    assert(bwa_dispatch_left_press(spreadsheet,divider_x,divider_y,1));
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.mouse_move(divider_x+42,divider_y,1));
+    assert(spreadsheet->definition.callbacks.mouse_up(divider_x+42,divider_y,0));
+    draw_desktop(0);
+    assert(ui_cursor_kind(divider_x+42,divider_y) == BUDO_CURSOR_RESIZE_EW);
+    divider_x = bx+14;
+    divider_y = by+92+20;
+    assert(ui_cursor_kind(divider_x,divider_y) == BUDO_CURSOR_RESIZE_NS);
+    assert(ui_button_event(divider_x,divider_y,1,0));
+    assert(bwa_dispatch_left_press(spreadsheet,divider_x,divider_y,1));
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.mouse_move(divider_x,divider_y+18,1));
+    assert(spreadsheet->definition.callbacks.mouse_up(divider_x,divider_y+18,0));
+    /* Alignment and renaming through the production menus after formulas exist. */
+    press_native(spreadsheet,bx+110,by+10);
+    press_native(spreadsheet,bx+110,by+22+2+8*16+8);
+    press_native(spreadsheet,bx+160,by+10);
+    press_native(spreadsheet,bx+160,by+48);
+    bwa_callback_app = spreadsheet;
+    assert(spreadsheet->definition.callbacks.key(1));
+    for (const char *p = "Results"; *p; ++p) assert(spreadsheet->definition.callbacks.key(*p));
+    assert(spreadsheet->definition.callbacks.key(13));
+    assert(native_label(spreadsheet,"Results"));
+    if (argc == 3) screenshot(argv[2],"spreadsheet-resized.ppm");
+    /* Every Cartesian grid direction has its own checked menu item. */
+    for (int grid = 10; grid <= 12; ++grid) {
+        press_native(spreadsheet,bx+212,by+10);
+        press_native(spreadsheet,bx+220,by+22+2+grid*16+8);
+    }
+    for (int axis = 7; axis <= 8; ++axis) {
+        press_native(spreadsheet,bx+212,by+10);
+        press_native(spreadsheet,bx+220,by+22+2+axis*16+8);
+        bwa_callback_app = spreadsheet;
+        assert(spreadsheet->definition.callbacks.key(1));
+        const char *label = axis == 7 ? "Time [s]" : "Voltage [V]";
+        for (const char *p = label; *p; ++p) assert(spreadsheet->definition.callbacks.key(*p));
+        assert(spreadsheet->definition.callbacks.key(13));
+    }
+    click_native(spreadsheet,bx+342,by+36); /* Toggle to saved figure. */
+    if (argc == 3) screenshot(argv[2],"spreadsheet-axis-grids.ppm");
+    bwa_callback_app = NULL;
     BwaLoadedApp *settings = NULL;
     for (int i = 0; i < bwa_instance_count; ++i)
         if (!strcmp(bwa_instances[i].definition.app_id, "settings")) settings = &bwa_instances[i];

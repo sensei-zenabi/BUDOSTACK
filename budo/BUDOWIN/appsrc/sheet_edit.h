@@ -11,7 +11,7 @@ static inline int sheet_copy_range(SheetBook *dst, const SheetBook *src, SheetRa
             const SheetCell *cell = sheet_cell(src, a.sheet, r, c);
             char raw[SHEET_TEXT] = {0};
             if (cell && !sheet_translate(cell->raw, row - a.r0, col - a.c0, raw, sizeof(raw))) return 0;
-            if (!sheet_set(dst, s, row + r - a.r0, col + c - a.c0, raw, cell ? cell->format : 0)) return 0;
+            if (!sheet_set_full(dst, s, row + r - a.r0, col + c - a.c0, raw, cell ? cell->format : 0, cell ? cell->align_h : 0, cell ? cell->align_v : 0)) return 0;
         }
     }
     return 1;
@@ -37,7 +37,7 @@ static inline int sheet_fill(SheetBook *dst, const SheetBook *src, SheetRange a,
                 if (!isfinite(n)) return 0;
                 snprintf(raw, sizeof(raw), "%.15g", n);
             } else if (first && !sheet_translate(first->raw, horizontal ? 0 : i, horizontal ? i : 0, raw, sizeof(raw))) return 0;
-            if (!sheet_set(dst, a.sheet, r + (horizontal ? 0 : i), c + (horizontal ? i : 0), raw, first ? first->format : 0)) return 0;
+            if (!sheet_set_full(dst, a.sheet, r + (horizontal ? 0 : i), c + (horizontal ? i : 0), raw, first ? first->format : 0, first ? first->align_h : 0, first ? first->align_v : 0)) return 0;
         }
     }
     return 1;
@@ -97,7 +97,7 @@ static inline int sheet_extend_fill(SheetBook *dst, const SheetBook *src, SheetR
                 if (!isfinite(value)) return 0;
                 snprintf(raw,sizeof(raw),"%.15g",value);
             } else if (cell && !sheet_translate(cell->raw,horizontal ? 0 : i-k,horizontal ? i-k : 0,raw,sizeof(raw))) return 0;
-            if (!sheet_set(dst,seed.sheet,r0+(horizontal ? 0 : i),c0+(horizontal ? i : 0),raw,cell ? cell->format : 0)) return 0;
+            if (!sheet_set_full(dst,seed.sheet,r0+(horizontal ? 0 : i),c0+(horizontal ? i : 0),raw,cell ? cell->format : 0,cell ? cell->align_h : 0,cell ? cell->align_v : 0)) return 0;
         }
     }
     return 1;
@@ -253,6 +253,17 @@ static inline int sheet_structure(SheetBook *dst, const SheetBook *src, int s, i
     dst->tabs = src->tabs;
     memcpy(dst->names,src->names,sizeof(dst->names));
     memcpy(dst->charts,src->charts,sizeof(dst->charts));
+    memcpy(dst->widths,src->widths,sizeof(dst->widths));
+    memcpy(dst->heights,src->heights,sizeof(dst->heights));
+    unsigned short *sizes = axis ? dst->widths[s] : dst->heights[s];
+    int limit = axis ? SHEET_COLS : SHEET_ROWS;
+    if (delta > 0) {
+        memmove(sizes+at+1,sizes+at,(size_t)(limit-at-1)*sizeof(*sizes));
+        sizes[at] = 0;
+    } else {
+        memmove(sizes+at,sizes+at+1,(size_t)(limit-at-1)*sizeof(*sizes));
+        sizes[limit-1] = 0;
+    }
     for (int i=0; i<src->count; ++i) {
         const SheetCell *cell = &src->cells[i];
         int tab = cell->key/(SHEET_ROWS*SHEET_COLS), r = cell->key/SHEET_COLS%SHEET_ROWS, c = cell->key%SHEET_COLS;
@@ -263,7 +274,7 @@ static inline int sheet_structure(SheetBook *dst, const SheetBook *src, int s, i
             if (*coordinate >= (axis ? SHEET_COLS : SHEET_ROWS)) return 0;
         }
         char raw[SHEET_TEXT];
-        if (!sheet_structural_formula(src,tab,cell->raw,s,axis,at,delta,raw) || !sheet_set(dst,tab,r,c,raw,cell->format)) return 0;
+        if (!sheet_structural_formula(src,tab,cell->raw,s,axis,at,delta,raw) || !sheet_set_full(dst,tab,r,c,raw,cell->format,cell->align_h,cell->align_v)) return 0;
     }
     for (int i=0; i<dst->tabs; ++i) {
         SheetChart *chart = &dst->charts[i];
@@ -285,6 +296,72 @@ static inline int sheet_structure(SheetBook *dst, const SheetBook *src, int s, i
         *lo = sheet_clamp(*lo,0,(axis ? SHEET_COLS : SHEET_ROWS)-1);
         *hi = sheet_clamp(*hi,*lo,(axis ? SHEET_COLS : SHEET_ROWS)-1);
     }
+    return 1;
+}
+
+static inline int sheet_rename_formula(const SheetBook *b, const char *raw, int target,
+                                       const char *name, char *out)
+{
+    size_t used = 0;
+    if (*raw != '=') { sheet_string(out,SHEET_TEXT,raw); return 1; }
+    for (const char *p = raw; *p;) {
+        const char *start = p;
+        char qualifier[64] = {0};
+        size_t count = 0;
+        int match = 0;
+        if (*p == '"') {
+            ++p;
+            while (*p) {
+                if (*p++ == '"') { if (*p != '"') break; ++p; }
+            }
+        } else if (*p == '\'') {
+            ++p;
+            while (*p) {
+                if (*p == '\'') { ++p; if (*p != '\'') break; }
+                if (count+1 < sizeof(qualifier)) qualifier[count++] = *p;
+                ++p;
+            }
+            if (*p == '!') { ++p; match = sheet_named_index(b,qualifier) == target; }
+        } else if (isalpha((unsigned char)*p) || *p == '_') {
+            while (isalnum((unsigned char)*p) || *p == '_' || *p == '.') {
+                if (count+1 < sizeof(qualifier)) qualifier[count++] = *p;
+                ++p;
+            }
+            if (*p == '!') { ++p; match = sheet_named_index(b,qualifier) == target; }
+        } else ++p;
+        if (match) {
+            char escaped[68];
+            size_t n = 0;
+            escaped[n++] = '\'';
+            for (const char *q = name; *q; ++q) {
+                if (*q == '\'') escaped[n++] = '\'';
+                escaped[n++] = *q;
+            }
+            escaped[n++] = '\'';
+            escaped[n++] = '!';
+            if (used+n >= SHEET_TEXT) return 0;
+            memcpy(out+used,escaped,n);
+            used += n;
+        } else {
+            size_t n = (size_t)(p-start);
+            if (used+n >= SHEET_TEXT) return 0;
+            memcpy(out+used,start,n);
+            used += n;
+        }
+    }
+    out[used] = 0;
+    return 1;
+}
+static inline int sheet_rename(SheetBook *dst, const SheetBook *src, int tab, const char *name)
+{
+    if (!*name || strlen(name) >= sizeof(src->names[0])) return 0;
+    int existing = sheet_named_index(src,name);
+    if (existing >= 0 && existing != tab) return 0;
+    for (const char *p = name; *p; ++p) if ((unsigned char)*p < 32) return 0;
+    *dst = *src;
+    for (int i = 0; i < src->count; ++i)
+        if (!sheet_rename_formula(src,src->cells[i].raw,tab,name,dst->cells[i].raw)) return 0;
+    sheet_string(dst->names[tab],sizeof(dst->names[tab]),name);
     return 1;
 }
 

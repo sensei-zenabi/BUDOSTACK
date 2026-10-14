@@ -18,6 +18,7 @@ budo/BUDOWIN/build.sh
 "$COMPILER" "${FLAGS[@]}" -O2 tests/budowin_spreadsheet.c -lm -o "$TEST_DIR/spreadsheet"
 mkdir -p "$TEST_DIR/spreadsheet-files"
 "$TEST_DIR/spreadsheet" "$TEST_DIR/spreadsheet-files"
+python3 tests/budowin_spreadsheet_exports.py "$TEST_DIR/spreadsheet-files"
 "$COMPILER" "${FLAGS[@]}" -O2 tests/budowin_chess.c -o "$TEST_DIR/chess"
 "$TEST_DIR/chess"
 for game in SNAKE INVADERS TICTACTOE; do

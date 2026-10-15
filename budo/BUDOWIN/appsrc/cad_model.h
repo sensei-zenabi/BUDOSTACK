@@ -7,6 +7,8 @@
 #define CAD_ENTITIES 2048
 #define CAD_LAYERS 16
 #define CAD_HISTORY 32
+#define CAD_FONT_ADVANCE 6
+#define CAD_FONT_HEIGHT 7
 #define CAD_LIMIT 1000000.0
 #define CAD_PI 3.14159265358979323846
 
@@ -159,7 +161,7 @@ static void cad_render(const CadEntity *e, const CadPen *p)
 }
 typedef struct CadHit {
     CadPoint point;
-    double distance;
+    double distance, text_scale;
 } CadHit;
 static void cad_hit_line(void *context, CadPoint a, CadPoint b)
 {
@@ -169,11 +171,16 @@ static void cad_hit_line(void *context, CadPoint a, CadPoint b)
 static void cad_hit_text(void *context, CadPoint a, double height, const char *s)
 {
     CadHit *h = context;
-    double x = fmax(a.x, fmin(a.x + strlen(s) * height * 0.86, h->point.x));
+    double width = strlen(s) * height * 0.86;
+    if (h->text_scale > 0) {
+        width = strlen(s) * CAD_FONT_ADVANCE / h->text_scale;
+        height = CAD_FONT_HEIGHT / h->text_scale;
+    }
+    double x = fmax(a.x, fmin(a.x + width, h->point.x));
     double y = fmax(a.y, fmin(a.y + height, h->point.y));
     h->distance = fmin(h->distance, cad_distance(h->point, cad_point(x, y)));
 }
-static int cad_hit(const CadDocument *d, CadPoint point, double tolerance)
+static int cad_hit(const CadDocument *d, CadPoint point, double tolerance, double text_scale)
 {
     for (int i = d->count - 1; i >= 0; --i) {
         const CadEntity *e = &d->entities[i];
@@ -182,7 +189,7 @@ static int cad_hit(const CadDocument *d, CadPoint point, double tolerance)
             if (fabs(cad_distance(point, e->a) - cad_distance(e->a, e->b)) <= tolerance) return i;
             continue;
         }
-        CadHit hit = {point, tolerance + 1};
+        CadHit hit = {point, tolerance + 1, text_scale};
         CadPen pen = {&hit, cad_hit_line, cad_hit_text};
         cad_render(e, &pen);
         if (hit.distance <= tolerance) return i;

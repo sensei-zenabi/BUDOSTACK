@@ -8,11 +8,14 @@ static CadDocument *document, *history, *saved, *clipboard;
 static int history_at, history_count, active_layer, tool, stage, menu = -1;
 static unsigned char selected[CAD_ENTITIES];
 static int primary = -1, dragging, marquee, grid_on = 1, snap_on = 1, object_snap = 1, ortho;
-static double scale = 0.5, left = -50, bottom = -50, text_height = 16;
+#define CAD_DEFAULT_SCALE 0.5
+#define CAD_TEXT_HEIGHT 16
+
+static double scale = CAD_DEFAULT_SCALE, left = -50, bottom = -50;
 static CadPoint pointer, drag_start, first, second;
 static CadEntity preview;
 static int editing, edit_field, edit_select, edit_new, help_page;
-static char fields[9][128];
+static char fields[8][128];
 static int dialog_kind, pending_action, confirming, allow_close;
 static char filename[4096], pending_path[4096];
 static char status[160] = "Choose a drawing tool. Coordinates and dimensions are in mm. F1: help.";
@@ -121,14 +124,18 @@ static void fit(void)
     left = (b.left + b.right) / 2 - l.cw / scale / 2;
     bottom = (b.bottom + b.top) / 2 - l.ch / scale / 2;
 }
-static void zoom_view(double factor)
+static void set_zoom(double value)
 {
     CadLayout l;
     if (!layout(&l)) return;
     double previous = scale;
-    scale = fmax(0.0001, fmin(100, scale * factor));
+    scale = fmax(0.0001, fmin(100, value));
     left += l.cw / 2.0 / previous - l.cw / 2.0 / scale;
     bottom += l.ch / 2.0 / previous - l.ch / 2.0 / scale;
+}
+static void zoom_view(double factor)
+{
+    set_zoom(scale * factor);
 }
 static void new_document(void)
 {
@@ -137,7 +144,7 @@ static void new_document(void)
     active_layer = tool = 0;
     filename[0] = 0;
     left = bottom = -50;
-    scale = 0.5;
+    scale = CAD_DEFAULT_SCALE;
     reset_history();
     title();
 }
@@ -369,7 +376,7 @@ static void choose_tool(int which)
     stage = 0;
     dragging = marquee = 0;
     message(tool == CAD_SELECT ? "Click to select; Ctrl-click adds; drag empty space for box selection. Enter: properties." :
-            tool == CAD_TEXT ? "Click a text anchor, then enter notation text and height." :
+            tool == CAD_TEXT ? "Click a text anchor, then enter notation text." :
             tool >= CAD_DIM_H && tool <= CAD_DIM_ALIGNED ? "Click two measured points, then a third point to position the dimension line." :
             tool == CAD_LEADER ? "Click the arrow tip, elbow and text anchor, then enter the note." :
             "Click start and end points. Enter edits exact coordinates after placement. Esc cancels.");
@@ -381,12 +388,12 @@ static void properties(int is_new)
         return;
     }
     const CadEntity *e = is_new ? &preview : &document->entities[primary];
-    double values[] = {e->a.x, e->a.y, e->b.x, e->b.y, e->c.x, e->c.y, e->height, e->layer + 1};
-    for (int i = 0; i < 8; ++i) snprintf(fields[i], sizeof(fields[i]), "%.10g", values[i]);
-    snprintf(fields[8], sizeof(fields[8]), "%s", e->text);
+    double values[] = {e->a.x, e->a.y, e->b.x, e->b.y, e->c.x, e->c.y, e->layer + 1};
+    for (int i = 0; i < 7; ++i) snprintf(fields[i], sizeof(fields[i]), "%.10g", values[i]);
+    snprintf(fields[7], sizeof(fields[7]), "%s", e->text);
     editing = 1;
     edit_new = is_new;
-    edit_field = is_new ? 8 : 0;
+    edit_field = is_new ? 7 : 0;
     edit_select = 1;
 }
 static void layer_properties(void)
@@ -413,13 +420,13 @@ static void apply_properties(void)
 {
     double v[8];
     if (editing == 1) {
-        for (int i = 0; i < 8; ++i) {
-            if (!number(fields[i], &v[i], i == 6 ? 0.1 : i == 7 ? 1 : -CAD_LIMIT, i == 6 ? 10000 : i == 7 ? document->layer_count : CAD_LIMIT)) {
-                message("Invalid value. Coordinates: +/-1000000 mm; height: 0.1..10000; layer: 1..16.");
+        for (int i = 0; i < 7; ++i) {
+            if (!number(fields[i], &v[i], i == 6 ? 1 : -CAD_LIMIT, i == 6 ? document->layer_count : CAD_LIMIT)) {
+                message("Invalid value. Coordinates: +/-1000000 mm; layer: 1..16.");
                 return;
             }
         }
-        if (floor(v[7]) != v[7]) {
+        if (floor(v[6]) != v[6]) {
             message("Layer must be a whole number.");
             return;
         }
@@ -427,9 +434,8 @@ static void apply_properties(void)
         e.a = cad_point(v[0], v[1]);
         e.b = cad_point(v[2], v[3]);
         e.c = cad_point(v[4], v[5]);
-        e.height = v[6];
-        e.layer = (int)v[7] - 1;
-        snprintf(e.text, sizeof(e.text), "%s", fields[8]);
+        e.layer = (int)v[6] - 1;
+        snprintf(e.text, sizeof(e.text), "%s", fields[7]);
         if (!cad_valid_entity(&e, document->layer_count) || document->layers[e.layer].locked || !document->layers[e.layer].visible) {
             message("Invalid or zero-size geometry, empty text, or target layer hidden/locked.");
             return;
@@ -468,12 +474,11 @@ static void apply_properties(void)
         l->locked = fields[5][0] == '1';
         clear_selection();
     } else if (editing == 3) {
-        if (!number(fields[0], &v[0], 0.1, 10000) || !number(fields[1], &v[1], 0.1, 10000)) {
-            message("Grid spacing and annotation height must be 0.1..10000 mm.");
+        if (!number(fields[0], &v[0], 0.1, 10000)) {
+            message("Grid spacing must be 0.1..10000 mm.");
             return;
         }
         document->grid = v[0];
-        text_height = v[1];
     }
     editing = stage = 0;
     changed();
@@ -498,7 +503,6 @@ static void settings(void)
     edit_field = 0;
     edit_select = 1;
     snprintf(fields[0], sizeof(fields[0]), "%.10g", document->grid);
-    snprintf(fields[1], sizeof(fields[1]), "%.10g", text_height);
 }
 /* Clipped screen rendering has a bound proportional to the viewport, even for
  * million-mm entities at maximum zoom. */
@@ -580,34 +584,41 @@ static void screen_circle(CadScreen *r, const CadEntity *e)
         screen_circle_pixel(r, cx - dx, y, cx, cy, radius);
     }
 }
+/* Use the SDK's exact default 5x7 glyphs, at one device pixel per bit.
+ * Zoom transforms only the anchor; labels remain readable at every scale. */
 static void screen_text(void *context, CadPoint a, double height, const char *s)
 {
+    (void)height;
     CadScreen *r = context;
-    double pixel_height = height * scale;
-    if (pixel_height < 3) return;
-    double size = pixel_height / 7;
-    double origin_x = (a.x - left) * scale;
-    double origin_y = r->l.ch - 1 - (a.y - bottom) * scale - pixel_height;
-    /* Iterate visible pixels per glyph rather than world-space points. */
+    double px = round((a.x - left) * scale);
+    double py = round(r->l.ch - 1 - (a.y - bottom) * scale) - CAD_FONT_HEIGHT;
+    if (py + CAD_FONT_HEIGHT <= 0 || py >= r->l.ch) return;
     while (*s) {
         const unsigned char *glyph = budo_glyph_rows((char)bw_text_cell(&s));
-        if (origin_x > r->l.cw) break;
-        if (origin_x + size * 5 >= 0 && origin_y < r->l.ch && origin_y + pixel_height >= 0) {
-            int x0 = (int)fmax(0, origin_x), y0 = (int)fmax(0, origin_y);
-            int x1 = (int)fmin(r->l.cw, ceil(origin_x + size * 5));
-            int y1 = (int)fmin(r->l.ch, ceil(origin_y + pixel_height));
-            for (int y = y0; y < y1; ++y) {
-                int gy = (int)((y - origin_y) / size);
-                if (gy < 0 || gy >= 7) continue;
-                for (int x = x0; x < x1; ++x) {
-                    int gx = (int)((x - origin_x) / size);
-                    if (gx >= 0 && gx < 5 && (glyph[gy] & (0x10 >> gx)))
-                        host_api->fill_rect_rgb(r->l.cx + x, r->l.cy + y, 1, 1, r->rgb);
+        if (px >= r->l.cw) break;
+        if (px + 5 > 0) {
+            for (int row = 0; row < CAD_FONT_HEIGHT; ++row) {
+                double y = py + row;
+                if (y < 0 || y >= r->l.ch) continue;
+                for (int col = 0; col < 5; ++col) {
+                    double x = px + col;
+                    if (x >= 0 && x < r->l.cw && (glyph[row] & (0x10 >> col)))
+                        host_api->fill_rect_rgb(r->l.cx + (int)x, r->l.cy + (int)y, 1, 1, r->rgb);
                 }
             }
         }
-        origin_x += size * 6;
+        px += CAD_FONT_ADVANCE;
     }
+}
+static void view_bounds_text(void *context, CadPoint a, double height, const char *s)
+{
+    (void)height;
+    size_t columns = 0;
+    while (*s) {
+        (void)bw_text_cell(&s);
+        ++columns;
+    }
+    cad_bounds_line(context, a, cad_point(a.x + columns * CAD_FONT_ADVANCE / scale, a.y + CAD_FONT_HEIGHT / scale));
 }
 static void ui_text(int x, int y, const char *s, int columns)
 {
@@ -620,7 +631,7 @@ static void update_preview(void)
     preview.a = first;
     preview.b = stage >= 2 ? second : pointer;
     preview.c = pointer;
-    preview.height = text_height;
+    preview.height = CAD_TEXT_HEIGHT;
     preview.text[0] = 0;
     if (tool == CAD_TEXT) {
         preview.a = pointer;
@@ -633,11 +644,11 @@ static int menu_items(int which, BudoMenuItem *items)
     static const char *const labels[][9] = {
         {"New  Ctrl+N", "Open  Ctrl+O", "Save  Ctrl+S", "Save As", "Export SVG", "Export DXF", "Close"},
         {"Undo  Ctrl+Z", "Redo  Ctrl+Y", "Copy  Ctrl+C", "Cut  Ctrl+X", "Paste  Ctrl+V", "Delete", "Select all  Ctrl+A", "Properties  Enter"},
-        {"Zoom in  +", "Zoom out  -", "Fit drawing  F", "Show grid  G", "Grid snap  S", "Object snap  E", "Orthogonal  O", "Grid / text settings"},
+        {"Zoom in  +", "Zoom out  -", "Fit drawing  F", "Show grid  G", "Grid snap  S", "Object snap  E", "Orthogonal  O", "Grid settings", "Zoom 100%  0"},
         {"New layer", "Layer properties", "Show / hide active", "Lock / unlock active", "Move selection here"},
         {"CAD help  F1"}
     };
-    const int counts[] = {7, 8, 8, 5, 1};
+    const int counts[] = {7, 8, 9, 5, 1};
     int count = counts[which];
     for (int i = 0; i < count; ++i) items[i] = (BudoMenuItem){labels[which][i], 1, 0};
     if (which == 1) {
@@ -692,7 +703,8 @@ static void menu_action(int which, int item)
         else if (item == 4) snap_on = !snap_on;
         else if (item == 5) object_snap = !object_snap;
         else if (item == 6) ortho = !ortho;
-        else settings();
+        else if (item == 7) settings();
+        else set_zoom(CAD_DEFAULT_SCALE);
     } else if (which == 3) {
         CadLayer *l = &document->layers[active_layer];
         if (item == 0) add_layer();
@@ -719,7 +731,7 @@ static void overlay_rect(const CadLayout *l, int *x, int *y)
 }
 static int field_count(void)
 {
-    return editing == 1 ? 9 : editing == 2 ? 6 : 2;
+    return editing == 1 ? 8 : editing == 2 ? 6 : 1;
 }
 static void draw_overlay(const CadLayout *l)
 {
@@ -731,9 +743,9 @@ static void draw_overlay(const CadLayout *l)
         static const char *const lines[] = {
             "CAD - 2D drafting in millimetres", "Line / rectangle: two clicks; circle: centre, rim.",
             "Dimensions: two measured points, then offset.", "Text: anchor then notation. Leader: tip, elbow, text.",
-            "Enter: edit selected entity coordinates, height, layer.", "Circle properties use centre (X1,Y1) and rim (X2,Y2).",
+            "Enter: edit selected entity coordinates and layer.", "Circle properties use centre (X1,Y1) and rim (X2,Y2).",
             "Ctrl-click: group selection. Drag empty space: box.", "Drag selection: move. Ctrl+C/X/V: copy/cut/paste.",
-            "Ctrl+Z/Y: undo/redo. Del: remove unlocked selection.", "Arrow keys: pan. +/-: zoom. F: fit. Esc: cancel.",
+            "Ctrl+Z/Y: undo/redo. Del: remove unlocked selection.", "Arrows: pan. +/-: zoom. 0: 100%. F: fit. Esc: cancel.",
             "G: grid. S: grid snap. E: object snap. O: orthogonal.", "Snap points: endpoints, midpoints, corners, centre/rim.",
             "Layers: choose active, edit name/RGB/width/dash/lock.", "Layer list: PgUp/PgDn cycles through all 16 layers.",
             "Save .bcad for editable geometry, layers and notes.", "SVG: visible layers, physical mm size for printing.",
@@ -744,9 +756,9 @@ static void draw_overlay(const CadLayout *l)
         budo_button_draw(host_api, x + 310, y + 292, 76, 24, "Close", 0);
         return;
     }
-    const char *const entity_labels[] = {"X1 mm", "Y1 mm", "X2 mm", "Y2 mm", "X3 mm", "Y3 mm", "Text height mm", "Layer number", "Text / suffix"};
+    const char *const entity_labels[] = {"X1 mm", "Y1 mm", "X2 mm", "Y2 mm", "X3 mm", "Y3 mm", "Layer number", "Text / suffix"};
     const char *const layer_labels[] = {"Layer name", "RGB hex", "Width mm", "Dashed 0/1", "Visible 0/1", "Locked 0/1"};
-    const char *const settings_labels[] = {"Grid mm", "Text height mm"};
+    const char *const settings_labels[] = {"Grid mm"};
     const char *heading = editing == 1 ? "Entity properties - absolute coordinates" : editing == 2 ? "Active layer properties" : "Drawing settings";
     ui_text(x + 12, y + 12, heading, 62);
     if (editing == 1) {
@@ -776,8 +788,8 @@ static void draw(void)
     host_api->fill_rect(l.x, l.y, l.w, l.h, color(BUDO_SYS_COLOR_FACE));
     const char *const menus[] = {"File", "Edit", "View", "Layers", "Help"};
     for (int i = 0; i < 5; ++i) budo_menu_bar_item(host_api, l.x + menu_offsets[i], l.y + 2, i == 3 ? 56 : 42, menus[i], menu == i);
-    const char *const buttons[] = {"Select", "Props", "Undo", "Redo", "Fit", "Zoom +", "Zoom -", "Save"};
-    for (int i = 0; i < 8; ++i) budo_button_draw(host_api, l.x + 4 + i * 58, l.y + 27, 54, 22, buttons[i], 0);
+    const char *const buttons[] = {"Select", "Props", "Undo", "Redo", "Fit", "Zoom +", "Zoom -", "Save", "Zoom 100%"};
+    for (int i = 0; i < 9; ++i) budo_button_draw(host_api, l.x + 4 + i * 58, l.y + 27, i == 8 ? 90 : 54, 22, buttons[i], 0);
     for (int i = 0; i < CAD_TOOLS; ++i) budo_button_draw(host_api, l.x + 4, l.y + 56 + i * 23, 106, 21, cad_tools[i], tool == i ? BUDO_BUTTON_PRESSED : 0);
     int ly = l.y + 268;
     char label[180];
@@ -836,7 +848,7 @@ static void draw(void)
     }
     host_api->pointer_region(l.cx, l.cy, l.cw, l.ch, tool ? BUDO_CURSOR_CROSSHAIR : BUDO_CURSOR_ARROW, "F1: CAD help; Enter: numeric properties; arrows: pan");
     host_api->fill_rect(l.x, l.sy, l.w, l.y + l.h - l.sy, color(BUDO_SYS_COLOR_STATUS_BG));
-    snprintf(label, sizeof(label), "%.1f,%.1f mm  %s%s%s | %.110s", pointer.x, pointer.y, snap_on ? "S" : "", object_snap ? "E" : "", ortho ? "O" : "", status);
+    snprintf(label, sizeof(label), "%.0f%%  %.1f,%.1f mm  %s%s%s | %.100s", scale / CAD_DEFAULT_SCALE * 100, pointer.x, pointer.y, snap_on ? "S" : "", object_snap ? "E" : "", ortho ? "O" : "", status);
     ui_text(l.x + 4, l.sy + 3, label, (l.w - 8) / 6);
     if (editing || help_page) draw_overlay(&l);
     if (menu >= 0) {
@@ -891,8 +903,8 @@ static int mouse_down(int x, int y, int buttons)
         if (item >= 0 && items[item].enabled) menu_action(which, item);
         return 1;
     }
-    for (int i = 0; i < 8; ++i) {
-        if (!host_api->point_in_rect(x, y, l.x + 4 + i * 58, l.y + 27, 54, 22)) continue;
+    for (int i = 0; i < 9; ++i) {
+        if (!host_api->point_in_rect(x, y, l.x + 4 + i * 58, l.y + 27, i == 8 ? 90 : 54, 22)) continue;
         if (i == 0) choose_tool(CAD_SELECT);
         else if (!stage && !dragging && !marquee) {
             if (i == 1) properties(0);
@@ -901,7 +913,8 @@ static int mouse_down(int x, int y, int buttons)
             else if (i == 4) fit();
             else if (i == 5) zoom_view(1.25);
             else if (i == 6) zoom_view(0.8);
-            else (void)save_document();
+            else if (i == 7) (void)save_document();
+            else set_zoom(CAD_DEFAULT_SCALE);
         }
         return 1;
     }
@@ -924,7 +937,7 @@ static int mouse_down(int x, int y, int buttons)
     pointer = snapped(world(&l, x, y));
     if (tool == CAD_SELECT) {
         CadPoint raw = world(&l, x, y);
-        int hit = cad_hit(document, raw, 6 / scale);
+        int hit = cad_hit(document, raw, 6 / scale, scale);
         if (hit >= 0) {
             if (host_api->get_keyboard_modifiers() & 7) {
                 selected[hit] = !selected[hit];
@@ -1031,7 +1044,7 @@ static int mouse_up(int x, int y, int buttons)
         for (int i = 0; i < document->count; ++i) {
             if (!editable(i)) continue;
             CadBounds b = {CAD_LIMIT * 4, CAD_LIMIT * 4, -CAD_LIMIT * 4, -CAD_LIMIT * 4};
-            CadPen pen = {&b, cad_bounds_line, cad_bounds_text};
+            CadPen pen = {&b, cad_bounds_line, view_bounds_text};
             cad_render(&document->entities[i], &pen);
             if (b.left >= fmin(drag_start.x, pointer.x) && b.right <= fmax(drag_start.x, pointer.x) &&
                 b.bottom >= fmin(drag_start.y, pointer.y) && b.top <= fmax(drag_start.y, pointer.y)) {
@@ -1109,6 +1122,7 @@ static int key(int k)
     else if (k == 13) properties(0);
     else if (k == '+' || k == '=') zoom_view(1.25);
     else if (k == '-') zoom_view(0.8);
+    else if (k == '0') set_zoom(CAD_DEFAULT_SCALE);
     else if (k == 'f' || k == 'F') fit();
     else if (k == 'g' || k == 'G') grid_on = !grid_on;
     else if (k == 's' || k == 'S') snap_on = !snap_on;

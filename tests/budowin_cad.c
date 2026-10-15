@@ -133,6 +133,69 @@ static void replace_field(int index, const char *value)
     key(1);
     while (*value) key((unsigned char)*value++);
 }
+static void font_and_zoom_checks(void)
+{
+    CadLayout l;
+    assert(layout(&l));
+    CadScreen screen = {l, 0x13579b, 0, 1};
+    const char *label = "A\204 360.00 mm";
+    const double zooms[] = {0.0001, 0.125, CAD_DEFAULT_SCALE, 0.78125, 4, 100};
+    for (size_t i = 0; i < sizeof(zooms) / sizeof(zooms[0]); ++i) {
+        scale = zooms[i];
+        CadPoint anchor = world(&l, l.cx + 30, l.cy + 47);
+        memset(pixels, 0, sizeof(pixels));
+        /* Old files' tiny or enormous text heights cannot resize the UI font. */
+        screen_text(&screen, anchor, i % 2 ? 0.1 : 10000, label);
+        size_t expected = 0, actual = 0;
+        for (size_t ch = 0; label[ch]; ++ch) {
+            const unsigned char *glyph = budo_glyph_rows(label[ch]);
+            for (int row = 0; row < 7; ++row) {
+                for (int col = 0; col < 6; ++col) {
+                    int on = col < 5 && (glyph[row] & (0x10 >> col));
+                    unsigned int pixel = pixels[(l.cy + 40 + row) * 1024 + l.cx + 30 + ch * 6 + col];
+                    assert(pixel == (on ? screen.rgb : 0));
+                    expected += on != 0;
+                }
+            }
+        }
+        for (size_t px = 0; px < sizeof(pixels) / sizeof(pixels[0]); ++px) actual += pixels[px] != 0;
+        assert(expected == actual);
+        /* Every edge clips individual font pixels without stretching a glyph. */
+        screen_text(&screen, world(&l, l.cx - 3, l.cy + 3), 16, label);
+        screen_text(&screen, world(&l, l.cx + l.cw - 3, l.cy + l.ch + 3), 16, label);
+        CadBounds b = {CAD_LIMIT * 4, CAD_LIMIT * 4, -CAD_LIMIT * 4, -CAD_LIMIT * 4};
+        view_bounds_text(&b, anchor, 10000, label);
+        assert(fabs((b.right - b.left) * scale - strlen(label) * 6) < 0.00001);
+        assert(fabs((b.top - b.bottom) * scale - 7) < 0.00001);
+    }
+    CadDocument *d = calloc(1, sizeof(*d));
+    assert(d);
+    cad_blank(d);
+    CadEntity note = {.type = CAD_TEXT, .a = {0, 0}, .height = 10000, .text = "ABC"};
+    assert(cad_add(d, &note) == 0);
+    for (size_t i = 0; i < sizeof(zooms) / sizeof(zooms[0]); ++i) {
+        double z = zooms[i];
+        assert(cad_hit(d, cad_point(16 / z, 3 / z), 0.01 / z, z) == 0);
+        assert(cad_hit(d, cad_point(20 / z, 3 / z), 0.01 / z, z) == -1);
+        assert(cad_hit(d, cad_point(3 / z, 9 / z), 0.01 / z, z) == -1);
+    }
+    free(d);
+    scale = 3.125;
+    left = -123;
+    bottom = 456;
+    double cx = left + l.cw / (2 * scale), cy = bottom + l.ch / (2 * scale);
+    assert(mouse_down(l.x + 480, l.y + 35, 1));
+    assert(scale == CAD_DEFAULT_SCALE);
+    assert(fabs(left + l.cw / (2 * scale) - cx) < 0.00001);
+    assert(fabs(bottom + l.ch / (2 * scale) - cy) < 0.00001);
+    zoom_view(1.25);
+    key('0');
+    assert(scale == CAD_DEFAULT_SCALE);
+    zoom_view(0.8);
+    menu_action(2, 8);
+    assert(scale == CAD_DEFAULT_SCALE);
+    left = bottom = -50;
+}
 static void editing_checks(void)
 {
     choose_tool(CAD_LINE);
@@ -174,16 +237,15 @@ static void editing_checks(void)
     active_layer = 2;
     choose_tool(CAD_TEXT);
     click_world(400, 300);
-    assert(editing && edit_new);
-    replace_field(8, "Panel & <note> \204");
-    replace_field(6, "12");
+    assert(editing && edit_new && field_count() == 8);
+    replace_field(7, "Panel & <note> \204");
     key(13);
     assert(!editing && !strcmp(document->entities[6].text, "Panel & <note> \204"));
     choose_tool(CAD_LEADER);
     click_world(200, 200);
     click_world(350, 300);
     click_world(500, 300);
-    replace_field(8, "18 mm plywood");
+    replace_field(7, "18 mm plywood");
     key(13);
     assert(document->count == 8 && document->entities[7].type == CAD_LEADER);
     choose_tool(CAD_TEXT);
@@ -238,7 +300,7 @@ static void editing_checks(void)
     assert(document->count == 3);
     key(26);
     assert(document->count == 8);
-    assert(cad_hit(document, cad_point(200, 400), 1) < 0);
+    assert(cad_hit(document, cad_point(200, 400), 1, 0) < 0);
     document->layers[0].locked = 0;
     changed();
     add_layer();
@@ -251,9 +313,8 @@ static void editing_checks(void)
     assert(!editing && document->layers[3].dashed && document->layers[3].rgb == 0x00a0a0);
     settings();
     replace_field(0, "2.5");
-    replace_field(1, "8");
     key(13);
-    assert(document->grid == 2.5 && text_height == 8);
+    assert(document->grid == 2.5 && field_count() == 1);
     snap_on = object_snap = 1;
 }
 static void geometry_checks(void)
@@ -263,21 +324,21 @@ static void geometry_checks(void)
     cad_blank(d);
     CadEntity e = {.type = CAD_LINE, .layer = 0, .a = {10, 10}, .b = {110, 10}, .height = 10};
     assert(cad_add(d, &e) == 0);
-    assert(cad_hit(d, cad_point(50, 12), 3) == 0);
-    assert(cad_hit(d, cad_point(50, 14), 3) == -1);
+    assert(cad_hit(d, cad_point(50, 12), 3, 0) == 0);
+    assert(cad_hit(d, cad_point(50, 14), 3, 0) == -1);
     CadPoint p = cad_snap(d, cad_point(61, 11), 3, 1, 1);
     assert(p.x == 60 && p.y == 10);
     p = cad_snap(d, cad_point(-14, -16), 3, 1, 0);
     assert(p.x == -10 && p.y == -20);
     d->layers[0].visible = 0;
-    assert(cad_hit(d, cad_point(50, 10), 3) == -1);
+    assert(cad_hit(d, cad_point(50, 10), 3, 0) == -1);
     p = cad_snap(d, cad_point(11, 11), 3, 0, 1);
     assert(p.x == 11 && p.y == 11);
     d->layers[0].visible = 1;
     e.type = CAD_CIRCLE;
     assert(cad_add(d, &e) == 1);
-    assert(cad_hit(d, cad_point(10, 110), 0.1) == 1);
-    assert(cad_hit(d, cad_point(10 + 100 * cos(0.3), 10 + 100 * sin(0.3)), 0.00001) == 1);
+    assert(cad_hit(d, cad_point(10, 110), 0.1, 0) == 1);
+    assert(cad_hit(d, cad_point(10 + 100 * cos(0.3), 10 + 100 * sin(0.3)), 0.00001, 0) == 1);
     e.a.x = NAN;
     assert(cad_add(d, &e) == -1);
     free(d);
@@ -459,6 +520,7 @@ int main(int argc, char **argv)
     assert(!strcmp(app.app_id, "cad"));
     assert(app.callbacks.open() && request_close());
     geometry_checks();
+    font_and_zoom_checks();
     editing_checks();
     file_checks();
     draw_checks();

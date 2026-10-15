@@ -11,7 +11,12 @@ owns its document, history, selection and clipboard.
 `cad_model.h` defines a bounded document: 2,048 entities, 16 layers and a
 32-state undo history. Coordinates use double precision, millimetres and a
 Cartesian Y-up axis. Stored coordinates are limited to +/-1,000,000 mm.
-Grid spacing and annotation heights range from 0.1 to 10,000 mm.
+Grid spacing ranges from 0.1 to 10,000 mm. The canvas uses the SDK default
+5x7 font at one device pixel per bit, with six-pixel character advance, for
+text, dimensions and leader notes at every zoom. Font size is not editable.
+Legacy annotation heights (0.1..10,000 mm) remain in the file format for
+existing drawings, dimension-arrow geometry and SVG/DXF export; numeric
+property edits preserve them. New annotations use a fixed 16 mm model height.
 
 Entities store type, zero-based layer index, three points (`a`, `b`, `c`),
 annotation height and up to 127 bytes of notation text. Type values are:
@@ -46,6 +51,11 @@ and midpoints, rectangle corners, circle centres/cardinal points, and
 annotation anchors. Orthogonal mode constrains line/leader construction.
 Selection movement is one history transaction; Escape restores its baseline.
 Screen lines are clipped before rasterization to bound work at extreme zoom.
+Font pixels clip individually at canvas edges. Text hit testing and box
+selection use the fixed screen-font footprint transformed back to model
+coordinates. Zoom 100% (toolbar, View menu, or `0`) restores the initial
+0.5 pixels/mm scale while retaining the viewport centre; the status bar shows
+the zoom percentage relative to that default.
 
 ## BCAD version 1
 

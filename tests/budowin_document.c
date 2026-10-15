@@ -5,6 +5,39 @@
 #include "../budo/BUDOWIN/src/platform.c"
 #include <assert.h>
 
+static int captured_key;
+static unsigned int captured_modifiers;
+static int capture_native_key(int key)
+{
+    captured_key = key;
+    captured_modifiers = keyboard_modifiers();
+    return 1;
+}
+static void test_native_wheel_modifiers(void)
+{
+    BwaLoadedApp app = {0};
+    app.definition.callbacks.key = capture_native_key;
+    const int shift_keys[] = {225, 229};
+    for (size_t i = 0; i < sizeof(shift_keys) / sizeof(shift_keys[0]); ++i) {
+        process_event(&(struct budo_gfx_event){.type = BUDO_GFX_RESET});
+        process_event(&(struct budo_gfx_event){.type = BUDO_GFX_KEY_DOWN, .scancode = shift_keys[i]});
+        process_event(&(struct budo_gfx_event){.type = BUDO_GFX_WHEEL, .y = 1});
+        process_event(&(struct budo_gfx_event){.type = BUDO_GFX_KEY_UP, .scancode = shift_keys[i]});
+        assert(bw_modifiers() == 0 && getch() == 0);
+        int key = 0x100 | getch();
+        assert(bwa_dispatch_key(&app, key));
+        assert(captured_key == (0x100 | 201) && (captured_modifiers & 3u));
+        assert(keyboard_modifiers() == 0 && !bwa_keyboard_event && !bwa_callback_app);
+        process_event(&(struct budo_gfx_event){.type = BUDO_GFX_WHEEL, .y = -1});
+        process_event(&(struct budo_gfx_event){.type = BUDO_GFX_KEY_DOWN, .scancode = shift_keys[i]});
+        assert(getch() == 0);
+        key = 0x100 | getch();
+        assert(bwa_dispatch_key(&app, key));
+        assert(captured_key == (0x100 | 202) && captured_modifiers == 0);
+        assert(keyboard_modifiers() & 3u);
+    }
+    process_event(&(struct budo_gfx_event){.type = BUDO_GFX_RESET});
+}
 static void select_text(int first, int fc, int last, int lc)
 {
     editor_anchor_line = first;
@@ -17,6 +50,7 @@ static void select_text(int first, int fc, int last, int lc)
 int main(int argc, char **argv)
 {
     assert(argc == 2);
+    test_native_wheel_modifiers();
     editor_reset_document();
     editor_window.open = 1;
     active_window = APP_EDITOR;

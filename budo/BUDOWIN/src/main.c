@@ -370,6 +370,7 @@ static BwaLoadedApp *bwa_new_instance(BwaLoadedApp *program);
 static int builtin_poll_terminals(void);
 static void desktop_focus_visible(void);
 static BwaLoadedApp *bwa_callback_app = NULL;
+static int bwa_keyboard_event;
 
 static char *editor_clipboard;
 
@@ -9491,7 +9492,21 @@ static void explorer_select_item(int target, unsigned int modifiers)
     budo_selection_click(&explorer_select, order, count, target, modifiers, 0);
 }
 
-static unsigned int keyboard_modifiers(void) { return bw_modifiers(); }
+static unsigned int keyboard_modifiers(void)
+{
+    return bwa_keyboard_event ? bw_key_modifiers() : bw_modifiers();
+}
+static int bwa_dispatch_key(BwaLoadedApp *app, int key)
+{
+    BwaLoadedApp *previous = bwa_callback_app;
+    int previous_event = bwa_keyboard_event;
+    bwa_callback_app = app;
+    bwa_keyboard_event = 1;
+    int handled = app->definition.callbacks.key(key);
+    bwa_keyboard_event = previous_event;
+    bwa_callback_app = previous;
+    return handled;
+}
 
 static int explorer_path_exists(const char *path)
 {
@@ -12606,10 +12621,8 @@ int main(int argc, char **argv)
                     (!app->managed_window || !app->window.minimized) &&
                     app->definition.callbacks.key != NULL) {
                     int key_handled;
-                    bwa_callback_app = app;
                     if (key == 0) key = 0x100 | getch();
-                    key_handled = app->definition.callbacks.key(key);
-                    bwa_callback_app = NULL;
+                    key_handled = bwa_dispatch_key(app, key);
                     if (key_handled) {
                         screen_dirty = 1;
                     }

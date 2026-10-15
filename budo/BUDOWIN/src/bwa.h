@@ -180,7 +180,9 @@ typedef struct BwaHostApi {
     int (*file_dialog)(int mode, const char *initial_path);
     int (*confirm_dialog)(int kind, const char *title, const char *message);
     void (*get_pointer_state)(int *x, int *y, int *buttons);
-    /* ABI 1.11: Shift (0x03) and Ctrl (0x04) for shared item selection. */
+    /* ABI 1.11: Shift (0x03) and Ctrl (0x04) for shared item selection.
+     * Key callbacks read the queued event snapshot; pointer callbacks read
+     * the current keyboard state. */
     unsigned int (*get_keyboard_modifiers)(void);
     /* ABI 1.12: explicit button states and draw-time contextual regions.
      * Immediate buttons (scroll arrows) bypass release-to-activate capture.

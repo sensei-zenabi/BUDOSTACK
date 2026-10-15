@@ -13,6 +13,7 @@ static int primary = -1, dragging, marquee, grid_on = 1, snap_on = 1, object_sna
 
 static double scale = CAD_DEFAULT_SCALE, left = -50, bottom = -50;
 static CadPoint pointer, drag_start, first, second;
+static BudoScrollbar hscroll, vscroll;
 static CadEntity preview;
 static int editing, edit_field, edit_select, edit_new, help_page;
 static char fields[8][128];
@@ -43,9 +44,67 @@ static int layout(CadLayout *l)
     l->sy = l->y + l->h - host_api->get_system_metric(BUDO_SYS_METRIC_STATUS_HEIGHT);
     l->cx = l->x + 116;
     l->cy = l->y + 54;
-    l->cw = l->w - 120;
-    l->ch = l->sy - l->cy - 4;
+    l->cw = l->w - 120 - BUDO_SCROLL_WIDTH;
+    l->ch = l->sy - l->cy - 4 - BUDO_SCROLL_WIDTH;
     return l->cw > 80 && l->ch > 80;
+}
+static int scrolling(void)
+{
+    return hscroll.dragging || hscroll.held || vscroll.dragging || vscroll.held;
+}
+static void scroll_layout(const CadLayout *l)
+{
+    hscroll.x = l->cx - 2;
+    hscroll.y = l->cy + l->ch + 2;
+    hscroll.length = l->cw + 4;
+    hscroll.horizontal = 1;
+    vscroll.x = l->cx + l->cw + 2;
+    vscroll.y = l->cy - 2;
+    vscroll.length = l->ch + 4;
+    /* Freeze the range during a gesture so the thumb does not chase a moving
+     * origin. Between gestures, include the drawing and space to pan farther. */
+    if (scrolling()) return;
+    CadBounds b = cad_bounds(document);
+    double width = l->cw / scale, height = l->ch / scale;
+    double min_x = fmin(b.left - width, left - width);
+    double max_x = fmax(b.right + width, left + 2 * width);
+    double min_y = fmin(b.bottom - height, bottom - height);
+    double max_y = fmax(b.top + height, bottom + 2 * height);
+    hscroll.page = l->cw;
+    vscroll.page = l->ch;
+    hscroll.total = (int)fmin(1000000000, ceil((max_x - min_x) * scale));
+    vscroll.total = (int)fmin(1000000000, ceil((max_y - min_y) * scale));
+    hscroll.position = (int)fmin(1000000000, round((left - min_x) * scale));
+    vscroll.position = (int)fmin(1000000000, round((max_y - bottom - height) * scale));
+    budo_scroll_clamp(&hscroll);
+    budo_scroll_clamp(&vscroll);
+}
+static void pan_view(double dx, double dy)
+{
+    left += dx / scale;
+    bottom -= dy / scale;
+    pointer.x += dx / scale;
+    pointer.y -= dy / scale;
+}
+static void scroll_arrow_step(BudoScrollbar *bar, int previous)
+{
+    /* Keep pixel-resolution thumb positions; enlarge the SDK's one-unit
+     * arrow step to match wheel/keyboard panning without affecting tracks. */
+    if ((bar->held == -1 || bar->held == 1) && bar->position != previous) {
+        bar->position += 39 * bar->held;
+        budo_scroll_clamp(bar);
+    }
+}
+static int scroll_pointer(const CadLayout *l, int x, int y, int event)
+{
+    scroll_layout(l);
+    int old_x = hscroll.position, old_y = vscroll.position;
+    int horizontal = budo_scroll_pointer_host(host_api, &hscroll, x, y, event);
+    int vertical = budo_scroll_pointer_host(host_api, &vscroll, x, y, event);
+    scroll_arrow_step(&hscroll, old_x);
+    scroll_arrow_step(&vscroll, old_y);
+    pan_view(hscroll.position - old_x, vscroll.position - old_y);
+    return horizontal || vertical;
 }
 static int dirty(void)
 {
@@ -70,6 +129,8 @@ static void reset_history(void)
     history_count = 1;
     clear_selection();
     stage = dragging = marquee = 0;
+    memset(&hscroll, 0, sizeof(hscroll));
+    memset(&vscroll, 0, sizeof(vscroll));
 }
 static void changed(void)
 {
@@ -375,6 +436,8 @@ static void choose_tool(int which)
     tool = which;
     stage = 0;
     dragging = marquee = 0;
+    hscroll.dragging = hscroll.held = hscroll.armed = 0;
+    vscroll.dragging = vscroll.held = vscroll.armed = 0;
     message(tool == CAD_SELECT ? "Click to select; Ctrl-click adds; drag empty space for box selection. Enter: properties." :
             tool == CAD_TEXT ? "Click a text anchor, then enter notation text." :
             tool >= CAD_DIM_H && tool <= CAD_DIM_ALIGNED ? "Click two measured points, then a third point to position the dimension line." :
@@ -745,9 +808,9 @@ static void draw_overlay(const CadLayout *l)
             "Dimensions: two measured points, then offset.", "Text: anchor then notation. Leader: tip, elbow, text.",
             "Enter: edit selected entity coordinates and layer.", "Circle properties use centre (X1,Y1) and rim (X2,Y2).",
             "Ctrl-click: group selection. Drag empty space: box.", "Drag selection: move. Ctrl+C/X/V: copy/cut/paste.",
-            "Ctrl+Z/Y: undo/redo. Del: remove unlocked selection.", "Arrows: pan. +/-: zoom. 0: 100%. F: fit. Esc: cancel.",
-            "G: grid. S: grid snap. E: object snap. O: orthogonal.", "Snap points: endpoints, midpoints, corners, centre/rim.",
-            "Layers: choose active, edit name/RGB/width/dash/lock.", "Layer list: PgUp/PgDn cycles through all 16 layers.",
+            "Ctrl+Z/Y: undo/redo. Del: remove unlocked selection.", "Arrows / scrollbars: pan. Shift+wheel: horizontal.",
+            "+/-: zoom. 0: 100%. F: fit. Esc: cancel.", "Snap points: endpoints, midpoints, corners, centre/rim.",
+            "Layers: choose active, edit name/RGB/width/dash/lock.", "PgUp/PgDn: layers. G/S/E/O: grid/snap/object/ortho.",
             "Save .bcad for editable geometry, layers and notes.", "SVG: visible layers, physical mm size for printing.",
             "DXF: all layers, circles, lines, text; mm model space.", "Exported dimensions are lines/text, not constraints.",
             "Dimensions update when their own points are edited.", "Tab: next field. Ctrl+A in a field: replace its value."
@@ -847,6 +910,9 @@ static void draw(void)
         screen_line(&r, cad_point(pointer.x, pointer.y - 4 / scale), cad_point(pointer.x, pointer.y + 4 / scale));
     }
     host_api->pointer_region(l.cx, l.cy, l.cw, l.ch, tool ? BUDO_CURSOR_CROSSHAIR : BUDO_CURSOR_ARROW, "F1: CAD help; Enter: numeric properties; arrows: pan");
+    scroll_layout(&l);
+    budo_scroll_draw(host_api, &hscroll);
+    budo_scroll_draw(host_api, &vscroll);
     host_api->fill_rect(l.x, l.sy, l.w, l.y + l.h - l.sy, color(BUDO_SYS_COLOR_STATUS_BG));
     snprintf(label, sizeof(label), "%.0f%%  %.1f,%.1f mm  %s%s%s | %.100s", scale / CAD_DEFAULT_SCALE * 100, pointer.x, pointer.y, snap_on ? "S" : "", object_snap ? "E" : "", ortho ? "O" : "", status);
     ui_text(l.x + 4, l.sy + 3, label, (l.w - 8) / 6);
@@ -933,6 +999,7 @@ static int mouse_down(int x, int y, int buttons)
             return 1;
         }
     }
+    if (!dragging && !marquee && scroll_pointer(&l, x, y, BUDO_POINTER_DOWN)) return 1;
     if (!canvas_inside(&l, x, y)) return 0;
     pointer = snapped(world(&l, x, y));
     if (tool == CAD_SELECT) {
@@ -996,6 +1063,8 @@ static int mouse_move(int x, int y, int buttons)
 {
     CadLayout l;
     if (!document || !layout(&l) || editing || help_page || dialog_kind || confirming || menu >= 0) return 0;
+    if (scrolling() && !(buttons & 1)) return scroll_pointer(&l, x, y, BUDO_POINTER_UP);
+    if (scroll_pointer(&l, x, y, BUDO_POINTER_MOVE)) return 1;
     pointer = snapped(world(&l, x, y));
     if (dragging && (buttons & 1)) {
         CadPoint raw = world(&l, x, y);
@@ -1032,7 +1101,9 @@ static int mouse_move(int x, int y, int buttons)
 static int mouse_up(int x, int y, int buttons)
 {
     (void)buttons;
-    if (!document || editing || help_page || dialog_kind || confirming) return 0;
+    CadLayout l;
+    if (!document || editing || help_page || dialog_kind || confirming || !layout(&l)) return 0;
+    if (scroll_pointer(&l, x, y, BUDO_POINTER_UP)) return 1;
     if (dragging) {
         (void)mouse_move(x, y, 1);
         dragging = 0;
@@ -1106,7 +1177,31 @@ static int key(int k)
         choose_tool(CAD_SELECT);
         return 1;
     }
-    if (stage || dragging || marquee) return 1;
+    if (!dragging && !marquee && !scrolling() && menu < 0) {
+        if (k == (0x100 | 201) || k == (0x100 | 202)) {
+            int delta = k == (0x100 | 201) ? -40 : 40;
+            if (host_api->get_keyboard_modifiers() & 3u) pan_view(delta, 0);
+            else pan_view(0, delta);
+            return 1;
+        }
+        if (k == (0x100 | 75)) {
+            pan_view(-40, 0);
+            return 1;
+        }
+        if (k == (0x100 | 77)) {
+            pan_view(40, 0);
+            return 1;
+        }
+        if (k == (0x100 | 72)) {
+            pan_view(0, -40);
+            return 1;
+        }
+        if (k == (0x100 | 80)) {
+            pan_view(0, 40);
+            return 1;
+        }
+    }
+    if (stage || dragging || marquee || scrolling()) return 1;
     if (k == 14) action(CAD_NEW);
     else if (k == 15) action(CAD_OPEN);
     else if (k == 19) (void)save_document();
@@ -1133,10 +1228,6 @@ static int key(int k)
     else if (k == 'r' || k == 'R') choose_tool(CAD_RECT);
     else if (k == 'c' || k == 'C') choose_tool(CAD_CIRCLE);
     else if (k == 't' || k == 'T') choose_tool(CAD_TEXT);
-    else if (k == (0x100 | 75)) left -= 40 / scale;
-    else if (k == (0x100 | 77)) left += 40 / scale;
-    else if (k == (0x100 | 72) || k == (0x100 | 201)) bottom += 40 / scale;
-    else if (k == (0x100 | 80) || k == (0x100 | 202)) bottom -= 40 / scale;
     else if (k == (0x100 | 73)) active_layer = (active_layer + document->layer_count - 1) % document->layer_count;
     else if (k == (0x100 | 81)) active_layer = (active_layer + 1) % document->layer_count;
     else if (k == (0x100 | 59)) {

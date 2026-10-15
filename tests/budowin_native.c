@@ -176,6 +176,19 @@ int main(int argc, char **argv) {
         press_native(cad, cx + 350, cy + 335);
         bwa_callback_app = cad;
         assert(cad->definition.callbacks.key(27));
+        const char *const scroll_tips[] = {"Scroll right", "Scroll left", "Scroll down", "Scroll up"};
+        for (size_t direction = 0; direction < sizeof(scroll_tips) / sizeof(scroll_tips[0]); ++direction) {
+            draw_desktop(0);
+            int found = 0;
+            for (int i = 0; i < ui_region_count; ++i) {
+                if (ui_regions[i].owner != cad->definition.runtime_id || strcmp(ui_regions[i].tip, scroll_tips[direction])) continue;
+                int sx = ui_regions[i].x + 3, sy = ui_regions[i].y + 3;
+                press_native(cad, sx, sy);
+                found = 1;
+                break;
+            }
+            assert(found);
+        }
         if (argc == 3) screenshot(argv[2], "cad.ppm");
         bwa_callback_app = cad;
         assert(cad->definition.callbacks.key(13));

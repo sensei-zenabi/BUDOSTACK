@@ -133,6 +133,90 @@ static void replace_field(int index, const char *value)
     key(1);
     while (*value) key((unsigned char)*value++);
 }
+static void scroll_checks(void)
+{
+    CadLayout l;
+    assert(layout(&l));
+    scroll_layout(&l);
+    assert(hscroll.horizontal && !vscroll.horizontal);
+    assert(hscroll.y >= l.cy + l.ch && vscroll.x >= l.cx + l.cw);
+    assert(hscroll.total > hscroll.page && vscroll.total > vscroll.page);
+    draw();
+    double x = left, y = bottom;
+    int before_history = history_at;
+    assert(mouse_down(hscroll.x + hscroll.length - 3, hscroll.y + 3, 1));
+    assert(fabs(left - x - 40 / scale) < 0.00001 && bottom == y);
+    assert(mouse_up(hscroll.x, hscroll.y, 0) && !scrolling());
+    assert(mouse_down(hscroll.x + 3, hscroll.y + 3, 1));
+    assert(mouse_up(hscroll.x, hscroll.y, 0));
+    assert(fabs(left - x) < 0.00001);
+    assert(mouse_down(vscroll.x + 3, vscroll.y + vscroll.length - 3, 1));
+    assert(fabs(bottom - y + 40 / scale) < 0.00001);
+    assert(mouse_up(vscroll.x, vscroll.y, 0));
+    assert(mouse_down(vscroll.x + 3, vscroll.y + 3, 1));
+    assert(mouse_up(vscroll.x, vscroll.y, 0));
+    assert(fabs(bottom - y) < 0.00001);
+    /* Track click pans one page. Dragging freezes the range until release. */
+    scroll_layout(&l);
+    int start, size;
+    budo_scroll_thumb(&hscroll, &start, &size);
+    int page = hscroll.page;
+    assert(mouse_down(hscroll.x + start + size + 2, hscroll.y + 3, 1));
+    assert(mouse_up(hscroll.x, hscroll.y, 0));
+    assert(fabs(left - x - page / scale) < 0.00001);
+    scroll_layout(&l);
+    budo_scroll_thumb(&hscroll, &start, &size);
+    assert(mouse_down(hscroll.x + start + size / 2, hscroll.y + 3, 1));
+    assert(hscroll.dragging);
+    int total = hscroll.total;
+    double before_drag = left;
+    assert(mouse_move(hscroll.x + start + size / 2 + 1, hscroll.y + 3, 1));
+    assert(left > before_drag && left - before_drag < 40 / scale);
+    assert(mouse_move(hscroll.x + hscroll.length - 13, hscroll.y + 3, 1));
+    assert(left > before_drag && hscroll.total == total);
+    draw();
+    assert(hscroll.total == total);
+    assert(mouse_up(hscroll.x, hscroll.y, 0) && !scrolling());
+    scroll_layout(&l);
+    budo_scroll_thumb(&vscroll, &start, &size);
+    assert(mouse_down(vscroll.x + 3, vscroll.y + start + size / 2, 1));
+    assert(vscroll.dragging);
+    before_drag = bottom;
+    assert(mouse_move(vscroll.x + 3, vscroll.y + vscroll.length - 13, 1));
+    assert(bottom < before_drag);
+    assert(mouse_up(vscroll.x, vscroll.y, 0) && !scrolling());
+    /* Wheel up/down pans vertically; either Shift key changes only the axis. */
+    left = x;
+    bottom = y;
+    modifiers = 0;
+    key(0x100 | 201);
+    assert(left == x && fabs(bottom - y - 40 / scale) < 0.00001);
+    key(0x100 | 202);
+    assert(fabs(bottom - y) < 0.00001);
+    for (unsigned int shift = 1; shift <= 3; ++shift) {
+        modifiers = shift;
+        key(0x100 | 202);
+        assert(fabs(left - x - 40 / scale) < 0.00001 && fabs(bottom - y) < 0.00001);
+        key(0x100 | 201);
+        assert(fabs(left - x) < 0.00001 && fabs(bottom - y) < 0.00001);
+    }
+    modifiers = 0;
+    first = cad_point(10, 20);
+    tool = CAD_LINE;
+    stage = 1;
+    key(0x100 | 202);
+    assert(stage == 1 && first.x == 10 && first.y == 20 && bottom < y);
+    key(27);
+    settings();
+    x = left;
+    y = bottom;
+    key(0x100 | 202);
+    assert(left == x && bottom == y);
+    key(27);
+    assert(history_at == before_history && !dirty());
+    left = bottom = -50;
+    pointer = cad_point(0, 0);
+}
 static void font_and_zoom_checks(void)
 {
     CadLayout l;
@@ -521,6 +605,7 @@ int main(int argc, char **argv)
     assert(app.callbacks.open() && request_close());
     geometry_checks();
     font_and_zoom_checks();
+    scroll_checks();
     editing_checks();
     file_checks();
     draw_checks();

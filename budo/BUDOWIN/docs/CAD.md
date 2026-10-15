@@ -57,6 +57,18 @@ coordinates. Zoom 100% (toolbar, View menu, or `0`) restores the initial
 0.5 pixels/mm scale while retaining the viewport centre; the status bar shows
 the zoom percentage relative to that default.
 
+Horizontal and vertical SDK scrollbars remain visible beside the canvas.
+Arrow buttons and the mouse wheel pan by 40 screen pixels; track clicks pan
+by a page, and the thumbs support dragging with pixel-resolution positions. The scroll range covers the
+visible drawing and viewport with room to pan into empty space. It expands
+between gestures and remains fixed during a thumb drag or held arrow.
+Wheel up/down pans vertically; holding either Shift key pans horizontally
+(up = left, down = right). Arrow keys pan on their respective axes. Panning
+also works between point placements without changing existing model points.
+Navigation does not modify drawing content or undo history. The host delivers
+the wheel event's captured modifier state to native key callbacks, so a Shift
+release queued before dispatch does not change that wheel event's direction.
+
 ## BCAD version 1
 
 `cad_io.h` writes a portable, line-oriented text format with LF line endings.

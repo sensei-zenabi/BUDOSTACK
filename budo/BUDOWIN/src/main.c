@@ -1455,6 +1455,7 @@ static int load_pcx_image(const char *path,
     int bytes_per_line;
     int row_bytes;
     int palette_mode = 0;
+    long image_end = 0;
     PcxRleState rle_state;
     int y;
 
@@ -1478,7 +1479,8 @@ static int load_pcx_image(const char *path,
     planes = header[65];
     bytes_per_line = (int)pcx_u16(&header[66]);
 
-    if (width != expected_w || height != expected_h ||
+    if (xmax < xmin || ymax < ymin ||
+        width != expected_w || height != expected_h ||
         bytes_per_line <= 0 ||
         (encoding != 0 && encoding != 1)) {
         fclose(file);
@@ -1503,6 +1505,7 @@ static int load_pcx_image(const char *path,
             return 0;
         }
 
+        image_end = end_pos - 769L;
         palette_mode = 256;
     } else if ((bits_per_pixel == 1 &&
                 (planes == 1 || planes == 2 || planes == 3 || planes == 4)) ||
@@ -1527,6 +1530,11 @@ static int load_pcx_image(const char *path,
         return 0;
     }
 
+    if ((bits_per_pixel == 1 && bytes_per_line < (width + 7) / 8) ||
+        (bits_per_pixel == 4 && bytes_per_line < (width + 1) / 2)) {
+        fclose(file);
+        return 0;
+    }
     row_bytes = bytes_per_line * planes;
     rle_state.count = 0;
     rle_state.value = 0;
@@ -1541,7 +1549,8 @@ static int load_pcx_image(const char *path,
         int x;
 
         if (!pcx_decode_bytes(file, scanline, row_bytes,
-                              encoding, &rle_state)) {
+                              encoding, &rle_state) ||
+            (image_end && ftell(file) > image_end)) {
             free(scanline);
             fclose(file);
             return 0;
@@ -1603,6 +1612,8 @@ static int load_pcx_image(const char *path,
     fclose(file);
     return 1;
 }
+
+#include "desktop_background.h"
 
 static const uint32_t *pcx_icon_rgb(const unsigned char *indices)
 {
@@ -1794,6 +1805,8 @@ static void load_pcx_assets(void)
                            SCREEN_WIDTH, SCREEN_HEIGHT,
                            desktop_background, 0);
     }
+
+    desktop_background_restore();
 
     explorer_pcx_icon_loaded =
         load_named_pcx("EXPLORER.PCX",
@@ -7028,7 +7041,8 @@ static const BwaHostApi bwa_host_api = {
     bwa_set_system_color,
     bwa_reset_system_colors,
     bw_play_tones,
-    bwa_draw_input_caret
+    bwa_draw_input_caret,
+    bwa_set_desktop_background
 };
 
 static BwaLoadedApp *bwa_find_external_app(int runtime_id)
@@ -8383,7 +8397,8 @@ static int picker_types(const char **labels, int *values)
         }
     } else {
         BwaLoadedApp *app = bwa_find_external_app(picker_owner);
-        if (app && strcmp(app->definition.app_id, "paint") == 0) {
+        if (app && (strcmp(app->definition.app_id, "paint") == 0 ||
+                    strcmp(app->definition.app_id, "settings") == 0)) {
             labels[count] = "PCX (.pcx)";
             values[count++] = 3;
         }
@@ -10315,7 +10330,10 @@ static int bwa_file_dialog(int mode, const char *initial)
         (mode != BUDO_FILE_OPEN && mode != BUDO_FILE_SAVE_AS)) return 0;
     if (!copy_text(directory, sizeof(directory), initial ? initial : "")) return 0;
     picker_owner = app->definition.runtime_id;
-    picker_filter = strcmp(app->definition.app_id, "paint") == 0 ? 3 : 0;
+    int background = strcmp(app->definition.app_id, "settings") == 0;
+    picker_filter = (background || strcmp(app->definition.app_id, "paint") == 0) ? 3 : 0;
+    if (background && !directory[0] &&
+        !join_path(directory, sizeof(directory), home_path, "PCX/")) return 0;
     picker_filter_menu = picker_mkdir = 0;
     picker_overwrite = 0;
     picker_focus = 1;

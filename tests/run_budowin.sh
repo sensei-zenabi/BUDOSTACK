@@ -5,7 +5,7 @@ ROOT_DIR=$PWD
 TEST_DIR=$(mktemp -d "$ROOT_DIR/.budowin-test-XXXXXX")
 TEST_EXE="$ROOT_DIR/budo/budowin-test"
 INSTANCE_EXE="$ROOT_DIR/budo/budowin-instances-test"
-trap 'rm -rf "$TEST_DIR"; rm -f "$TEST_EXE" "$INSTANCE_EXE" "$ROOT_DIR/budo/budowin-improvements7-test"' EXIT
+trap 'rm -rf "$TEST_DIR"; rm -f "$TEST_EXE" "$INSTANCE_EXE" "$ROOT_DIR/budo/budowin-improvements7-test" "$ROOT_DIR/budo/budowin-background-test"' EXIT
 export TMPDIR="$TEST_DIR"
 export HOME="$TEST_DIR"
 export BUDOWIN_TEST_DIR="$TEST_DIR/work"
@@ -70,6 +70,9 @@ mkdir -p "$TEST_DIR/improvements7-files"
 "$ROOT_DIR/budo/budowin-improvements7-test" "$ROOT_DIR/budo/BUDOWIN" "$TEST_DIR/improvements7-files"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_background.c lib/budo_gfx.c -ldl -lm -o "$TEST_DIR/background"
 "$TEST_DIR/background" "$TEST_DIR/background.pcx"
+"$COMPILER" "${FLAGS[@]}" tests/budowin_background_select.c lib/budo_gfx.c -ldl -lm -o "$ROOT_DIR/budo/budowin-background-test"
+"$ROOT_DIR/budo/budowin-background-test" "$ROOT_DIR/budo/BUDOWIN" "$TEST_DIR"
+rm -f "$ROOT_DIR/budo/budowin-background-test"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_paint_colors.c -o "$TEST_DIR/paint-colors"
 "$TEST_DIR/paint-colors"
 "$COMPILER" "${FLAGS[@]}" tests/budowin_native.c budo/BUDOWIN/src/platform.c lib/budo_gfx.c -ldl -lm -o "$TEST_EXE"

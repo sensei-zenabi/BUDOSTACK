@@ -170,7 +170,8 @@ static void settings_ui_draw(int wx, int wy, int ww, int wh)
             host_api->draw_rect(x + 1, y + 1, 8, 8, ui_color(BUDO_SYS_COLOR_HIGHLIGHT));
         }
     }
-    host_api->draw_standard_button(wx + 206, wy + 266, 150, 20, "Reset UI colors", 0);
+    host_api->draw_standard_button(wx + 206, wy + wh - 46, 150, 20, "Reset UI colors", 0);
+    host_api->draw_standard_button(wx + 16, wy + wh - 46, 150, 20, "Select Background", 0);
     host_api->draw_text(wx + 16, wy + wh - 20, settings_status, ui_color(BUDO_SYS_COLOR_TEXT), (ww - 32) / 6);
 }
 
@@ -419,13 +420,18 @@ static int settings_mouse_down(int x, int y, int buttons)
         return 1;
     }
     if (settings_tab == 2) {
+        if (host_api->point_in_rect(x, y, wx + 16, wy + wh - 46, 150, 20)) {
+            if (!host_api->file_dialog(BUDO_FILE_OPEN, ""))
+                settings_status = "Unable to open background picker.";
+            return 1;
+        }
         if (settings_ui_pointer(x, y, BUDO_POINTER_DOWN)) return 1;
         if (host_api->point_in_rect(x, y, wx + 16, wy + 82, 164, wh - 146)) {
             int role = ui_top + (y - wy - 82) / ROW_H;
             if (role < BUDO_SYS_COLOR_COUNT) ui_role = role;
         } else if (host_api->point_in_rect(x, y, wx + 206, wy + 98, 160, 160)) {
             settings_ui_color((y - wy - 98) / 10 * 16 + (x - wx - 206) / 10);
-        } else if (host_api->point_in_rect(x, y, wx + 206, wy + 266, 150, 20)) {
+        } else if (host_api->point_in_rect(x, y, wx + 206, wy + wh - 46, 150, 20)) {
             settings_status = host_api->reset_system_colors() ? "Default UI colors restored." : "Unable to save UI colors.";
         }
         return 1;
@@ -550,11 +556,20 @@ static void settings_draw_icon(int x, int y)
                         ui_color(BUDO_SYS_COLOR_TEXT), 3);
 }
 
+static int settings_background_selected(int mode, const char *path)
+{
+    if (mode != BUDO_FILE_OPEN) return 0;
+    int ok = host_api->set_desktop_background(path);
+    settings_status = ok ? "Desktop background saved." : "Invalid PCX or save failed; background preserved.";
+    return ok;
+}
+
 int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 {
     if (host == 0 || app == 0 ||
         host->abi_major != BWA_ABI_MAJOR ||
-        host->abi_minor < 14 ||
+        host->abi_minor < 18 ||
+        !host->set_desktop_background || !host->file_dialog ||
         host->get_system_color == 0 ||
         host->draw_standard_button == 0 ||
         host->draw_sunken_panel == 0 ||
@@ -574,6 +589,8 @@ int bwa_entry(const BwaHostApi *host, BwaAppDefinition *app)
 
     host_api = host;
 
+    budo_app_definition_clear(host, app);
+    app->file_selected = settings_background_selected;
     app->runtime_id = 0;
     app->app_id = "settings";
     app->name = "Settings";

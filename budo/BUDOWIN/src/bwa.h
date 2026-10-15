@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 17
+#define BWA_ABI_MINOR 18
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -207,6 +207,10 @@ typedef struct BwaHostApi {
     int (*play_tones)(const BwaTone *tones, unsigned int count);
     /* ABI 1.17: focused input registration and host-driven 500 ms caret blink. */
     void (*draw_input_caret)(int x, int y, int height, unsigned char color);
+    /* ABI 1.18: fit and persist a PCX desktop background. Returns zero on
+     * decode/save failure, preserving the previous background. Settings may
+     * open file_dialog(BUDO_FILE_OPEN, "") to start in the PCX asset folder. */
+    int (*set_desktop_background)(const char *path);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

@@ -442,6 +442,152 @@ static void geometry_checks(void)
     tool = CAD_SELECT;
     snap_on = object_snap = 1;
 }
+typedef struct CadTrace {
+    CadPoint points[32], label;
+    int count;
+    char text[160];
+} CadTrace;
+static void trace_line(void *context, CadPoint a, CadPoint b)
+{
+    CadTrace *trace = context;
+    assert(trace->count + 2 <= 32);
+    trace->points[trace->count++] = a;
+    trace->points[trace->count++] = b;
+}
+static void trace_text(void *context, CadPoint a, double height, const char *s)
+{
+    (void)height;
+    CadTrace *trace = context;
+    trace->label = a;
+    snprintf(trace->text, sizeof(trace->text), "%s", s);
+}
+static CadTrace trace_entity(const CadEntity *entity)
+{
+    CadTrace trace = {0};
+    CadPen pen = {&trace, trace_line, trace_text};
+    cad_render(entity, &pen);
+    return trace;
+}
+static void label_screen_point(CadPoint anchor, int *x, int *y)
+{
+    CadLayout l;
+    assert(layout(&l));
+    *x = l.cx + (int)lround((anchor.x - left) * scale) + 8;
+    *y = l.cy + l.ch - 1 - (int)lround((anchor.y - bottom) * scale) - 3;
+    assert(canvas_inside(&l, *x, *y));
+}
+static void dimension_label_checks(void)
+{
+    CadDocument *backup = malloc(sizeof(*backup)), *old_saved = malloc(sizeof(*old_saved));
+    CadDocument *loaded = malloc(sizeof(*loaded));
+    assert(backup && old_saved && loaded);
+    *backup = *document;
+    *old_saved = *saved;
+    int old_layer = active_layer;
+    double old_scale = scale, old_left = left, old_bottom = bottom;
+    for (int type = CAD_DIM_H; type <= CAD_DIM_ALIGNED; ++type) {
+        cad_blank(document);
+        CadEntity entity = {.type = type, .a = {0, 0}, .b = {300, 400}, .c = {100, -50}, .height = 16};
+        assert(cad_add(document, &entity) == 0);
+        *saved = *document;
+        reset_history();
+        choose_tool(CAD_SELECT);
+        scale = CAD_DEFAULT_SCALE;
+        left = -100;
+        bottom = -150;
+        CadTrace before = trace_entity(&entity);
+        int x, y;
+        label_screen_point(before.label, &x, &y);
+        assert(mouse_down(x, y, 1) && dragging == 2 && primary == 0);
+        int at = history_at;
+        assert(mouse_move(x + 15, y - 7, 1) && history_at == at);
+        assert(mouse_move(x + 37, y + 19, 1) && history_at == at);
+        assert(mouse_up(x + 37, y + 19, 0));
+        assert(!dragging && history_at == at + 1 && dirty());
+        CadEntity moved = document->entities[0];
+        assert(moved.label_offset.x == 74 && moved.label_offset.y == -38);
+        CadEntity expected = entity;
+        expected.label_offset = moved.label_offset;
+        assert(!memcmp(&moved, &expected, sizeof(expected)));
+        CadTrace after = trace_entity(&moved);
+        assert(before.count == after.count && !memcmp(before.points, after.points, sizeof(before.points)));
+        assert(!strcmp(before.text, after.text));
+        assert(fabs(after.label.x - before.label.x - 74) < 0.000001);
+        assert(fabs(after.label.y - before.label.y + 38) < 0.000001);
+        key(26);
+        assert(!dirty() && !memcmp(&document->entities[0], &entity, sizeof(entity)));
+        key(25);
+        assert(!memcmp(&document->entities[0], &moved, sizeof(moved)));
+        label_screen_point(after.label, &x, &y);
+        assert(mouse_down(x, y, 1) && dragging == 2);
+        assert(mouse_move(x - 33, y - 29, 1));
+        key(27);
+        assert(!dragging && !memcmp(&document->entities[0], &moved, sizeof(moved)));
+        menu_action(1, 8);
+        assert(!memcmp(&document->entities[0], &entity, sizeof(entity)));
+        key(26);
+        assert(!memcmp(&document->entities[0], &moved, sizeof(moved)));
+        /* The dimension still moves as one entity when its markings are grabbed. */
+        CadLayout l;
+        assert(layout(&l));
+        x = l.cx + (int)lround(-left * scale);
+        y = l.cy + l.ch - 1 - (int)lround(-bottom * scale);
+        assert(mouse_down(x, y, 1) && dragging == 1);
+        assert(mouse_up(x + 20, y - 10, 0));
+        assert(document->entities[0].a.x == 40 && document->entities[0].a.y == 20);
+        assert(document->entities[0].label_offset.x == 74 && document->entities[0].label_offset.y == -38);
+        key(26);
+        assert(!memcmp(&document->entities[0], &moved, sizeof(moved)));
+        char name[64], target[4096];
+        snprintf(name, sizeof(name), "labels-%d.bcad", type);
+        path(target, name);
+        assert(cad_write(document, target) && cad_read(loaded, target));
+        assert(!memcmp(loaded, document, sizeof(*loaded)));
+        for (int format = 0; format < 2; ++format) {
+            snprintf(name, sizeof(name), "labels-%d.%s", type, format ? "dxf" : "svg");
+            path(target, name);
+            assert(cad_export(document, target, format));
+            loaded->entities[0].label_offset = cad_point(0, 0);
+            snprintf(name, sizeof(name), "labels-%d-before.%s", type, format ? "dxf" : "svg");
+            path(target, name);
+            assert(cad_export(loaded, target, format));
+        }
+        CadPoint inside = cad_point(after.label.x + 4, after.label.y + 4);
+        assert(cad_hit_dimension_text(document, inside, 0, scale) == 0);
+        document->layers[0].locked = 1;
+        assert(cad_hit_dimension_text(document, inside, 0, scale) == -1);
+        document->layers[0].locked = 0;
+        document->layers[0].visible = 0;
+        assert(cad_hit_dimension_text(document, inside, 0, scale) == -1);
+    }
+    char target[4096];
+    path(target, "legacy-label.bcad");
+    FILE *file = fopen(target, "wb");
+    assert(file);
+    fputs("BCAD 1\n1 1 10\n0 1 0 0 0.18 44696d73\n4 0 0 0 300 0 0 -50 16 -\nEND\n", file);
+    assert(!fclose(file) && cad_read(loaded, target));
+    assert(loaded->entities[0].label_offset.x == 0 && loaded->entities[0].label_offset.y == 0);
+    assert(loaded->entities[0].b.x == 300 && loaded->entities[0].c.y == -50);
+    path(target, "legacy-label-resaved.bcad");
+    assert(cad_write(loaded, target));
+    CadEntity legacy = loaded->entities[0];
+    file = fopen(target, "wb");
+    assert(file);
+    fputs("BCAD 2\n1 1 10\n0 1 0 0 0.18 44696d73\n4 0 0 0 300 0 0 -50 16 nan 0 -\nEND\n", file);
+    assert(!fclose(file) && !cad_read(loaded, target));
+    assert(!memcmp(&loaded->entities[0], &legacy, sizeof(legacy)));
+    *document = *backup;
+    *saved = *old_saved;
+    active_layer = old_layer;
+    scale = old_scale;
+    left = old_left;
+    bottom = old_bottom;
+    reset_history();
+    title();
+    free(backup);
+    free(old_saved);
+    free(loaded);
+}
 static void file_checks(void)
 {
     char native[4096], svg[4096], dxf[4096], invalid[4096];
@@ -462,7 +608,7 @@ static void file_checks(void)
     assert(!fclose(f));
     assert(!cad_read(copy, invalid) && !memcmp(copy, document, sizeof(*copy)));
     const char *const malformed[] = {
-        "BCAD 2\n0 1 10\nEND\n",
+        "BCAD 3\n0 1 10\nEND\n",
         "BCAD 1\n4294967296 1 10\nEND\n",
         "BCAD 1\n9999999999999999999999999999999999 1 10\nEND\n",
         "BCAD 1\n0 1 10 extra\nEND\n",
@@ -607,6 +753,7 @@ int main(int argc, char **argv)
     font_and_zoom_checks();
     scroll_checks();
     editing_checks();
+    dimension_label_checks();
     file_checks();
     draw_checks();
     for (int i = 0; i < CAD_HISTORY + 8; ++i) {

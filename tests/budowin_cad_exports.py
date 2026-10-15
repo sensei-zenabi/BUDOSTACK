@@ -62,4 +62,26 @@ else:
         assert len(drawing.modelspace().query("CIRCLE")) == 1
     layer = drawing.layers.get("L0_Geometry")
     assert layer.is_off() and layer.is_locked()
+for dimension_type, measurement in [(4, "300.00 mm"), (5, "400.00 mm"), (6, "500.00 mm")]:
+    before = ET.parse(root / f"labels-{dimension_type}-before.svg").getroot()
+    after = ET.parse(root / f"labels-{dimension_type}.svg").getroot()
+    assert [e.attrib for e in before.findall(".//s:line", ns)] == [e.attrib for e in after.findall(".//s:line", ns)]
+    old_label = before.find(".//s:text", ns)
+    new_label = after.find(".//s:text", ns)
+    assert old_label.text == new_label.text == measurement
+    assert math.isclose(float(new_label.attrib["x"]) - float(old_label.attrib["x"]), 74)
+    assert math.isclose(float(new_label.attrib["y"]) - float(old_label.attrib["y"]), 38)
+    if "ezdxf" in sys.modules:
+        original = ezdxf.readfile(root / f"labels-{dimension_type}-before.dxf")
+        moved = ezdxf.readfile(root / f"labels-{dimension_type}.dxf")
+        audit = moved.audit()
+        assert not audit.errors and not audit.fixes
+        old_lines = [(tuple(e.dxf.start), tuple(e.dxf.end)) for e in original.modelspace().query("LINE")]
+        new_lines = [(tuple(e.dxf.start), tuple(e.dxf.end)) for e in moved.modelspace().query("LINE")]
+        assert old_lines == new_lines
+        old_text = original.modelspace().query("TEXT")[0]
+        new_text = moved.modelspace().query("TEXT")[0]
+        assert old_text.dxf.text == new_text.dxf.text == measurement
+        delta = new_text.dxf.insert - old_text.dxf.insert
+        assert math.isclose(delta.x, 74) and math.isclose(delta.y, -38)
 print("BUDOWIN CAD SVG and DXF export checks passed.")

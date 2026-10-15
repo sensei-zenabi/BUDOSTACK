@@ -706,12 +706,12 @@ static int menu_items(int which, BudoMenuItem *items)
 {
     static const char *const labels[][9] = {
         {"New  Ctrl+N", "Open  Ctrl+O", "Save  Ctrl+S", "Save As", "Export SVG", "Export DXF", "Close"},
-        {"Undo  Ctrl+Z", "Redo  Ctrl+Y", "Copy  Ctrl+C", "Cut  Ctrl+X", "Paste  Ctrl+V", "Delete", "Select all  Ctrl+A", "Properties  Enter"},
+        {"Undo  Ctrl+Z", "Redo  Ctrl+Y", "Copy  Ctrl+C", "Cut  Ctrl+X", "Paste  Ctrl+V", "Delete", "Select all  Ctrl+A", "Properties  Enter", "Reset dimension label"},
         {"Zoom in  +", "Zoom out  -", "Fit drawing  F", "Show grid  G", "Grid snap  S", "Object snap  E", "Orthogonal  O", "Grid settings", "Zoom 100%  0"},
         {"New layer", "Layer properties", "Show / hide active", "Lock / unlock active", "Move selection here"},
         {"CAD help  F1"}
     };
-    const int counts[] = {7, 8, 9, 5, 1};
+    const int counts[] = {7, 9, 9, 5, 1};
     int count = counts[which];
     for (int i = 0; i < count; ++i) items[i] = (BudoMenuItem){labels[which][i], 1, 0};
     if (which == 1) {
@@ -719,6 +719,7 @@ static int menu_items(int which, BudoMenuItem *items)
         items[1].enabled = history_at + 1 < history_count;
         items[2].enabled = items[3].enabled = items[5].enabled = items[7].enabled = selection_count() > 0;
         items[4].enabled = clipboard->count > 0;
+        items[8].enabled = primary >= 0 && selected[primary] && editable(primary) && cad_is_dimension(&document->entities[primary]);
     }
     if (which == 2) {
         items[3].checked = grid_on;
@@ -757,7 +758,12 @@ static void menu_action(int which, int item)
                 selected[i] = (unsigned char)editable(i);
                 if (selected[i]) primary = i;
             }
-        } else properties(0);
+        } else if (item == 7) properties(0);
+        else if (primary >= 0 && editable(primary) && cad_is_dimension(&document->entities[primary])) {
+            document->entities[primary].label_offset = cad_point(0, 0);
+            changed();
+            message("Dimension label restored to its default position.");
+        }
     } else if (which == 2) {
         if (item == 0) zoom_view(1.25);
         else if (item == 1) zoom_view(0.8);
@@ -805,7 +811,8 @@ static void draw_overlay(const CadLayout *l)
     if (help_page) {
         static const char *const lines[] = {
             "CAD - 2D drafting in millimetres", "Line / rectangle: two clicks; circle: centre, rim.",
-            "Dimensions: two measured points, then offset.", "Text: anchor then notation. Leader: tip, elbow, text.",
+            "Dimensions: two measured points, then offset.",
+            "Select tool: drag dimension text independently.", "Text: anchor then notation. Leader: tip, elbow, text.",
             "Enter: edit selected entity coordinates and layer.", "Circle properties use centre (X1,Y1) and rim (X2,Y2).",
             "Ctrl-click: group selection. Drag empty space: box.", "Drag selection: move. Ctrl+C/X/V: copy/cut/paste.",
             "Ctrl+Z/Y: undo/redo. Del: remove unlocked selection.", "Arrows / scrollbars: pan. Shift+wheel: horizontal.",
@@ -909,7 +916,7 @@ static void draw(void)
         screen_line(&r, cad_point(pointer.x - 4 / scale, pointer.y), cad_point(pointer.x + 4 / scale, pointer.y));
         screen_line(&r, cad_point(pointer.x, pointer.y - 4 / scale), cad_point(pointer.x, pointer.y + 4 / scale));
     }
-    host_api->pointer_region(l.cx, l.cy, l.cw, l.ch, tool ? BUDO_CURSOR_CROSSHAIR : BUDO_CURSOR_ARROW, "F1: CAD help; Enter: numeric properties; arrows: pan");
+    host_api->pointer_region(l.cx, l.cy, l.cw, l.ch, tool ? BUDO_CURSOR_CROSSHAIR : BUDO_CURSOR_ARROW, "Drag dimension text independently; drag markings to move the dimension. F1: help");
     scroll_layout(&l);
     budo_scroll_draw(host_api, &hscroll);
     budo_scroll_draw(host_api, &vscroll);
@@ -1004,17 +1011,19 @@ static int mouse_down(int x, int y, int buttons)
     pointer = snapped(world(&l, x, y));
     if (tool == CAD_SELECT) {
         CadPoint raw = world(&l, x, y);
-        int hit = cad_hit(document, raw, 6 / scale, scale);
+        int label = cad_hit_dimension_text(document, raw, 1 / scale, scale);
+        int hit = label >= 0 ? label : cad_hit(document, raw, 6 / scale, scale);
         if (hit >= 0) {
             if (host_api->get_keyboard_modifiers() & 7) {
                 selected[hit] = !selected[hit];
                 primary = selected[hit] ? hit : -1;
             } else {
-                if (!selected[hit]) clear_selection();
+                if (label >= 0 || !selected[hit]) clear_selection();
                 selected[hit] = 1;
                 primary = hit;
-                dragging = 1;
+                dragging = label >= 0 ? 2 : 1;
                 drag_start = raw;
+                if (label >= 0) message("Drag the label freely. Dimension lines, arrows and measured points stay fixed.");
             }
         } else {
             clear_selection();
@@ -1056,7 +1065,8 @@ static int mouse_down(int x, int y, int buttons)
     selected[index] = 1;
     stage = 0;
     changed();
-    message("Entity created. Enter: exact numeric properties; Esc: selection tool.");
+    message(cad_is_dimension(&preview) ? "Select tool: drag the dimension text to position it independently." :
+            "Entity created. Enter: exact numeric properties; Esc: selection tool.");
     return 1;
 }
 static int mouse_move(int x, int y, int buttons)
@@ -1069,6 +1079,12 @@ static int mouse_move(int x, int y, int buttons)
     if (dragging && (buttons & 1)) {
         CadPoint raw = world(&l, x, y);
         double dx = raw.x - drag_start.x, dy = raw.y - drag_start.y;
+        if (dragging == 2) {
+            const CadPoint offset = history[history_at].entities[primary].label_offset;
+            document->entities[primary].label_offset = cad_point(fmax(-CAD_LIMIT, fmin(CAD_LIMIT, offset.x + dx)),
+                                                                fmax(-CAD_LIMIT, fmin(CAD_LIMIT, offset.y + dy)));
+            return 1;
+        }
         if (snap_on) {
             dx = round(dx / document->grid) * document->grid;
             dy = round(dy / document->grid) * document->grid;

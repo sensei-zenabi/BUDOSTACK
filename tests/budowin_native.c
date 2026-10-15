@@ -189,6 +189,10 @@ int main(int argc, char **argv) {
             }
             assert(found);
         }
+        bwa_callback_app = cad;
+        assert(cad->definition.callbacks.mouse_down(cx + 275, cy + 330, 1));
+        assert(cad->definition.callbacks.mouse_move(cx + 205, cy + 302, 1));
+        assert(cad->definition.callbacks.mouse_up(cx + 205, cy + 302, 0));
         if (argc == 3) screenshot(argv[2], "cad.ppm");
         bwa_callback_app = cad;
         assert(cad->definition.callbacks.key(13));

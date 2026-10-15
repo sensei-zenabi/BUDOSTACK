@@ -67,7 +67,7 @@ static int cad_write(const CadDocument *d, const char *path)
     char temporary[4096];
     FILE *f = cad_atomic_begin(path, temporary, sizeof(temporary));
     if (!f) return 0;
-    fprintf(f, "BCAD 1\n%d %d %.17g\n", d->count, d->layer_count, d->grid);
+    fprintf(f, "BCAD 2\n%d %d %.17g\n", d->count, d->layer_count, d->grid);
     for (int i = 0; i < d->layer_count; ++i) {
         const CadLayer *l = &d->layers[i];
         fprintf(f, "%u %d %d %d %.17g ", l->rgb, l->visible, l->locked, l->dashed, l->width);
@@ -76,8 +76,9 @@ static int cad_write(const CadDocument *d, const char *path)
     }
     for (int i = 0; i < d->count; ++i) {
         const CadEntity *e = &d->entities[i];
-        fprintf(f, "%d %d %.17g %.17g %.17g %.17g %.17g %.17g %.17g ",
-                e->type, e->layer, e->a.x, e->a.y, e->b.x, e->b.y, e->c.x, e->c.y, e->height);
+        fprintf(f, "%d %d %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g ",
+                e->type, e->layer, e->a.x, e->a.y, e->b.x, e->b.y, e->c.x, e->c.y, e->height,
+                e->label_offset.x, e->label_offset.y);
         cad_hex_write(f, e->text);
         fputc('\n', f);
     }
@@ -154,7 +155,12 @@ static int cad_read(CadDocument *out, const char *path)
     }
     char line[1024];
     const char *s;
-    int ok = cad_record(f, line, sizeof(line)) && !strcmp(line, "BCAD 1\n");
+    int version = 0;
+    if (cad_record(f, line, sizeof(line))) {
+        if (!strcmp(line, "BCAD 1\n")) version = 1;
+        else if (!strcmp(line, "BCAD 2\n")) version = 2;
+    }
+    int ok = version != 0;
     if (ok) {
         ok = cad_record(f, line, sizeof(line));
         s = line;
@@ -187,8 +193,10 @@ static int cad_read(CadDocument *out, const char *path)
                      cad_real(&s, &e->b.y, -CAD_LIMIT, CAD_LIMIT) &&
                      cad_real(&s, &e->c.x, -CAD_LIMIT, CAD_LIMIT) &&
                      cad_real(&s, &e->c.y, -CAD_LIMIT, CAD_LIMIT) &&
-                     cad_real(&s, &e->height, 0.1, 10000) &&
-                     cad_text_record(s, e->text, sizeof(e->text)) && cad_valid_entity(e, d->layer_count);
+                     cad_real(&s, &e->height, 0.1, 10000);
+        if (ok && version == 2) ok = cad_real(&s, &e->label_offset.x, -CAD_LIMIT, CAD_LIMIT) &&
+                                    cad_real(&s, &e->label_offset.y, -CAD_LIMIT, CAD_LIMIT);
+        if (ok) ok = cad_text_record(s, e->text, sizeof(e->text)) && cad_valid_entity(e, d->layer_count);
     }
     if (ok) ok = cad_record(f, line, sizeof(line)) && !strcmp(line, "END\n") && fgetc(f) == EOF && !ferror(f);
     if (fclose(f)) ok = 0;

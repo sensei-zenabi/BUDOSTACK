@@ -19,7 +19,7 @@ existing drawings, dimension-arrow geometry and SVG/DXF export; numeric
 property edits preserve them. New annotations use a fixed 16 mm model height.
 
 Entities store type, zero-based layer index, three points (`a`, `b`, `c`),
-annotation height and up to 127 bytes of notation text. Type values are:
+a dimension-label offset, annotation height and up to 127 bytes of notation text. Type values are:
 
 | Value | Entity | Point interpretation |
 | --- | --- | --- |
@@ -36,6 +36,14 @@ Dimensions compute their labels from their own measured coordinates. They are
 independent annotation entities, with no references or constraints linking
 them to other geometry. Moving a whole selection moves its dimensions too;
 editing unrelated geometry does not update separately selected dimensions.
+Dimension labels have a separate model-space offset from their automatic
+anchor. In Select mode, clicking and dragging a dimension's text moves only
+that label, without grid snapping; its measured points, extension lines,
+dimension line and arrows are unchanged. Dragging a marking moves the complete
+dimension, retaining its relative label offset. A label drag is one undo entry,
+Escape cancels it, and Edit > Reset dimension label restores the automatic
+position. Locked/hidden layers cannot have their labels dragged. Offsets are
+preserved by save/load, copy/paste, numeric property edits and SVG/DXF export.
 Text is horizontal. Drawing and exports share dimension/leader construction.
 Circle display and hit testing use analytic geometry; circles export as
 true circles. Generic geometry traversal tessellates them for bounds.
@@ -69,7 +77,7 @@ Navigation does not modify drawing content or undo history. The host delivers
 the wheel event's captured modifier state to native key callbacks, so a Shift
 release queued before dispatch does not change that wheel event's direction.
 
-## BCAD version 1
+## BCAD version 2 (reads versions 1 and 2)
 
 `cad_io.h` writes a portable, line-oriented text format with LF line endings.
 Numbers use C-locale decimal notation; the native host does not change that
@@ -77,16 +85,19 @@ locale. Strings are hexadecimal byte pairs in BUDOWIN's text encoding; `-`
 represents an empty string. Strings cannot contain control bytes.
 
 ```text
-BCAD 1
+BCAD 2
 <entity-count> <layer-count> <grid-mm>
 <rgb-decimal> <visible> <locked> <dashed> <width-mm> <name-hex>
 ... one record per layer ...
-<type> <layer> <ax> <ay> <bx> <by> <cx> <cy> <height-mm> <text-hex>
+<type> <layer> <ax> <ay> <bx> <by> <cx> <cy> <height-mm> <label-dx-mm> <label-dy-mm> <text-hex>
 ... one record per entity ...
 END
 ```
 
-All points and heights are serialized even when unused by the entity type.
+Version 1 entity records omit the two label-offset fields. Loading a version 1
+file initializes those offsets to zero, preserving its original label positions.
+Saves use version 2; label offsets must be finite and within +/-1,000,000 mm.
+All points, offsets and heights are serialized even when unused by the entity type.
 Unused storage is zero-initialized. Load parses into a separate allocation,
 rejecting overflow, nonfinite values, invalid indices, unsupported versions,
 degenerate geometry, truncation and trailing records. Failure preserves the

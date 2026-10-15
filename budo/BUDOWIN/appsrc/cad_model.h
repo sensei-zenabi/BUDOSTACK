@@ -32,6 +32,7 @@ typedef struct CadLayer {
 typedef struct CadEntity {
     int type, layer;
     CadPoint a, b, c;
+    CadPoint label_offset;
     double height;
     char text[128];
 } CadEntity;
@@ -75,10 +76,14 @@ static int cad_valid_point(CadPoint p)
 {
     return isfinite(p.x) && isfinite(p.y) && fabs(p.x) <= CAD_LIMIT && fabs(p.y) <= CAD_LIMIT;
 }
+static int cad_is_dimension(const CadEntity *e)
+{
+    return e->type >= CAD_DIM_H && e->type <= CAD_DIM_ALIGNED;
+}
 static int cad_valid_entity(const CadEntity *e, int layers)
 {
     if (e->type <= CAD_SELECT || e->type >= CAD_TOOLS || e->layer < 0 || e->layer >= layers ||
-        !cad_valid_point(e->a) || !cad_valid_point(e->b) || !cad_valid_point(e->c) ||
+        !cad_valid_point(e->a) || !cad_valid_point(e->b) || !cad_valid_point(e->c) || !cad_valid_point(e->label_offset) ||
         !isfinite(e->height) || e->height < 0.1 || e->height > 10000 ||
         !memchr(e->text, 0, sizeof(e->text))) return 0;
     if (e->type == CAD_TEXT) return e->text[0] != 0;
@@ -122,7 +127,7 @@ static void cad_render(const CadEntity *e, const CadPen *p)
             p->line(p->context, previous, next);
             previous = next;
         }
-    } else if (e->type >= CAD_DIM_H && e->type <= CAD_DIM_ALIGNED) {
+    } else if (cad_is_dimension(e)) {
         double ux = b.x - a.x, uy = b.y - a.y;
         if (e->type == CAD_DIM_H) {
             ux = b.x >= a.x ? 1 : -1;
@@ -148,7 +153,7 @@ static void cad_render(const CadEntity *e, const CadPen *p)
         cad_arrow(p, db, -ux, -uy, e->height);
         char label[160];
         snprintf(label, sizeof(label), "%.2f mm%s%s", fabs(measure), e->text[0] ? " " : "", e->text);
-        p->text(p->context, cad_point((da.x + db.x) / 2, (da.y + db.y) / 2 + e->height * 0.3), e->height, label);
+        p->text(p->context, cad_point((da.x + db.x) / 2 + e->label_offset.x, (da.y + db.y) / 2 + e->height * 0.3 + e->label_offset.y), e->height, label);
     } else {
         p->line(p->context, a, b);
         if (e->type == CAD_LEADER) {
@@ -179,6 +184,24 @@ static void cad_hit_text(void *context, CadPoint a, double height, const char *s
     double x = fmax(a.x, fmin(a.x + width, h->point.x));
     double y = fmax(a.y, fmin(a.y + height, h->point.y));
     h->distance = fmin(h->distance, cad_distance(h->point, cad_point(x, y)));
+}
+static void cad_ignore_line(void *context, CadPoint a, CadPoint b)
+{
+    (void)context;
+    (void)a;
+    (void)b;
+}
+static int cad_hit_dimension_text(const CadDocument *d, CadPoint point, double tolerance, double text_scale)
+{
+    for (int i = d->count - 1; i >= 0; --i) {
+        const CadEntity *e = &d->entities[i];
+        if (!cad_is_dimension(e) || !d->layers[e->layer].visible || d->layers[e->layer].locked) continue;
+        CadHit hit = {point, tolerance + 1, text_scale};
+        CadPen pen = {&hit, cad_ignore_line, cad_hit_text};
+        cad_render(e, &pen);
+        if (hit.distance <= tolerance) return i;
+    }
+    return -1;
 }
 static int cad_hit(const CadDocument *d, CadPoint point, double tolerance, double text_scale)
 {

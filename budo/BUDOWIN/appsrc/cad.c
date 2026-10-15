@@ -916,7 +916,7 @@ static void draw(void)
         screen_line(&r, cad_point(pointer.x - 4 / scale, pointer.y), cad_point(pointer.x + 4 / scale, pointer.y));
         screen_line(&r, cad_point(pointer.x, pointer.y - 4 / scale), cad_point(pointer.x, pointer.y + 4 / scale));
     }
-    host_api->pointer_region(l.cx, l.cy, l.cw, l.ch, tool ? BUDO_CURSOR_CROSSHAIR : BUDO_CURSOR_ARROW, "Drag dimension text independently; drag markings to move the dimension. F1: help");
+    host_api->pointer_region(l.cx, l.cy, l.cw, l.ch, tool ? BUDO_CURSOR_CROSSHAIR : BUDO_CURSOR_ARROW, NULL);
     scroll_layout(&l);
     budo_scroll_draw(host_api, &hscroll);
     budo_scroll_draw(host_api, &vscroll);

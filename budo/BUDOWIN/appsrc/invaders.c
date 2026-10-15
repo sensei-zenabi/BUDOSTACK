@@ -7,22 +7,73 @@
 #define MIN_W 400
 #define MIN_H 310
 #define START_PAUSED 1
+#define GAME_EXTRA_UI 1
 #define GAME_HINT "Left/Right or A/D: move. Space/click: fire."
-#define GAME_HELP "Shoot all 48 aliens before they reach you."
+#define GAME_HELP "Clear 48 aliens. 1/2/3: level, 1/2/3 pts per kill."
 #include "game_ui.h"
 
-static int player_x, invaders[4][12], offset_x, offset_y, direction, score;
+static int player_x, invaders[4][12], offset_x, offset_y, direction, score, remaining;
+static int difficulty, pending_difficulty = -1;
+static const char *difficulty_names[] = {"EASY", "MEDIUM", "HARD"};
+/* Milliseconds per formation step, floor, and descent speed multiplier. */
+static const unsigned int starting_period[] = {1200, 700, 400};
+static const unsigned int minimum_period[] = {600, 300, 100};
+static const unsigned int descent_multiplier[] = {19, 18, 17};
 static unsigned int frame, formation_elapsed;
 static unsigned int formation_interval(void)
 {
-    unsigned int period = 1200;
-    for (int row = 1; row < offset_y; ++row) period = period * 19 / 20;
-    return period < 600 ? 600 : period;
+    unsigned int period = starting_period[difficulty];
+    for (int row = 1; row < offset_y; ++row) {
+        period = period * descent_multiplier[difficulty] / 20;
+    }
+    return period < minimum_period[difficulty] ? minimum_period[difficulty] : period;
 }
 static struct { int active, x, y; } bullet;
 static unsigned int game_interval(void) { return 100000; }
+static void invaders_status(void)
+{
+    snprintf(status, sizeof(status), "%s Score: %d%s", difficulty_names[difficulty], score,
+             finished ? (remaining == 0 ? " - You win! R: new game." : " - Game over. R: new game.") : "");
+}
+static void game_cancel_new(void) { pending_difficulty = -1; }
+static void set_difficulty(int level)
+{
+    if (level == difficulty || confirming) return;
+    pending_difficulty = level;
+    if ((!frame && !bullet.active) || finished) new_game();
+    else {
+        request_new();
+        if (!confirming) pending_difficulty = -1;
+    }
+}
+static void game_toolbar_draw(const Layout *l)
+{
+    for (int i = 0; i < 3; ++i) {
+        budo_button_draw(host_api, l->x + 6 + i * 68, l->y + 32, 64, 20, difficulty_names[i],
+                         difficulty == i ? BUDO_BUTTON_PRESSED : 0);
+    }
+    text(l->x + 214, l->y + 38, "1/2/3: level", (l->w - 222) / 6);
+}
+static int game_toolbar_click(const Layout *l, int x, int y)
+{
+    for (int i = 0; i < 3; ++i) {
+        if (host_api->point_in_rect(x, y, l->x + 6 + i * 68, l->y + 32, 64, 20)) {
+            set_difficulty(i);
+            return 1;
+        }
+    }
+    return 0;
+}
+static void game_status_draw(const Layout *l, const char *line)
+{
+    host_api->draw_text(l->x + 4, l->y + l->h - l->status_h + 3, line,
+                        color(BUDO_SYS_COLOR_STATUS_TEXT), (l->w - 8) / 6);
+}
 static void game_reset(void)
 {
+    if (pending_difficulty >= 0) difficulty = pending_difficulty;
+    pending_difficulty = -1;
+    remaining = 48;
     player_x = GRID_W / 2;
     bullet.active = 0;
     score = 0;
@@ -34,7 +85,7 @@ static void game_reset(void)
     for (int r = 0; r < 4; ++r) {
         for (int c = 0; c < 12; ++c) invaders[r][c] = 1;
     }
-    snprintf(status, sizeof(status), "Score: 0. Clear the formation!");
+    invaders_status();
 }
 static int hit_invader(void)
 {
@@ -44,8 +95,8 @@ static int hit_invader(void)
             if (!invaders[r][c] || bullet.x != offset_x + c * 3 || bullet.y != offset_y + r * 2) continue;
             invaders[r][c] = 0;
             bullet.active = 0;
-            score += 10;
-            finished = score == 480;
+            score += difficulty + 1;
+            finished = --remaining == 0;
             effect(finished ? 4 : 2);
             return 1;
         }
@@ -87,8 +138,7 @@ static void game_tick(void)
             if (finished) effect(3);
         }
     }
-    snprintf(status, sizeof(status), "Score: %d%s", score,
-             finished ? (score == 480 ? " - You win! R: new game." : " - Game over. R: new game.") : "");
+    invaders_status();
 }
 static void fire(void)
 {
@@ -100,6 +150,7 @@ static void fire(void)
 }
 static int game_key(int key)
 {
+    if (key >= '1' && key <= '3') { set_difficulty(key - '1'); return 1; }
     if (finished || paused) return 0;
     if (key == (0x100 | 75) || key == 'a' || key == 'A') {
         if (player_x > 0) --player_x;

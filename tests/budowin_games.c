@@ -144,13 +144,13 @@ static void rules_checks(void)
 #elif defined(TEST_INVADERS)
     key(' '); assert(bullet.active && bullet.x == player_x);
     int bx = bullet.x; key('d'); key(' '); assert(bullet.x == bx); /* Single bullet. */
-    bullet.x = offset_x; bullet.y = offset_y; game_tick(); assert(score == 10 && !invaders[0][0]);
+    bullet.x = offset_x; bullet.y = offset_y; game_tick(); assert(score == 1 && !invaders[0][0]);
     new_game(); paused = 0;
     bullet.active = 1; bullet.x = offset_x; bullet.y = offset_y + 1;
-    game_tick(); assert(score == 10); /* Collision after bullet motion. */
+    game_tick(); assert(score == 1); /* Collision after bullet motion. */
     new_game(); paused = 0;
     bullet.active = 1; bullet.x = offset_x; bullet.y = offset_y + 2;
-    game_tick(); assert(score == 10 && !bullet.active); /* Second crossed cell. */
+    game_tick(); assert(score == 1 && !bullet.active); /* Second crossed cell. */
     for (int y = 0; y < 2; ++y) {
         new_game(); paused = 0;
         bullet.active = 1; bullet.x = 0; bullet.y = y;
@@ -160,8 +160,8 @@ static void rules_checks(void)
     offset_x = 4; formation_elapsed = formation_interval() - 100; game_tick(); assert(offset_y == 2 && direction == -1);
     new_game(); paused = 0;
     memset(invaders, 0, sizeof(invaders)); invaders[0][0] = 1;
-    score = 470; bullet.active = 1; bullet.x = offset_x; bullet.y = offset_y;
-    game_tick(); assert(finished && score == 480 && strstr(status, "You win"));
+    score = 47; remaining = 1; bullet.active = 1; bullet.x = offset_x; bullet.y = offset_y;
+    game_tick(); assert(finished && score == 48 && strstr(status, "You win"));
     new_game(); paused = 0;
     offset_y = 13; offset_x = 4; formation_elapsed = formation_interval() - 100; game_tick(); assert(finished && strstr(status, "Game over"));
     new_game(); paused = 0;
@@ -287,6 +287,75 @@ static void timing_checks(void)
     test_host.abi_minor = BWA_ABI_MINOR;
 }
 #if defined(TEST_INVADERS)
+static void invaders_difficulty_checks(void)
+{
+    unsigned int previous_start = 0, previous_floor = 0, previous_lifetime = 0;
+    for (int level = 0; level < 3; ++level) {
+        difficulty = level;
+        new_game();
+        assert(paused && score == 0 && remaining == 48);
+        assert(strstr(status, difficulty_names[level]));
+        unsigned int start = formation_interval();
+        offset_y = GRID_H;
+        unsigned int floor = formation_interval();
+        assert(start > floor && floor >= 100);
+        if (level) assert(start < previous_start && floor < previous_floor);
+        previous_start = start;
+        previous_floor = floor;
+        new_game();
+        paused = 0;
+        while (!finished && frame < 2000) game_tick();
+        assert(finished && remaining == 48 && strstr(status, "Game over"));
+        if (level) assert(frame < previous_lifetime);
+        previous_lifetime = frame;
+        new_game();
+        paused = 0;
+        /* Clear the actual formation: score and victory must work at every level. */
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 12; ++c) {
+                bullet.active = 1;
+                bullet.x = offset_x + c * 3;
+                bullet.y = offset_y + r * 2;
+                assert(hit_invader());
+                assert(score == (48 - remaining) * (level + 1));
+                assert(finished == (remaining == 0));
+            }
+        }
+        invaders_status();
+        assert(score == 48 * (level + 1) && strstr(status, "You win"));
+        new_game();
+        assert(difficulty == level && !score && remaining == 48 && !finished);
+    }
+    difficulty = 0;
+    new_game();
+    Layout l;
+    assert(layout(&l));
+    mouse_down(l.x + 145, l.y + 35, 1);
+    assert(difficulty == 2 && paused && !confirming);
+    key('2');
+    assert(difficulty == 1 && paused);
+    key(' ');
+    key(' '); /* A shot before the first tick also counts as progress. */
+    assert(bullet.active && !frame);
+    key('1');
+    assert(confirming && paused && difficulty == 1 && pending_difficulty == 0);
+    key('3');
+    assert(pending_difficulty == 0);
+    confirm_result(BUDO_CONFIRM_OVERWRITE, BUDO_RESPONSE_CANCEL);
+    assert(!confirming && !paused && difficulty == 1 && pending_difficulty == -1 && bullet.active);
+    game_tick();
+    unsigned int saved_frame = frame;
+    key('p');
+    key('3');
+    confirm_result(BUDO_CONFIRM_OVERWRITE, BUDO_RESPONSE_CANCEL);
+    assert(paused && difficulty == 1 && frame == saved_frame);
+    key('3');
+    confirm_result(BUDO_CONFIRM_OVERWRITE, BUDO_RESPONSE_SAVE);
+    assert(paused && difficulty == 2 && pending_difficulty == -1 && !frame && !bullet.active && !score);
+    finished = 1;
+    key('1');
+    assert(difficulty == 0 && paused && !finished && !confirming);
+}
 static void invaders_playability_checks(void)
 {
     /* Ordinary keyboard input at 200/300 ms intervals, with no trajectory
@@ -314,7 +383,7 @@ static void invaders_playability_checks(void)
             clock_ms += 100;
             assert(tick(1));
         }
-        assert(finished && score == 480 && strstr(status, "You win"));
+        assert(finished && score == 48 && strstr(status, "You win"));
         assert(!bullet.active);
         for (int r = 0; r < 4; ++r) {
             for (int c = 0; c < 12; ++c) assert(!invaders[r][c]);
@@ -357,6 +426,7 @@ static void behavior_checks(void)
     }
     assert(formation_interval() == 600);
     invaders_playability_checks();
+    invaders_difficulty_checks();
 #else
     for (int orientation = 0; orientation < 4; ++orientation) {
         new_game(); paused = 0; mode = 1; human_marker = 'X'; current_player = 'O';

@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
     assert(chdir(argv[1]) == 0);
     assert(getcwd(home_path, sizeof(home_path)));
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 14);
+    assert(bwa_external_app_count == 15);
     load_file_associations();
     char path[MAX_PATH];
     assert(join_path(path, sizeof(path), "/", "tmp") && strcmp(path, "/tmp") == 0);
@@ -151,6 +151,44 @@ int main(int argc, char **argv) {
         click_native(game, gx + 295, gy + 12); /* Close also activates on release. */
         assert(!game->open);
         bwa_callback_app = NULL;
+    }
+    {
+        BwaLoadedApp *cad = NULL;
+        for (int i = 0; i < bwa_instance_count; ++i)
+            if (!strcmp(bwa_instances[i].definition.app_id, "cad")) cad = &bwa_instances[i];
+        assert(cad && cad->managed_window);
+        int cad_assoc = find_file_association(".BCAD");
+        assert(cad_assoc >= 0 && !strcmp(file_associations[cad_assoc].app_id, "cad"));
+        bwa_callback_app = cad;
+        active_window = cad->definition.runtime_id;
+        int cx, cy, cw, ch;
+        assert(bwa_window_get_client_rect(&cx, &cy, &cw, &ch));
+        press_native(cad, cx + 20, cy + 112); /* Rectangle through native button capture. */
+        press_native(cad, cx + 170, cy + 140);
+        press_native(cad, cx + 350, cy + 300);
+        bwa_callback_app = cad;
+        assert(cad->definition.callbacks.key('c'));
+        press_native(cad, cx + 260, cy + 200);
+        press_native(cad, cx + 305, cy + 200);
+        press_native(cad, cx + 20, cy + 156); /* Horizontal dimension, three clicks. */
+        press_native(cad, cx + 170, cy + 300);
+        press_native(cad, cx + 350, cy + 300);
+        press_native(cad, cx + 350, cy + 335);
+        bwa_callback_app = cad;
+        assert(cad->definition.callbacks.key(27));
+        if (argc == 3) screenshot(argv[2], "cad.ppm");
+        bwa_callback_app = cad;
+        assert(cad->definition.callbacks.key(13));
+        if (argc == 3) screenshot(argv[2], "cad-properties.ppm");
+        bwa_callback_app = cad;
+        assert(cad->definition.callbacks.key(27));
+        assert(cad->definition.callbacks.key(0x100 | 59));
+        if (argc == 3) screenshot(argv[2], "cad-help.ppm");
+        bwa_callback_app = cad;
+        assert(cad->definition.callbacks.key(27));
+        assert(!cad->definition.request_close());
+        assert(confirm_kind == BUDO_CONFIRM_SAVE);
+        desktop_confirm_result(BUDO_RESPONSE_CANCEL);
     }
     BwaLoadedApp *flow = NULL;
     for (int i = 0; i < bwa_instance_count; ++i)

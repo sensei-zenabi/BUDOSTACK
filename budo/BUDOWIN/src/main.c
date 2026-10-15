@@ -9112,7 +9112,8 @@ static void add_default_association(const char *extension)
     strncpy(assoc->extension, extension, FILE_EXT_LEN);
     assoc->extension[FILE_EXT_LEN] = '\0';
     strncpy(assoc->app_id, compare_names_ci(extension, ".FLOW") == 0 ? "flow" :
-            compare_names_ci(extension, ".BSHEET") == 0 ? "spreadsheet" : "editor", BWA_ID_LEN - 1);
+            compare_names_ci(extension, ".BSHEET") == 0 ? "spreadsheet" :
+            compare_names_ci(extension, ".BCAD") == 0 ? "cad" : "editor", BWA_ID_LEN - 1);
     assoc->app_id[BWA_ID_LEN - 1] = '\0';
 }
 
@@ -9159,7 +9160,7 @@ static void load_file_associations(void)
         ".CSV", ".TSV", ".INF", ".LST", ".DOC", ".ME", ".PCX",
         ".C", ".H", ".CPP", ".HPP", ".CC", ".CXX", ".ASM", ".INC",
         ".PAS", ".BAS", ".JAVA", ".JS", ".PY", ".CSS", ".HTM", ".HTML",
-        ".PHP", ".SQL", ".LUA", ".PL", ".RB", ".SH", ".XML", ".JSON", ".FLOW", ".BSHEET"
+        ".PHP", ".SQL", ".LUA", ".PL", ".RB", ".SH", ".XML", ".JSON", ".FLOW", ".BSHEET", ".BCAD"
     };
     char path[MAX_PATH];
     FILE *file;

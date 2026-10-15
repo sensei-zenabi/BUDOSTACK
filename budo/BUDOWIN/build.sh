@@ -5,8 +5,8 @@ cd "$BUDOWIN_DIR"
 COMPILER=${CC:-cc}
 FLAGS=(-std=c11 -O2 -Wall -Wextra -Werror -Wpedantic)
 mkdir -p APPS
-for application in explorer editor terminal settings paint reader help recycle chess snake invaders tictactoe flow spreadsheet; do
+for application in explorer editor terminal settings paint reader help recycle chess snake invaders tictactoe flow spreadsheet cad; do
     "$COMPILER" "${FLAGS[@]}" -fPIC -shared "appsrc/$application.c" -o "APPS/${application^^}.BWA" -lm
 done
 "$COMPILER" "${FLAGS[@]}" src/main.c src/platform.c ../../lib/budo_gfx.c -ldl -lm -o ../budowin
-printf 'Built BUDOWIN and fourteen native applications.\n'
+printf 'Built BUDOWIN and fifteen native applications.\n'

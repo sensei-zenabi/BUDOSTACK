@@ -8373,6 +8373,12 @@ static int parent_path(char *dest, size_t dest_size)
     return copy_text(dest, dest_size, temp);
 }
 
+static int picker_is_background(void)
+{
+    BwaLoadedApp *app = bwa_find_external_app(picker_owner);
+    return app && strcmp(app->definition.app_id, "settings") == 0;
+}
+
 static int picker_types(const char **labels, int *values)
 {
     int count = 1;
@@ -8581,6 +8587,7 @@ static void editor_begin_file_dialog(int mode)
     picker_owner = APP_EDITOR;
     picker_filter = mode == EDITOR_FILE_DIALOG_OPEN ? 0 : (editor_writer_mode ? 2 : 1);
     picker_filter_menu = picker_mkdir = 0;
+    picker_background_menu = picker_background_focus = 0;
     picker_overwrite = 0;
     picker_focus = 1;
     picker_name_selected = 1;
@@ -8704,7 +8711,9 @@ static int editor_file_accept(void)
         editor_file_dialog = EDITOR_FILE_DIALOG_NONE;
         if (app && app->definition.file_selected) {
             bwa_callback_app = app;
+            picker_background_accepting = picker_is_background();
             ok = app->definition.file_selected(mode, full_path);
+            picker_background_accepting = 0;
             bwa_callback_app = NULL;
         }
         if (!ok) {
@@ -8767,6 +8776,22 @@ static void editor_file_dialog_click(int x, int y, clock_t now)
     int cancel_x = dialog_x + dialog_w - 68;
     int button_y = dialog_y + dialog_h - 24;
 
+    if (picker_is_background() && picker_background_menu) {
+        int chosen = budo_menu_hit(x, y, dialog_x + 160,
+                                   dialog_y + dialog_h - 34 - (BACKGROUND_MODE_COUNT * 16 + 4),
+                                   110, BACKGROUND_MODE_COUNT);
+        picker_background_menu = 0;
+        if (chosen >= 0) picker_background_mode = chosen;
+        return;
+    }
+    if (picker_is_background() && !picker_filter_menu &&
+        point_in_rect(x, y, dialog_x + 160, dialog_y + dialog_h - 34, 110, 14)) {
+        picker_background_menu = 1;
+        picker_background_focus = 1;
+        picker_focus = 0;
+        return;
+    }
+    picker_background_focus = 0;
     if (picker_filter_menu) {
         const char *labels[4];
         int values[4];
@@ -8859,6 +8884,7 @@ static void picker_cancel(void)
         return;
     }
     int owner = picker_owner;
+    picker_background_menu = picker_background_focus = 0;
     if (owner == APP_NONE) desktop_picker_action = 0;
     desktop_exit_requested = 0;
     editor_file_dialog = EDITOR_FILE_DIALOG_NONE;
@@ -8879,13 +8905,42 @@ static void editor_file_dialog_key(int key)
     int rows = (270 - 102) / 12;
     if (rows < 1) rows = 1;
     if (key == 27) {
-        if (picker_filter_menu) picker_filter_menu = 0;
+        if (picker_background_menu) picker_background_menu = 0;
+        else if (picker_filter_menu) picker_filter_menu = 0;
         else picker_cancel();
         return;
     }
     if (key == 9) {
+        if (picker_is_background()) {
+            picker_filter_menu = picker_background_menu = 0;
+            if (picker_focus) {
+                picker_focus = 0;
+                picker_background_focus = 1;
+            } else if (picker_background_focus) picker_background_focus = 0;
+            else picker_focus = 1;
+            picker_name_selected = picker_focus;
+            return;
+        }
         picker_focus = !picker_focus;
         picker_name_selected = picker_focus;
+        return;
+    }
+    if (picker_is_background() && picker_background_focus) {
+        if (key == 13 || key == ' ') picker_background_menu = !picker_background_menu;
+        else if (key == 0) {
+            int scan = getch();
+            if (scan == 72 || scan == 75)
+                picker_background_mode = (picker_background_mode + BACKGROUND_MODE_COUNT - 1) % BACKGROUND_MODE_COUNT;
+            else if (scan == 80 || scan == 77)
+                picker_background_mode = (picker_background_mode + 1) % BACKGROUND_MODE_COUNT;
+        } else {
+            for (int i = 0; i < BACKGROUND_MODE_COUNT; ++i) {
+                if (tolower((unsigned char)key) == tolower((unsigned char)background_modes[i][0])) {
+                    picker_background_mode = i;
+                    break;
+                }
+            }
+        }
         return;
     }
     if (key == 1 && picker_focus) { picker_name_selected = 1; return; }
@@ -9053,11 +9108,25 @@ static void editor_draw_file_dialog(void)
         const char *types[4] = {"All files", "Text (.txt/.md)", "RTF (.rtf)", "PCX (.pcx)"};
         bwa_draw_standard_button(dialog_x + 10, dialog_y + dialog_h - 34,
                                  144, 14, types[picker_filter], 0);
-        draw_text(dialog_x + 160, dialog_y + dialog_h - 31,
-                  editor_status, TEXT_COLOR, (dialog_w - 170) / 6);
+        if (picker_is_background()) {
+            char label[24];
+            snprintf(label, sizeof(label), "%s    v", background_modes[picker_background_mode]);
+            bwa_draw_button_state(dialog_x + 160, dialog_y + dialog_h - 34, 110, 14,
+                                   label, picker_background_focus ? BUDO_BUTTON_FOCUSED : 0);
+            bwa_pointer_region(dialog_x + 160, dialog_y + dialog_h - 34, 110, 14,
+                               BUDO_CURSOR_ARROW, "Wallpaper scaling mode");
+            draw_text(dialog_x + 10, dialog_y + dialog_h - 15,
+                      editor_status, TEXT_COLOR, (dialog_w - 150) / 6);
+        } else draw_text(dialog_x + 160, dialog_y + dialog_h - 31,
+                          editor_status, TEXT_COLOR, (dialog_w - 170) / 6);
     }
     bwa_draw_button_state(ok_x, button_y, 58, 16, picker_mkdir ? "Create" : ok_text, BUDO_BUTTON_DEFAULT);
     bwa_draw_standard_button(cancel_x, button_y, 58, 16, "Cancel", 0);
+    if (picker_is_background() && picker_background_menu) {
+        budo_menu_draw(&bwa_host_api, dialog_x + 160,
+                       dialog_y + dialog_h - 34 - (BACKGROUND_MODE_COUNT * 16 + 4),
+                       110, background_modes, BACKGROUND_MODE_COUNT);
+    }
     if (picker_filter_menu) {
         const char *types[4];
         int values[4];
@@ -10331,10 +10400,12 @@ static int bwa_file_dialog(int mode, const char *initial)
     if (!copy_text(directory, sizeof(directory), initial ? initial : "")) return 0;
     picker_owner = app->definition.runtime_id;
     int background = strcmp(app->definition.app_id, "settings") == 0;
+    picker_background_mode = desktop_background_mode;
     picker_filter = (background || strcmp(app->definition.app_id, "paint") == 0) ? 3 : 0;
     if (background && !directory[0] &&
         !join_path(directory, sizeof(directory), home_path, "PCX/")) return 0;
     picker_filter_menu = picker_mkdir = 0;
+    picker_background_menu = picker_background_focus = 0;
     picker_overwrite = 0;
     picker_focus = 1;
     picker_name_selected = 1;
@@ -12832,7 +12903,7 @@ int main(int argc, char **argv)
             text_caret_last_toggle = 0;
         }
 
-        if ((editor_menu != EDITOR_MENU_NONE || explorer_file_menu || explorer_view_menu || terminal_file_menu || picker_filter_menu || context_menu) &&
+        if ((editor_menu != EDITOR_MENU_NONE || explorer_file_menu || explorer_view_menu || terminal_file_menu || picker_filter_menu || picker_background_menu || context_menu) &&
             (mouse_x != previous_mouse_x || mouse_y != previous_mouse_y))
             screen_dirty = 1;
         if (caret_dirty && (editor_search_dialog_active() ||

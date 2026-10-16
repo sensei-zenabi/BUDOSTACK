@@ -1,5 +1,11 @@
-Basic electrical concepts
+Electricity
 
-Electric charge is measured in coulombs. Electric current is the rate of charge flow, measured in amperes. Voltage is electrical potential difference, measured in volts; it represents energy transferred per unit charge.
+Electricity is a name for effects caused by electric charge. A flow of charge through a wire is an electric current. This flow can transfer energy to a lamp and make it light up.
 
-Electrical resistance describes opposition to current flow and is measured in ohms. For an ohmic resistor under constant physical conditions, Ohm's law is V = I R. Electrical power transferred to a component is P = V I, measured in watts using the passive sign convention.
+Voltage measures energy for each unit of electric charge. You can think of voltage as an electrical push that can make current flow around a complete circuit. Voltage is measured in volts.
+
+Resistance is how much a material opposes an electric current. A larger resistance lets less current flow at the same voltage. Resistance is measured in ohms.
+
+A circuit is a complete path for electric current. Opening a switch breaks the path and stops the current in a simple battery circuit. Use only suitable low-voltage learning kits with adult help; do not experiment with wall sockets.
+
+For an ohmic resistor at constant temperature, Ohm's law is V = I R. Here V is voltage in volts, I is current in amperes, and R is resistance in ohms. Electrical power transferred to a component is P = V I, in watts, using the passive sign convention.

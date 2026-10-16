@@ -1,5 +1,10 @@
-Basic algorithms
+Algorithms
 
-An algorithm is a finite, precisely specified sequence of steps for solving a problem. A useful algorithm defines its inputs, outputs, and conditions for termination. Correctness means that it produces the required result for all inputs allowed by its specification.
+An algorithm is a clear set of steps for solving a problem. A recipe is a familiar example: it tells you what to do and in which order. A computer algorithm must describe steps precisely enough for a computer to follow.
 
-Linear search examines items in order until it finds a match or reaches the end. Its worst-case running time grows linearly with the number of items. Binary search repeatedly halves a sorted search range and uses logarithmically many comparisons; it requires a suitable sorted representation.
+Procedure: To find a number in a list using linear search:
+Step 1: look at the first number.
+Step 2: compare it with the number you want. If they match, you have found it.
+Step 3: if not, try the next number. Stop when you find it or reach the end of the list.
+
+Binary search finds a value in a sorted list by checking the middle and discarding the half that cannot contain it. Repeating this makes the remaining search range smaller. The list must be sorted first.

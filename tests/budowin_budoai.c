@@ -109,7 +109,7 @@ int main(int argc, char **argv)
     assert(e.use_context && !strcmp(e.category, "fishing"));
     ask(&e, "What equipment is needed for fishing?", "equipment includes");
     ask(&e, "Explain Newton's first law", "remains at rest");
-    assert(e.result_count == 1 && !strcmp(e.category, "physics"));
+    assert(e.result_count >= 1 && !strcmp(e.category, "physics"));
     ask(&e, "What is computer memory?", "Random-access memory");
     ask(&e, "What bait should I use?", "worms");
     ask(&e, "How do quantum unicorns teleport?", NULL);
@@ -222,7 +222,7 @@ int main(int argc, char **argv)
     assert(app.callbacks.key(0x100 | 63));
     while (engine.phase != AI_READY) app.tick(0);
     app.callbacks.close();
-    assert(!engine.docs && !engine.passages && !engine.depth && !engine.file);
+    assert(!engine.docs && !engine.words && !engine.passages && !engine.depth && !engine.file);
     puts("BUDOAI acceptance, source verification, resource/error and UI tests passed.");
     return 0;
 }

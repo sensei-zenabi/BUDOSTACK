@@ -124,6 +124,19 @@ int main(int argc, char **argv) {
     bwa_callback_app = ai;
     for (int i = 0; i < 100; ++i) ai->definition.tick(1);
     if (argc == 3) screenshot(argv[2], "budoai.ppm");
+    assert(native_label(ai, "More"));
+    click_native(ai, ax + aw - 40, ay + 65);
+    if (argc == 3) screenshot(argv[2], "budoai-more.ppm");
+    bwa_callback_app = ai;
+    assert(ai->definition.callbacks.key(12));
+    const char *followups[] = {"Explain Newton's first law", "Can you explain that more simply?"};
+    for (int q = 0; q < 2; ++q) {
+        for (const char *s = followups[q]; *s; ++s) assert(ai->definition.callbacks.key(*s));
+        assert(ai->definition.callbacks.key(13));
+        for (int i = 0; i < 100; ++i) ai->definition.tick(1);
+    }
+    if (argc == 3) screenshot(argv[2], "budoai-simple.ppm");
+    bwa_callback_app = ai;
     assert(ai->definition.callbacks.key(12));
     bwa_callback_app = NULL;
     assert(unsetenv("BUDOAI_KNOWLEDGE_ROOT") == 0);

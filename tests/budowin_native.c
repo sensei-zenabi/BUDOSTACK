@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
     assert(chdir(argv[1]) == 0);
     assert(getcwd(home_path, sizeof(home_path)));
     bwa_load_external_apps();
-    assert(bwa_external_app_count == 15);
+    assert(bwa_external_app_count == 16);
     load_file_associations();
     char path[MAX_PATH];
     assert(join_path(path, sizeof(path), "/", "tmp") && strcmp(path, "/tmp") == 0);
@@ -99,11 +99,34 @@ int main(int argc, char **argv) {
         if (!(app->definition.flags & BWA_FLAG_LAUNCHER)) app = bwa_new_instance(app);
         assert(app);
         bwa_callback_app = app;
+        if (!strcmp(app->definition.app_id, "budoai")) {
+            char knowledge[MAX_PATH];
+            assert(join_path(knowledge, sizeof(knowledge), home_path, "../../users/default/knowledge"));
+            assert(setenv("BUDOAI_KNOWLEDGE_ROOT", knowledge, 1) == 0);
+        }
         assert(app->definition.callbacks.open());
         app->open = 1;
         if (app->definition.callbacks.draw) app->definition.callbacks.draw();
         bwa_callback_app = NULL;
     }
+    BwaLoadedApp *ai = NULL;
+    for (int i = 0; i < bwa_instance_count; ++i)
+        if (!strcmp(bwa_instances[i].definition.app_id, "budoai")) ai = &bwa_instances[i];
+    assert(ai && ai->managed_window && ai->definition.tick);
+    bwa_callback_app = ai;
+    active_window = ai->definition.runtime_id;
+    for (int i = 0; i < 100; ++i) ai->definition.tick(1);
+    const char *question = "How do I fish?";
+    for (; *question; ++question) assert(ai->definition.callbacks.key(*question));
+    int ax, ay, aw, ah;
+    assert(bwa_window_get_client_rect(&ax, &ay, &aw, &ah));
+    click_native(ai, ax + aw - 40, ay + 16);
+    bwa_callback_app = ai;
+    for (int i = 0; i < 100; ++i) ai->definition.tick(1);
+    if (argc == 3) screenshot(argv[2], "budoai.ppm");
+    assert(ai->definition.callbacks.key(12));
+    bwa_callback_app = NULL;
+    assert(unsetenv("BUDOAI_KNOWLEDGE_ROOT") == 0);
     const char *games[] = {"snake", "invaders", "tictactoe"};
     for (int g = 0; g < 3; ++g) {
         BwaLoadedApp *game = NULL;

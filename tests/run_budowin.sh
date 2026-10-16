@@ -15,6 +15,9 @@ printf 'input' > "$BUDOWIN_TEST_DIR/input.txt"
 COMPILER=${CC:-cc}
 FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
 budo/BUDOWIN/build.sh
+"$COMPILER" "${FLAGS[@]}" -O2 tests/budowin_budoai.c -lm -o "$TEST_DIR/budoai"
+mkdir -p "$TEST_DIR/budoai-files"
+"$TEST_DIR/budoai" "$ROOT_DIR/users/default/knowledge" "$TEST_DIR/budoai-files"
 "$COMPILER" "${FLAGS[@]}" -O2 tests/budowin_cad.c -lm -o "$TEST_DIR/cad"
 mkdir -p "$TEST_DIR/cad-files"
 "$TEST_DIR/cad" "$TEST_DIR/cad-files"

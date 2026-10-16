@@ -7042,7 +7042,8 @@ static const BwaHostApi bwa_host_api = {
     bwa_reset_system_colors,
     bw_play_tones,
     bwa_draw_input_caret,
-    bwa_set_desktop_background
+    bwa_set_desktop_background,
+    bw_user_directory
 };
 
 static BwaLoadedApp *bwa_find_external_app(int runtime_id)

@@ -1,6 +1,6 @@
 # Native BWA modules
 
-BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.17 (`src/bwa.h`). Modules use
+BUDOSTACK BUDOWIN extends upstream BWA ABI to 1.19 (`src/bwa.h`). Modules use
 `BwaHostApi` for drawing, managed windows, binary file access and allocation.
 The built-in Explorer, Editor, Terminal, Reader, Help and Recycle Bin launcher modules delegate to
 host-managed application implementations; Paint and Settings own their
@@ -329,3 +329,12 @@ Tic-Tac-Toe uses threat-ranked nearby
 candidates, immediate win/block detection, and incremental three-ply alpha-beta
 search; open-three, open-four, and broken-four patterns receive tactical weights.
 Each desktop tick processes at most one root candidate search.
+
+## User workspace path (ABI 1.19)
+
+`get_working_directory()` returns a borrowed absolute path to the BUDOWIN
+user workspace, valid for the host lifetime. Native POSIX modules performing
+streaming file I/O resolve relative paths against this directory, matching
+`file_read_all`; the process CWD is the assets directory and must not be used.
+The field is appended without changing earlier offsets. Modules accessing it
+must require `abi_minor >= 19`.

@@ -10,7 +10,7 @@
  */
 
 #define BWA_ABI_MAJOR 1
-#define BWA_ABI_MINOR 18
+#define BWA_ABI_MINOR 19
 
 #define BWA_NAME_LEN 32
 #define BWA_ID_LEN 16
@@ -211,6 +211,8 @@ typedef struct BwaHostApi {
      * decode/save failure, preserving the previous background. Settings may
      * open file_dialog(BUDO_FILE_OPEN, "") to start in the PCX asset folder. */
     int (*set_desktop_background)(const char *path);
+    /* ABI 1.19: stable absolute user workspace; borrowed for host lifetime. */
+    const char *(*get_working_directory)(void);
 } BwaHostApi;
 
 typedef struct BwaAppCallbacks {

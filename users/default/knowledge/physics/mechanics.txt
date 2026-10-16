@@ -1,0 +1,7 @@
+Newton's laws of motion
+
+Newton's first law states that an object remains at rest or moves at constant velocity in a straight line unless acted on by a nonzero net external force. This is the law of inertia. A balanced set of forces produces no acceleration in an inertial reference frame.
+
+Newton's second law relates net force to the rate of change of momentum. For constant mass, the relation is F = m a: net force equals mass times acceleration. Force is measured in newtons, mass in kilograms, and acceleration in metres per second squared.
+
+Newton's third law states that when one body exerts a force on another, the second exerts an equal and opposite force on the first. These two forces act on different bodies, so they do not cancel in a force balance for one body.

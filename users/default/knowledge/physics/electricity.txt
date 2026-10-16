@@ -1,0 +1,5 @@
+Basic electrical concepts
+
+Electric charge is measured in coulombs. Electric current is the rate of charge flow, measured in amperes. Voltage is electrical potential difference, measured in volts; it represents energy transferred per unit charge.
+
+Electrical resistance describes opposition to current flow and is measured in ohms. For an ohmic resistor under constant physical conditions, Ohm's law is V = I R. Electrical power transferred to a component is P = V I, measured in watts using the passive sign convention.

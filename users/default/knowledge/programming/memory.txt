@@ -1,0 +1,5 @@
+Variables and computer memory
+
+Computer memory stores data and instructions in addressable locations. Random-access memory (RAM) normally holds working data while a program runs and is usually volatile: its contents are lost when power is removed. Persistent storage retains information without power.
+
+A variable is a named storage location or a language-level binding to a value. Its type controls the values and operations it supports. In languages such as C, an object's address identifies its location in computer memory, and its lifetime determines when that storage may be accessed safely.

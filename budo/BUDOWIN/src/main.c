@@ -3720,6 +3720,8 @@ static void editor_history_clear(struct EditorSnapshot *history, int *count)
 
 static void editor_history_reset(void)
 {
+    editor_preferred_visual_col = -1;
+    editor_state->v_editor_end_affinity = 0;
     editor_history_clear(editor_undo, &editor_undo_count);
     editor_history_clear(editor_redo, &editor_redo_count);
     editor_typing_line = -1;
@@ -3762,6 +3764,7 @@ static int editor_history_before_edit(void)
     if (editor_read_only) return 0;
     editor_typing_line = -1;
     if (!editor_history_capture(editor_undo, &editor_undo_count)) return 0;
+    editor_preferred_visual_col = -1;
     editor_history_clear(editor_redo, &editor_redo_count);
     editor_match_line = -1;
     return 1;
@@ -3794,6 +3797,8 @@ static void editor_history_restore(int redo)
     editor_line_count = snapshot.lines;
     editor_cursor_line = snapshot.row;
     editor_cursor_col = snapshot.col;
+    editor_preferred_visual_col = -1;
+    editor_state->v_editor_end_affinity = 0;
     free(snapshot.text);
     editor_match_line = -1;
     editor_ensure_cursor_visible();
@@ -3847,6 +3852,8 @@ static int editor_find_direction(const char *needle, int start_line,
                 if (editor_match_at(editor_lines[line], col, needle)) {
                     editor_cursor_line = line;
                     editor_cursor_col = col;
+                    editor_preferred_visual_col = -1;
+                    editor_state->v_editor_end_affinity = 0;
                     editor_match_line = line;
                     editor_match_col = col;
                     editor_match_len = (int)strlen(needle);
@@ -4245,7 +4252,7 @@ static void editor_cursor_wrap_position(int *row_out, int *col_out)
     int len = (int)strlen(text);
     int start = 0;
     int row = 0;
-    int end_affinity = editor_writer_mode && editor_state->v_editor_end_affinity &&
+    int end_affinity = editor_state->v_editor_end_affinity &&
         editor_state->v_editor_end_line == editor_cursor_line &&
         editor_state->v_editor_end_col == editor_cursor_col;
 
@@ -4423,7 +4430,7 @@ static int editor_set_cursor_from_visual_row(int target_row, int desired_col)
 
                     editor_cursor_line = line;
                     editor_cursor_col = draw_start + col;
-                    editor_state->v_editor_end_affinity = editor_writer_mode && col == draw_len && draw_len > 0;
+                    editor_state->v_editor_end_affinity = col == draw_len && draw_len > 0;
                     editor_state->v_editor_end_line = line;
                     editor_state->v_editor_end_col = editor_cursor_col;
                     return 1;
@@ -4446,10 +4453,8 @@ static int editor_set_cursor_from_visual_row(int target_row, int desired_col)
         }
     }
 
-    editor_cursor_line = editor_line_count - 1;
-    editor_cursor_col =
-        (int)strlen(editor_lines[editor_cursor_line]);
-    return 1;
+    /* Clamp to the last visual row while retaining the requested column. */
+    return editor_set_cursor_from_visual_row(row - 1, desired_col);
 }
 
 static void editor_move_visual_row(int delta)
@@ -4458,7 +4463,9 @@ static void editor_move_visual_row(int delta)
     int desired_col;
 
     if (editor_preferred_visual_col < 0) {
-        editor_preferred_visual_col = editor_cursor_screen_col();
+        /* Unwrapped navigation uses document columns, independent of scrolling. */
+        editor_preferred_visual_col = editor_wrap_enabled() ?
+            editor_cursor_screen_col() : editor_cursor_col;
     }
 
     desired_col = editor_preferred_visual_col;
@@ -4770,7 +4777,10 @@ static int editor_navigation(int scan, unsigned int modifiers)
 {
     if (scan != 71 && scan != 72 && scan != 73 && scan != 75 &&
         scan != 77 && scan != 79 && scan != 80 && scan != 81) return 0;
-    if (scan == 75 || scan == 77) editor_state->v_editor_end_affinity = 0;
+    if (scan == 75 || scan == 77) {
+        editor_state->v_editor_end_affinity = 0;
+        editor_preferred_visual_col = -1;
+    }
     int shift = (modifiers & KEYMOD_SHIFT) != 0;
     int ctrl = (modifiers & KEYMOD_CTRL) != 0;
     int first, fc, last, lc;
@@ -11891,6 +11901,8 @@ int main(int argc, char **argv)
                                          wrap_x, editor_window.y + 4,
                                          48, 12)) {
                     editor_word_wrap = !editor_word_wrap;
+                    editor_preferred_visual_col = -1;
+                    editor_state->v_editor_end_affinity = 0;
                     editor_left_col = 0;
                     editor_ensure_cursor_visible();
                     (void)save_editor_settings();
@@ -12003,6 +12015,8 @@ int main(int argc, char **argv)
                         editor_cursor_line = editor_line_count - 1;
                         editor_cursor_col = (int)strlen(editor_lines[editor_cursor_line]);
                         editor_selection_active = 1;
+                        editor_preferred_visual_col = -1;
+                        editor_state->v_editor_end_affinity = 0;
                         editor_ensure_cursor_visible();
                     }
                     screen_dirty = 1;
@@ -12746,6 +12760,8 @@ int main(int argc, char **argv)
                     editor_cursor_line = editor_line_count - 1;
                     editor_cursor_col = (int)strlen(editor_lines[editor_cursor_line]);
                     editor_selection_active = 1;
+                    editor_preferred_visual_col = -1;
+                    editor_state->v_editor_end_affinity = 0;
                     editor_ensure_cursor_visible();
                     screen_dirty = 1;
                 } else if (key == 3 || key == 24) {

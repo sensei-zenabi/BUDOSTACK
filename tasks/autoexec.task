@@ -60,7 +60,7 @@ IF ($FIRST_BOOT == 1):
   PRINT "\n"
   PRINT "\n In overlay mode BUDOSTACK is displayed within a simulated retro-PC"
   PRINT "\n display. For best user experience, do not use overlay."
-  PRINT "\n
+  PRINT "\n"
   PRINT "\n Enable Overlay? [y/n]: "
   INPUT $SELECTION
   IF ($SELECTION == "y"):
@@ -72,7 +72,7 @@ IF ($FIRST_BOOT == 1):
   PRINT "\n"
   PRINT "\n In simulation mode, BUDOSTACK behaves more like it would be running"
   PRINT "\n in an retro-PC. This means slower start and performance."
-  PRINT "\n
+  PRINT "\n"
   PRINT "\n Enable Simulation? [y/n]: "
   INPUT $SELECTION
   IF ($SELECTION == "y"):

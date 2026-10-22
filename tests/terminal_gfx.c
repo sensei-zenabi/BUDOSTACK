@@ -276,7 +276,7 @@ int main(int argc, char **argv) {
     assert(terminal_layout_aspect == 1.25);
     terminal_overlay_enabled = 0;
     terminal_display_rect(1920, 1080, &x, &y, &w, &h);
-    assert(x == 158 && y == 160 && w == 1546 && h == 813);
+    assert(x == 285 && y == 0 && w == 1350 && h == 1080);
     terminal_overlay_enabled = 1;
     terminal_handle_osc_777(&percentage_buffer, "layout_aspect=screen");
     assert(terminal_layout_aspect == 0);
@@ -292,7 +292,7 @@ int main(int argc, char **argv) {
     terminal_overlay_height = 1200;
     terminal_overlay_rect(1280, 1024, &x, &y, &w, &h);
     assert(x == 384 && y == 0 && w == 512 && h == 1024);
-    /* Overlay disabled: ignore configured size/offsets and fill 5:4 displays. */
+    /* Overlay disabled: ignore calibration and retain the native 5:4 shape. */
     terminal_overlay_enabled = 0;
     terminal_display_width = 62.5;
     terminal_display_height = 58.59375;
@@ -301,7 +301,7 @@ int main(int argc, char **argv) {
     terminal_gfx_display_rect(1280, 1024, &x, &y, &w, &h);
     assert(x == 0 && y == 0 && w == 1280 && h == 1024);
     terminal_gfx_display_rect(960, 540, &x, &y, &w, &h);
-    assert(x == 0 && y == 0 && w == 960 && h == 540);
+    assert(x == 142 && y == 0 && w == 675 && h == 540);
     /* Overlay enabled: use the exact configured viewport without letterboxes. */
     terminal_overlay_enabled = 1;
     terminal_gfx_display_rect(1280, 1024, &x, &y, &w, &h);

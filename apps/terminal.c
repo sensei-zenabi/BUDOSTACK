@@ -1471,9 +1471,10 @@ static void terminal_layout_size(int drawable_width, int drawable_height,
                                  double *out_width, double *out_height) {
     double width = drawable_width;
     double height = drawable_height;
-    if (terminal_overlay_enabled && terminal_layout_aspect > 0) {
-        /* Use the same height baseline as the overlay on every display. */
-        width = height * terminal_layout_aspect;
+    double aspect = terminal_overlay_enabled ? terminal_layout_aspect : 5.0 / 4.0;
+    if (aspect > 0) {
+        /* Scale from height; narrow screens crop instead of stretching. */
+        width = height * aspect;
         double scale = fmin(1.0, (INT_MAX / 4) / fmax(width, height));
         width *= scale;
         height *= scale;
@@ -1486,10 +1487,27 @@ static void terminal_display_rect(int drawable_width, int drawable_height, int *
     double layout_width;
     double layout_height;
     terminal_layout_size(drawable_width, drawable_height, &layout_width, &layout_height);
+    if (!terminal_overlay_enabled) {
+        int width = (int)lround(layout_width);
+        int height = (int)lround(layout_height);
+        if (out_x) {
+            *out_x = (drawable_width - width) / 2;
+        }
+        if (out_y) {
+            *out_y = (drawable_height - height) / 2;
+        }
+        if (out_w) {
+            *out_w = width;
+        }
+        if (out_h) {
+            *out_h = height;
+        }
+        return;
+    }
     int width = terminal_display_width > 0 ? (int)lround(layout_width * terminal_display_width / 100.0) : (int)lround(layout_width);
     int height = terminal_display_height > 0 ? (int)lround(layout_height * terminal_display_height / 100.0) : (int)lround(layout_height);
 
-    if (terminal_layout_aspect == 0 || !terminal_overlay_enabled) {
+    if (terminal_layout_aspect == 0) {
         if (width > drawable_width) {
             width = drawable_width;
         }
@@ -7790,20 +7808,10 @@ static void terminal_apply_margin(struct terminal_buffer *buffer, int margin) {
     }
 }
 
-/* Pixel applications fill the native drawable without an overlay. With an
- * overlay they fill the configured display area, including its offsets.
- * X and Y scale independently so neither mode introduces letterboxing.
- */
+/* Pixel applications and text share the display area and input mapping. */
 static void terminal_gfx_display_rect(int drawable_w, int drawable_h,
                                       int *x, int *y, int *w, int *h) {
-    if (terminal_overlay_enabled) {
-        terminal_display_rect(drawable_w, drawable_h, x, y, w, h);
-    } else {
-        *x = 0;
-        *y = 0;
-        *w = drawable_w;
-        *h = drawable_h;
-    }
+    terminal_display_rect(drawable_w, drawable_h, x, y, w, h);
 }
 
 static void terminal_gfx_keyboard_capture(SDL_Window *window, int enabled) {

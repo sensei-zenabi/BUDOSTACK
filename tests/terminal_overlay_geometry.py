@@ -9,6 +9,8 @@ root = Path(__file__).resolve().parents[1]
 source = (root / "apps/terminal.c").read_text()
 start = source.index("static void terminal_layout_size(")
 end = source.index("static int terminal_window_point_to_framebuffer", start)
+gfx_start = source.index("static void terminal_gfx_display_rect(")
+gfx_end = source.index("static void terminal_gfx_keyboard_capture", gfx_start)
 program = r"""
 #include <assert.h>
 #include <limits.h>
@@ -20,7 +22,7 @@ static double terminal_display_width = 65.2, terminal_display_height = 61.2;
 static double terminal_offset_x = 0, terminal_offset_y = 0;
 static double terminal_overlay_zoom = 100;
 static double terminal_overlay_offset_x = 0, terminal_overlay_offset_y = 0;
-""" + source[start:end] + r"""
+""" + source[start:end] + source[gfx_start:gfx_end] + r"""
 int main(void) {
     int x, y, w, h;
     terminal_overlay_rect(1920, 1080, &x, &y, &w, &h);
@@ -66,7 +68,36 @@ int main(void) {
     terminal_overlay_enabled = 0;
     terminal_display_width = terminal_display_height = 0;
     terminal_display_rect(1920, 1080, &x, &y, &w, &h);
-    assert(x == 0 && y == 0 && w == 1920 && h == 1080);
+    assert(x == 285 && y == 0 && w == 1350 && h == 1080);
+    /* Both text and graphics retain 5:4 independently of overlay calibration. */
+    const int modes[][5] = {
+        {1280, 1024, 0, 1280, 1024},
+        {1920, 1080, 285, 1350, 1080},
+        {2560, 1440, 380, 1800, 1440},
+        {3840, 2160, 570, 2700, 2160},
+        {2048, 1080, 349, 1350, 1080},
+        {4096, 2160, 698, 2700, 2160},
+        {1080, 1920, -660, 2400, 1920}
+    };
+    for (int aspect = 0; aspect < 3; aspect++) {
+        terminal_layout_aspect = aspect == 0 ? 0 : aspect == 1 ? 4.0 / 3 : 16.0 / 9;
+        terminal_display_width = 76.8;
+        terminal_display_height = 77.1;
+        terminal_offset_x = 0.63;
+        terminal_offset_y = 0.34;
+        for (unsigned i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+            for (int graphics = 0; graphics < 2; graphics++) {
+                if (graphics) {
+                    terminal_gfx_display_rect(modes[i][0], modes[i][1], &x, &y, &w, &h);
+                } else {
+                    terminal_display_rect(modes[i][0], modes[i][1], &x, &y, &w, &h);
+                }
+                assert(x == modes[i][2] && y == 0);
+                assert(w == modes[i][3] && h == modes[i][4]);
+                assert(w * 4 == h * 5);
+            }
+        }
+    }
     return 0;
 }
 """

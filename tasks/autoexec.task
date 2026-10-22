@@ -53,9 +53,15 @@ RUN _CONFIG -read VAR_FIRST_BOOT TO $FIRST_BOOT
 
 IF ($FIRST_BOOT == 1):
 
-  PRINT "\n\nFirst boot of BUDOSTACK detected.\n"
   PRINT "\n"
-  PRINT "Do you want to use overlay? [y/n]: "
+  PRINT "\nFirst boot of BUDOSTACK detected."
+  PRINT "\n"
+  PRINT "\n SETTINGS:"
+  PRINT "\n"
+  PRINT "\n In overlay mode BUDOSTACK is displayed within a simulated retro-PC"
+  PRINT "\n display. For best user experience, do not use overlay."
+  PRINT "\n
+  PRINT "\n Enable Overlay? [y/n]: "
   INPUT $SELECTION
   IF ($SELECTION == "y"):
     RUN _CONFIG -write _TERM_OVERLAY "enable"
@@ -63,7 +69,11 @@ IF ($FIRST_BOOT == 1):
     RUN _CONFIG -write _TERM_OVERLAY "disable"
   END
 
-  PRINT "\n\nSimulation Mode? [y/n]: "
+  PRINT "\n"
+  PRINT "\n In simulation mode, BUDOSTACK behaves more like it would be running"
+  PRINT "\n in an retro-PC. This means slower start and performance."
+  PRINT "\n
+  PRINT "\n Enable Simulation? [y/n]: "
   INPUT $SELECTION
   IF ($SELECTION == "y"):
     RUN _CONFIG -write SIMULATION_MODE "enable"
@@ -216,6 +226,8 @@ IF ($SIMULATION_MODE == "enable"):
   RUN _WAIT 300
 
 END
+
+RUN _CLEAR
 
 # Keep the complete POST visible in the 80x60 HIGH terminal.
 RUN _TERM_TYPING_SOUND $TYPING_SOUND

@@ -231,7 +231,10 @@ RUN _CLEAR
 
 # Keep the complete POST visible in the 80x60 HIGH terminal.
 RUN _TERM_TYPING_SOUND $TYPING_SOUND
-PRINT "\n>> Start BUDOWIN? [y/n]: "
+PRINT "\n"
+PRINT "\n BUDOWIN is the Graphical Operating System for BUDOSTACK."
+PRINT "\n"
+PRINT "\n Start BUDOWIN? [y/n]: "
 INPUT $SELECTION
 
 IF ($SELECTION != "y"):

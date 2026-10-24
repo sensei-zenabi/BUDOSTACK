@@ -14,6 +14,8 @@ mkdir -p "$BUDOWIN_TEST_DIR/folder"
 printf 'input' > "$BUDOWIN_TEST_DIR/input.txt"
 COMPILER=${CC:-cc}
 FLAGS=(-std=c11 -Wall -Wextra -Werror -Wpedantic)
+"$COMPILER" "${FLAGS[@]}" -O2 -Wstrict-overflow=5 tests/budowin_ui_arithmetic.c -o "$TEST_DIR/ui-arithmetic"
+"$TEST_DIR/ui-arithmetic"
 budo/BUDOWIN/build.sh
 "$COMPILER" "${FLAGS[@]}" -O2 tests/budowin_cad.c -lm -o "$TEST_DIR/cad"
 mkdir -p "$TEST_DIR/cad-files"

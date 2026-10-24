@@ -1,4 +1,4 @@
-#version 130
+#version 120
 // film noise
 // by hunterk
 // license: public domain

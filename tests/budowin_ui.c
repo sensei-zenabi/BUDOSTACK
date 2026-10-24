@@ -119,6 +119,61 @@ static void test_rename_keyboard(const char *directory)
     assert(access(original, F_OK) != 0 && stat(renamed, &info) == 0 && S_ISDIR(info.st_mode));
 }
 
+static void test_copy_names(const char *directory)
+{
+    char folder[MAX_PATH], path[MAX_PATH], name[MAX_NAME];
+    assert(join_path(folder, sizeof(folder), directory, "copy-names"));
+    assert(mkdir(folder, 0700) == 0);
+    assert(load_directory(folder));
+    assert(explorer_make_copy_name("DOCUMENT.TXT", name, sizeof(name)));
+    assert(!strcmp(name, "DOCUME~1.TXT"));
+    assert(!explorer_make_copy_name("DOCUMENT.TXT", name, 2));
+    assert(explorer_make_copy_name("a", name, sizeof(name)));
+    assert(!strcmp(name, "a~1"));
+    assert(explorer_make_copy_name("DOCUMENT.longext", name, sizeof(name)));
+    assert(!strcmp(name, "DOCUME~1.lon"));
+    /* Exercise the actual same-directory clipboard copy and its contents. */
+    assert(join_path(path, sizeof(path), folder, "DOCUMENT.TXT"));
+    FILE *file = fopen(path, "wb");
+    assert(file && fputs("copy contents", file) >= 0 && fclose(file) == 0);
+    assert(load_directory(folder));
+    for (int i = 0; i < item_count; ++i)
+        if (!strcmp(directory_items[i].path, path)) explorer_select_item(i, 0);
+    explorer_stage_clipboard(EXPLORER_CLIP_COPY);
+    assert(explorer_clipboard_count == 1 && explorer_paste_clipboard());
+    assert(join_path(path, sizeof(path), folder, "DOCUME~1.TXT"));
+    file = fopen(path, "rb");
+    char contents[32] = {0};
+    assert(file && fgets(contents, sizeof(contents), file) && fclose(file) == 0);
+    assert(!strcmp(contents, "copy contents"));
+    assert(unlink(path) == 0);
+    assert(join_path(path, sizeof(path), folder, "DOCUMENT.TXT"));
+    assert(unlink(path) == 0);
+    explorer_clipboard_count = 0;
+    explorer_clipboard_mode = EXPLORER_CLIP_NONE;
+    for (int suffix = 1; suffix <= 999; ++suffix) {
+        assert(explorer_make_copy_name("DOCUMENT.TXT", name, sizeof(name)));
+        if (suffix == 1) assert(!strcmp(name, "DOCUME~1.TXT"));
+        if (suffix == 9) assert(!strcmp(name, "DOCUME~9.TXT"));
+        if (suffix == 10) assert(!strcmp(name, "DOCUM~10.TXT"));
+        if (suffix == 99) assert(!strcmp(name, "DOCUM~99.TXT"));
+        if (suffix == 100) assert(!strcmp(name, "DOCU~100.TXT"));
+        if (suffix == 999) assert(!strcmp(name, "DOCU~999.TXT"));
+        assert(join_path(path, sizeof(path), folder, name));
+        assert(access(path, F_OK) != 0);
+        FILE *file = fopen(path, "wb");
+        assert(file && fclose(file) == 0);
+    }
+    assert(!explorer_make_copy_name("DOCUMENT.TXT", name, sizeof(name)));
+    /* Leave a gap and verify the first unused name is chosen. */
+    assert(join_path(path, sizeof(path), folder, "DOCUM~10.TXT"));
+    assert(unlink(path) == 0);
+    assert(explorer_make_copy_name("DOCUMENT.TXT", name, sizeof(name)));
+    assert(!strcmp(name, "DOCUM~10.TXT"));
+    assert(explorer_delete_path(folder, TYPE_FOLDER));
+    assert(load_directory(directory));
+}
+
 static void choose(const char *directory, const char *name, int mode)
 {
     picker_owner = APP_EDITOR;
@@ -340,6 +395,7 @@ int main(int argc, char **argv)
     test_input_caret();
     const char *directory = argv[1];
     test_rename_keyboard(directory);
+    test_copy_names(directory);
     char path[MAX_PATH];
     BudoScrollbar bar = {.x=10, .y=20, .length=200, .total=100, .page=10};
     int start, size;
@@ -536,6 +592,6 @@ int main(int argc, char **argv)
     free(editor_file_items);
     editor_file_items = NULL;
     editor_history_reset();
-    puts("PASS: shared scrollbar interaction, file workflows, save protection and load preservation");
+    puts("PASS: copy-name suffixes 1..999, shared scrollbar interaction, file workflows, save protection and load preservation");
     return 0;
 }

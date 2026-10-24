@@ -7,6 +7,7 @@
 #include "editor_syntax.h"
 #include <ctype.h>
 #include <stdint.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9795,14 +9796,16 @@ static int explorer_make_copy_name(const char *name,
     base[base_len] = '\0';
 
     for (suffix = 1; suffix <= 999; ++suffix) {
-        char suffix_text[5];
+        /* Size for any int, so older GCC need not infer the loop bound. */
+        char suffix_text[sizeof(int) * CHAR_BIT + 2];
         size_t suffix_len;
         size_t keep;
         char candidate[MAX_NAME];
         int n;
 
-        snprintf(suffix_text, sizeof(suffix_text), "~%d", suffix);
-        suffix_len = strlen(suffix_text);
+        n = snprintf(suffix_text, sizeof(suffix_text), "~%d", suffix);
+        if (n <= 0 || (size_t)n >= sizeof(suffix_text)) return 0;
+        suffix_len = (size_t)n;
         keep = suffix_len < 8 ? 8 - suffix_len : 0;
         if (keep > base_len) keep = base_len;
 

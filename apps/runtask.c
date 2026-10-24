@@ -34,7 +34,6 @@
 #include <time.h>
 #include <signal.h>
 #include <termios.h>
-#include <threads.h> // thrd_sleep
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
@@ -3133,7 +3132,13 @@ static void delay_ms(int ms) {
     while (elapsed < ms && !stop) {
         int slice = (ms - elapsed > 50) ? 50 : (ms - elapsed);
         struct timespec ts = { .tv_sec = slice / 1000, .tv_nsec = (slice % 1000) * 1000000L };
-        thrd_sleep(&ts, NULL);
+        while (nanosleep(&ts, &ts) != 0) {
+            if (errno != EINTR) {
+                perror("WAIT: nanosleep");
+                return;
+            }
+            if (stop) return;
+        }
         elapsed += slice;
     }
 }

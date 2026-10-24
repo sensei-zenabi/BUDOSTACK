@@ -28,12 +28,17 @@ static inline void budo_text_caret(const BwaHostApi *host, int x, int y, int hei
 
 static inline int budo_scroll_limit(const BudoScrollbar *bar)
 {
-    /* Counts are nonnegative. Subtract unsigned values only after checking
-     * their order, so neither invalid input nor inlining can overflow int. */
-    if (bar->total <= 0) return 0;
-    if (bar->page <= 0) return bar->total;
-    if (bar->page >= bar->total) return 0;
-    return (int)((unsigned int)bar->total - (unsigned int)bar->page);
+    /* Keep normalization, comparison and subtraction unsigned. Inlined callers
+     * can derive total as page + a constant; signed guards let older GCC use
+     * signed-overflow assumptions even if the subtraction itself is unsigned.
+     * A negative int converts to an unsigned value above INT_MAX. Division
+     * extracts that sign bit; the mask zeros negative counts without a signed
+     * comparison that GCC could fold back into the caller's addition. */
+    unsigned int total = (unsigned int)bar->total;
+    unsigned int page = (unsigned int)bar->page;
+    total &= ~(0U - (total / ((unsigned int)INT_MAX + 1U)));
+    page &= ~(0U - (page / ((unsigned int)INT_MAX + 1U)));
+    return total > page ? (int)(total - page) : 0;
 }
 
 static inline void budo_scroll_clamp(BudoScrollbar *bar)

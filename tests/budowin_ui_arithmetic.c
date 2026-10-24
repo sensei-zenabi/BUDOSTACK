@@ -11,6 +11,23 @@ static int expected_limit(int total, int page)
     return result > 0 ? (int)result : 0;
 }
 
+/* Spreadsheet layout derives total from the same page value. Keep this
+ * relationship visible to the optimizer, as it is in the application. */
+static int layout_scroll_limit(int page)
+{
+    BudoScrollbar bar = {.total = 255 + page, .page = page};
+    return budo_scroll_limit(&bar);
+}
+
+static void test_layout_scroll_limit(void)
+{
+    const int pages[] = {INT_MIN, -256, -255, -254, -1, 0, 1, 255, INT_MAX - 255};
+    for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); ++i) {
+        int page = pages[i];
+        assert(layout_scroll_limit(page) == expected_limit(255 + page, page));
+    }
+}
+
 static void test_scroll_boundaries(void)
 {
     for (size_t t = 0; t < VALUE_COUNT; ++t)
@@ -165,6 +182,7 @@ int main(void)
     assert(budo_ui_int(LLONG_MIN) == INT_MIN);
     assert(budo_ui_int(LLONG_MAX) == INT_MAX);
     assert(budo_ui_int(0) == 0);
+    test_layout_scroll_limit();
     test_scroll_boundaries();
     test_scroll_interaction();
     test_coordinates();
